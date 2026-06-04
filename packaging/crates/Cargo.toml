@@ -1,0 +1,21 @@
+# Reservation crate for the name `byn` on crates.io. It is a LIBRARY (no
+# binary target), so it can never shadow the real Go `byn` command.
+# Publish:  cargo publish
+# If crates.io rejects the license below, copy the repo LICENSE here and
+# swap `license = ...` for `license-file = "LICENSE"`.
+[package]
+name = "byn"
+version = "0.0.1"
+edition = "2021"
+description = "Name reserved for byn — a local-first secure secrets vault & credential manager (a Go CLI). Install via `go install github.com/sandeepbaynes/byn/cmd/byn@latest`, Homebrew, or https://github.com/sandeepbaynes/byn."
+authors = ["Sandeep Baynes"]
+homepage = "https://github.com/sandeepbaynes/byn"
+repository = "https://github.com/sandeepbaynes/byn"
+documentation = "https://github.com/sandeepbaynes/byn"
+readme = "README.md"
+keywords = ["secrets", "vault", "credentials", "dotenv", "cli"]
+categories = ["command-line-utilities"]
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+
+[lib]
+path = "src/lib.rs"

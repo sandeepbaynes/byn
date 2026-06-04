@@ -1,0 +1,28 @@
+BYN                  default / billing / staging                   unlocked
+▼ default                                                                  
+  ▼ billing          ENV-VARS (3)                                 + add (a)
+    ○ default        ──────────────────────────────────────────────────────
+    ● staging           ↓ inherited   ⤴ overrides default   ✦ new in env   
+  ▶ default            ⤴ API_KEY                          ●●●●●●●●●●  06-02
+▶ work                 ⤴ DB_URL                           ●●●●●●●●●●  06-02
++ new vault            ⤴ STRIPE_SK                        ●●●●●●●●●●  06-02
+                     ▼ (new entry)                                         
+                        ╭────────────────────────────────────────────────╮ 
+                        │NAME:  API_KEY█                                 │ 
+                        ╰────────────────────────────────────────────────╯ 
+                        ✘ name already exists in default/billing/staging   
+                        ╭────────────────────────────────────────────────╮ 
+                        │VALUE:                                          │ 
+                        ╰────────────────────────────────────────────────╯ 
+                        Tab next field   :w save   :q cancel               
+                                                                           
+                     FILES (0)                                    + add (a)
+                     ──────────────────────────────────────────────────────
+                       (none — Phase 5)                                    
+                                                                           
+                     RECENT AUDIT                             view all (ga)
+                     ──────────────────────────────────────────────────────
+                       21:48  get          DB_URL            ok            
+                       21:48  put          STRIPE_SK         ok            
+                                                                           
+INSERT  API_KEY  0/4096 B                    ESC normal  :w save  :q cancel

@@ -1,0 +1,29 @@
+# Reserve the snap name first (no build needed):  snapcraft register byn
+#
+# This manifest is a starting point for an actual snap. byn needs to write
+# ~/.byn, bind a Unix socket, and exec shim binaries — which strict
+# confinement makes awkward — so `classic` confinement (manual Snapcraft
+# review) is the likely path. Treat `grade`/`confinement` below as TBD.
+name: byn
+version: '0.0.1'
+summary: Local-first secure secrets vault and credential manager
+description: |
+  byn keeps your secrets in a local, encrypted, daemon-backed vault. Agents
+  and processes can always read the NAMES of your env-vars, never the
+  values. https://github.com/sandeepbaynes/byn
+license: LicenseRef-PolyForm-Noncommercial-1.0.0
+base: core22
+grade: devel
+confinement: classic
+
+parts:
+  byn:
+    plugin: dump
+    source: https://github.com/sandeepbaynes/byn/releases/download/v0.0.1/byn-linux-amd64
+    source-type: file
+    organize:
+      byn-linux-amd64: bin/byn
+
+apps:
+  byn:
+    command: bin/byn

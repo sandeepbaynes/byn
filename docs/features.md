@@ -1,0 +1,223 @@
+# byn — Features (2026-06-02)
+
+What is shippable today, organized by user-facing capability. Each
+feature names the relevant source files for future reference.
+
+---
+
+## 1. Secure multi-vault store
+
+- Multiple vaults coexist; each gets its own SQLite database and
+  Argon2id-wrapped key under `$BYN_DIR/vaults/<name>/`.
+- Vault key is a random 32 bytes. Wrapped with
+  `Argon2id(password, salt) → XChaCha20-Poly1305 AEAD`; the AEAD's AAD
+  binds the full header (salt + Argon2 params + version) so any byte
+  in the header changes the unwrap result.
+- Per-row encryption: `XChaCha20-Poly1305` with random 24-byte nonce,
+  AAD = `vault_id || 0x1F || kind || 0x1F || name`. Names are
+  plaintext (forensics-friendly); values are ciphertext.
+- Schema v3, SQLite STRICT tables, FK enforced. Versioned migrations
+  in `internal/vault/schema.go`.
+
+## 2. Project / env scopes inside each vault
+
+- `vault → project → env → entry` four-level path.
+- Default project + default env per vault (created on init).
+- Non-default envs fall back to default for missing keys
+  (inheritance).
+- CRUD via `byn {project,env} {list,create,delete,rename}`.
+
+## 3. Daemon + IPC
+
+- Unix socket at `$BYN_DIR/daemon.sock`, mode 0600, peer-UID
+  enforced.
+- Length-prefixed JSON envelopes; per-call connection.
+- Multi-vault state map: `map[string]*vaultEntry` with per-vault idle
+  timer and rate limiter.
+- Status / version negotiation (protocol min/max).
+
+## 4. CLI surface
+
+- Hybrid scope flag pre-parser: `--vault`/`--project`/`--env` work
+  before or after the subcommand, conflicting duplicates error, env
+  fallbacks `BYN_VAULT`/`BYN_PROJECT`/`BYN_ENV`.
+- Env-var ops: `put` (stdin only, never argv), `get`, `list`,
+  `delete`, `rename` with `cat`/`ls`/`rm`/`mv` aliases.
+- Structure CRUD: vault/project/env list/create/delete/rename.
+- Bulk: `import` (`.env`/`.yaml`/`.json` files or stdin),
+  `export` (same formats, stdout or `--output`).
+- Execution: `byn exec -- COMMAND` injects vault env-vars into the
+  child via `syscall.Exec` (no parent process, no inheritance of CLI
+  PID).
+- Modal TUI: `byn`, `byn edit`, `byn view` open the vi-style
+  TUI for the default scope.
+- AWS-CLI style help: `byn <cmd> {help,--help,-h}` and
+  `byn help <cmd>`; man page at `man/byn.1`.
+
+## 5. Agent / JSON mode
+
+- `--json` is accepted by:
+  - `byn list`
+  - `byn get`
+  - `byn status`
+  - `byn vault list`, `byn project list`, `byn env list`
+- Output: arrays/objects keyed exactly to the matching IPC response
+  types — agent harnesses can `JSON.parse` directly.
+
+## 6. Bulk import/export
+
+- Import detects format by extension (`.env`/`.yaml`/`.json`), then
+  sniffs `{` for JSON, then errors. `--format` overrides.
+- Dotenv parser handles `export`, quoted values with `\n`/`\t`/`\"`
+  escapes, single-quoted literals, inline `# comment` stripping.
+- YAML/JSON: flat key→scalar maps only; nested data is rejected with
+  a clear error.
+- `--dry-run` previews keys + byte sizes; `--skip-existing` switches
+  semantics from overwrite to add-only.
+- `--replace [--yes]` is the destructive variant — wipes every
+  existing key in the scope first, then imports. Confirms on a TTY;
+  `--yes` is required in non-TTY/agent mode. Mutually exclusive
+  with `--skip-existing`. Tests cover all three modes.
+- Export emits a sorted dotenv-style document by default; YAML and
+  JSON also available. `--output PATH` writes 0600.
+
+## 7. IDE integration docs
+
+- `docs/integrations/vscode.md` — Node/Python/Go launch.json
+  recipes, tasks, terminal wiring.
+- `docs/integrations/jetbrains.md` — IntelliJ/GoLand/PyCharm/WebStorm,
+  External Tools + script-wrapping.
+- `docs/integrations/eclipse.md` — External Tools, terminal,
+  External Maven/Gradle wrapping.
+- `docs/integrations/ai-agents.md` — agent-safe usage patterns:
+  what to allow, what to deny, example permission rules, per-project
+  scope pinning via `direnv`.
+
+## 8. Audit log (HMAC-chained)
+
+- Per-vault append-only audit log; each entry HMAC'd with the
+  previous entry's tag (chain).
+- Plain-text names (forensics-friendly).
+- `byn audit tail [--lines N] [--json]` — read recent events
+  (works while locked).
+- `byn audit verify [--json]` — walk the chain end-to-end; exit 3
+  with "BROKEN at event #M" on tamper.
+- HMAC seed + head persisted in vault meta; daemon resumes cleanly
+  across restarts.
+
+## 9. Diagnostics
+
+- `byn doctor [--json]` — daemon-side battery: daemon liveness,
+  vaults-on-disk enumeration, per-vault schema + meta.json
+  fingerprint, per-vault audit-chain integrity.
+- Per-check severity (`ok` / `warn` / `fail`); exit non-zero on any
+  fail.
+- Mutating-op hints to stderr (`Stored "K" in default/billing/staging.`)
+  gated by `BYN_HINTS=0` and non-TTY stderr.
+
+## 10. `.byn` discovery + TOFU trust
+
+- CWD-walk for a `.byn` TOML file (strict parser; unknown keys
+  fail). Stops at home dir, filesystem root, or an empty `.byn`
+  (per-project escape hatch).
+- Trust on First Use: SHA-256 of file contents recorded against the
+  canonical path (`filepath.EvalSymlinks`) in
+  `~/.byn/trusted_byn.json`.
+- Agent mode (`--json` anywhere in args) hard-fails on untrusted or
+  tampered `.byn` — never an interactive prompt.
+- `byn trust [PATH]`, `byn trust list [--json]`,
+  `byn untrust [PATH]`.
+- `--no-discovery` flag and `BYN_NO_DISCOVERY=1` opt out.
+- Management commands (`trust`, `untrust`, `daemon`, `doctor`,
+  `help`, `version`) skip discovery so an untrusted file can't lock
+  the user out of fixing it.
+- **Planned hardening (deferred):** granting trust will require the
+  master password even when the vault is unlocked, and any change to a
+  previously-trusted `.byn` will require explicit user re-approval via
+  auth — so a rogue agent or local attacker can't add or silently
+  re-trust a `.byn` without the user's consent.
+
+## 11. Responsive bubbletea TUI
+
+- `byn`, `byn edit`, `byn view` open the modal vi-style TUI.
+- Five layout tiers driven by `(width, height)`:
+  - Below-min (< 40×12): friendly fallback message
+  - Tiny (40-59): breadcrumb only, no rail, abbreviated dates
+  - Medium (60-89): 20-col rail, abbreviated dates
+  - Standard (90-119): 26-col rail, full dates
+  - Large (120+): rail + 32-col detail pane with live entry metadata
+- SIGWINCH-aware: resize re-lays cleanly with no flicker; cursor
+  preserved across tier changes.
+- Default focus on the rail so j/k navigate immediately. `Tab` /
+  `Shift+Tab` toggle to content.
+- **vi-style draft semantics** — typing modifies a local buffer only.
+  `:w` commits, `:q` refuses dirty, `:q!` discards, `:wq` saves+leaves.
+  ESC preserves the draft. Dirty drafts surfaced as `[DRAFT: NAME]`
+  in status line + `[*]` next to the row.
+- **Undo / redo** on the draft buffer: `u` undoes, `Ctrl+R` redoes.
+  Per-keystroke snapshot, capped at 200 per draft.
+- **Clipboard** (cross-platform via `atotto/clipboard`):
+  - `y` (NORMAL) yanks selected entry's value (audited `OpGet`)
+  - `y` (REVEAL) copies the revealed value
+  - `p` (NORMAL) pastes into open draft
+  - `Ctrl+V` (INSERT) pastes inline
+- **Inheritance badges** in non-default envs:
+  - `↓` inherited from default
+  - `⤴` overrides default
+  - `✦` created in this env only
+  - Legend rendered under ENV-VARS header
+- **Scope picker** (`s`) — 3-column modal with cascading: vault
+  change updates both projects AND envs; tries to preserve current
+  project/env names across the switch.
+- **Targeted vault bootstrap** — `byn --vault X edit` prompts for
+  X's password (not "default") and lands on X with the rail cursor
+  pre-positioned to the most specific match (env > project > vault).
+- **Locked-vault state** rendered explicitly — `Vault is locked +
+  Run 'byn --vault X unlock' from a shell, then return`. Edit
+  actions (i/a/r/R) refuse with the same recovery hint.
+- **Active filter never hidden** — section header, status-line chip,
+  and auto-clear-on-add all surface a running `m.entriesFilter`. ESC
+  from NORMAL clears it.
+- **Audit visibility** — RECENT AUDIT updates after every mutating
+  op + every reveal/yank. `ga` opens the full-screen AUDIT view.
+- Snapshot tests guard each tier: TestSnapshots_PerTier,
+  TestRender_Tiny_NoRail, etc. ~14 TUI tests total.
+
+## 12. Security primitives
+
+- `internal/secmem`: mlock'd byte buffers for unwrap workspace and
+  master-password handling.
+- `internal/auth`: golang.org/x/term raw-mode prompt; persistent
+  failed-unlock backoff in `auth-state.json`.
+- `byn put NAME VALUE` rejected at the CLI — value via stdin only,
+  so secrets never enter argv or scrollback.
+
+## 13. Tests
+
+- Unit tests under `internal/*`. All pass with `-race`.
+- Integration suite under `tests/integration/`, gated by build tag
+  `integration`. Covers golden path, status, exec, scope CRUD,
+  import/export.
+
+---
+
+## Backlog (deferred, with rationale)
+
+- **FUSE-mounted file secrets** — schema + IPC shaped already; Phase 5.
+- **`.byn` workspace manifest** — per-command env allowlists +
+  file materialization. Gated on `byn exec` field-testing. Memory:
+  `project_byn_file_workspace.md`.
+- **Entry versioning CLI** — `byn history` / `revert` / `diff`.
+  Schema + `entry_versions` table shipped in Slice 2; IPC ops + CLI
+  surface deferred.
+- **Trust-file HMAC hardening** — `~/.byn/trusted_byn.json`
+  integrity-signed with a daemon-resident key. Design ready, deferred
+  per internal design notes.
+- **mlock wiring** — `internal/secmem` package shipped but not yet
+  used for master password / Argon2 workspace. Security audit
+  flagged the docs-vs-reality gap.
+- **TOTP per-read / push-approval / leases** — analysis concluded
+  the design didn't fit the core goal (see
+  internal design notes).
+- **Web UI / shims / ACLs / cloud sync** — Phases 2/3/4/6 of original
+  plan.

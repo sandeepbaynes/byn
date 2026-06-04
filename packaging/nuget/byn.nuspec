@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Reservation package for the name `byn` on NuGet. It is NOT a .NET tool
+     (no `byn` command is installed), so it cannot shadow the real Go binary.
+     Publish:  nuget pack byn.nuspec
+               dotnet nuget push byn.0.0.1.nupkg -s https://api.nuget.org/v3/index.json -k <KEY> -->
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>byn</id>
+    <version>0.0.1</version>
+    <authors>Sandeep Baynes</authors>
+    <owners>Sandeep Baynes</owners>
+    <projectUrl>https://github.com/sandeepbaynes/byn</projectUrl>
+    <description>Name reserved for byn — a local-first secure secrets vault and credential manager (a Go CLI). Install via `go install github.com/sandeepbaynes/byn/cmd/byn@latest`, Homebrew, or https://github.com/sandeepbaynes/byn.</description>
+    <tags>secrets vault credentials cli security dotenv</tags>
+    <readme>README.md</readme>
+    <license type="file">LICENSE.txt</license>
+  </metadata>
+  <files>
+    <file src="README.md" target="" />
+    <file src="LICENSE.txt" target="" />
+  </files>
+</package>

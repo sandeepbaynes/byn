@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>byn</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- App view -->
+<main id="app" class="app" hidden>
+  <aside class="rail">
+    <header class="rail-head">
+      <div class="wordmark sm"><span class="bracket">[</span>byn<span class="caret"></span><span class="bracket">]</span></div>
+      <button id="new-vault-btn" class="icon-btn add" title="new vault" aria-label="new vault">+</button>
+    </header>
+    <nav id="tree" class="tree" aria-label="scope"></nav>
+    <footer class="rail-foot">
+      <span id="conn-dot" class="dot"></span>
+      <span id="conn-label" class="conn-label">connected</span>
+    </footer>
+  </aside>
+
+  <section class="content">
+    <header class="content-head">
+      <nav class="crumbs" id="crumbs" aria-label="breadcrumb"></nav>
+      <div class="head-actions">
+        <div class="search">
+          <span class="search-ico">⌕</span>
+          <input id="filter" class="filter" type="search" placeholder="search keys…" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="add-btn" class="btn btn-primary sm" title="new env-var (n)"><span class="plus">+</span> new</button>
+        <button id="audit-btn" class="btn btn-ghost sm" title="audit log for this vault">audit</button>
+        <button id="trust-btn" class="btn btn-ghost sm" title="trusted .byn files">trust</button>
+        <div id="help-wrap" class="help-wrap">
+          <button id="help-btn" class="btn btn-ghost sm" title="keyboard shortcuts (?)" aria-label="keyboard shortcuts">?</button>
+          <div id="help-pop" class="help-pop" hidden>
+            <div class="help-title">keyboard</div>
+            <dl class="help-list">
+              <div><dt>⌘/Ctrl&nbsp;P</dt><dd>spotlight: go to vault/project/env</dd></div>
+              <div><dt>n</dt><dd>new env-var</dd></div>
+              <div><dt>u</dt><dd>unlock current vault</dd></div>
+              <div><dt>l</dt><dd>lock current vault</dd></div>
+              <div><dt>l a</dt><dd>lock all vaults</dd></div>
+              <div><dt>⌘/Ctrl&nbsp;↵</dt><dd>save inline edit</dd></div>
+              <div><dt>↵</dt><dd>newline inside a value</dd></div>
+              <div><dt>Esc</dt><dd>cancel edit / close</dd></div>
+              <div><dt>?</dt><dd>toggle this help</dd></div>
+            </dl>
+            <div class="help-title">mouse</div>
+            <dl class="help-list">
+              <div><dt>click value</dt><dd>reveal / hide</dd></div>
+              <div><dt>double-click key</dt><dd>rename</dd></div>
+              <div><dt>double-click value</dt><dd>edit (multi-line)</dd></div>
+              <div><dt>drag .env file</dt><dd>import into this env</dd></div>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div id="legend" class="legend" hidden>
+      <span class="bdg bdg-inherit">↓</span> inherited
+      <span class="bdg bdg-override">⤴</span> overrides default
+      <span class="bdg bdg-new">✦</span> new in env
+    </div>
+
+    <div id="content-body" class="content-body" aria-live="polite"></div>
+  </section>
+</main>
+
+<!-- Reusable dialog (create / confirm) -->
+<div id="dialog" class="dialog" hidden>
+  <div class="dialog-card" role="dialog" aria-modal="true">
+    <h2 id="dialog-title" class="dialog-title"></h2>
+    <p id="dialog-msg" class="dialog-msg" hidden></p>
+    <div id="dialog-fields" class="dialog-fields" hidden></div>
+    <div id="dialog-error" class="form-error"></div>
+    <div class="dialog-actions">
+      <button id="dialog-cancel" class="btn btn-ghost" type="button">cancel</button>
+      <button id="dialog-ok" class="btn btn-primary" type="button">ok</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<div id="palette" class="palette" hidden>
+  <div class="palette-box" role="dialog" aria-modal="true">
+    <input id="palette-input" class="palette-input" type="text" placeholder="go to vault / project / env…  (↑↓ to move, ↵ to open)" autocomplete="off" spellcheck="false" aria-label="quick navigation">
+    <div id="palette-results" class="palette-results"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
