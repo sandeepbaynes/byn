@@ -15,7 +15,7 @@ documentation = "https://github.com/sandeepbaynes/byn"
 readme = "README.md"
 keywords = ["secrets", "vault", "credentials", "dotenv", "cli"]
 categories = ["command-line-utilities"]
-license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-file = "LICENSE"
 
 [lib]
 path = "src/lib.rs"
