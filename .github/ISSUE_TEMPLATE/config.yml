@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 🔒 Report a security vulnerability (private)
+    url: https://github.com/sandeepbaynes/byn/security/advisories/new
+    about: Report vulnerabilities privately — never in a public issue. See SECURITY.md.
+  - name: 📖 Docs & usage
+    url: https://github.com/sandeepbaynes/byn#readme
+    about: Check the README and docs/ first — your question may already be answered.

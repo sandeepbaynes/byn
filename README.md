@@ -62,6 +62,19 @@ byn ls             # names are always listable; values stay encrypted
 
 ---
 
+## Platform support
+
+byn targets **macOS and Linux** today (Go 1.22+, pure-Go binary). **Windows is
+not yet supported** — the daemon's Unix-socket IPC + peer-UID enforcement, the
+`syscall.Exec` injection path, the machine fingerprint, and `mlock` / file-mode
+hardening all assume a Unix host. A Windows port (named-pipe IPC, token/SID
+peer-auth, `CreateProcess` exec, WMI fingerprint, ACL hardening) is a tracked,
+**contribution-welcome** roadmap item — the platform-specific pieces sit behind
+interfaces, so it can land without touching the core. Windows Hello already
+supports the WebAuthn PRF the portal unlock uses, so that part would come along.
+
+---
+
 ## Status
 
 What works today (post Phase 1–6 overnight push, 2026-06-02):
