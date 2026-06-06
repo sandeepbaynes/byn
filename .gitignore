@@ -1,0 +1,23 @@
+/bin/
+/byn
+/dist/
+/coverage.out
+/coverage.html
+*.test
+*.prof
+.DS_Store
+.idea/
+.vscode/
+# packaging build artifacts (name-reservation stubs)
+*.gem
+*.nupkg
+packaging/pypi/dist/
+packaging/pypi/*.egg-info/
+packaging/crates/target/
+packaging/nuget/bin/
+packaging/nuget/obj/
+node_modules/
+.claude
+
+# local dev project docs
+internaldocs

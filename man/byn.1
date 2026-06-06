@@ -1,0 +1,735 @@
+.TH BYN 1 "2026-06-03" "byn 0.0.1" "User Commands"
+.SH NAME
+byn \- secure secrets vault with shim-based credential injection
+.SH SYNOPSIS
+.B byn
+[\fIcommand\fR] [\fIargs...\fR]
+.PP
+.B byn help
+[\fIcommand\fR]
+.PP
+.B byn
+\fIcommand\fR
+.B \-\-help
+.PP
+.B byn
+\fIcommand\fR
+.B help
+.SH DESCRIPTION
+.B byn
+stores secrets locally in an encrypted vault and serves them through a
+background daemon. The CLI is a thin client; the daemon owns all
+business logic, encryption keys, and file state.
+.PP
+The vault key is a 32\-byte random key, sealed at rest by Argon2id of
+the master password. Each secret value is encrypted with
+XChaCha20\-Poly1305 keyed by the vault key, with the ciphertext bound
+to the entry's identity via AEAD additional data.
+.PP
+Default daemon data directory is
+.IR ~/.byn/ .
+Override with
+.B BYN_DIR
+in the environment.
+.SH COMMANDS
+.SS Setup and lifecycle
+.TP
+.B init
+Create a fresh vault. Prompts for the master password twice. Targets
+the vault named by \fB\-\-vault\fR (or \fIBYN_VAULT\fR), defaulting
+to \fIdefault\fR. Vaults live under
+\fI$BYN_DIR/vaults/<name>/\fR.
+See
+.BR byn-init (1).
+.TP
+.B unlock
+Unlock the vault for the current daemon session. Prompts for the
+master password.
+See
+.BR byn-unlock (1).
+.TP
+.B lock \fR[\fB\-\-all\fR]
+Lock the vault by zeroing the in\-memory vault key.
+.B \-\-all
+locks every unlocked vault.
+See
+.BR byn-lock (1).
+.TP
+.B passwd \fR[\fB\-\-password\-stdin\fR]
+Change the vault's master password by re\-wrapping the vault key. The
+current password is required; data and lock state are preserved. With
+.B \-\-password\-stdin
+the current and new passwords are read as two lines from standard input.
+A forgotten password is unrecoverable by design.
+.TP
+.B status
+Print daemon and vault state. Alias for \fBdaemon status\fR.
+Accepts \fB\-\-json\fR for the raw StatusResp payload.
+See
+.BR byn-status (1).
+.SS Structure (vault / project / env)
+.TP
+.B vault list \fR[\fB\-\-json\fR]
+List every vault present on disk under
+.IR $BYN_DIR/vaults/ .
+.TP
+.B vault delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
+Securely remove a vault from disk (overwrites the wrapped key, then
+removes the directory; the audit log is kept). Refuses the \fIdefault\fR
+vault. See \fBDELETING WHILE LOCKED\fR below.
+.TP
+.B vault rename \fIOLD NEW\fR \fR[\fB\-\-password\-stdin\fR]
+Rename a vault (and its audit trail) on disk. Refuses the \fIdefault\fR
+vault and an existing destination. Crypto\-safe (the value encryption binds
+to the vault id, not its name). The vault is left LOCKED afterwards. A
+locked vault is renamed with the password, like a delete.
+.TP
+.B vault passwd
+Alias for the top\-level \fBpasswd\fR command.
+.TP
+.B vault init \fR| \fBvault unlock \fR| \fBvault lock\fR
+Aliases for the top\-level lifecycle commands; provided so muscle
+memory works either way.
+.TP
+.B project list \fR[\fB\-\-json\fR]
+List projects in the active vault.
+.TP
+.B project create \fINAME\fR
+Create a project and its implicit \fIdefault\fR env.
+.TP
+.B project delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
+Cascade\-delete the project, its envs, entries, and entry_versions.
+Refuses \fIdefault\fR. See \fBDELETING WHILE LOCKED\fR below.
+.TP
+.B project rename \fIOLD\fR \fINEW\fR
+Rename a project.
+.TP
+.B env list \fR[\fB\-\-json\fR]
+List envs in the active project. The default env is pinned first.
+.TP
+.B env create \fINAME\fR
+Create a non\-default env. Other envs inherit from \fIdefault\fR for
+missing keys.
+.TP
+.B env delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
+Remove a non\-default env (cascades to its entries). Refuses
+\fIdefault\fR. See \fBDELETING WHILE LOCKED\fR below.
+.TP
+.B env rename \fIOLD\fR \fINEW\fR
+Rename an env.
+.SS Secret CRUD
+.TP
+.B put \fINAME\fR
+Store a secret. The value is read from stdin; piping or redirection
+is required so the value never appears in argv or shell history.
+See
+.BR byn-put (1).
+.TP
+.B get \fINAME\fR
+Print a secret's decrypted value to stdout. Alias:
+.BR cat .
+See
+.BR byn-get (1).
+.TP
+.B list \fR[\fINAME\fR|\fIGLOB\fR]
+List secret names. Works while the vault is locked (the index is
+plaintext metadata; only values require unlock). With a
+.I NAME
+or
+.I GLOB
+argument it is grep\-like: prints only matching names, exits 0 when at
+least one matches, or prints nothing and exits 1 when none do \(em an
+existence check that never reads a value. Alias:
+.BR ls .
+See
+.BR byn-list (1).
+.TP
+.B delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
+Remove a secret from the vault. Alias:
+.BR rm .
+See \fBDELETING WHILE LOCKED\fR below and
+.BR byn-delete (1).
+.TP
+.B rename \fIOLD\fR \fINEW\fR
+Move a secret to a new name. Re\-encrypts under the new name's AAD,
+so unlock is required. Alias:
+.BR mv .
+See
+.BR byn-rename (1).
+.TP
+.B exec \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS...\fR]
+Inject env\-vars into a child process. See COMMANDS \(-> "Run with
+env\-vars injected" above.
+.SS Run with env-vars injected
+.TP
+.B exec \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS...\fR]
+Loads every env\-var entry in the active vault scope and replaces the
+current byn process with \fICOMMAND\fR via \fBexecve\fR(2), passing
+the loaded entries plus the existing environment to the child. The
+child's PID is the same as the byn CLI that invoked it. Values
+never appear in the parent shell or argv. The "\fB\-\-\fR" separator
+is required.
+See
+.BR byn-exec (1).
+.SS Bulk I/O
+.TP
+.B import \fR[\fB\-\-format\fR \fIenv\fR|\fIyaml\fR|\fIjson\fR] \fR[\fB\-\-dry\-run\fR] \fR[\fB\-\-skip\-existing\fR | \fB\-\-replace\fR \fR[\fB\-\-yes\fR]] \fR[\fIPATH\fR | \fB\-\fR]
+Bulk\-load key/value entries into the active scope from a
+\fB.env\fR, YAML, or JSON file (or stdin). Format is inferred from
+the file extension first, then sniffed (a leading "{" implies JSON);
+\fB\-\-format\fR forces it. Nested objects are rejected with a clear
+error pointing at the offending key. \fB\-\-dry\-run\fR prints what
+would be written (key + byte length, never the value) \- and when
+combined with \fB\-\-replace\fR, also the entries that would be
+deleted.
+.IP
+Three modes (mutually exclusive):
+\fBmerge\fR (default) adds new keys, overwrites matching ones, and
+leaves other keys in the scope untouched;
+\fB\-\-skip\-existing\fR refuses to overwrite (add\-only);
+\fB\-\-replace\fR wipes every existing key in the scope first, then
+imports. \fB\-\-replace\fR prompts in interactive terminals;
+\fB\-\-yes\fR skips the prompt and is required in non\-TTY / agent
+mode.
+.IP
+Dotenv parser supports: \fBexport\fR PREFIX, double\-quoted values
+with \\n / \\t / \\" / \\\\ escapes, single\-quoted literals,
+inline \fB# comment\fR stripping, and blank/comment lines. YAML/JSON
+scalars (string, bool, number, null) are coerced to strings; anything
+deeper than a flat map is rejected.
+.TP
+.B export \fR[\fB\-\-format\fR \fIenv\fR|\fIyaml\fR|\fIjson\fR] \fR[\fB\-\-output\fR \fIPATH\fR]
+Dump every entry in the active scope as a flat key/value document.
+Default format is \fBenv\fR. \fB\-\-output\fR writes to disk with
+mode 0600; otherwise output goes to stdout. Keys are sorted
+alphabetically. Dotenv values containing whitespace, "#", "=", or "
+are wrapped in double quotes with standard escapes.
+.IP
+.B Caveat:
+this materialises plaintext. Treat the destination as you would a
+\fB.env\fR file \- never commit, never share.
+.SS Diagnostics and audit
+.TP
+.B doctor \fR[\fB\-\-json\fR]
+Run a battery of self\-checks against the daemon and every vault on
+disk: daemon liveness, vault enumeration, schema + fingerprint
+match, audit\-chain HMAC integrity. Each check returns
+\fBok\fR / \fBwarn\fR / \fBfail\fR. Exits non\-zero if any
+\fBfail\fR.
+.TP
+.B audit view \fR[\fB\-\-lines\fR \fIN\fR] \fR[\fB\-\-json\fR]
+Snapshot the most recent \fIN\fR events from the active vault's audit
+log (default 50; \fB\-\-lines 0\fR returns all) and exit. Allowed while
+locked \- log metadata is not secret. Each row ends with the caller
+for forensics: surface (\fBsocket\fR = CLI/TUI, \fBportal\fR =
+browser), process name, pid/uid, and the parent process (who invoked
+it) \- e.g. \fIsocket:byn(pid 9123, uid 501)\(<-node\fR. A reveal in
+the browser or TUI routes through \fBget\fR and is logged as such.
+.TP
+.B audit tail \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-f\fR] \fR[\fB\-\-json\fR]
+Like \fBtail\fR(1): print the last \fIN\fR events (default 10) and
+exit. With \fB\-f\fR, follow \- stream new events in realtime until
+Ctrl\-C (NDJSON when combined with \fB\-\-json\fR).
+.TP
+.B audit verify \fR[\fB\-\-json\fR]
+Re\-walk the active vault's audit log and recompute the HMAC chain
+end\-to\-end. Exits 0 with "chain intact" on success; exits 3 with
+"chain BROKEN at event #N" if any link fails verification.
+.SS Trust (\fB.byn\fR TOFU)
+.TP
+.B trust \fR[\fIPATH\fR] \fR[\fB\-\-password\-stdin\fR]
+Approve a \fB.byn\fR file (default:
+.IR ./.byn ).
+\fBAlways prompts for the master password\fR \(em even when the vault is
+unlocked \(em because approving a \fB.byn\fR is a proof\-of\-presence action.
+The daemon (which owns
+.IR ~/.byn/trusted_byn.json )
+verifies the password against the vault the \fB.byn\fR targets, then records
+the canonical path plus SHA\-256 of the contents. If the file already exists
+in the store with a different hash (changed since trusted), \fBtrust\fR warns
+before re\-approving. Discovery never auto\-trusts: a new or changed \fB.byn\fR
+is refused until you run this command. Use \fB\-\-password\-stdin\fR to read
+the password from stdin in scripts.
+.TP
+.B trust list \fR[\fB\-\-json\fR]
+Print every trusted path with the first 12 hex chars of its hash.
+.TP
+.B untrust \fR[\fIPATH\fR]
+Revoke trust for a path (default:
+.IR ./.byn ).
+Idempotent.
+.SS Visual editor
+.TP
+.B edit, view, byn \fR(no args)
+Open the responsive bubbletea TUI. Left rail navigates
+vault/project/env; main pane shows ENV-VARS + FILES + RECENT AUDIT;
+right detail pane on Large terminals (>= 120 cols).
+.IP
+Honors
+.B \-\-vault ,
+.B \-\-project ,
+.B \-\-env
+on launch \- bootstrap prompts for the targeted vault's password
+and lands the rail cursor on the most\-specific matching node.
+.IP
+\fBvi\-style draft semantics\fR: typing modifies a local buffer only;
+the daemon is not contacted. Use
+.B :w
+to commit,
+.B :q
+to leave edit context (refuses dirty),
+.B :q!
+to discard, or
+.B :wq
+to commit and leave.
+.B ESC
+preserves the draft. Dirty drafts are surfaced as a red
+\fB[DRAFT: NAME]\fR chip in the status line plus a \fB[*]\fR prefix
+on the affected entry row.
+.IP
+\fBvim commands\fR: \fBu\fR undoes,
+.B Ctrl\-R
+redoes (per\-keystroke history, capped at 200 per draft). \fBy\fR
+yanks the selected entry's value to the system clipboard (fires a
+daemon get + audit event). \fBp\fR pastes the clipboard into the
+draft at cursor.
+.B Ctrl\-V
+pastes inline while in INSERT mode.
+.IP
+\fBInheritance badges\fR in non\-default envs:
+.B \(da
+(inherited from default),
+.B \(la
+(overrides default), and
+.B \(de
+(new in this env).
+.IP
+Alias:
+.BR view .
+See
+.BR byn-edit (1)
+and
+.IR docs/tui-design.md
+for the full design.
+.SS Deleting while locked
+The deletes \(em
+.BR delete / rm ,
+.BR "project delete" ,
+.BR "env delete" ,
+and
+.BR "vault delete"
+\(em touch only names, never values, so they never need the vault key. A
+locked vault therefore accepts them when you supply the master password:
+the daemon verifies it and proceeds WITHOUT unlocking the vault, so its
+other values are never exposed to a watching process. Interactively, the
+CLI prompts for the password when it finds the vault locked; for scripts,
+pass
+.B \-\-password\-stdin
+to read it from standard input (the flag must precede the name). A wrong
+password is rejected and rate\-limited like
+.BR unlock .
+By contrast, ADDING or editing a value needs the key to encrypt and so
+cannot be done while locked \(em unlock first.
+.SS Web portal
+.TP
+.B web, ui
+Open the browser admin portal hosted by the daemon at
+.I http://localhost:2967
+(configurable via \fB[ui] port\fR in \fI~/.byn/config\fR). A web UI over
+the same vault as the CLI and TUI. There is no portal login: like
+\fBbyn ls\fR, the scope tree and entry names are visible, but reading or
+editing VALUES requires the target vault to be unlocked \(em a per\-vault
+lock/unlock toggle in the UI. Browse vault/project/env, create/delete
+scopes and vaults, view/edit env\-var entries, and reveal values (each
+reveal is audited). Binds loopback only; CSRF is defended by an Origin
+check. Disable with \fB[ui] enabled = false\fR. See \fBbyn-web\fR(1).
+.SS Daemon control
+.TP
+.B daemon start \fR[\fB\-\-foreground\fR]
+Start the daemon (detached by default).
+.TP
+.B daemon stop
+SIGTERM the daemon via its pidfile.
+.TP
+.B daemon restart \fR[\fB\-\-foreground\fR]
+Stop the running daemon (if any) and start a fresh one \- one command
+instead of stop + start. Picks up a new binary and config.
+.TP
+.B daemon reload
+Signal the running daemon (SIGHUP) to re-read
+.I ~/.byn/config
+and apply runtime-changeable settings \- idle_timeout and the web portal
+(enable/disable/port) \- without a restart. Open vaults stay unlocked.
+.TP
+.B daemon status
+Print daemon state and uptime.
+See
+.BR byn-daemon (1).
+.SS Diagnostics
+.TP
+.B version
+Print the binary version string.
+.TP
+.B help \fR[\fICOMMAND\fR]
+Print top\-level help, or detailed help for a specific command.
+.SH OPTIONS
+.SS Global
+These flags work \fBbefore or after\fR the subcommand. Conflicting
+duplicates are a hard error.
+.TP
+.B \-\-vault \fINAME\fR
+Target vault. Env\-var fallback:
+.BR BYN_VAULT .
+Defaults to \fIdefault\fR.
+.TP
+.B \-\-project \fINAME\fR
+Target project. Env\-var fallback:
+.BR BYN_PROJECT .
+Defaults to \fIdefault\fR.
+.TP
+.B \-\-env \fINAME\fR
+Target env. Env\-var fallback:
+.BR BYN_ENV .
+Defaults to \fIdefault\fR.
+.TP
+.B \-\-json
+Agent mode. Emits machine\-readable output where applicable AND
+disables all interactive prompts; an untrusted
+.B .byn
+file is a hard error instead of a y/N prompt.
+.TP
+.B \-\-no\-discovery
+Skip the
+.B .byn
+parent\-directory walk for this call. Env\-var alternative:
+.BR BYN_NO_DISCOVERY=1 .
+.TP
+.BR \-\-help ", " \-h
+Print command\-specific help and exit.
+.SS Subcommand
+.TP
+.B \-\-password\-stdin
+Used by \fBinit\fR and \fBunlock\fR. Read the password from stdin
+instead of prompting at the terminal. Useful for automation; the
+caller is responsible for not leaking the password via shell
+history.
+.TP
+.B \-\-create\-only
+Used by \fBput\fR. Refuse to overwrite an existing secret with that
+name.
+.TP
+.B \-\-foreground
+Used by \fBdaemon start\fR. Run in the foreground instead of
+detaching. Useful for development and supervised\-service setups.
+.SH ENVIRONMENT
+.TP
+.B BYN_DIR
+Override the daemon data directory. Defaults to
+.IR ~/.byn .
+The daemon places its socket, pidfile, logs, auth\-state, and the
+.B vaults/
+subtree here.
+.TP
+.B NO_COLOR
+If set to any non\-empty value, disables ANSI color codes in CLI
+output. See
+.UR https://no-color.org
+no\-color.org
+.UE .
+.TP
+.B FORCE_COLOR
+If set to any non\-empty value, forces ANSI color codes even when
+stderr is not a terminal.
+.TP
+.B BYN_VAULT, BYN_PROJECT, BYN_ENV
+Default scope when the corresponding
+.BR \-\-vault ,
+.BR \-\-project ,
+or
+.B \-\-env
+flag is not given. CLI flag beats env var beats discovered
+.B .byn
+beats daemon default.
+.TP
+.B BYN_NO_DISCOVERY
+If set to \fB1\fR, skips the
+.B .byn
+parent\-directory walk entirely.
+.TP
+.B BYN_HINTS
+If set to \fB0\fR, \fBfalse\fR, \fBoff\fR, or \fBno\fR, suppresses
+the short post\-mutation stderr echoes (e.g. "Stored \fIK\fR in
+\fIvault/project/env\fR"). Auto\-suppressed when stderr is not a
+TTY.
+.TP
+.B PAGER
+Pager binary for
+.BR "byn help" .
+Default
+.B less \-RFX
+when available, falling back to
+.BR more .
+Set
+.B PAGER=cat
+or
+.B BYN_NO_PAGER=1
+to disable.
+.TP
+.B BYN_NO_PAGER
+If set to \fB1\fR, disables paging on
+.B byn help
+output even if
+.B $PAGER
+is set.
+.SH FILES
+Under the data root (default
+.IR ~/.byn/ ):
+.TP
+.I config
+Optional TOML configuration (no file extension). Recognised keys:
+\fB[ui] port\fR (browser admin portal port, default 2967),
+\fB[ui] enabled\fR, and \fB[daemon] idle_timeout\fR (Go duration
+string; default 15m, set \fB"0s"\fR to disable vault auto\-relock).
+Unknown keys are rejected with an error. A missing file uses the
+defaults. Loaded at
+.BR "byn daemon start" .
+.TP
+.I daemon.sock
+Unix domain socket, mode 0600. The daemon enforces same\-UID access
+via the peer credential socket option.
+.TP
+.I daemon.pid
+Pidfile (single\-instance guard). Stale pidfiles are detected via
+signal\-0 probe and replaced.
+.TP
+.I daemon.log
+Combined stdout/stderr of a detached daemon (omitted when started
+with \fB\-\-foreground\fR).
+.TP
+.I auth-state.json
+Failed\-unlock backoff state. Persisted across daemon restarts so
+restarting the daemon doesn't reset the rate limiter.
+.TP
+.I trusted_byn.json
+TOFU records for
+.B .byn
+files \- a JSON map of canonical paths to SHA\-256 hashes of file
+contents. Mode 0600.
+.TP
+.I audit/<vault>/YYYY-MM.log
+Per\-vault append\-only audit log, rolled monthly. NDJSON; one event
+per line; each event carries an
+.B hmac_chain
+field that depends on the previous event's chain (tamper\-evident).
+Allowed to be read while the vault is locked.
+.PP
+Under
+.IR vaults/<name>/ :
+.TP
+.I vault.db
+SQLite database. Schema v2: projects, envs, entries, file_meta,
+entry_versions, meta.
+.TP
+.I vault.db-wal, vault.db-shm
+SQLite WAL files.
+.TP
+.I wrapped.key
+Argon2id\-wrapped vault key, mode 0600.
+.TP
+.I meta.json
+Vault sidecar: vault_id (UUID v4), wrapped\-key SHA\-256 fingerprint,
+creation timestamp. Validated before the password prompt at unlock
+so a corrupted or swapped wrapped.key is detected with a clear
+diagnostic.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Generic error: bad usage, runtime failure, missing required input.
+.TP
+.B 2
+Daemon unreachable. The CLI prints a recovery hint with the command
+to run.
+.TP
+.B 3
+Daemon returned a typed error: wrong password, secret not found,
+vault locked, etc.
+.SH EXAMPLES
+Create and unlock a fresh vault interactively:
+.PP
+.RS 4
+.nf
+$ byn init
+$ byn unlock
+.fi
+.RE
+.PP
+Store and retrieve a credential:
+.PP
+.RS 4
+.nf
+$ echo \-n "AKIA..." | byn put aws-access-key
+$ byn get aws-access-key
+AKIA...
+.fi
+.RE
+.PP
+Pipe a secret into another tool without ever materializing it on
+disk:
+.PP
+.RS 4
+.nf
+$ aws --profile "$(byn get aws-profile)" s3 ls
+.fi
+.RE
+.PP
+Use the vault from a script (no interactive prompts):
+.PP
+.RS 4
+.nf
+$ echo "$MASTER_PW" | byn init --password-stdin
+$ echo "$MASTER_PW" | byn unlock --password-stdin
+.fi
+.RE
+.PP
+Browse the vault visually:
+.PP
+.RS 4
+.nf
+$ byn edit
+.fi
+.RE
+.PP
+Switch scope per call:
+.PP
+.RS 4
+.nf
+$ byn \-\-project myapp \-\-env staging list
+$ echo s3cr3t | byn \-\-project myapp put DB_PASSWORD
+$ BYN_PROJECT=myapp byn list   # env\-var fallback
+.fi
+.RE
+.PP
+Vault / project / env management:
+.PP
+.RS 4
+.nf
+$ byn project create myapp
+$ byn \-\-project myapp env create staging
+$ byn vault list \-\-json | jq '.[].name'
+.fi
+.RE
+.PP
+Import a .env / YAML / JSON file:
+.PP
+.RS 4
+.nf
+$ byn import .env.local                 # by extension
+$ cat config.json | byn import \-\-format json
+$ byn import secrets.yaml \-\-dry\-run   # preview
+$ byn import .env \-\-skip\-existing     # add\-only
+.fi
+.RE
+.PP
+Export back out:
+.PP
+.RS 4
+.nf
+$ byn export                            # dotenv to stdout
+$ byn export \-\-format json > snapshot.json
+$ byn export \-\-output /tmp/dump.env    # 0600 file
+.fi
+.RE
+.PP
+Verify everything is healthy and check the audit chain:
+.PP
+.RS 4
+.nf
+$ byn doctor
+$ byn audit tail \-\-lines 20
+$ byn audit verify
+.fi
+.RE
+.PP
+Auto\-pick scope from a project directory via
+.BR .byn :
+.PP
+.RS 4
+.nf
+$ cat > .byn <<'EOF'
+[scope]
+project = "myapp"
+env = "dev"
+EOF
+$ byn trust ./.byn      # first time only
+$ byn list                  # uses myapp/dev automatically
+.fi
+.RE
+.PP
+Agent\-safe invocation (hard\-fail on untrusted
+.BR .byn ,
+JSON output for parsing):
+.PP
+.RS 4
+.nf
+$ byn \-\-json list
+$ byn \-\-json status
+$ byn \-\-no\-discovery list  # bypass .byn entirely
+.fi
+.RE
+.SH SECURITY MODEL
+.IP \(bu 2
+The daemon is per\-user. Other UIDs are rejected at the socket via
+the OS peer\-credential check.
+.IP \(bu 2
+Secret values are encrypted at rest with XChaCha20\-Poly1305.
+AAD\-binding to the entry's vault_id, kind, and name means swapping
+ciphertexts across rows within the same vault fails decryption.
+.IP \(bu 2
+The vault key is wrapped with Argon2id of the master password.
+Failed unlock attempts trigger exponential backoff persisted to
+disk.
+.IP \(bu 2
+\fBdoes not\fR defend against a malicious user with the same UID as
+the daemon. Memory protection (mlock for master password / Argon2
+workspace via
+.IR internal/secmem )
+is staged but not yet wired into the unlock path \- see deferred
+items in
+.IR docs/security.md .
+.SH ROADMAP
+Vault / project / env hierarchy, vault CRUD, project CRUD, env CRUD,
+import / export, audit tail + verify, doctor,
+.B .byn
+discovery + TOFU trust, and a responsive bubbletea TUI are all
+shipped. File\-content entries (Phase 5, FUSE materialization),
+entry versioning CLI (\fBhistory\fR / \fBrevert\fR / \fBdiff\fR),
+the Phase 2 local Web UI, Phase 3 shims, Phase 4 ACLs, and Phase 6
+cloud sync remain. See
+.IR PLAN.md
+for the phased plan.
+.SH SEE ALSO
+.BR byn-init (1),
+.BR byn-unlock (1),
+.BR byn-lock (1),
+.BR byn-put (1),
+.BR byn-get (1),
+.BR byn-list (1),
+.BR byn-delete (1),
+.BR byn-rename (1),
+.BR byn-edit (1),
+.BR byn-daemon (1),
+.BR byn-status (1),
+.BR byn-version (1),
+.BR byn-help (1)
+.SH AUTHOR
+Sandeep Baynes.
+.UR https://github.com/sandeepbaynes/byn
+https://github.com/sandeepbaynes/byn
+.UE
+.SH COPYRIGHT
+Copyright \(co 2026 Sandeep Baynes. Licensed under the PolyForm
+Noncommercial License 1.0.0 \(em free for non\-commercial use; commercial
+use requires a separate license. See the LICENSE file.

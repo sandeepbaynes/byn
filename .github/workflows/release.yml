@@ -1,0 +1,39 @@
+name: release
+
+# Cuts a release when you push a v* tag:
+#   git tag v0.0.1 && git push origin v0.0.1
+#
+# GoReleaser then cross-compiles, checksums, creates the GitHub release,
+# builds the deb/rpm/apk, and updates the Homebrew formula in your tap.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub release
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT that can push to sandeepbaynes/homebrew-tap.
+          # Add it under Settings → Secrets, or comment out the `brews:`
+          # block in .goreleaser.yaml to skip the Homebrew step.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

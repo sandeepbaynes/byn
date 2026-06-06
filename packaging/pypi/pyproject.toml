@@ -1,0 +1,28 @@
+# Reservation package for the name `byn` on PyPI. It deliberately defines NO
+# console script, so `pip install byn` can never shadow the real Go binary.
+# Publish:  python -m build && twine upload dist/*
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "byn"
+version = "0.0.1"
+description = "Name reserved for byn — a local-first secure secrets vault & credential manager (a Go CLI). Install via `go install`, Homebrew, or https://github.com/sandeepbaynes/byn."
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [{ name = "Sandeep Baynes" }]
+keywords = ["secrets", "vault", "credentials", "dotenv", "cli", "security"]
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/sandeepbaynes/byn"
+
+[tool.setuptools]
+packages = ["byn"]

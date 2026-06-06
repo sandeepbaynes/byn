@@ -1,0 +1,3 @@
+# Default owner for everything — auto-requested as reviewer on every PR.
+# Combined with branch protection on `main`, nothing merges without this review.
+* @sandeepbaynes
