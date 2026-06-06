@@ -73,3 +73,121 @@ func TestLoad_Malformed(t *testing.T) {
 		t.Fatal("expected an error for a malformed store")
 	}
 }
+
+func TestHash_Deterministic(t *testing.T) {
+	a := Hash([]byte("hello"))
+	if a != Hash([]byte("hello")) {
+		t.Fatal("Hash is not deterministic")
+	}
+	if a == Hash([]byte("world")) {
+		t.Fatal("different content hashed to the same value")
+	}
+	if len(a) != 64 {
+		t.Fatalf("Hash len = %d, want 64 (sha256 hex)", len(a))
+	}
+}
+
+func TestGrant_NewRecord(t *testing.T) {
+	dir := t.TempDir()
+	changed, err := Grant(dir, "/a/.byn", "hash1")
+	if err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if changed {
+		t.Error("granting a brand-new path should report changed=false")
+	}
+	s, _ := Load(dir)
+	if len(s.Records) != 1 || s.Records[0].Path != "/a/.byn" || s.Records[0].SHA256 != "hash1" {
+		t.Fatalf("record not stored: %+v", s.Records)
+	}
+}
+
+func TestGrant_SameHashIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Grant(dir, "/a/.byn", "hash1"); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := Grant(dir, "/a/.byn", "hash1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("re-granting the same hash should report changed=false")
+	}
+	if s, _ := Load(dir); len(s.Records) != 1 {
+		t.Fatalf("duplicate record created: %+v", s.Records)
+	}
+}
+
+func TestGrant_ChangedHash(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Grant(dir, "/a/.byn", "hash1"); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := Grant(dir, "/a/.byn", "hash2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("granting a different hash for a known path should report changed=true")
+	}
+	s, _ := Load(dir)
+	if len(s.Records) != 1 || s.Records[0].SHA256 != "hash2" {
+		t.Fatalf("hash not updated: %+v", s.Records)
+	}
+}
+
+func TestCanonicalize(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f")
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := Canonicalize(p); !filepath.IsAbs(got) {
+		t.Fatalf("existing file: %q not absolute", got)
+	}
+	// A missing file still resolves to an absolute path (Abs fallback).
+	if got := Canonicalize(filepath.Join(dir, "missing")); !filepath.IsAbs(got) {
+		t.Fatalf("missing file: %q not absolute", got)
+	}
+}
+
+func TestStat_String(t *testing.T) {
+	for s, want := range map[Stat]string{
+		StatusTrusted:   "trusted",
+		StatusChanged:   "changed",
+		StatusUntrusted: "untrusted",
+	} {
+		if got := s.String(); got != want {
+			t.Errorf("Stat(%d).String() = %q, want %q", s, got, want)
+		}
+	}
+}
+
+func TestStatus(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Grant(dir, "/a/.byn", "hash1"); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		path string
+		hash string
+		want Stat
+	}{
+		{"trusted matches", "/a/.byn", "hash1", StatusTrusted},
+		{"known path, changed content", "/a/.byn", "hashX", StatusChanged},
+		{"unknown path", "/b/.byn", "whatever", StatusUntrusted},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Status(dir, c.path, c.hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Fatalf("Status = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

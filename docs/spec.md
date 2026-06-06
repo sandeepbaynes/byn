@@ -78,7 +78,8 @@ nonces are forbidden.
 1.3.1. Current schema version: **3**.
 
 1.3.2. Schema includes the tables `meta`, `projects`, `envs`,
-`entries`, `entry_versions`, `file_meta` (reserved).
+`entries`, `entry_versions`, `passkey`, `passkey_unlock`, and
+`file_meta` (reserved).
 
 1.3.3. `projects (name UNIQUE)` and `envs (project_id, name UNIQUE)`.
 
@@ -396,8 +397,10 @@ opt out for one call / one session.
 
 ### 6.2 Trust on First Use
 
-6.2.1. Each first-seen `.byn` triggers a prompt (`trust [y/N]:`)
-in interactive terminal mode. Agent mode hard-fails.
+6.2.1. Each first-seen or changed `.byn` is refused by discovery — the user
+must explicitly approve it with `byn trust PATH`, which requires the master
+password (op `trust.grant`). Discovery itself never prompts or auto-trusts;
+agent mode gets a tailored hint pointing at the same command.
 
 6.2.2. Trust record: `(canonical_path, sha256_of_full_contents)`,
 written to `~/.byn/trusted_byn.json` (mode 0600).
@@ -944,10 +947,12 @@ separate, unbuilt design.
   by the lock.
 - Revealed values cross the loopback connection in cleartext (loopback
   traffic does not leave the machine).
-- **WebAuthn / passkey unlock is NOT yet built.** Per-vault unlock uses the
-  master password only. Passkey unlock (PRF-based) is a future slice — see
-  [`docs/research/webauthn-prf-spike.md`](research/webauthn-prf-spike.md)
-  and the roadmap.
+- **Portal passkey / Touch ID unlock is built** (WebAuthn PRF on macOS;
+  enroll/revoke from the portal). It is a *second* wrapping of the vault key —
+  the master password stays the durable recovery root, and authenticators
+  without PRF degrade to session-only. Design notes:
+  [`docs/research/webauthn-prf-spike.md`](research/webauthn-prf-spike.md);
+  security model in [`security.md`](security.md) §7.
 
 ---
 

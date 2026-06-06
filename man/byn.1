@@ -237,12 +237,19 @@ end\-to\-end. Exits 0 with "chain intact" on success; exits 3 with
 "chain BROKEN at event #N" if any link fails verification.
 .SS Trust (\fB.byn\fR TOFU)
 .TP
-.B trust \fR[\fIPATH\fR]
+.B trust \fR[\fIPATH\fR] \fR[\fB\-\-password\-stdin\fR]
 Approve a \fB.byn\fR file (default:
 .IR ./.byn ).
-Records the canonical path plus SHA\-256 of the file's contents in
-.IR ~/.byn/trusted_byn.json .
-Subsequent runs require the recorded hash to match.
+\fBAlways prompts for the master password\fR \(em even when the vault is
+unlocked \(em because approving a \fB.byn\fR is a proof\-of\-presence action.
+The daemon (which owns
+.IR ~/.byn/trusted_byn.json )
+verifies the password against the vault the \fB.byn\fR targets, then records
+the canonical path plus SHA\-256 of the contents. If the file already exists
+in the store with a different hash (changed since trusted), \fBtrust\fR warns
+before re\-approving. Discovery never auto\-trusts: a new or changed \fB.byn\fR
+is refused until you run this command. Use \fB\-\-password\-stdin\fR to read
+the password from stdin in scripts.
 .TP
 .B trust list \fR[\fB\-\-json\fR]
 Print every trusted path with the first 12 hex chars of its hash.

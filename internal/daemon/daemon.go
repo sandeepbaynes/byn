@@ -98,6 +98,11 @@ type Daemon struct {
 	// cfg.UIEnabled and stopped in Shutdown. nil when disabled.
 	uiSrv *ui.Server
 
+	// pkChallenges holds in-flight WebAuthn ceremony challenges (register +
+	// auth) keyed by a one-time ceremony id, with a short TTL. Server-side
+	// challenge storage is mandatory — the browser response binds to it.
+	pkChallenges *passkeyChallenges
+
 	// reloadMu serializes Reload so two concurrent SIGHUPs can't interleave
 	// portal restarts.
 	reloadMu sync.Mutex
@@ -145,13 +150,14 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		cfg:         cfg,
-		socketPath:  filepath.Join(cfg.Dir, SocketFilename),
-		pidPath:     filepath.Join(cfg.Dir, PIDFilename),
-		limiterPath: filepath.Join(cfg.Dir, auth.RateLimiterFile),
-		ownerUID:    cfg.OwnerUID,
-		closeCh:     make(chan struct{}),
-		vaults:      make(map[string]*vaultEntry),
+		cfg:          cfg,
+		socketPath:   filepath.Join(cfg.Dir, SocketFilename),
+		pidPath:      filepath.Join(cfg.Dir, PIDFilename),
+		limiterPath:  filepath.Join(cfg.Dir, auth.RateLimiterFile),
+		ownerUID:     cfg.OwnerUID,
+		closeCh:      make(chan struct{}),
+		vaults:       make(map[string]*vaultEntry),
+		pkChallenges: newPasskeyChallenges(),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
 	d.limiter = auth.NewRateLimiter(d.limiterPath)

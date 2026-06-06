@@ -8,21 +8,31 @@ thin CLI client. Pre-release, under active development.
 
 Built for a machine that's **owned by you but operated by many** — coding
 agents, bots, and scripts all run under your account, none of them you.
-byn keeps secret *values* out of their reach while staying invisible to
-the tools that legitimately need them.
+byn keeps secret *values* out of their reach while transparently delivering
+them to the tools that legitimately need them.
 
 ## Install
 
 ```sh
-# Go (recommended)
+# Go — works today (builds from source)
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
 
-# Homebrew (macOS / Linux)
+# Homebrew + curl installer — available with the first tagged release
 brew install sandeepbaynes/tap/byn
-
-# Or download a prebuilt binary
 curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
 ```
+
+> **⚠️ Early access — the install path will change.** byn is pre-1.0 and
+> currently installs from `github.com/sandeepbaynes/byn`. Once the project's
+> own domain is in place, the canonical Go module path (and the Homebrew tap)
+> will move to a **branded path on that domain**. You can install and use byn
+> today — just be aware you'll re-point to the new path when it lands. Existing
+> installs keep working; they simply won't pull updates from the old path once
+> it moves. Watch the
+> [releases](https://github.com/sandeepbaynes/byn/releases) for the switch.
+
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (a quick,
+one-time CLA signature is required).
 
 Then:
 
@@ -68,8 +78,10 @@ What works today (post Phase 1–6 overnight push, 2026-06-02):
 - Hybrid scope-flag positioning: `--vault`/`--project`/`--env` work before OR after the subcommand; conflicting duplicates are a hard error; env-var fallbacks `BYN_VAULT`/`BYN_PROJECT`/`BYN_ENV`
 - Modal vi-style TUI for the default scope (`byn` with no args, or `byn edit`)
 - Browser admin portal (`byn web`) — daemon-embedded, loopback-only at
-  `localhost:2967` (configurable); password unlock + session/CSRF; browse the
-  scope tree, view/edit entries, reveal values (audited). Same vault as the CLI/TUI.
+  `localhost:2967` (configurable); password **or passkey / Touch ID unlock**
+  (WebAuthn PRF on macOS; enroll/revoke from the portal, password stays the
+  recovery root); session/CSRF; browse the scope tree, view/edit entries, reveal
+  values (audited). Same vault as the CLI/TUI.
 - HMAC-chained audit log per vault (append-only, plain-text names for forensics)
 - AWS-CLI-style per-command help (`byn <cmd> help`, `--help`, or `byn help <cmd>`); `man byn`
 - Persistent failed-unlock rate limiter (survives daemon restart)
@@ -79,8 +91,7 @@ Not yet:
 
 - macOS Secure Enclave / Linux TPM2 wrapping (skeletons in place; tests skip without entitlements)
 - launchd/systemd auto-install
-- Idle re-lock UI polish, Touch ID, biometric unlock
-- WebAuthn / passkey unlock for the portal (password-only today)
+- Idle re-lock UI polish
 - FUSE-mounted file secrets, shims, ACLs, cloud sync
 - Neovim-style TUI redesign with left rail navigation across vault/project/env/files (the existing modal TUI is env-var-only for the default scope)
 
@@ -90,7 +101,7 @@ Not yet:
 
 ```
 ┌──────────────┐   length-prefixed JSON    ┌────────────────────────────┐
-│ byn (CLI) │ ◄──────────────────────►  │ byn daemon              │
+│ byn (CLI)    │ ◄──────────────────────►  │ byn daemon                 │
 │  flag-parse  │     Unix socket           │                            │
 │  password    │     mode 0600             │ ┌────────────────────────┐ │
 │  prompt      │     peer UID checked      │ │ in-memory vault key    │ │
@@ -358,8 +369,7 @@ The daemon binds the socket at `<BYN_DIR>/daemon.sock`. On macOS,
 
 Highlights of what's next:
 
-- **Slice 1.3** — launchd/systemd auto-install, idle re-lock, Touch ID
-- **Phase 2** — local web UI on `local.byn.com` with a public cert
+- **Release readiness** — daemon auto-start (launchd/systemd, `byn daemon install`), quickstart guide
 - **Phase 3** — shim engine + `aws`/`gcloud`/etc. credential injection + tamper-evident audit log
 - **Phase 4–7** — ACLs, FUSE, cloud sync, enterprise features
 

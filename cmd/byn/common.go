@@ -68,6 +68,17 @@ func zero(b []byte) {
 	}
 }
 
+// stdinIsTTY reports whether stdin is an interactive terminal (vs a pipe or
+// file). Used to decide between an interactive prompt and a non-interactive
+// hard error.
+func stdinIsTTY() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
 // isLockedErr reports whether err is the daemon's "vault is locked" reply.
 func isLockedErr(err error) bool {
 	var er *ipc.ErrResponse

@@ -78,7 +78,8 @@ func TestE2E_Discovery_TrustThenList(t *testing.T) {
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
 		t.Fatalf("project create alpha failed")
 	}
-	if _, _, code := s.runInDir(projDir, "", nil, "trust", dotBynPath); code != 0 {
+	if _, _, code := s.runInDir(projDir, "correct-horse-battery-staple\n", nil,
+		"trust", "--password-stdin", dotBynPath); code != 0 {
 		t.Fatalf("trust failed")
 	}
 	// Now listing in projDir without --project should target "alpha".
@@ -124,21 +125,22 @@ func TestE2E_Discovery_TamperedReprompts(t *testing.T) {
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
 		t.Fatalf("project create alpha failed")
 	}
-	// Trust it once.
-	if _, _, code := s.runInDir(projDir, "", nil, "trust", dotPath); code != 0 {
+	// Trust it once (granting now requires the master password).
+	if _, _, code := s.runInDir(projDir, "correct-horse-battery-staple\n", nil,
+		"trust", "--password-stdin", dotPath); code != 0 {
 		t.Fatalf("trust failed")
 	}
 	// Tamper.
 	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"evil\"\n"), 0o600); err != nil {
 		t.Fatalf("retmper: %v", err)
 	}
-	// In JSON mode the tampered file should hard-fail.
+	// A changed-since-trusted file must hard-fail (no silent re-trust).
 	_, stderr, code := s.runInDir(projDir, "", nil, "list", "--json")
 	if code == 0 {
-		t.Fatalf("tampered file should fail in agent mode")
+		t.Fatalf("tampered file should fail")
 	}
-	if !strings.Contains(stderr, "untrusted") {
-		t.Fatalf("tampered file rejection should say untrusted:\n%s", stderr)
+	if !strings.Contains(stderr, "CHANGED") {
+		t.Fatalf("tampered file rejection should say CHANGED:\n%s", stderr)
 	}
 }
 

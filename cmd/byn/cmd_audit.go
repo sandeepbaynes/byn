@@ -106,14 +106,29 @@ func runAuditTail(args []string, scope cliScope) int {
 		ipc.AuditTailReq{Vault: scope.Vault, Lines: *n}, &resp); err != nil {
 		return handleCallError(err)
 	}
-	for _, e := range resp.Events {
-		printAuditEvent(e, *jsonOut)
-	}
+	// Snapshot (no -f): JSON mode emits a single array — consistent with
+	// `audit view --json` and every other --json command. NDJSON is reserved
+	// for the streaming -f path below, where a JSON array can't be left open.
 	if !*follow {
+		if *jsonOut {
+			out, _ := json.MarshalIndent(resp.Events, "", "  ")
+			fmt.Println(string(out))
+			return exitOK
+		}
 		if len(resp.Events) == 0 {
 			fmt.Fprintln(os.Stderr, "(no audit events recorded yet)")
+			return exitOK
+		}
+		for _, e := range resp.Events {
+			fmt.Println(auditLine(e))
 		}
 		return exitOK
+	}
+
+	// Follow (-f): print the initial batch as NDJSON (or text rows), then
+	// stream new events the same way.
+	for _, e := range resp.Events {
+		printAuditEvent(e, *jsonOut)
 	}
 
 	// Follow: poll for events newer than the last we've printed. The log

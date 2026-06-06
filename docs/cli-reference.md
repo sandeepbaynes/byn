@@ -344,6 +344,11 @@ Human format: timestamp + op + scope + entry name + outcome:
 2026-06-02 12:35:01Z  vault.lock default                  -         ok
 ```
 
+With `--json`, a snapshot is a single **JSON array** of event objects (so
+`byn audit tail --json | jq` works, like every other `--json` command). Add
+`-f` to follow: that streams **NDJSON** (one object per line) so new events
+can be appended live.
+
 ### `byn audit verify [--json]`
 
 Re-walk the active vault's audit log; recompute the HMAC chain;
@@ -359,13 +364,23 @@ report the first bad index.
 
 ### `byn trust [PATH]`
 
-Approve a `.byn` file (default: `./.byn`). Records the
-canonical path + SHA-256 of contents in
-`~/.byn/trusted_byn.json`.
+Approve a `.byn` file (default: `./.byn`). **Always prompts for the
+master password** — granting trust is a proof-of-presence action, so it
+requires the password even when the vault is unlocked. The daemon (which
+owns `~/.byn/trusted_byn.json`) verifies the password against the vault
+the `.byn` targets, then records the canonical path + SHA-256.
+
+If the `.byn` already exists in the store with a *different* hash (it
+changed since you trusted it), `byn trust` warns loudly before
+re-approving. Discovery itself never auto-trusts — a new or changed
+`.byn` is refused until you run this command.
+
+- `--password-stdin` — read the password from stdin (for scripts), e.g.
+  `printf '%s' "$PW" | byn trust --password-stdin ./.byn`.
 
 ### `byn untrust [PATH]`
 
-Revoke trust (default: `./.byn`). Idempotent.
+Revoke trust (default: `./.byn`). Idempotent. Routed through the daemon.
 
 ### `byn trust list [--json]`
 

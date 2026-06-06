@@ -269,6 +269,10 @@ func Open(ctx context.Context, root, vaultName string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensurePasskeyTables(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	vaultID, err := readVaultID(ctx, db)
 	if err != nil {
 		_ = db.Close()

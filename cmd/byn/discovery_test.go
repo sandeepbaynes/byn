@@ -5,146 +5,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sandeepbaynes/byn/internal/trust"
 )
 
-func TestHashBynFile_Deterministic(t *testing.T) {
-	a := hashBynFile([]byte("hello"))
-	b := hashBynFile([]byte("hello"))
-	if a != b {
-		t.Fatalf("non-deterministic: %q vs %q", a, b)
-	}
-	c := hashBynFile([]byte("world"))
-	if a == c {
-		t.Fatal("collisions are not okay")
-	}
-	if len(a) != 64 {
-		t.Fatalf("hex length = %d, want 64", len(a))
-	}
-}
-
-func TestCanonicalize_ExistingFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "file.txt")
-	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	got := canonicalize(p)
-	if got == "" {
-		t.Fatal("empty")
-	}
-	// Should produce an absolute path.
-	if !filepath.IsAbs(got) {
-		t.Fatalf("not absolute: %q", got)
-	}
-}
-
-func TestCanonicalize_MissingFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "nope")
-	got := canonicalize(p)
-	if !filepath.IsAbs(got) {
-		t.Fatalf("missing should still abs, got %q", got)
-	}
-}
-
-func TestTrustStore_EmptyOnMissingFile(t *testing.T) {
-	dir := t.TempDir()
-	ts, err := loadTrustStore(dir)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if ts == nil || len(ts.Records) != 0 {
-		t.Fatalf("expected empty store, got %v", ts)
-	}
-}
-
-func TestTrustStore_AddAndCheck(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(t.TempDir(), ".byn")
-	body := []byte("[scope]\nvault = \"a\"\n")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := addTrust(dir, path, body); err != nil {
-		t.Fatalf("addTrust: %v", err)
-	}
-	ok, err := isTrusted(dir, path, body)
-	if err != nil {
-		t.Fatalf("isTrusted: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected trusted")
-	}
-	// Mismatched content fails.
-	ok, _ = isTrusted(dir, path, []byte("[scope]\nvault = \"b\"\n"))
-	if ok {
-		t.Fatal("different content should not match")
-	}
-	// File mode 0600.
-	info, _ := os.Stat(filepath.Join(dir, trustFile))
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %o, want 0600", info.Mode().Perm())
-	}
-}
-
-func TestAddTrust_UpdatesExistingRecord(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(t.TempDir(), ".byn")
-	body1 := []byte("v1")
-	if err := os.WriteFile(path, body1, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := addTrust(dir, path, body1); err != nil {
-		t.Fatalf("addTrust1: %v", err)
-	}
-	body2 := []byte("v2")
-	if err := addTrust(dir, path, body2); err != nil {
-		t.Fatalf("addTrust2: %v", err)
-	}
-	// Only one record, with v2's hash.
-	ts, _ := loadTrustStore(dir)
-	if len(ts.Records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(ts.Records))
-	}
-	if ts.Records[0].SHA256 != hashBynFile(body2) {
-		t.Fatal("record not updated to new hash")
-	}
-}
-
-func TestRemoveTrust(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(t.TempDir(), ".byn")
-	body := []byte("x")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := addTrust(dir, path, body); err != nil {
-		t.Fatalf("addTrust: %v", err)
-	}
-	removed, err := removeTrust(dir, path)
-	if err != nil {
-		t.Fatalf("removeTrust: %v", err)
-	}
-	if !removed {
-		t.Fatal("expected removed=true")
-	}
-	removed2, err := removeTrust(dir, path)
-	if err != nil {
-		t.Fatalf("removeTrust idempotent: %v", err)
-	}
-	if removed2 {
-		t.Fatal("expected removed=false on second call")
-	}
-}
-
-func TestLoadTrustStore_BadJSON(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, trustFile), []byte("{not json"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, err := loadTrustStore(dir)
-	if err == nil {
-		t.Fatal("expected JSON parse error")
+// trustByn records trust for a .byn the way the daemon would, so discovery
+// (read-only) sees it as trusted.
+func trustByn(t *testing.T, bynDir, path string, body []byte) {
+	t.Helper()
+	if _, err := trust.Grant(bynDir, trust.Canonicalize(path), trust.Hash(body)); err != nil {
+		t.Fatalf("seed trust: %v", err)
 	}
 }
 
@@ -201,6 +71,50 @@ func TestDiscoverScope_AgentModeUntrustedIsFatal(t *testing.T) {
 	}
 }
 
+// In interactive (non-agent) mode an untrusted .byn is STILL fatal — discovery
+// no longer offers a y/N auto-trust, and it must not silently record trust.
+func TestDiscoverScope_UntrustedInteractive_NoAutoTrust(t *testing.T) {
+	t.Setenv("BYN_NO_DISCOVERY", "")
+	start := t.TempDir()
+	bynDir := t.TempDir()
+	body := []byte("[scope]\nvault = \"acme\"\n")
+	tpath := filepath.Join(start, ".byn")
+	if err := os.WriteFile(tpath, body, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
+	if err == nil || !strings.Contains(err.Error(), "untrusted") {
+		t.Fatalf("interactive untrusted should error, got %v", err)
+	}
+	// And nothing was auto-trusted.
+	st, _ := trust.Status(bynDir, trust.Canonicalize(tpath), trust.Hash(body))
+	if st == trust.StatusTrusted {
+		t.Fatal("discovery silently granted trust — it must never auto-trust")
+	}
+}
+
+// A previously-trusted .byn whose content changed is refused with a CHANGED
+// error — the silent-re-trust hole is closed.
+func TestDiscoverScope_ChangedBynIsFatal(t *testing.T) {
+	t.Setenv("BYN_NO_DISCOVERY", "")
+	start := t.TempDir()
+	bynDir := t.TempDir()
+	tpath := filepath.Join(start, ".byn")
+	orig := []byte("[scope]\nvault = \"acme\"\n")
+	if err := os.WriteFile(tpath, orig, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	trustByn(t, bynDir, tpath, orig)
+	// Now tamper with the file.
+	if err := os.WriteFile(tpath, []byte("[scope]\nvault = \"evil\"\n"), 0o600); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
+	if err == nil || !strings.Contains(err.Error(), "CHANGED") {
+		t.Fatalf("expected a CHANGED error, got %v", err)
+	}
+}
+
 func TestDiscoverScope_TrustedParses(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "")
 	start := t.TempDir()
@@ -210,9 +124,7 @@ func TestDiscoverScope_TrustedParses(t *testing.T) {
 	if err := os.WriteFile(tpath, body, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := addTrust(bynDir, tpath, body); err != nil {
-		t.Fatalf("addTrust: %v", err)
-	}
+	trustByn(t, bynDir, tpath, body)
 	sc, src, err := discoverScope(start, t.TempDir(), bynDir, false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -234,9 +146,7 @@ func TestDiscoverScope_TrustedButBadTOML(t *testing.T) {
 	if err := os.WriteFile(tpath, body, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := addTrust(bynDir, tpath, body); err != nil {
-		t.Fatalf("addTrust: %v", err)
-	}
+	trustByn(t, bynDir, tpath, body)
 	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
 	if err == nil {
 		t.Fatal("expected parse error")
@@ -252,9 +162,7 @@ func TestDiscoverScope_TrustedUnknownKeyRejected(t *testing.T) {
 	if err := os.WriteFile(tpath, body, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := addTrust(bynDir, tpath, body); err != nil {
-		t.Fatalf("addTrust: %v", err)
-	}
+	trustByn(t, bynDir, tpath, body)
 	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
 	if err == nil {
 		t.Fatal("expected unknown-key rejection")
@@ -270,5 +178,17 @@ func TestMergeDiscoveryScope(t *testing.T) {
 	}
 	if out.Project != "p" || out.Env != "e" {
 		t.Fatalf("discovery should fill missing: %+v", out)
+	}
+}
+
+func TestBynTargetVault(t *testing.T) {
+	if got := bynTargetVault([]byte("[scope]\nvault = \"acme\"\n")); got != "acme" {
+		t.Fatalf("vault = %q, want acme", got)
+	}
+	if got := bynTargetVault([]byte("[scope]\nproject = \"p\"\n")); got != "" {
+		t.Fatalf("missing vault should be empty, got %q", got)
+	}
+	if got := bynTargetVault([]byte("garbage = =")); got != "" {
+		t.Fatalf("unparseable should be empty, got %q", got)
 	}
 }

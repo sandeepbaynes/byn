@@ -4,11 +4,13 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
-// withCWD changes directory for the duration of a test, restoring it
-// after.
+// withCWD changes directory for the duration of a test, restoring it after.
 func withCWD(t *testing.T, dir string) {
 	t.Helper()
 	prev, err := os.Getwd()
@@ -19,6 +21,15 @@ func withCWD(t *testing.T, dir string) {
 		t.Fatalf("chdir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(prev) })
+}
+
+func writeDotByn(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), ".byn")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return p
 }
 
 func TestDefaultBynPath_PositionalArg(t *testing.T) {
@@ -34,15 +45,8 @@ func TestDefaultBynPath_FallbackToCWD(t *testing.T) {
 	withCWD(t, dir)
 	fs := flag.NewFlagSet("x", flag.ContinueOnError)
 	_ = fs.Parse(nil)
-	got := defaultBynPath(fs)
-	want := filepath.Join(dir, ".byn")
-	// CWD on macOS may go through /private; allow either prefix.
-	if got != want && got != filepath.Join("/private", want) {
-		// Accept both because /tmp can be symlinked.
-		// Use suffix match.
-		if filepath.Base(got) != ".byn" {
-			t.Fatalf("got %q, want suffix .byn", got)
-		}
+	if filepath.Base(defaultBynPath(fs)) != ".byn" {
+		t.Fatalf("want a path ending in .byn")
 	}
 }
 
@@ -54,34 +58,55 @@ func TestRunTrust_DispatchHelp(t *testing.T) {
 	}
 }
 
-func TestRunTrust_ListBranch(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("BYN_DIR", dir)
-	if got := runTrust([]string{"list"}, cliScope{}); got != exitOK {
-		t.Fatalf("got %d", got)
-	}
-	if got := runTrust([]string{"ls"}, cliScope{}); got != exitOK {
-		t.Fatalf("got %d", got)
+func TestBynTargetVault_Helper(t *testing.T) {
+	if v := bynTargetVault([]byte("[scope]\nvault = \"acme\"\n")); v != "acme" {
+		t.Fatalf("got %q", v)
 	}
 }
 
-func TestRunTrustAdd_OK(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	dir := t.TempDir()
-	tpath := filepath.Join(dir, ".byn")
-	if err := os.WriteFile(tpath, []byte("[scope]\nvault=\"a\"\n"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if got := runTrustAdd([]string{tpath}); got != exitOK {
+// ---- grant -------------------------------------------------------------
+
+// The headline CLI guarantee: `byn trust` sends the target vault + the
+// master password to the daemon (granting is never a local write).
+func TestRunTrustAdd_GrantsViaDaemonWithPassword(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustGrant, ipc.TrustGrantResp{Path: "/canon/.byn", SHA256: strings.Repeat("a", 64)})
+	tpath := writeDotByn(t, "[scope]\nvault = \"a\"\n")
+	withStdin(t, "s3cret\n")
+
+	if got := runTrustAdd([]string{"--password-stdin", tpath}); got != exitOK {
 		t.Fatalf("got %d", got)
+	}
+	calls := fd.callsFor(ipc.OpTrustGrant)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 grant call, got %d", len(calls))
+	}
+	var req ipc.TrustGrantReq
+	requireUnmarshal(t, calls[0].Body, &req)
+	if req.Vault != "a" {
+		t.Errorf("vault = %q, want a (from .byn [scope])", req.Vault)
+	}
+	if string(req.Password) != "s3cret" {
+		t.Errorf("password not forwarded to the daemon: %q", req.Password)
+	}
+	if req.Path != tpath {
+		t.Errorf("path = %q, want %q", req.Path, tpath)
+	}
+}
+
+func TestRunTrustAdd_DaemonRejectsWrongPassword(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onErr(ipc.OpTrustGrant, ipc.CodeWrongPassword, "could not authorize: wrong password")
+	tpath := writeDotByn(t, "[scope]\nvault = \"a\"\n")
+	withStdin(t, "wrong\n")
+	if got := runTrustAdd([]string{"--password-stdin", tpath}); got != exitDaemonErr {
+		t.Fatalf("got %d, want exitDaemonErr", got)
 	}
 }
 
 func TestRunTrustAdd_MissingFile(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	if got := runTrustAdd([]string{filepath.Join(td, "nope")}); got != exitErr {
+	t.Setenv("BYN_DIR", t.TempDir())
+	if got := runTrustAdd([]string{filepath.Join(t.TempDir(), "nope")}); got != exitErr {
 		t.Fatalf("got %d", got)
 	}
 }
@@ -92,33 +117,35 @@ func TestRunTrustAdd_BadFlag(t *testing.T) {
 	}
 }
 
-func TestRunUntrust_NotPreviouslyTrusted(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	dir := t.TempDir()
-	tpath := filepath.Join(dir, ".byn")
-	if err := os.WriteFile(tpath, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	// Untrust an absent record should succeed silently (exitOK).
-	if got := runUntrust([]string{tpath}, cliScope{}); got != exitOK {
-		t.Fatalf("got %d", got)
+func TestRunTrustAdd_DaemonDown(t *testing.T) {
+	noDaemon(t)
+	tpath := writeDotByn(t, "[scope]\nvault = \"a\"\n")
+	withStdin(t, "pw\n")
+	if got := runTrustAdd([]string{"--password-stdin", tpath}); got != exitDaemonDown {
+		t.Fatalf("got %d, want exitDaemonDown", got)
 	}
 }
 
-func TestRunUntrust_AfterAdd(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	dir := t.TempDir()
-	tpath := filepath.Join(dir, ".byn")
-	if err := os.WriteFile(tpath, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if got := runTrustAdd([]string{tpath}); got != exitOK {
-		t.Fatalf("add got %d", got)
-	}
+// ---- untrust -----------------------------------------------------------
+
+func TestRunUntrust_ViaDaemon(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustRemove, ipc.TrustRemoveResp{Removed: true})
+	tpath := writeDotByn(t, "x")
 	if got := runUntrust([]string{tpath}, cliScope{}); got != exitOK {
-		t.Fatalf("untrust got %d", got)
+		t.Fatalf("got %d", got)
+	}
+	if n := len(fd.callsFor(ipc.OpTrustRemove)); n != 1 {
+		t.Fatalf("expected 1 remove call, got %d", n)
+	}
+}
+
+func TestRunUntrust_NotTrusted_StillOK(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustRemove, ipc.TrustRemoveResp{Removed: false})
+	tpath := writeDotByn(t, "x")
+	if got := runUntrust([]string{tpath}, cliScope{}); got != exitOK {
+		t.Fatalf("got %d", got)
 	}
 }
 
@@ -128,44 +155,34 @@ func TestRunUntrust_BadFlag(t *testing.T) {
 	}
 }
 
-func TestRunUntrust_BrokenStore(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	// Write malformed JSON.
-	if err := os.WriteFile(filepath.Join(td, trustFile), []byte("not json"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	dir := t.TempDir()
-	tpath := filepath.Join(dir, ".byn")
-	if got := runUntrust([]string{tpath}, cliScope{}); got != exitErr {
+func TestRunUntrust_DaemonDown(t *testing.T) {
+	noDaemon(t)
+	tpath := writeDotByn(t, "x")
+	if got := runUntrust([]string{tpath}, cliScope{}); got != exitDaemonDown {
 		t.Fatalf("got %d", got)
 	}
 }
 
-func TestRunTrustList_JSON(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	if got := runTrustList([]string{"--json"}); got != exitOK {
-		t.Fatalf("got %d", got)
-	}
-}
+// ---- list --------------------------------------------------------------
 
-func TestRunTrustList_WithRecords(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	dir := t.TempDir()
-	tpath := filepath.Join(dir, ".byn")
-	if err := os.WriteFile(tpath, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := addTrust(td, tpath, []byte("x")); err != nil {
-		t.Fatalf("addTrust: %v", err)
-	}
+func TestRunTrustList_ViaDaemon(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustList, ipc.TrustListResp{Entries: []ipc.TrustEntry{
+		{Path: "/a/.byn", SHA256: strings.Repeat("b", 64)},
+	}})
 	if got := runTrustList(nil); got != exitOK {
-		t.Fatalf("got %d", got)
+		t.Fatalf("plain got %d", got)
 	}
 	if got := runTrustList([]string{"--json"}); got != exitOK {
 		t.Fatalf("json got %d", got)
+	}
+}
+
+func TestRunTrustList_Empty(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustList, ipc.TrustListResp{})
+	if got := runTrustList(nil); got != exitOK {
+		t.Fatalf("got %d", got)
 	}
 }
 
@@ -175,13 +192,20 @@ func TestRunTrustList_BadFlag(t *testing.T) {
 	}
 }
 
-func TestRunTrustList_BrokenStore(t *testing.T) {
-	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
-	if err := os.WriteFile(filepath.Join(td, trustFile), []byte("nope"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if got := runTrustList(nil); got != exitOK && got != exitErr {
+func TestRunTrustList_DaemonDown(t *testing.T) {
+	noDaemon(t)
+	if got := runTrustList(nil); got != exitDaemonDown {
 		t.Fatalf("got %d", got)
+	}
+}
+
+func TestRunTrust_ListBranch(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustList, ipc.TrustListResp{})
+	if got := runTrust([]string{"list"}, cliScope{}); got != exitOK {
+		t.Fatalf("list got %d", got)
+	}
+	if got := runTrust([]string{"ls"}, cliScope{}); got != exitOK {
+		t.Fatalf("ls got %d", got)
 	}
 }

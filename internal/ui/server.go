@@ -31,11 +31,12 @@ type Config struct {
 
 // Server is the embedded portal HTTP server.
 type Server struct {
-	disp    Dispatcher
-	mux     *http.ServeMux
-	httpSrv *http.Server
-	ln      net.Listener
-	port    int
+	disp     Dispatcher
+	mux      *http.ServeMux
+	httpSrv  *http.Server
+	ln       net.Listener
+	port     int
+	sessions *pkSessions
 }
 
 // New constructs a portal server bound to disp. It does not listen until
@@ -46,9 +47,10 @@ func New(disp Dispatcher, cfg Config) *Server {
 		port = 2967
 	}
 	s := &Server{
-		disp: disp,
-		mux:  http.NewServeMux(),
-		port: port,
+		disp:     disp,
+		mux:      http.NewServeMux(),
+		port:     port,
+		sessions: newPKSessions(),
 	}
 	s.routes()
 	return s
@@ -72,6 +74,16 @@ func (s *Server) routes() {
 	// Per-vault lock state (no portal session).
 	s.mux.HandleFunc("/api/unlock", s.sameOrigin(s.only(http.MethodPost, s.handleUnlock)))
 	s.mux.HandleFunc("/api/lock", s.sameOrigin(s.only(http.MethodPost, s.handleLock)))
+
+	// Portal passkey (WebAuthn) ceremonies. begin/finish forward to the daemon;
+	// a verified assertion issues a session cookie.
+	s.mux.HandleFunc("/api/passkey/register/begin", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRegisterBegin)))
+	s.mux.HandleFunc("/api/passkey/register/finish", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRegisterFinish)))
+	s.mux.HandleFunc("/api/passkey/auth/begin", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyAuthBegin)))
+	s.mux.HandleFunc("/api/passkey/auth/finish", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyAuthFinish)))
+	s.mux.HandleFunc("/api/passkey/list", s.only(http.MethodGet, s.handlePasskeyList))
+	s.mux.HandleFunc("/api/passkey/remove", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRemove)))
+	s.mux.HandleFunc("/api/passkey/session", s.only(http.MethodGet, s.handlePasskeySession))
 
 	// Scope CRUD.
 	s.mux.HandleFunc("/api/vaults", s.sameOrigin(s.handleVaults)) // POST create

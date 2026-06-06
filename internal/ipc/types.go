@@ -1,6 +1,9 @@
 package ipc
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ProtocolVersion is the current wire-protocol major version. The
 // daemon refuses requests whose `v` field is unknown. v2 introduced
@@ -65,9 +68,21 @@ const (
 	OpDoctor Op = "doctor"
 
 	// Trust store (global, not per-vault): the TOFU list of approved
-	// `.byn` files. The portal lists and can revoke entries.
+	// `.byn` files. The portal lists and can revoke entries; granting is
+	// gated by the master password (proof-of-presence).
 	OpTrustList   Op = "trust.list"
 	OpTrustRemove Op = "trust.remove"
+	OpTrustGrant  Op = "trust.grant"
+
+	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
+	// for navigator.credentials.{create,get}; finish verifies the browser's
+	// response. Enrollment requires the vault unlocked; revoke is password-gated.
+	OpPasskeyRegisterBegin  Op = "passkey.register.begin"
+	OpPasskeyRegisterFinish Op = "passkey.register.finish"
+	OpPasskeyAuthBegin      Op = "passkey.auth.begin"  //nolint:gosec // G101: op name, not a credential
+	OpPasskeyAuthFinish     Op = "passkey.auth.finish" //nolint:gosec // G101: op name, not a credential
+	OpPasskeyList           Op = "passkey.list"
+	OpPasskeyRemove         Op = "passkey.remove"
 )
 
 // AllOps is the canonical op list. Used by the daemon dispatcher to
@@ -80,7 +95,10 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove,
+	OpTrustList, OpTrustRemove, OpTrustGrant,
+	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
+	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
+	OpPasskeyList, OpPasskeyRemove,
 }
 
 // Envelope is the top-level wire frame. Exactly one of Req/Resp/Err
@@ -519,6 +537,125 @@ type TrustRemoveReq struct {
 
 // TrustRemoveResp reports whether a record was removed.
 type TrustRemoveResp struct {
+	Removed bool `json:"removed"`
+}
+
+// TrustGrantReq grants TOFU trust to the `.byn` at Path, gated by the master
+// password of Vault (the vault the file targets — its [scope] vault, or
+// "default"). The password is ALWAYS required, even when the vault is already
+// unlocked: granting trust is a proof-of-presence action, not an ambient one.
+// The daemon canonicalizes Path, reads + hashes the file itself, verifies the
+// password, then records {canonical path, hash}.
+type TrustGrantReq struct {
+	Path     string `json:"path"`
+	Vault    string `json:"vault,omitempty"`
+	Password []byte `json:"password"`
+}
+
+// TrustGrantResp reports the result. Changed=true means the path was already
+// trusted with a DIFFERENT hash (a re-approval of a modified file), so the
+// caller can surface a louder confirmation. SHA256 is the recorded fingerprint.
+type TrustGrantResp struct {
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+	Changed bool   `json:"changed"`
+}
+
+// ---- Portal passkey (WebAuthn) ------------------------------------------
+
+// PasskeyRegisterBeginReq starts enrollment of a new passkey for Vault. The
+// vault must be unlocked (enrollment is a proof-of-presence action).
+type PasskeyRegisterBeginReq struct {
+	Vault string `json:"vault,omitempty"`
+}
+
+// PasskeyRegisterBeginResp carries the creation options for
+// navigator.credentials.create plus the ceremony id that binds the follow-up
+// finish call to the server-held challenge.
+type PasskeyRegisterBeginResp struct {
+	CeremonyID string          `json:"ceremony_id"`
+	Options    json.RawMessage `json:"options"`
+}
+
+// PasskeyRegisterFinishReq submits the browser's attestation response.
+type PasskeyRegisterFinishReq struct {
+	Vault      string          `json:"vault,omitempty"`
+	CeremonyID string          `json:"ceremony_id"`
+	Response   json.RawMessage `json:"response"`
+	Label      string          `json:"label,omitempty"`
+	// KEK, when present, is the browser's HKDF(prfOut) key. The daemon wraps a
+	// second copy of the vault key with it (PRF cold-unlock enrollment). Absent
+	// → session-only passkey (PRF unavailable on this authenticator).
+	KEK []byte `json:"kek,omitempty"`
+}
+
+// PasskeyRegisterFinishResp reports the stored credential.
+type PasskeyRegisterFinishResp struct {
+	CredentialID []byte `json:"credential_id"`
+	Label        string `json:"label"`
+	// Unlock is true when a PRF cold-unlock path was enrolled (KEK provided).
+	Unlock bool `json:"unlock"`
+}
+
+// PasskeyAuthBeginReq starts an assertion (login) ceremony for Vault.
+type PasskeyAuthBeginReq struct {
+	Vault string `json:"vault,omitempty"`
+}
+
+// PasskeyAuthBeginResp carries the request options for
+// navigator.credentials.get plus the ceremony id.
+type PasskeyAuthBeginResp struct {
+	CeremonyID string          `json:"ceremony_id"`
+	Options    json.RawMessage `json:"options"`
+}
+
+// PasskeyAuthFinishReq submits the browser's assertion response.
+type PasskeyAuthFinishReq struct {
+	Vault      string          `json:"vault,omitempty"`
+	CeremonyID string          `json:"ceremony_id"`
+	Response   json.RawMessage `json:"response"`
+	// KEK, when present, unwraps the credential's wrapped vault key and unlocks
+	// the vault (PRF cold-unlock). Absent → session auth only.
+	KEK []byte `json:"kek,omitempty"`
+}
+
+// PasskeyAuthFinishResp reports the matched credential and whether the
+// assertion also unlocked the vault (PRF cold-unlock).
+type PasskeyAuthFinishResp struct {
+	CredentialID []byte `json:"credential_id"`
+	Unlocked     bool   `json:"unlocked"`
+}
+
+// PasskeyInfo is one enrolled credential, names + timestamps only (no secret).
+type PasskeyInfo struct {
+	CredentialID []byte `json:"credential_id"`
+	Label        string `json:"label"`
+	CreatedAt    int64  `json:"created_at"`
+	// Unlock is true when this credential can cold-unlock the vault (it has a
+	// PRF-wrapped key), vs a session-only passkey.
+	Unlock bool `json:"unlock"`
+}
+
+// PasskeyListReq lists the credentials enrolled for Vault.
+type PasskeyListReq struct {
+	Vault string `json:"vault,omitempty"`
+}
+
+// PasskeyListResp is the enrolled-credential list.
+type PasskeyListResp struct {
+	Passkeys []PasskeyInfo `json:"passkeys"`
+}
+
+// PasskeyRemoveReq revokes a credential. Password-gated (proof-of-presence),
+// like trust grants — an ambient unlocked session is not consent.
+type PasskeyRemoveReq struct {
+	Vault        string `json:"vault,omitempty"`
+	CredentialID []byte `json:"credential_id"`
+	Password     []byte `json:"password"`
+}
+
+// PasskeyRemoveResp reports whether a credential was removed.
+type PasskeyRemoveResp struct {
 	Removed bool `json:"removed"`
 }
 

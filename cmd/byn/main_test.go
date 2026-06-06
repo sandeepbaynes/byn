@@ -152,13 +152,14 @@ func TestRun_RoutesToStatus(t *testing.T) {
 
 func TestRun_RoutesToTrust(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "1")
-	t.Setenv("BYN_DIR", t.TempDir())
-	// "trust list" doesn't talk to the daemon and works in isolation.
-	if got := run([]string{"trust", "list"}); got != exitOK {
-		t.Fatalf("got %d", got)
+	t.Setenv("BYN_DIR", t.TempDir()) // no daemon socket here
+	// Trust management now goes through the daemon. With none running, routing
+	// is proven by the daemon-down exit code (vs an "unknown command" error).
+	if got := run([]string{"trust", "list"}); got != exitDaemonDown {
+		t.Fatalf("trust list got %d, want daemon-down", got)
 	}
-	if got := run([]string{"untrust", "/nonexistent"}); got != exitOK {
-		t.Fatalf("got %d", got)
+	if got := run([]string{"untrust", "/nonexistent"}); got != exitDaemonDown {
+		t.Fatalf("untrust got %d, want daemon-down", got)
 	}
 }
 

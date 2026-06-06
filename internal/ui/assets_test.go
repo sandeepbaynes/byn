@@ -33,6 +33,7 @@ func TestAssets_IndexWiring(t *testing.T) {
 	for _, want := range []string{
 		`id="app"`, `id="content-body"`, `id="dialog"`, `id="new-vault-btn"`,
 		"/static/app.js", "/static/style.css",
+		`id="passkey-btn"`, "/static/passkey.js",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("index.html missing %q", want)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -56,11 +57,24 @@ func TestRunAuditTail_WithEvents(t *testing.T) {
 	}
 }
 
+// A snapshot `tail --json` (no -f) must emit a single JSON array — the same
+// shape as `audit view --json` and every other --json command — not NDJSON.
 func TestRunAuditTail_JSON(t *testing.T) {
 	fd := startFakeDaemon(t)
-	fd.onOK(ipc.OpAuditTail, ipc.AuditTailResp{Events: []ipc.AuditEvent{{Op: "x", Outcome: "ok"}}})
-	if got := runAudit([]string{"tail", "--json"}, cliScope{}); got != exitOK {
-		t.Fatalf("got %d", got)
+	fd.onOK(ipc.OpAuditTail, ipc.AuditTailResp{Events: []ipc.AuditEvent{
+		{Op: "put", Outcome: "ok"}, {Op: "lock", Outcome: "ok"},
+	}})
+	var code int
+	out := captureStdout(t, func() { code = runAudit([]string{"tail", "--json"}, cliScope{}) })
+	if code != exitOK {
+		t.Fatalf("exit %d", code)
+	}
+	var events []map[string]any
+	if err := json.Unmarshal([]byte(out), &events); err != nil {
+		t.Fatalf("tail --json must be one JSON array, got:\n%s\nerr=%v", out, err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("want 2 events, got %d", len(events))
 	}
 }
 

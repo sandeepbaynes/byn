@@ -274,14 +274,25 @@ async function selectScope(vault, project, env) {
 // ---- per-vault lock / create / delete -----------------------------------
 
 async function unlockVault(name) {
+  const refresh = async () => {
+    await renderTree();
+    if (state.scope.vault === name && state.view === "entries") await loadEntries(); else renderContent();
+  };
+  // Touch ID first when this vault has an unlock-capable passkey; on cancel or
+  // any failure, fall through to the master-password dialog.
+  if (window.bynPasskey && (await window.bynPasskey.canUnlock(name))) {
+    try {
+      const r = await window.bynPasskey.signIn(name);
+      if (r && r.unlocked) { toast("unlocked " + name + " with Touch ID"); await refresh(); return; }
+    } catch (e) { /* fall through to password */ }
+  }
   const r = await openDialog({ title: "Unlock " + name, okText: "unlock",
     message: `Enter the master password for “${name}”.`,
     fields: [{ key: "password", label: "master password", type: "password" }] });
   if (!r) return;
   try {
     await api("POST", "/api/unlock", { vault: name, password: r.password });
-    toast("unlocked " + name); await renderTree();
-    if (state.scope.vault === name && state.view === "entries") await loadEntries(); else renderContent();
+    toast("unlocked " + name); await refresh();
   } catch (e) { toast(e.message, true); }
 }
 async function lockVault(name) {

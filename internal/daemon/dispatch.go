@@ -141,6 +141,20 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleTrustList(env)
 	case ipc.OpTrustRemove:
 		return d.handleTrustRemove(env)
+	case ipc.OpTrustGrant:
+		return d.handleTrustGrant(ctx, env)
+	case ipc.OpPasskeyRegisterBegin:
+		return d.handlePasskeyRegisterBegin(ctx, env)
+	case ipc.OpPasskeyRegisterFinish:
+		return d.handlePasskeyRegisterFinish(ctx, env)
+	case ipc.OpPasskeyAuthBegin:
+		return d.handlePasskeyAuthBegin(ctx, env)
+	case ipc.OpPasskeyAuthFinish:
+		return d.handlePasskeyAuthFinish(ctx, env)
+	case ipc.OpPasskeyList:
+		return d.handlePasskeyList(ctx, env)
+	case ipc.OpPasskeyRemove:
+		return d.handlePasskeyRemove(ctx, env)
 
 	default:
 		return ipc.NewError(env.ID, ipc.CodeUnknownOp,
@@ -509,6 +523,53 @@ func (d *Daemon) handleTrustRemove(env *ipc.Envelope) *ipc.Envelope {
 		return internalErr(env.ID, err)
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustRemoveResp{Removed: removed})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// handleTrustGrant records TOFU trust for a `.byn`, gated by the master
+// password of the target vault. Unlike a delete, the password is required even
+// when the vault is already unlocked: granting trust is a proof-of-presence
+// action, so an ambient unlocked session is never sufficient consent. The
+// daemon reads + hashes the file itself (authoritative), so a caller cannot
+// record a fingerprint for content it never actually presented.
+func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.TrustGrantReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	if req.Path == "" {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest, "path required", "")
+	}
+	if len(req.Password) == 0 {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			"granting trust requires the master password",
+			"run `byn trust` from a terminal so byn can prompt for it")
+	}
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+	st, errEnv := d.storeForVault(env.ID, name)
+	if errEnv != nil {
+		return errEnv
+	}
+	// Always verify — even an unlocked vault must re-prove presence here.
+	if le := d.authorizeWithPassword(ctx, env.ID, name, st, req.Password); le != nil {
+		return le
+	}
+	body, rerr := os.ReadFile(req.Path) // #nosec G304 -- user-named; daemon runs as the same user
+	if rerr != nil {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			fmt.Sprintf("read %s: %v", req.Path, rerr), "check the path and retry")
+	}
+	canon := trust.Canonicalize(req.Path)
+	hash := trust.Hash(body)
+	changed, gerr := trust.Grant(d.cfg.Dir, canon, hash)
+	if gerr != nil {
+		return internalErr(env.ID, gerr)
+	}
+	d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK})
+	resp, err := ipc.NewResponse(env.ID, ipc.TrustGrantResp{Path: canon, SHA256: hash, Changed: changed})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
@@ -939,6 +1000,31 @@ func (d *Daemon) authorizeMutationWhileLocked(ctx context.Context, id, vaultName
 		})
 		return ipc.NewError(id, ipc.CodeWrongPassword,
 			"could not authorize delete", "verify password and retry")
+	}
+	_ = d.limiter.RecordSuccess()
+	return nil
+}
+
+// authorizeWithPassword verifies the master password against st's wrapped key
+// WITHOUT unlocking the vault, regardless of the current lock state. Unlike
+// authorizeMutationWhileLocked (which short-circuits when the vault is already
+// unlocked), this ALWAYS requires a correct password — used for
+// proof-of-presence actions like granting trust, where an ambient unlocked
+// session is not consent. Rate-limited exactly like unlock. The caller
+// guarantees password is non-empty.
+func (d *Daemon) authorizeWithPassword(ctx context.Context, id, vaultName string, st *vault.Store, password []byte) *ipc.Envelope {
+	if le := d.rateLimitCheck(id); le != nil {
+		return le
+	}
+	if err := st.VerifyPassword(password); err != nil {
+		_ = d.limiter.RecordFailure()
+		d.auditEmit(ctx, vaultName, audit.Event{
+			Op:        "vault.authorize",
+			Outcome:   audit.OutcomeDenied,
+			ErrorCode: string(ipc.CodeWrongPassword),
+		})
+		return ipc.NewError(id, ipc.CodeWrongPassword,
+			"could not authorize: wrong password", "verify the password and retry")
 	}
 	_ = d.limiter.RecordSuccess()
 	return nil

@@ -12,11 +12,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -72,7 +73,12 @@ type session struct {
 
 func newSession(t *testing.T) *session {
 	t.Helper()
-	return &session{t: t, bin: binPath(t), dir: shortDir(t)}
+	s := &session{t: t, bin: binPath(t), dir: shortDir(t)}
+	// Auto-reap this session's daemon at test end, even if the test forgot to
+	// register cleanup. stopDaemon force-kills a daemon that survives `stop`,
+	// so a flaky shutdown can never leak processes across the many runs.
+	t.Cleanup(s.stopDaemon)
+	return s
 }
 
 // run executes one invocation of the byn binary. Returns stdout,
@@ -112,7 +118,33 @@ func (s *session) mustRun(stdin string, args ...string) (string, string) {
 
 func (s *session) stopDaemon() {
 	s.t.Helper()
+	pid := s.daemonPID() // capture before stop — a clean stop removes the pidfile
 	_, _, _ = s.run("", "daemon", "stop")
+	if pid <= 0 {
+		return
+	}
+	// Guarantee the process is gone. A flaky `daemon stop` must never leave a
+	// stray daemon holding socket + WAL FDs — across many integration runs that
+	// is exactly what exhausts the system file table.
+	for i := 0; i < 100; i++ { // up to ~2s
+		if syscall.Kill(pid, 0) != nil { // ESRCH → already gone
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	s.t.Errorf("daemon (pid %d) survived `daemon stop` for 2s — force-killed; investigate shutdown", pid)
+}
+
+// daemonPID reads this session's daemon pidfile (in BYN_DIR), or 0 when
+// absent/unreadable. Used by stopDaemon to verify the process actually died.
+func (s *session) daemonPID() int {
+	b, err := os.ReadFile(filepath.Join(s.dir, "daemon.pid"))
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid
 }
 
 // TestE2E_GoldenPath exercises init → unlock → put → get → lock → get-while-locked.
@@ -303,7 +335,6 @@ func TestE2E_HarnessSelfCheck(t *testing.T) {
 	if !strings.Contains(stdout, "Usage:") {
 		t.Fatalf("help stdout missing 'Usage:':\n%s", stdout)
 	}
-	_ = fmt.Sprintf("ok") // silence unused import in tidied versions
 }
 
 // TestE2E_Exec_InjectsEnvVars exercises the core injection path:

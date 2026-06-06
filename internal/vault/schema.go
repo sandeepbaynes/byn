@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // openDB opens the SQLite database in WAL mode with safe defaults.
@@ -116,6 +117,66 @@ var schemaStatements = []string{
 		UNIQUE(entry_id, version_no)
 	) STRICT`,
 	`CREATE INDEX idx_entry_versions_entry ON entry_versions(entry_id, version_no DESC)`,
+
+	passkeyTableDDL,
+	passkeyUnlockTableDDL,
+}
+
+// passkeyTableDDL is the per-vault WebAuthn credential store. It is additive
+// and idempotent (CREATE TABLE IF NOT EXISTS): created on a fresh vault via
+// schemaStatements, and ensured on open for vaults that predate it (see
+// ensurePasskeyTable) — so no schema-version bump or re-init is needed. All
+// columns are non-secret; security rests on possession of the authenticator +
+// user verification. The PRF cold-unlock columns arrive with slice A-auth.2.
+const passkeyTableDDL = `CREATE TABLE IF NOT EXISTS passkey (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	credential_id   BLOB    NOT NULL UNIQUE,
+	public_key      BLOB    NOT NULL,
+	sign_count      INTEGER NOT NULL DEFAULT 0,
+	aaguid          BLOB,
+	transports      TEXT    NOT NULL DEFAULT '',
+	label           TEXT    NOT NULL DEFAULT '',
+	backup_eligible INTEGER NOT NULL DEFAULT 0,
+	backup_state    INTEGER NOT NULL DEFAULT 0,
+	created_at      INTEGER NOT NULL
+) STRICT`
+
+// passkeyUnlockTableDDL is the PRF-derived second wrapping of the vault key,
+// one row per credential (A-auth.2). All columns are non-secret — the KEK that
+// unwraps wrapped_vault_key is HKDF(prfOut), computed in the browser and never
+// stored. ON DELETE CASCADE ties it to the credential, so revoking a passkey
+// also drops its unlock path.
+const passkeyUnlockTableDDL = `CREATE TABLE IF NOT EXISTS passkey_unlock (
+	credential_id     BLOB    PRIMARY KEY REFERENCES passkey(credential_id) ON DELETE CASCADE,
+	prf_salt          BLOB    NOT NULL,
+	wrapped_vault_key BLOB    NOT NULL,
+	hkdf_info_version INTEGER NOT NULL DEFAULT 1,
+	aead_alg          TEXT    NOT NULL DEFAULT 'xchacha20poly1305',
+	label             TEXT    NOT NULL DEFAULT '',
+	created_at        INTEGER NOT NULL
+) STRICT`
+
+// ensurePasskeyTables adds the passkey + passkey_unlock tables to a vault that
+// predates them. Idempotent and non-destructive — safe on every open. Order
+// matters: passkey_unlock has a FK into passkey.
+func ensurePasskeyTables(ctx context.Context, db *sql.DB) error {
+	for _, ddl := range []string{passkeyTableDDL, passkeyUnlockTableDDL} {
+		if _, err := db.ExecContext(ctx, ddl); err != nil {
+			return fmt.Errorf("vault: ensure passkey tables: %w", err)
+		}
+	}
+	// Additive column migration for a passkey table that predates the WebAuthn
+	// backup flags. SQLite has no ADD COLUMN IF NOT EXISTS, so run the ALTER and
+	// ignore the duplicate-column error on already-migrated DBs.
+	for _, alt := range []string{
+		"ALTER TABLE passkey ADD COLUMN backup_eligible INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE passkey ADD COLUMN backup_state INTEGER NOT NULL DEFAULT 0",
+	} {
+		if _, err := db.ExecContext(ctx, alt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("vault: ensure passkey columns: %w", err)
+		}
+	}
+	return nil
 }
 
 // Reserved meta keys. Values are stored as TEXT; callers convert.

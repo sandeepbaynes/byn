@@ -8,6 +8,8 @@
 package trust
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,4 +88,93 @@ func Remove(dir, path string) (bool, error) {
 	}
 	s.Records = out
 	return true, Save(dir, s)
+}
+
+// Hash returns the lowercase hex SHA-256 of a `.byn` file's content. It is the
+// TOFU fingerprint stored in a Record and recomputed on every discovery.
+func Hash(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+// Canonicalize normalizes a path via filepath.EvalSymlinks so stored records
+// survive symlinked /tmp on macOS, ~ shortcuts, and dotted segments. Falls
+// back to filepath.Abs when EvalSymlinks fails (e.g. the file no longer
+// exists — relevant only when revoking trust for a deleted file).
+func Canonicalize(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	abs, _ := filepath.Abs(path)
+	return abs
+}
+
+// Stat is the trust status of a `.byn` path relative to the store.
+type Stat int
+
+const (
+	// StatusUntrusted means no record exists for the path (first use).
+	StatusUntrusted Stat = iota
+	// StatusTrusted means a record exists and its hash matches the current
+	// content.
+	StatusTrusted
+	// StatusChanged means a record exists but the content hash differs — the
+	// file changed since trust was granted, so it must be explicitly re-approved.
+	StatusChanged
+)
+
+// String renders the status for messages and logs.
+func (s Stat) String() string {
+	switch s {
+	case StatusTrusted:
+		return "trusted"
+	case StatusChanged:
+		return "changed"
+	default:
+		return "untrusted"
+	}
+}
+
+// Status reports whether the given canonical path + content hash is Trusted,
+// Changed (known path, different hash), or Untrusted (unknown path). It is the
+// read side used by `.byn` discovery; it never mutates the store.
+func Status(dir, path, hash string) (Stat, error) {
+	s, err := Load(dir)
+	if err != nil {
+		return StatusUntrusted, err
+	}
+	for _, r := range s.Records {
+		if r.Path == path {
+			if r.SHA256 == hash {
+				return StatusTrusted, nil
+			}
+			return StatusChanged, nil
+		}
+	}
+	return StatusUntrusted, nil
+}
+
+// Grant inserts or updates the trust record for a canonical path. It reports
+// changed=true only when a record already existed with a *different* hash
+// (the file changed since it was last trusted) — letting callers warn loudly
+// on a re-trust versus a first-time grant. Granting an identical hash is a
+// no-op (changed=false, no write). The caller is responsible for authorizing
+// the grant (the daemon gates it on the master password); this function is
+// the storage primitive only.
+func Grant(dir, path, hash string) (changed bool, err error) {
+	s, err := Load(dir)
+	if err != nil {
+		return false, err
+	}
+	for i, r := range s.Records {
+		if r.Path == path {
+			if r.SHA256 == hash {
+				return false, nil // already trusted, identical content
+			}
+			s.Records[i].SHA256 = hash
+			return true, Save(dir, s)
+		}
+	}
+	s.Records = append(s.Records, Record{Path: path, SHA256: hash})
+	return false, Save(dir, s)
 }

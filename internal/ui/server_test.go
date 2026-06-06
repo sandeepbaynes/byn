@@ -89,6 +89,21 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return mk(ipc.TrustListResp{Entries: []ipc.TrustEntry{{Path: "/proj/.byn", SHA256: "deadbeef"}}})
 	case ipc.OpTrustRemove:
 		return mk(ipc.TrustRemoveResp{Removed: true})
+	case ipc.OpPasskeyRegisterBegin:
+		return mk(ipc.PasskeyRegisterBeginResp{CeremonyID: "creg", Options: json.RawMessage(`{"publicKey":{"challenge":"AA"}}`)})
+	case ipc.OpPasskeyRegisterFinish:
+		return mk(ipc.PasskeyRegisterFinishResp{CredentialID: []byte{1, 2}, Label: "Touch ID"})
+	case ipc.OpPasskeyAuthBegin:
+		return mk(ipc.PasskeyAuthBeginResp{CeremonyID: "cauth", Options: json.RawMessage(`{"publicKey":{"challenge":"BB"}}`)})
+	case ipc.OpPasskeyAuthFinish:
+		if f.wrongPassword {
+			return ipc.NewError(env.ID, ipc.CodeWrongPassword, "passkey sign-in failed", "")
+		}
+		return mk(ipc.PasskeyAuthFinishResp{CredentialID: []byte{1, 2}})
+	case ipc.OpPasskeyList:
+		return mk(ipc.PasskeyListResp{Passkeys: []ipc.PasskeyInfo{{CredentialID: []byte{1, 2}, Label: "Touch ID", CreatedAt: 1}}})
+	case ipc.OpPasskeyRemove:
+		return mk(ipc.PasskeyRemoveResp{Removed: true})
 	default:
 		return ipc.NewError(env.ID, ipc.CodeUnknownOp, "unknown op", "")
 	}

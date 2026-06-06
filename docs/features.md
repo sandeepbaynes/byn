@@ -123,19 +123,22 @@ feature names the relevant source files for future reference.
 - Trust on First Use: SHA-256 of file contents recorded against the
   canonical path (`filepath.EvalSymlinks`) in
   `~/.byn/trusted_byn.json`.
-- Agent mode (`--json` anywhere in args) hard-fails on untrusted or
-  tampered `.byn` — never an interactive prompt.
-- `byn trust [PATH]`, `byn trust list [--json]`,
-  `byn untrust [PATH]`.
+- **Auth-gated grants (shipped):** `byn trust` ALWAYS requires the master
+  password — even when the vault is unlocked — and routes through the
+  daemon (which owns the store + verifies the password against the vault
+  the `.byn` targets). Discovery is read-only and **never auto-trusts**:
+  a new *or changed* `.byn` is refused (both interactive and agent mode)
+  until re-approved with `byn trust`. Closes the old `trust [y/N]`
+  silent-re-trust path. `--password-stdin` for scripts.
+- `byn trust [PATH]`, `byn trust list [--json]`, `byn untrust [PATH]` —
+  all routed through the daemon.
 - `--no-discovery` flag and `BYN_NO_DISCOVERY=1` opt out.
 - Management commands (`trust`, `untrust`, `daemon`, `doctor`,
   `help`, `version`) skip discovery so an untrusted file can't lock
   the user out of fixing it.
-- **Planned hardening (deferred):** granting trust will require the
-  master password even when the vault is unlocked, and any change to a
-  previously-trusted `.byn` will require explicit user re-approval via
-  auth — so a rogue agent or local attacker can't add or silently
-  re-trust a `.byn` without the user's consent.
+- **Deferred (separate slice):** HMAC-signing the trust store so a direct
+  write to `trusted_byn.json` (which the password gate can't stop) is
+  detected; and a portal "approve" action as an out-of-band channel.
 
 ## 11. Responsive bubbletea TUI
 
@@ -191,6 +194,12 @@ feature names the relevant source files for future reference.
   failed-unlock backoff in `auth-state.json`.
 - `byn put NAME VALUE` rejected at the CLI — value via stdin only,
   so secrets never enter argv or scrollback.
+- **Passkey unlock (Touch ID):** enroll a WebAuthn/PRF passkey from the local
+  portal to unlock a vault with Touch ID — a second, KEK-wrapped copy of the
+  vault key (`internal/passkey`, `passkey_unlock` table; see `docs/security.md`
+  §7). Per-vault, never passkey-only; the master password stays the recovery
+  root. Revoke is password-gated and cascades to a hard lockout. macOS Touch ID
+  / iCloud Keychain only; non-PRF authenticators degrade to session-only.
 
 ## 13. Tests
 

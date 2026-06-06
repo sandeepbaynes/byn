@@ -952,39 +952,46 @@ SYNOPSIS
        byn untrust [PATH]
 
 DESCRIPTION
-       byn discovers a .byn TOML file by walking up from CWD;
-       its [scope] table pins an active vault/project/env. The first
-       time a .byn file is seen, it must be trusted before its
-       scope is applied.
+       byn discovers a .byn TOML file by walking up from CWD; its
+       [scope] table pins an active vault/project/env. A .byn must be
+       trusted before its scope is applied.
 
-       Trust records the canonical path plus a SHA-256 of the file's
-       full contents in $BYN_DIR/trusted_byn.json. On
-       subsequent runs the hash must match; tampering or replacement
-       fails the check until you re-trust.
+       Granting trust ALWAYS requires the master password — even when
+       the vault is unlocked — because approving a .byn is a
+       proof-of-presence action. The daemon owns the trust store and
+       verifies the password (against the vault the .byn targets)
+       before recording the canonical path + SHA-256 of the contents.
 
-       In agent mode (--json), an untrusted or tampered .byn is
-       a hard error — never an interactive prompt — so agents can't
-       be silently redirected.
+       Discovery itself is read-only and NEVER auto-trusts: a new or a
+       CHANGED .byn (its hash no longer matches) is refused — in both
+       interactive and agent mode — until you re-approve it with
+       'byn trust'. This closes the silent-re-trust path: a modified
+       file is never honored on a y/N, and an agent driving the CLI
+       can't approve a file whose password it doesn't have.
 
 OPTIONS
        PATH
            Path to the .byn file. Default: ./.byn.
 
+       --password-stdin (trust only)
+           Read the master password from stdin instead of prompting
+           (for scripts/CI).
+
        --json (trust list only)
            Print the trust store as a JSON array.
 
 EXAMPLES
-       Approve the file in the current project:
+       Approve the file in the current project (prompts for password):
            $ byn trust
+
+       Approve non-interactively:
+           $ printf '%s' "$PW" | byn trust --password-stdin ./.byn
 
        List trusted paths:
            $ byn trust list
 
        Revoke trust:
            $ byn untrust ./.byn
-
-       Bypass discovery without revoking:
-           $ byn --no-discovery list
 
 SEE ALSO
        byn(1) — discovery walk + .byn file format

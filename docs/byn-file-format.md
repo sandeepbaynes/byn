@@ -93,25 +93,42 @@ For every command that has a scope (i.e., not `trust`, `untrust`,
 2. Read its contents, hash, canonicalize the path.
 3. Look up the canonical path in `trusted_byn.json`.
 
-Three outcomes:
+Discovery is **read-only** — the same three outcomes in both
+interactive and agent mode (it never prompts, and never auto-trusts):
 
-| State | TTY mode | Agent mode (`--json`) |
-|---|---|---|
-| Path absent (first run) | `trust [y/N]:` prompt; `y` adds the record; `N` errors | **Hard fail** — `untrusted .byn (agent mode); run \`byn trust PATH\` from a terminal first` |
-| Path present, hash matches | Apply the scope | Apply the scope |
-| Path present, hash differs (tampered) | **Hard fail** — `untrusted .byn; run \`byn trust PATH\` to allow it` | **Hard fail**, same message |
+| State | What discovery does |
+|---|---|
+| Path present, hash matches | **Apply the scope** |
+| Path absent (first run) | **Refuse** — `untrusted .byn — approve it with \`byn trust PATH\`` |
+| Path present, hash differs (changed) | **Refuse** — `this .byn CHANGED since you trusted it — re-approve with \`byn trust PATH\`` |
 
-### Why agent mode hard-fails
+### Granting trust is a separate, password-gated act
 
-A CI job, an AI coding agent, or any non-interactive caller can't
-meaningfully answer "trust this file?":
+Discovery never grants trust. You approve a `.byn` explicitly with
+`byn trust PATH`, which **always requires the master password** — proof
+that *you* are present, even when the vault is already unlocked. The
+daemon owns the trust store and verifies the password (against the vault
+the `.byn` targets, or `default`) before recording the approval.
 
-- Silent auto-trust → attacker who can plant `.byn` in a
-  parent dir redirects every `byn exec` the agent does.
-- Hanging prompt → the agent stalls.
+This deliberately drops the old interactive `trust [y/N]` prompt. Two
+reasons, both from the "owned by you, operated by many" threat model
+(see [security.md](security.md)):
 
-Hard fail is the only safe choice. The human approves once in a
-terminal; the agent uses it from then on.
+- A y/N prompt can be answered by the very agent that planted the file
+  — it controls the CLI's stdin. A password it doesn't have cannot be.
+- A previously-trusted `.byn` that *changed* would otherwise be silently
+  re-trusted on a "y". Now a change is **refused** until a human
+  re-approves it with the password.
+
+So the human approves once, in a deliberate password-gated step; the
+agent uses the result from then on but can never grant — or silently
+re-grant — trust itself.
+
+**Ceiling (be honest):** the password gate routes grants through the
+daemon and closes the `byn trust` / prompt vectors, but a code-executing
+same-UID process can still write `trusted_byn.json` directly — no
+user-space gate stops that. Tamper-evidence for the store itself
+(HMAC-signing) is a separate, planned hardening; see security.md.
 
 ---
 
@@ -202,17 +219,17 @@ Now every `byn` invocation in the directory uses
 
 ## Known weaknesses
 
-- The `trusted_byn.json` file is protected only by UNIX perms
-  (mode 0600 in `~`). An attacker who can write to it can pre-approve
-  any `.byn`. Hardening (HMAC-sign the file with a daemon-resident
-  key derived from machine fingerprint) is designed and deferred —
-  see [security.md](security.md) and
-  internal design notes.
+- Granting trust is password-gated and daemon-owned, but the
+  `trusted_byn.json` file itself is still protected only by UNIX perms
+  (mode 0600 in `~`). A code-executing same-UID process can write it
+  directly, bypassing the password gate. Tamper-evidence (HMAC-sign the
+  file with a daemon-resident key) is designed and deferred to a
+  separate slice — see [security.md](security.md).
 
-- The discovery walk is CWD-relative. If you `cd` away mid-task and
-  the parent dir's `.byn` is malicious, the next `byn` call
-  would discover it. TOFU catches this (first-time → prompt), but
-  it's a subtle interaction worth knowing.
+- The discovery walk is CWD-relative. If you `cd` away mid-task and the
+  parent dir's `.byn` is malicious, the next `byn` call would discover
+  it — but a new or changed `.byn` is **refused** (run `byn trust` to
+  approve), never auto-trusted, so it can't silently redirect you.
 
 - No relative paths in `.byn`. There's no `path =` field; the
   file only carries scope (vault/project/env). Workspace-manifest

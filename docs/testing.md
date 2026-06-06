@@ -107,6 +107,36 @@ which returns exit code 3.
 
 ---
 
+## Passkey unlock — manual E2E (real hardware)
+
+The WebAuthn PRF unlock path can only be exercised end-to-end against a real
+platform authenticator (macOS Touch ID / iCloud Keychain) — a headless-Chrome
+*virtual* authenticator does not implement PRF, so it cannot cover the part that
+matters. Run on a Mac with **Safari**, or **Chrome with an iCloud-Keychain**
+passkey (a Chrome-profile / Google-Password-Manager passkey has no PRF and only
+enrolls as session-only):
+
+```bash
+make build && bin/byn daemon start && bin/byn web   # portal on http://localhost:2967
+```
+
+1. **Enroll.** Unlock the vault, open the **passkey** panel → *Add passkey* →
+   choose **iCloud Keychain**, approve both Touch ID prompts (create + PRF
+   eval). The new entry must show the green **"unlocks"** badge — grey
+   "sign-in only" means PRF didn't fire (wrong authenticator).
+2. **Unlock.** Lock the vault, click its unlock action in the sidebar → Touch ID
+   → it unlocks **with no password dialog**.
+3. **Password still works.** Lock again, cancel the Touch ID prompt → the master
+   password dialog appears and unlocks (the password is never removed).
+4. **Revoke = lockout.** Revoke the passkey (password-gated). Lock the vault →
+   the sidebar no longer offers Touch ID; only the password unlocks.
+
+Must hold: enrollment is refused while the vault is locked; the value is never
+recoverable without either the passkey *or* the password; reach the portal at
+`http://localhost:<port>` (not `127.0.0.1`, which fails the `rp.id` check).
+
+---
+
 ## What the integration suite covers
 
 In `tests/integration/`:
@@ -160,6 +190,12 @@ In `tests/integration/`:
 - `byn history` / `revert` / `diff` — entry-version CLI not yet
   shipped (schema + `entry_versions` table are in place).
 - IDE integration recipes — documented but not auto-verified.
+- WebAuthn PRF cold-unlock — covered at the Go layer (passkey package, daemon
+  ceremony ops + adversarial/one-time/revoke-lockout tests, portal handler
+  tests) and validated end-to-end manually on real hardware (above). An
+  automated headless-Chrome *virtual-authenticator* harness is deferred: CDP
+  virtual authenticators don't implement the PRF extension, so they can't
+  exercise the cold-unlock path.
 
 ---
 

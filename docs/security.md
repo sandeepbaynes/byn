@@ -63,7 +63,7 @@ We protect a user's secrets against the following adversaries.
 | **A careless or semi-trusted agent** (coding agent, evil VSCode extension, compromised CI) running as the user | Can run `byn` commands | (a) **Detection over prevention:** a same-UID agent *can* invoke `get`/`exec`, so the guarantee is that **every value access is audited** (`byn audit`) — harness deny rules are best-effort and not relied upon. The primary win is that there is no plaintext `.env` on disk to read accidentally. (b) `byn exec` injects vars only into the child it spawns; the parent shell sees nothing — but the child's own `/proc/<pid>/environ` is readable by a same-UID process, so env values reach the workload (this is an accepted limitation, not concealment from it). (c) Untrusted `.byn` files hard-fail in agent mode (`--json`) so the agent can't be silently redirected. |
 | **IDE code-completion / inline-suggestion models** (Copilot, Cursor Tab, JetBrains AI, …) running as you | A continuous read of your editor buffer + neighbouring tabs, streamed to (usually cloud) inference on every keystroke | A secret typed as a *literal into source* is ingested the instant it lands in the buffer — and with cloud inference it has **already left the machine before you finish the line** (the model suggesting the cred back, or offering to move it, is proof it read it; it may then propagate it into other files/commits). byn's mitigation is structural: secrets live in the vault and are referenced by *name* / injected at runtime via `byn exec`, so there is no literal in the buffer to slurp. byn can't intercept the IDE itself — keeping literals out of source is the control byn makes practical. |
 | **A tampering attacker** with write access to `vault.db` or the audit log | Can modify on-disk state without the key | (a) Tampered ciphertext fails AEAD auth → vault refuses to open / decrypt. (b) Tampered audit log fails HMAC chain → `byn audit verify` flags first bad index → daemon error to user. |
-| **An attacker with write access to a project directory** | Can plant or modify a `.byn` | TOFU SHA-256 binds trust to specific file contents; tampering re-prompts (or hard-fails in agent mode). |
+| **An attacker with write access to a project directory** | Can plant or modify a `.byn` | TOFU SHA-256 binds trust to specific file contents. A new or changed `.byn` is **refused** — discovery never auto-trusts; approval is a separate, password-gated `byn trust` (proof of presence). A *changed* previously-trusted file is never silently re-trusted. |
 
 ### Out of scope
 
@@ -235,6 +235,44 @@ Wired but gated. When live: vault key needs *both* password+Argon2id
 *and* an SE/TPM operation, so a stolen `wrapped.key` is useless
 without the machine.
 
+### 7. Passkey unlock (WebAuthn PRF)
+
+A passkey (Touch ID / iCloud Keychain) can unlock a vault without typing the
+master password — a **second, independent wrapping** of the same vault key:
+
+- **Enrollment** (only while the vault is already unlocked, so the daemon holds
+  the key): the browser registers a `localhost` passkey with the WebAuthn `prf`
+  extension, evaluates PRF over a random per-credential salt, and derives
+  `KEK = HKDF-SHA256(prfOut, info="byn:passkey-kek:v1")`. **The 32-byte PRF
+  output never leaves the browser** — only the derived KEK crosses the loopback
+  socket. The daemon AEAD-wraps a second copy of the vault key with the KEK
+  (XChaCha20-Poly1305, AAD = `vault_id ‖ credential_id ‖ domain`) into the
+  `passkey_unlock` table. The password wrap is untouched — **vault data is never
+  re-encrypted** (same shape as a password change).
+- **Unlock:** the assertion re-evaluates PRF over the stored salt → the same KEK
+  → the daemon unwraps the stored copy and installs the key. A wrong KEK,
+  tampered ciphertext, or mismatched AAD **fails closed** (the vault stays
+  locked); the raw vault key never enters the browser.
+- **Per vault, never passkey-only:** each passkey wraps only *its* vault's key
+  (bound by AAD + a per-vault user handle). `rp.id` is fixed to `localhost`, so
+  macOS groups all byn passkeys under one "site" — but authorization is
+  per-vault, server-side. The **master password stays the durable root**:
+  enrollment requires a password-set vault, and losing every passkey never
+  locks you out.
+- **Revoke = lockout:** removing a credential is password-gated and cascades
+  (`ON DELETE CASCADE`) to its `passkey_unlock` row, so a revoked passkey can
+  never unlock the vault again.
+- **Scope:** needs a platform authenticator that implements `prf` — macOS Touch
+  ID / iCloud Keychain (Safari, or Chrome with an *iCloud-Keychain* passkey).
+  Authenticators without PRF (e.g. Chrome's own Google-Password-Manager
+  passkeys) degrade to **session-only** sign-in, never key recovery.
+
+Honest ceiling: convenience + a second unlock path, not a stronger root than the
+password. The KEK transits the loopback socket once per unlock, to a daemon that
+already holds the key while unlocked; it does not defend against a compromised
+daemon or a same-machine attacker who can drive the browser — see "owned by you,
+operated by many" above.
+
 ---
 
 ## Process & IPC defenses
@@ -303,14 +341,24 @@ Agents and CI can never silently auto-trust a malicious config.
 
 `~/.byn/trusted_byn.json` maps a canonical path (after
 `filepath.EvalSymlinks`) to a SHA-256 of the file's full contents.
-First time byn sees a `.byn`: prompt (TTY) or hard-fail (agent).
-On subsequent runs the hash must match. See
-[`.byn` file format](byn-file-format.md).
+Discovery is **read-only**: a new or changed `.byn` is refused (in both
+interactive and agent mode) — it never auto-trusts. Approval is a
+separate, deliberate act — `byn trust PATH` — which **always requires
+the master password** (proof of presence, even when the vault is already
+unlocked). The daemon owns the store and verifies the password before
+recording. A *changed* previously-trusted file is never silently
+re-trusted. See [`.byn` file format](byn-file-format.md).
 
-**Known weakness:** the trust file itself is protected only by UNIX
-perms (mode 0600 in `~`). An attacker who can write your home
-directory can pre-approve any `.byn`. Hardening is designed and
-deferred — see internal design notes.
+**The ceiling (honest):** the password gate closes the `byn trust` and
+interactive-prompt vectors — an agent constrained to byn's CLI, or one
+that doesn't have the password, can no longer grant or re-grant trust.
+It does **not** stop a code-executing same-UID process from writing
+`trusted_byn.json` directly (mode 0600 in `~` doesn't keep *you* out of
+your own file). That's the same user-space ceiling as everywhere here:
+*small and loud*, not zero. Tamper-evidence for the store — HMAC-signing
+it with a daemon-resident key — is designed and deferred to a **separate
+slice**; even then, a same-UID adversary that can recompute the key
+isn't fully stopped without OS isolation.
 
 ### Hints redaction
 

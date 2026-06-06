@@ -181,6 +181,31 @@ entry_versions(
     created_at TEXT NOT NULL
 ) STRICT
 
+-- Portal passkey credentials (WebAuthn). All columns are non-secret.
+passkey(
+    id INTEGER PRIMARY KEY,
+    credential_id BLOB NOT NULL UNIQUE,
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    aaguid BLOB, transports TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '',
+    backup_eligible INTEGER NOT NULL DEFAULT 0,   -- WebAuthn BE flag (must round-trip)
+    backup_state INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+) STRICT
+
+-- PRF-derived second wrapping of the vault key, one row per credential (cold
+-- unlock). Revoking the credential cascades here; the KEK = HKDF(prfOut) that
+-- unwraps wrapped_vault_key is computed in the browser and never stored.
+passkey_unlock(
+    credential_id BLOB PRIMARY KEY REFERENCES passkey(credential_id) ON DELETE CASCADE,
+    prf_salt BLOB NOT NULL,
+    wrapped_vault_key BLOB NOT NULL,
+    hkdf_info_version INTEGER NOT NULL DEFAULT 1,
+    aead_alg TEXT NOT NULL DEFAULT 'xchacha20poly1305',
+    label TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+) STRICT
+
 -- File-content secrets (reserved; data-plane CRUD not yet shipped).
 file_meta(...) STRICT
 ```
@@ -385,9 +410,10 @@ time cost), AAD-binding rationale, and threat model.
 | `internal/auth` | Raw-mode password prompt; persistent failed-unlock backoff |
 | `internal/secmem` | `mlock`'d buffers for sensitive workspace |
 | `internal/hwkey` | macOS SE / Linux TPM2 / software fallback (provider interface) |
+| `internal/passkey` | WebAuthn relying party — register/assert ceremonies + PRF→KEK derivation for portal passkey unlock |
+| `internal/ui` | daemon-embedded browser portal (loopback HTTP; scope tree, entries, passkey unlock) |
 | `internal/shim` | (reserved; Phase 3) |
 | `internal/acl` | (reserved; Phase 4) |
-| `internal/ui` | (reserved; Phase 2 local web UI) |
 
 ---
 
