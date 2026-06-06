@@ -1,0 +1,30 @@
+BYN                        default / billing / staging                                      unlocked       
+▼ default                                                                                                  
+  ▼ billing                ENV-VARS (3)                                                    + add (a)       
+    ○ default              ─────────────────────────────────────────────────────────────────────────       
+    ● staging                 ↓ inherited   ⤴ overrides default   ✦ new in env                             
+  ▶ default                  ⤴ API_KEY                                  ●●●●●●●●●●●●●●●●  2026-06-02       
+▶ work                       ⤴ DB_URL                                   ●●●●●●●●●●●●●●●●  2026-06-02       
++ new vault                  ⤴ STRIPE_SK                                ●●●●●●●●●●●●●●●●  2026-06-02       
+                                                                                                           
+                           FILES (0)                                                       + add (a)       
+                           ─────────────────────────────────────────────────────────────────────────       
+                             (none — Phase 5)                                                              
+                                                                                                           
+                           RECENT AUDIT                                                view all (ga)       
+                           ─────────────────────────────────────────────────────────────────────────       
+                             21:49  get          DB_URL            ok                                      
+                             21:49  put          STRIPE_SK         ok                                      
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+                                                                                                           
+NORMAL  default/billing/staging  unlocked [rail]  j/k nav  Tab swap  i edit  a add  : cmd  / search  ? help

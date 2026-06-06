@@ -1,0 +1,10 @@
+                              
+  Terminal too small.         
+  Resize to at least 40 × 12. 
+                              
+  Or use:                     
+    $ byn list                
+    $ byn get NAME            
+                              
+  Press q to quit.            
+                              

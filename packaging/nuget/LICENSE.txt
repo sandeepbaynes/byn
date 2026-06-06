@@ -1,0 +1,6 @@
+byn — PolyForm Noncommercial License 1.0.0
+Copyright (c) 2026 Sandeep Baynes. https://github.com/sandeepbaynes/byn
+
+Free for non-commercial use; commercial use requires a separate license.
+Full text: https://polyformproject.org/licenses/noncommercial/1.0.0/
+This package only reserves the name "byn"; the software is a Go CLI.

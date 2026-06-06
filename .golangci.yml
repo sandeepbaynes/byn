@@ -1,0 +1,58 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - gocritic
+    - revive
+    - unused
+    - ineffassign
+    - misspell
+
+  settings:
+    gosec:
+      excludes:
+        - G104 # errcheck already covers unhandled errors
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+        - name: error-return
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - revive
+          - errcheck
+      # CGo-heavy files: linters routinely false-positive on the
+      # generated wrapper code (e.g. gocritic dupSubExpr on &cErr).
+      - path: internal/hwkey/macos\.go
+        linters:
+          - gocritic
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

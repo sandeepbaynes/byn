@@ -1,0 +1,130 @@
+# GoReleaser config for byn — https://goreleaser.com
+# Validate:  goreleaser check
+# Dry run:   goreleaser release --snapshot --clean
+# Real run:  git tag v0.0.1 && git push --tags   (CI does the rest)
+#
+# Produces raw per-platform binaries named byn-<os>-<arch> + a
+# byn-<version>.sha256 manifest — the exact names install.sh,
+# packaging/homebrew/byn.rb, and packaging/aur/PKGBUILD already expect.
+version: 2
+
+project_name: byn
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: byn
+    main: ./cmd/byn
+    binary: byn
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.buildDate={{ .CommitDate }}
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: byn
+    formats: [binary]
+    name_template: 'byn-{{ .Os }}-{{ .Arch }}{{ if eq .Os "windows" }}.exe{{ end }}'
+
+checksum:
+  name_template: "byn-{{ .Version }}.sha256"
+  algorithm: sha256
+
+# Linux packages: deb (Debian/Ubuntu), rpm (Fedora/RHEL), apk (Alpine).
+nfpms:
+  - id: byn
+    package_name: byn
+    vendor: Sandeep Baynes
+    homepage: https://github.com/sandeepbaynes/byn
+    maintainer: Sandeep Baynes
+    description: "Local-first secure secrets vault and credential manager."
+    license: "PolyForm-Noncommercial-1.0.0"
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    section: utils
+    contents:
+      - src: man/byn.1
+        dst: /usr/share/man/man1/byn.1
+      - src: LICENSE
+        dst: /usr/share/doc/byn/LICENSE
+
+# Homebrew: auto-update the formula in your tap. Needs a HOMEBREW_TAP_GITHUB_TOKEN
+# secret (a PAT that can push to sandeepbaynes/homebrew-tap). Supersedes the
+# hand-written packaging/homebrew/byn.rb once you adopt CI.
+brews:
+  - name: byn
+    repository:
+      owner: sandeepbaynes
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/sandeepbaynes/byn
+    description: "Local-first secure secrets vault and credential manager."
+    license: "PolyForm-Noncommercial-1.0.0"
+    test: |
+      assert_match "byn #{version}", shell_output("#{bin}/byn version")
+    skip_upload: auto
+
+release:
+  github:
+    owner: sandeepbaynes
+    name: byn
+  draft: false
+  prerelease: auto
+  name_template: "byn {{ .Version }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "merge conflict"
+
+# --- Future publishers: uncomment + add the matching repo/secret to enable ---
+#
+# aurs:
+#   - name: byn-bin
+#     homepage: https://github.com/sandeepbaynes/byn
+#     description: "Local-first secure secrets vault and credential manager."
+#     license: "PolyForm-Noncommercial-1.0.0"
+#     git_url: "ssh://aur@aur.archlinux.org/byn-bin.git"
+#     private_key: "{{ .Env.AUR_SSH_PRIVATE_KEY }}"
+#     package: |-
+#       install -Dm755 "./byn" "${pkgdir}/usr/bin/byn"
+#
+# snapcrafts:
+#   - name: byn
+#     summary: "Local-first secure secrets vault and credential manager."
+#     description: "byn keeps secrets in a local, encrypted, daemon-backed vault."
+#     grade: stable
+#     confinement: classic
+#     publish: true
+#
+# scoops:                       # Windows (Scoop)
+#   - repository: { owner: sandeepbaynes, name: scoop-bucket, token: "{{ .Env.SCOOP_GITHUB_TOKEN }}" }
+#     homepage: https://github.com/sandeepbaynes/byn
+#     description: "Local-first secure secrets vault and credential manager."
+#     license: "PolyForm-Noncommercial-1.0.0"
+#
+# winget:                       # Windows (winget)
+#   - name: byn
+#     publisher: SandeepBaynes
+#     license: "PolyForm-Noncommercial-1.0.0"
+#     homepage: https://github.com/sandeepbaynes/byn
+#     short_description: "Local-first secure secrets vault and credential manager."
+#     repository: { owner: sandeepbaynes, name: winget-pkgs, branch: "byn-{{ .Version }}", token: "{{ .Env.WINGET_GITHUB_TOKEN }}" }
+#
+# dockers:
+#   - image_templates: ["ghcr.io/sandeepbaynes/byn:{{ .Version }}", "ghcr.io/sandeepbaynes/byn:latest"]
