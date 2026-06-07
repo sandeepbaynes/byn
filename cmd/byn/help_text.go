@@ -681,7 +681,8 @@ DESCRIPTION
        "byn --version" and "byn -v".
 
        byn is by Sandeep Baynes (https://github.com/sandeepbaynes/byn) and is licensed
-       under the PolyForm Noncommercial License 1.0.0.
+       under the Business Source License 1.1 (source-available;
+       converts to Apache-2.0 four years after each release).
 
 EXAMPLES
            $ byn version

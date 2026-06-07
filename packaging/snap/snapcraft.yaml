@@ -11,7 +11,7 @@ description: |
   byn keeps your secrets in a local, encrypted, daemon-backed vault. Agents
   and processes can always read the NAMES of your env-vars, never the
   values. https://github.com/sandeepbaynes/byn
-license: LicenseRef-PolyForm-Noncommercial-1.0.0
+license: BUSL-1.1
 base: core22
 grade: devel
 confinement: classic

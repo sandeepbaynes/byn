@@ -13,7 +13,6 @@ Closes #
 - [ ] Docs updated if behavior changed (`docs/`, `man/`, CLI help text)
 - [ ] No secrets in plaintext and none via CLI args; nothing sensitive in the diff or test fixtures
 - [ ] Commit subjects are imperative mood, ≤72 chars (e.g. `Add vault unlock command`)
-- [ ] I will sign the CLA when the bot asks, by commenting exactly:
-      `I have read the CLA Document and I hereby sign the CLA`
+- [ ] My commits are signed off (`git commit -s`) per the [DCO](../DCO)
 
 <!-- New to the layout? See CONTRIBUTING.md, docs/architecture.md, and docs/spec.md. -->

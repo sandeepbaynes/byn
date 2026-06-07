@@ -13,7 +13,7 @@ readme = "README.md"
 requires-python = ">=3.7"
 authors = [{ name = "Sandeep Baynes" }]
 keywords = ["secrets", "vault", "credentials", "dotenv", "cli", "security"]
-license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license = "BUSL-1.1"
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Environment :: Console",

@@ -9,7 +9,7 @@ class Byn < Formula
   desc "Local-first secure secrets vault and credential manager"
   homepage "https://github.com/sandeepbaynes/byn"
   version "0.0.1"
-  license "PolyForm-Noncommercial-1.0.0"
+  license "BUSL-1.1"
 
   on_macos do
     on_arm do
