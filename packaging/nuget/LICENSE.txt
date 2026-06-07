@@ -1,6 +1,8 @@
-byn — PolyForm Noncommercial License 1.0.0
+byn — Business Source License 1.1 (BUSL-1.1)
 Copyright (c) 2026 Sandeep Baynes. https://github.com/sandeepbaynes/byn
 
-Free for non-commercial use; commercial use requires a separate license.
-Full text: https://polyformproject.org/licenses/noncommercial/1.0.0/
+Source-available: free for internal and commercial use; you may not offer byn
+to third parties as a competing hosted secrets-management service. Each version
+converts to Apache-2.0 four years after its release.
+Full text: https://github.com/sandeepbaynes/byn/blob/main/LICENSE
 This package only reserves the name "byn"; the software is a Go CLI.

@@ -27,7 +27,7 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .ShortCommit }}
       - -X main.buildDate={{ .CommitDate }}
-    goos: [darwin, linux, windows]
+    goos: [darwin, linux]
     goarch: [amd64, arm64]
 
 archives:
@@ -47,7 +47,7 @@ nfpms:
     homepage: https://github.com/sandeepbaynes/byn
     maintainer: Sandeep Baynes
     description: "Local-first secure secrets vault and credential manager."
-    license: "PolyForm-Noncommercial-1.0.0"
+    license: "BUSL-1.1"
     formats: [deb, rpm, apk]
     bindir: /usr/bin
     section: utils
@@ -69,7 +69,7 @@ brews:
     directory: Formula
     homepage: https://github.com/sandeepbaynes/byn
     description: "Local-first secure secrets vault and credential manager."
-    license: "PolyForm-Noncommercial-1.0.0"
+    license: "BUSL-1.1"
     test: |
       assert_match "byn #{version}", shell_output("#{bin}/byn version")
     skip_upload: auto
@@ -98,7 +98,7 @@ changelog:
 #   - name: byn-bin
 #     homepage: https://github.com/sandeepbaynes/byn
 #     description: "Local-first secure secrets vault and credential manager."
-#     license: "PolyForm-Noncommercial-1.0.0"
+#     license: "BUSL-1.1"
 #     git_url: "ssh://aur@aur.archlinux.org/byn-bin.git"
 #     private_key: "{{ .Env.AUR_SSH_PRIVATE_KEY }}"
 #     package: |-
@@ -116,12 +116,12 @@ changelog:
 #   - repository: { owner: sandeepbaynes, name: scoop-bucket, token: "{{ .Env.SCOOP_GITHUB_TOKEN }}" }
 #     homepage: https://github.com/sandeepbaynes/byn
 #     description: "Local-first secure secrets vault and credential manager."
-#     license: "PolyForm-Noncommercial-1.0.0"
+#     license: "BUSL-1.1"
 #
 # winget:                       # Windows (winget)
 #   - name: byn
 #     publisher: SandeepBaynes
-#     license: "PolyForm-Noncommercial-1.0.0"
+#     license: "BUSL-1.1"
 #     homepage: https://github.com/sandeepbaynes/byn
 #     short_description: "Local-first secure secrets vault and credential manager."
 #     repository: { owner: sandeepbaynes, name: winget-pkgs, branch: "byn-{{ .Version }}", token: "{{ .Env.WINGET_GITHUB_TOKEN }}" }

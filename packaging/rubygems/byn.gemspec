@@ -8,7 +8,7 @@ Gem::Specification.new do |s|
   s.description = "byn is a local-first secure secrets vault. This gem reserves the name; install the real CLI via `go install github.com/sandeepbaynes/byn/cmd/byn@latest`, Homebrew, or https://github.com/sandeepbaynes/byn. It installs no executable."
   s.authors     = ["Sandeep Baynes"]
   s.homepage    = "https://github.com/sandeepbaynes/byn"
-  s.license     = "Nonstandard" # PolyForm Noncommercial 1.0.0 — see https://github.com/sandeepbaynes/byn
+  s.license     = "Nonstandard" # BUSL-1.1 (source-available) — see https://github.com/sandeepbaynes/byn
   s.files       = ["README.md"]
   s.metadata    = { "homepage_uri" => "https://github.com/sandeepbaynes/byn" }
   s.required_ruby_version = ">= 2.6"

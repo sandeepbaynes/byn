@@ -1,7 +1,7 @@
 # byn
 
 **v0.0.1** · by Sandeep Baynes · [github.com/sandeepbaynes/byn](https://github.com/sandeepbaynes/byn) ·
-PolyForm Noncommercial 1.0.0
+Source-available (BUSL-1.1)
 
 Secure secrets vault and credential management with a local daemon and a
 thin CLI client. Pre-release, under active development.
@@ -36,8 +36,8 @@ go install github.com/sandeepbaynes/byn/cmd/byn@latest
 > it moves. Watch the
 > [releases](https://github.com/sandeepbaynes/byn/releases) for the switch.
 
-Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (a quick,
-one-time CLA signature is required).
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). Sign off your
+commits with `git commit -s` (Developer Certificate of Origin) — no CLA.
 
 Then:
 
@@ -395,6 +395,14 @@ Highlights of what's next:
 
 ## License
 
-PolyForm Noncommercial 1.0.0 — free for personal, research, and
-noncommercial use. Commercial use requires a separate license. See
-`LICENSE`.
+**Business Source License 1.1 (BUSL-1.1)** — source-available, *not* OSI
+"open source". You may use, modify, and self-host byn for any purpose,
+including internal and commercial use at work. The one restriction: you may
+not offer byn to third parties as a competing hosted/managed
+secrets-management service. Each released version automatically converts to
+**Apache-2.0** four years after its release. See [`LICENSE`](LICENSE) for the
+exact terms, including the Additional Use Grant.
+
+byn is **open-core**: this repository is the free, source-available base. Paid
+enterprise features (multi-user management, team ACLs / sharing, SSO, audit
+export & compliance) live in a separate repository under commercial terms.

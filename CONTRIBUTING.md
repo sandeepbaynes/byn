@@ -2,27 +2,33 @@
 
 Thanks for your interest in byn. A few things before you start.
 
-## Contributor License Agreement (required)
+## Sign-off: Developer Certificate of Origin (DCO)
 
-byn is licensed under **PolyForm Noncommercial 1.0.0** (see [`LICENSE`](LICENSE)).
-Because the project may also be offered under separate commercial terms,
-every contributor must agree to the **[Contributor License Agreement](CLA.md)**
-before a pull request can be merged.
+byn is licensed under the **Business Source License 1.1** — source-available
+(see [`LICENSE`](LICENSE)); each version converts to Apache-2.0 four years
+after release. There is **no CLA**. Contributions are accepted under the
+**[Developer Certificate of Origin](DCO)**: you keep full copyright in your
+work and simply certify that you have the right to submit it under the
+project's license.
 
-It's lightweight and automated. The first time you open a PR, a bot comments
-with a link; you sign by replying **exactly**:
+You certify by **signing off your commits**:
 
-> I have read the CLA Document and I hereby sign the CLA
+```sh
+git commit -s -m "Add vault unlock command"
+```
 
-Your signature is recorded and applies to all your future PRs. The CLA lets
-you keep copyright on your contribution while granting the project the right
-to use and relicense it. Read it in full: [`CLA.md`](CLA.md).
+That appends a `Signed-off-by: Your Name <you@example.com>` line from your
+`git config` name/email. Every commit in a PR must carry one — the
+[DCO check](.github/workflows/dco.yml) enforces it. Read exactly what you're
+certifying in [`DCO`](DCO).
 
-> **The bot is a convenience, not a precondition.** Per the [CLA](CLA.md) (§6),
-> **submitting any contribution — by any means — is itself acceptance** of the
-> agreement, whether or not the bot recorded a signature and regardless of how
-> the contribution reached the project. The signing step just makes that
-> acceptance explicit and easy to track.
+> Forgot to sign off? Amend the last commit with `git commit --amend -s`, or a
+> whole branch with `git rebase --signoff origin/main`, then force-push.
+
+> **Why DCO, not a CLA?** It keeps contribution friction low and the project
+> never asks you to hand over relicensing rights. (BUSL is source-available,
+> not OSI "open source" — but every release becomes Apache-2.0 on its fourth
+> anniversary, and DCO means that promise can't be quietly revoked.)
 
 ## Project shape
 
@@ -72,9 +78,9 @@ and tagged, this becomes the standard `…/cmd/byn@latest`.
 1. Branch off `main`.
 2. Add tests with your change.
 3. `make test` + `make test-integration` green; `golangci-lint` clean.
-4. Open the PR; sign the CLA when the bot asks.
+4. Open the PR; the DCO check confirms every commit is signed off.
 5. A maintainer reviews. `main` is protected — merges require review + a
-   passing CLA check.
+   passing DCO check.
 
 ## Maintainer notes — branch protection
 
@@ -82,9 +88,9 @@ Configure once at **Settings → Branches → Add branch protection rule** for
 `main`:
 
 - ✅ Require a pull request before merging (+ at least 1 approval)
-- ✅ Require status checks to pass → select **CLA Assistant** and the **CI** jobs
+- ✅ Require status checks to pass → select **DCO** and the **CI** jobs
 - ✅ Require conversation resolution before merging
 - ✅ (optional, stricter) Do not allow bypassing the above
 
 That gives "public read, private write": anyone may fork and propose, but
-nothing merges without your review and a signed CLA.
+nothing merges without your review and a DCO sign-off.

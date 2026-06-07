@@ -11,4 +11,4 @@ go install github.com/sandeepbaynes/byn/cmd/byn@latest
 ```
 
 Homepage: https://github.com/sandeepbaynes/byn · © 2026 Sandeep Baynes ·
-PolyForm Noncommercial 1.0.0
+BUSL-1.1 (source-available)
