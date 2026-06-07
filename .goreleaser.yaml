@@ -27,7 +27,9 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .ShortCommit }}
       - -X main.buildDate={{ .CommitDate }}
-    goos: [darwin, linux, windows]
+    # macOS + Linux only — the daemon uses Unix-only syscalls (umask,
+    # SO_PEERCRED), so the binary does not compile for Windows yet.
+    goos: [darwin, linux]
     goarch: [amd64, arm64]
 
 archives:
