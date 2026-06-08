@@ -407,3 +407,4 @@ byn is **open-core**: this repository is the free, source-available base. Paid
 enterprise features (multi-user management, team ACLs / sharing, SSO, audit
 export & compliance) live in a separate repository under commercial terms.
 
+
