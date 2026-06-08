@@ -197,6 +197,7 @@ function twistSpan(onToggle) {
 async function renderTree() {
   const tree = $("#tree"); tree.innerHTML = "";
   const st = await api("GET", "/api/status");
+  if (st && st.version) setHelpVersion(st.version);
   state.vaults = (st.vaults || []).filter((v) => v.initialized);
   for (const v of state.vaults) {
     const open = state.open.vaults.has(v.name);
@@ -978,6 +979,12 @@ function toast(msg, isErr) {
 function isTyping() { const a = document.activeElement; return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable); }
 function toggleHelp() { const p = $("#help-pop"); p.hidden = !p.hidden; }
 function hideHelp() { $("#help-pop").hidden = true; }
+function setHelpVersion(v) {
+  const el = $("#help-ver");
+  if (!el || !v) return;
+  const label = /^[0-9]/.test(v) ? "byn v" + v : "byn " + v; // 0.0.1 -> "byn v0.0.1"
+  if (el.textContent !== label) el.textContent = label;
+}
 
 // ---- spotlight palette (Ctrl/⌘+P) ---------------------------------------
 

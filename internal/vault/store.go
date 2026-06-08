@@ -2,14 +2,17 @@ package vault
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/hkdf"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver
 
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
@@ -498,6 +501,46 @@ func (s *Store) snapshotVaultKey() []byte {
 	out := make([]byte, len(s.vaultKey))
 	copy(out, s.vaultKey)
 	return out
+}
+
+// DeriveSubkey returns a 32-byte key derived from the vault key via HKDF-SHA256
+// with the given info label — the safe way for callers to obtain a
+// purpose-bound subkey (e.g. the trust-store MAC key) without ever handling the
+// raw vault key. Returns ErrLocked when the vault is locked.
+func (s *Store) DeriveSubkey(info string) ([]byte, error) {
+	vk := s.snapshotVaultKey()
+	if vk == nil {
+		return nil, ErrLocked
+	}
+	defer zero(vk)
+	return hkdfSubkey(vk, info)
+}
+
+// DeriveSubkeyWithPassword unwraps the vault key with the password and returns
+// an HKDF subkey for info WITHOUT changing the lock state (the unwrapped key is
+// zeroed immediately). This is the grant-time path: the password is presented
+// for proof-of-presence, but the vault may be locked, so the in-memory key
+// isn't available. Returns vcrypto.ErrWrongPassword on a bad password.
+func (s *Store) DeriveSubkeyWithPassword(password []byte, info string) ([]byte, error) {
+	wrapped, err := os.ReadFile(filepath.Join(s.dir, wrappedFilename)) // #nosec G304 -- path is store-configured
+	if err != nil {
+		return nil, fmt.Errorf("vault: read wrapped key: %w", err)
+	}
+	vk, err := vcrypto.Unwrap(password, wrapped)
+	if err != nil {
+		return nil, err
+	}
+	defer zero(vk)
+	return hkdfSubkey(vk, info)
+}
+
+// hkdfSubkey derives a 32-byte key from vk via HKDF-SHA256 with the info label.
+func hkdfSubkey(vk []byte, info string) ([]byte, error) {
+	out := make([]byte, 32)
+	if _, err := io.ReadFull(hkdf.New(sha256.New, vk, nil, []byte(info)), out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // IsLocked reports whether the vault is currently locked.

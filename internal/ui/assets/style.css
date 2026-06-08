@@ -468,6 +468,9 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .help-list > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px; }
 .help-list dt { color: var(--signal); white-space: nowrap; }
 .help-list dd { color: var(--text-dim); text-align: right; }
+/* version footer — divider above, faint + right-aligned to read as an annotation */
+.help-ver { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-faint); text-align: right; letter-spacing: .04em; }
+.help-ver:empty { display: none; }
 
 /* "+ new …" browse rows */
 .lvl-add { background: rgba(52,216,160,.16); color: var(--signal); }
@@ -476,7 +479,9 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 
 /* reusable dialog (create / confirm) */
 .dialog {
-  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
+  /* Above the passkey panel (.pk-modal, z-index 1000) so the masked
+     password dialog is usable when revoking from that panel. */
+  position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center;
   background: rgba(6,7,10,.66); backdrop-filter: blur(3px); animation: fade .15s ease;
 }
 

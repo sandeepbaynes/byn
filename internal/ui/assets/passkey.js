@@ -265,10 +265,19 @@
           rev.type = "button";
           rev.textContent = "revoke";
           rev.onclick = async () => {
-            const pw = window.prompt("master password to revoke this passkey:");
-            if (!pw) return;
+            // byn's own masked dialog — never window.prompt() (shows the
+            // master password in plaintext).
+            if (typeof openDialog !== "function") { say("password dialog unavailable", true); return; }
+            const r = await openDialog({
+              title: "Revoke passkey",
+              okText: "revoke",
+              danger: true,
+              message: "Enter your master password to revoke “" + (p.label || "passkey") + "”.",
+              fields: [{ key: "password", label: "master password", type: "password" }],
+            });
+            if (!r || !r.password) return;
             say("revoking…");
-            try { await remove(vault, p.credential_id, pw); say("passkey revoked."); refresh(); }
+            try { await remove(vault, p.credential_id, r.password); say("passkey revoked."); refresh(); }
             catch (e) { say("revoke failed: " + e.message, true); }
           };
           row.appendChild(left);

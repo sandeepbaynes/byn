@@ -46,12 +46,40 @@ func (m Model) renderRail() string {
 		lines = lines[:height]
 	}
 
+	// Version footer in the bottom row — the scroll math above reserves it
+	// (maxVisible = height-2). Dim + right-aligned so it reads as a subtle
+	// corner annotation rather than a tree item.
+	if height > 1 {
+		lines[height-1] = m.renderRailVersion(width)
+	}
+
 	// Pad each line to rail width so the rail/content border is straight.
 	for i, ln := range lines {
 		lines[i] = padRightLipgloss(ln, width)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// renderRailVersion renders the byn version as a dim, right-aligned footer in
+// the rail. It degrades gracefully on narrow rails (truncates) and renders
+// empty when there is no version string or no room.
+func (m Model) renderRailVersion(width int) string {
+	v := strings.TrimSpace(m.version)
+	if v == "" || width <= 0 {
+		return ""
+	}
+	if v[0] >= '0' && v[0] <= '9' {
+		v = "v" + v // 0.0.1 -> v0.0.1; leave non-numeric ("dev") as-is
+	}
+	if lipgloss.Width(v) > width {
+		v = truncate(v, width)
+	}
+	pad := width - lipgloss.Width(v)
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + m.styles.RailDim.Render(v)
 }
 
 func (m Model) renderRailNode(node railNode, focused bool, width int) string {
