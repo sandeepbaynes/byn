@@ -73,6 +73,7 @@ const (
 	OpTrustList   Op = "trust.list"
 	OpTrustRemove Op = "trust.remove"
 	OpTrustGrant  Op = "trust.grant"
+	OpTrustVerify Op = "trust.verify" // MAC-hardened TOFU check (fp + vk layers)
 
 	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
 	// for navigator.credentials.{create,get}; finish verifies the browser's
@@ -95,7 +96,7 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove, OpTrustGrant,
+	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustVerify,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
@@ -559,6 +560,27 @@ type TrustGrantResp struct {
 	Path    string `json:"path"`
 	SHA256  string `json:"sha256"`
 	Changed bool   `json:"changed"`
+}
+
+// TrustVerifyReq asks the daemon to verify a `.byn` against the hardened trust
+// store: it canonicalizes Path, reads + hashes the file, and checks the
+// record's MACs. Vault is the file's target vault (keys the vault-key MAC), or
+// "default".
+type TrustVerifyReq struct {
+	Path  string `json:"path"`
+	Vault string `json:"vault,omitempty"`
+}
+
+// TrustVerifyResp reports the status: "trusted", "changed" (content differs),
+// "untrusted" (no record), "stale" (record predates MAC hardening — re-trust to
+// protect), or "tampered" (a MAC failed — forged or copied from another
+// machine). VKChecked is true when the vault-key MAC was verified (target vault
+// unlocked); when false only the machine-fingerprint MAC was checked (e.g.
+// locked discovery).
+type TrustVerifyResp struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	VKChecked bool   `json:"vk_checked"`
 }
 
 // ---- Portal passkey (WebAuthn) ------------------------------------------

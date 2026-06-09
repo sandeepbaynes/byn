@@ -25,6 +25,11 @@ const (
 	vkMACDomain = "byn:trust-vk-mac:v1" // vault-key layer
 )
 
+// VKMACKeyInfo is the HKDF info label the daemon passes to
+// vault.Store.DeriveSubkey to derive the vault-key MAC key. Exported because
+// that derivation lives in the vault layer while the MAC itself lives here.
+const VKMACKeyInfo = "byn:trust-store-mac:v1"
+
 // macPreimage builds the message a record's MAC commits to: each field is
 // length-prefixed (4-byte big-endian) so field boundaries are unambiguous —
 // (path="a", sha="bc") and (path="ab", sha="c") produce different preimages.

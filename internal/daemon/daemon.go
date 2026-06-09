@@ -15,6 +15,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/config"
+	"github.com/sandeepbaynes/byn/internal/machineid"
 	"github.com/sandeepbaynes/byn/internal/ui"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
@@ -109,6 +110,11 @@ type Daemon struct {
 
 	limiter *auth.RateLimiter
 
+	// fpMACKey keys the trust store's machine-fingerprint MAC, derived once
+	// from machineid at New. nil when the machine id is unavailable (the
+	// fp-MAC layer degrades; the vault-key MAC still protects records).
+	fpMACKey []byte
+
 	// vaults holds every Store the daemon has opened in this process
 	// lifetime. Entries persist until Shutdown — locking a vault zeros
 	// the in-memory key (via vault.Store.Lock) but keeps the *Store so
@@ -163,6 +169,13 @@ func New(cfg Config) (*Daemon, error) {
 	d.limiter = auth.NewRateLimiter(d.limiterPath)
 	if cfg.Clock != nil {
 		d.limiter.SetClock(cfg.Clock)
+	}
+	// Trust-store machine-fingerprint MAC key, derived once. A failure here
+	// degrades only the fp-MAC layer (the vault-key MAC still protects records).
+	if id, err := machineid.ID(); err == nil {
+		d.fpMACKey = id
+	} else {
+		fmt.Fprintf(os.Stderr, "byn: machine id unavailable (%v); trust-store machine-fingerprint MAC disabled\n", err)
 	}
 	return d, nil
 }

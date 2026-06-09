@@ -143,6 +143,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleTrustRemove(env)
 	case ipc.OpTrustGrant:
 		return d.handleTrustGrant(ctx, env)
+	case ipc.OpTrustVerify:
+		return d.handleTrustVerify(env)
 	case ipc.OpPasskeyRegisterBegin:
 		return d.handlePasskeyRegisterBegin(ctx, env)
 	case ipc.OpPasskeyRegisterFinish:
@@ -564,7 +566,16 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 	}
 	canon := trust.Canonicalize(req.Path)
 	hash := trust.Hash(body)
-	changed, gerr := trust.Grant(d.cfg.Dir, canon, hash)
+	// Mint both MACs: vk from the vault key (derived from the just-verified
+	// password, so it works even on a locked vault); fp from the machine key.
+	vkKey, derr := st.DeriveSubkeyWithPassword(req.Password, trust.VKMACKeyInfo)
+	if derr != nil {
+		return internalErr(env.ID, derr)
+	}
+	defer zeroBytes(vkKey)
+	rec := trust.Record{Path: canon, SHA256: hash, Vault: name}
+	rec.SetMACs(d.fpMACKey, vkKey)
+	changed, gerr := trust.Put(d.cfg.Dir, rec)
 	if gerr != nil {
 		return internalErr(env.ID, gerr)
 	}
@@ -574,6 +585,64 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 		return internalErr(env.ID, err)
 	}
 	return resp
+}
+
+// handleTrustVerify checks a `.byn` against the hardened trust store. The
+// fp-MAC (machine) layer is verified whenever its key is available — including
+// while the vault is locked, which is what gates discovery. The vk-MAC
+// (vault-key) layer is verified only when the target vault is unlocked, the
+// use-time gate before a value flows. It mutates nothing.
+func (d *Daemon) handleTrustVerify(env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.TrustVerifyReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	if req.Path == "" {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest, "path required", "")
+	}
+	body, rerr := os.ReadFile(req.Path) // #nosec G304 -- user-named; daemon runs as the same user
+	if rerr != nil {
+		// File gone or unreadable: nothing to trust.
+		resp, err := ipc.NewResponse(env.ID, ipc.TrustVerifyResp{
+			Path: req.Path, Status: string(trust.VerifyUntrusted),
+		})
+		if err != nil {
+			return internalErr(env.ID, err)
+		}
+		return resp
+	}
+	canon := trust.Canonicalize(req.Path)
+	hash := trust.Hash(body)
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+
+	// vk-MAC key only when the target vault is unlocked (use-time check); while
+	// locked the fp-MAC alone gates discovery.
+	var vkKey []byte
+	if st, errEnv := d.storeForVault(env.ID, name); errEnv == nil && !st.IsLocked() {
+		if k, derr := st.DeriveSubkey(trust.VKMACKeyInfo); derr == nil {
+			vkKey = k
+			defer zeroBytes(vkKey)
+		}
+	}
+
+	status, vkChecked, verr := trust.Verify(d.cfg.Dir, canon, hash, d.fpMACKey, vkKey)
+	if verr != nil {
+		return internalErr(env.ID, verr)
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.TrustVerifyResp{
+		Path: canon, Status: string(status), VKChecked: vkChecked,
+	})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// zeroBytes wipes a derived-key buffer in place.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 // ---- Project CRUD ------------------------------------------------------
