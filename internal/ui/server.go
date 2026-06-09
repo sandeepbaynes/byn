@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -31,11 +32,13 @@ type Config struct {
 
 // Server is the embedded portal HTTP server.
 type Server struct {
-	disp     Dispatcher
-	mux      *http.ServeMux
-	httpSrv  *http.Server
-	ln       net.Listener
-	port     int
+	disp    Dispatcher
+	mux     *http.ServeMux
+	mu      sync.Mutex // guards httpSrv: Serve sets it, Close (via reload) reads it
+	httpSrv *http.Server
+	ln      net.Listener
+	port    int
+
 	sessions *pkSessions
 }
 
@@ -129,11 +132,17 @@ func (s *Server) Serve() error {
 	if s.ln == nil {
 		return fmt.Errorf("ui: Serve called before Listen")
 	}
-	s.httpSrv = &http.Server{
+	srv := &http.Server{
 		Handler:           s.mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	return s.httpSrv.Serve(s.ln)
+	// Publish under the lock so a concurrent Close (from reloadUI) reads a
+	// fully-constructed server, then serve WITHOUT the lock held (Serve blocks
+	// until Close, so holding it would deadlock the reload).
+	s.mu.Lock()
+	s.httpSrv = srv
+	s.mu.Unlock()
+	return srv.Serve(s.ln)
 }
 
 // Port returns the bound port.
@@ -141,8 +150,11 @@ func (s *Server) Port() int { return s.port }
 
 // Close stops the server.
 func (s *Server) Close() error {
-	if s.httpSrv != nil {
-		return s.httpSrv.Close()
+	s.mu.Lock()
+	srv := s.httpSrv
+	s.mu.Unlock()
+	if srv != nil {
+		return srv.Close()
 	}
 	if s.ln != nil {
 		return s.ln.Close()
