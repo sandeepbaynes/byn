@@ -156,7 +156,7 @@ func TestE2E_GoldenPath(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("daemon down status: code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr, "daemon is not running") || !strings.Contains(stderr, "byn daemon start") {
+	if !strings.Contains(stderr, "daemon is not running") || !strings.Contains(stderr, "byn start") {
 		t.Fatalf("daemon down stderr missing recovery message:\n%s", stderr)
 	}
 

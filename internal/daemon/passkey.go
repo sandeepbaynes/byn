@@ -81,6 +81,57 @@ func (c *passkeyChallenges) gcLocked(now time.Time) {
 	}
 }
 
+const presenceTokenTTL = 2 * time.Minute
+
+// presenceToken is a one-time, TTL'd proof that a fresh passkey ceremony just
+// succeeded for a vault — letting a follow-up privileged op (a trust grant)
+// accept the passkey as proof-of-presence in place of the master password. It
+// is returned only to the portal that ran the ceremony.
+type presenceToken struct {
+	vault   string
+	expires time.Time
+}
+
+type presenceTokens struct {
+	mu sync.Mutex
+	m  map[string]presenceToken
+}
+
+func newPresenceTokens() *presenceTokens { return &presenceTokens{m: make(map[string]presenceToken)} }
+
+func (p *presenceTokens) mint(vaultName string, now time.Time) ([]byte, error) {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return nil, err
+	}
+	id := hex.EncodeToString(buf[:])
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for k, t := range p.m {
+		if now.After(t.expires) {
+			delete(p.m, k)
+		}
+	}
+	p.m[id] = presenceToken{vault: vaultName, expires: now.Add(presenceTokenTTL)}
+	return []byte(id), nil
+}
+
+// consume removes the token and returns true only if it existed, matched
+// vaultName, and was unexpired. One-time use; never replayable.
+func (p *presenceTokens) consume(token []byte, vaultName string, now time.Time) bool {
+	if len(token) == 0 {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	t, ok := p.m[string(token)]
+	if !ok {
+		return false
+	}
+	delete(p.m, string(token))
+	return !now.After(t.expires) && t.vault == vaultName
+}
+
 // passkeyRP builds the relying party bound to the portal's configured loopback
 // origin (the URL the browser actually loads). rp.id stays "localhost"; only
 // the origin carries the port, validated at finish against the response's
@@ -289,7 +340,16 @@ func (d *Daemon) handlePasskeyAuthFinish(ctx context.Context, env *ipc.Envelope)
 		}
 	}
 	d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpPasskeyAuthFinish), Outcome: audit.OutcomeOK})
-	resp, err := ipc.NewResponse(env.ID, ipc.PasskeyAuthFinishResp{CredentialID: cred.ID, Unlocked: unlocked})
+	// A successful passkey ceremony is fresh proof-of-presence: mint a one-time
+	// token a trust grant can consume in place of the master password. Useful
+	// only while unlocked (trust needs the in-memory vault key), so only then.
+	var presence []byte
+	if !st.IsLocked() {
+		if tok, terr := d.presenceTokens.mint(name, time.Now()); terr == nil {
+			presence = tok
+		}
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.PasskeyAuthFinishResp{CredentialID: cred.ID, Unlocked: unlocked, PresenceToken: presence})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}

@@ -4,8 +4,8 @@
 # Real run:  git tag v0.0.1 && git push --tags   (CI does the rest)
 #
 # Produces raw per-platform binaries named byn-<os>-<arch> + a
-# byn-<version>.sha256 manifest — the exact names install.sh,
-# packaging/homebrew/byn.rb, and packaging/aur/PKGBUILD already expect.
+# byn-<version>.sha256 manifest — the exact names install.sh and
+# packaging/aur/PKGBUILD already expect.
 version: 2
 
 project_name: byn
@@ -58,8 +58,12 @@ nfpms:
         dst: /usr/share/doc/byn/LICENSE
 
 # Homebrew: auto-update the formula in your tap. Needs a HOMEBREW_TAP_GITHUB_TOKEN
-# secret (a PAT that can push to sandeepbaynes/homebrew-tap). Supersedes the
-# hand-written packaging/homebrew/byn.rb once you adopt CI.
+# secret (a PAT that can push to sandeepbaynes/homebrew-tap). This generated
+# formula replaces the old hand-written one (now removed).
+#
+# NOTE: GoReleaser deprecated `brews` in favour of `homebrew_casks`, but casks
+# are macOS-only — a formula covers Linux Homebrew too. We keep `brews` for
+# cross-platform coverage until GoReleaser offers a cross-platform replacement.
 brews:
   - name: byn
     repository:

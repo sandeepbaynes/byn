@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/trust"
@@ -29,7 +29,7 @@ func TestDiscoverScope_NoFileReturnsEmpty(t *testing.T) {
 	if src != "" {
 		t.Fatalf("src=%q, want empty", src)
 	}
-	if sc != (cliScope{}) {
+	if !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("scope=%+v", sc)
 	}
 }
@@ -37,7 +37,7 @@ func TestDiscoverScope_NoFileReturnsEmpty(t *testing.T) {
 func TestDiscoverScope_NoDiscoveryEnv(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "1")
 	sc, src, err := discoverScope(t.TempDir(), t.TempDir(), t.TempDir(), false)
-	if err != nil || src != "" || sc != (cliScope{}) {
+	if err != nil || src != "" || !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("expected zero result")
 	}
 }
@@ -52,28 +52,15 @@ func TestDiscoverScope_EmptyFileIsStopMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if src != "" || sc != (cliScope{}) {
+	if src != "" || !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("empty .byn should be a stop marker, got %+v src=%q", sc, src)
 	}
 }
 
-func TestDiscoverScope_AgentModeUntrustedIsFatal(t *testing.T) {
-	t.Setenv("BYN_NO_DISCOVERY", "")
-	start := t.TempDir()
-	bynDir := t.TempDir()
-	body := []byte("[scope]\nvault = \"acme\"\n")
-	if err := os.WriteFile(filepath.Join(start, ".byn"), body, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, _, err := discoverScope(start, t.TempDir(), bynDir, true)
-	if err == nil || !strings.Contains(err.Error(), "untrusted") {
-		t.Fatalf("expected untrusted err, got %v", err)
-	}
-}
-
-// In interactive (non-agent) mode an untrusted .byn is STILL fatal — discovery
-// no longer offers a y/N auto-trust, and it must not silently record trust.
-func TestDiscoverScope_UntrustedInteractive_NoAutoTrust(t *testing.T) {
+// Discovery resolves the scope from any .byn — trust is NOT checked here (only
+// `byn exec` gates on trust). An untrusted .byn yields its scope, not an error,
+// in both agent and interactive mode, and discovery never auto-trusts.
+func TestDiscoverScope_ResolvesUntrusted(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "")
 	start := t.TempDir()
 	bynDir := t.TempDir()
@@ -82,20 +69,23 @@ func TestDiscoverScope_UntrustedInteractive_NoAutoTrust(t *testing.T) {
 	if err := os.WriteFile(tpath, body, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
-	if err == nil || !strings.Contains(err.Error(), "untrusted") {
-		t.Fatalf("interactive untrusted should error, got %v", err)
+	for _, agent := range []bool{true, false} {
+		sc, src, err := discoverScope(start, t.TempDir(), bynDir, agent)
+		if err != nil {
+			t.Fatalf("agent=%v: untrusted .byn should resolve, got %v", agent, err)
+		}
+		if src != tpath || sc.Vault != "acme" {
+			t.Fatalf("agent=%v: scope=%+v src=%q", agent, sc, src)
+		}
 	}
-	// And nothing was auto-trusted.
-	st, _ := trust.Status(bynDir, trust.Canonicalize(tpath), trust.Hash(body))
-	if st == trust.StatusTrusted {
-		t.Fatal("discovery silently granted trust — it must never auto-trust")
+	if st, _ := trust.Status(bynDir, trust.Canonicalize(tpath), trust.Hash(body)); st == trust.StatusTrusted {
+		t.Fatal("discovery must never auto-trust")
 	}
 }
 
-// A previously-trusted .byn whose content changed is refused with a CHANGED
-// error — the silent-re-trust hole is closed.
-func TestDiscoverScope_ChangedBynIsFatal(t *testing.T) {
+// A changed .byn also just resolves — the trust/CHANGED check now lives in
+// `byn exec`, not discovery.
+func TestDiscoverScope_ResolvesChanged(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "")
 	start := t.TempDir()
 	bynDir := t.TempDir()
@@ -105,13 +95,15 @@ func TestDiscoverScope_ChangedBynIsFatal(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	trustByn(t, bynDir, tpath, orig)
-	// Now tamper with the file.
 	if err := os.WriteFile(tpath, []byte("[scope]\nvault = \"evil\"\n"), 0o600); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
-	if err == nil || !strings.Contains(err.Error(), "CHANGED") {
-		t.Fatalf("expected a CHANGED error, got %v", err)
+	sc, _, err := discoverScope(start, t.TempDir(), bynDir, false)
+	if err != nil {
+		t.Fatalf("changed .byn should resolve in discovery, got %v", err)
+	}
+	if sc.Vault != "evil" {
+		t.Fatalf("scope=%+v", sc)
 	}
 }
 

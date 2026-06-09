@@ -7,17 +7,29 @@ and how the TOFU trust model protects you from someone planting one.
 
 ## File format
 
-`.byn` is a TOML file with a single `[scope]` table.
+`.byn` is a TOML file with a `[scope]` table and an optional `[exec]` table.
 
 ```toml
 [scope]
 vault   = "default"
 project = "myapp"
 env     = "dev"
+
+[exec]
+env = ["AWS_ACCESS_KEY_ID", "DATABASE_URL"]   # injection allowlist for `byn exec`
 ```
 
-- All three fields are optional. Omitted fields fall through to env
+- `[scope]` fields are all optional. Omitted fields fall through to env
   vars and then daemon defaults.
+- `[exec] env` is the **injection allowlist** for `byn exec`: only the
+  listed names are injected into the child. `"*"` (or `["*"]`) injects
+  **all** scope vars — with a warning, since secrets added later are then
+  auto-injected. An **empty or absent** `[exec] env` injects **nothing**
+  (a project declares the vars it needs). With no `.byn` at all (ad-hoc
+  run), `byn exec` injects the whole scope.
+- `[exec] env` is **env-vars only** — it controls *which secrets are
+  injected*, not *which command runs*. A trusted `.byn` runs any command
+  you pass to `byn exec`; there is no command/script allowlist (yet).
 - Unknown keys are a **strict parse error** — typos and out-of-spec
   schemas don't silently turn into "default".
 - An **empty** `.byn` file is a stop marker; see below.
@@ -26,6 +38,14 @@ env     = "dev"
 
 Human-editable. Comment-friendly. Strict-mode parsing via
 `github.com/pelletier/go-toml/v2` with `DisallowUnknownFields()`.
+
+### Generating one from the portal
+
+Hand-authoring is fine, but the web portal's **`.byn`** button writes one for
+you: enter the project directory, multi-select which of the current scope's
+env-vars go in the `[exec] env` allowlist, and optionally **trust now**
+(password-gated) so `byn exec` works immediately. It writes `[scope]` for the
+portal's active vault/project/env plus the chosen `[exec] env`.
 
 ---
 
@@ -84,23 +104,26 @@ after.
   paths.)
 - **sha256** — SHA-256 of the file's bytes.
 
-### Check on every CLI invocation
+### Discovery applies the scope; `byn exec` enforces trust
 
-For every command that has a scope (i.e., not `trust`, `untrust`,
-`daemon`, `doctor`, `help`, `version` — those skip discovery):
+**Discovery itself does not gate on trust.** It walks for `.byn`, parses
+it, and applies the scope for *every* scoped command (`list`, `get`,
+`put`, the TUI, …) — an untrusted `.byn` does **not** block them. A `.byn`
+only redirects *which* secrets a command sees; the dangerous case is
+injecting them into a child process.
 
-1. Walk for `.byn` (as above).
-2. Read its contents, hash, canonicalize the path.
-3. Look up the canonical path in `trusted_byn.json`.
+**`byn exec` is the one command that verifies trust** — the verb that
+injects secrets into a child. Before injecting, it asks the daemon to
+MAC-verify the `.byn` (machine-fingerprint + vault-key MACs, see
+[security.md](security.md)) and aborts on anything but `trusted`:
 
-Discovery is **read-only** — the same three outcomes in both
-interactive and agent mode (it never prompts, and never auto-trusts):
-
-| State | What discovery does |
+| State | What `byn exec` does |
 |---|---|
-| Path present, hash matches | **Apply the scope** |
-| Path absent (first run) | **Refuse** — `untrusted .byn — approve it with \`byn trust PATH\`` |
-| Path present, hash differs (changed) | **Refuse** — `this .byn CHANGED since you trusted it — re-approve with \`byn trust PATH\`` |
+| Trusted (path + hash match, MACs valid) | **Inject** the allowlisted vars |
+| Untrusted (no record) | **Abort** — `byn trust PATH` |
+| Changed (hash differs) | **Abort** — re-approve with `byn trust PATH` |
+| Tampered (a MAC failed — forged / copied from another machine) | **Abort** — re-establish with `byn trust PATH` |
+| Stale (record predates MAC hardening) | **Abort** — re-trust to add protection |
 
 ### Granting trust is a separate, password-gated act
 

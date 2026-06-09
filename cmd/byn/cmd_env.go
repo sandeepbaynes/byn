@@ -3,6 +3,7 @@
 // `byn env create NAME`            create env in the active project
 // `byn env list`                   list envs in the active project
 // `byn env delete NAME`            remove a non-default env
+// `byn env clear [ENV] --yes`      delete all vars in an env (keep the env)
 // `byn env rename OLD NEW`         rename
 package main
 
@@ -28,6 +29,8 @@ func runEnv(args []string, scope cliScope) int {
 		return runEnvList(rest, scope)
 	case "delete", "rm":
 		return runEnvDelete(rest, scope)
+	case "clear":
+		return runEnvClear(rest, scope)
 	case "rename", "mv":
 		return runEnvRename(rest, scope)
 	case "help", "--help", "-h":
@@ -160,6 +163,51 @@ func runEnvDelete(args []string, scope cliScope) int {
 	return rc
 }
 
+// runEnvClear deletes ALL env-vars in an env (the env itself is kept).
+// Destructive, so it requires --yes; without it, prints a preview and exits.
+func runEnvClear(args []string, scope cliScope) int {
+	fs := flag.NewFlagSet("env clear", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	yes := fs.Bool("yes", false, "confirm the deletion (without it, prints a preview and exits non-zero)")
+	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
+	if err := fs.Parse(args); err != nil {
+		return exitErr
+	}
+	target := scope.Env
+	if fs.NArg() == 1 {
+		target = fs.Arg(0)
+	} else if fs.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, "Usage: byn env clear [ENV] --yes")
+		return exitErr
+	}
+	if target == "" {
+		target = "default"
+	}
+	vlt, prj := vaultOrDefault(scope.Vault), projectOrDefault(scope.Project)
+	if !*yes {
+		fmt.Fprintf(os.Stderr, "%s deletes ALL env-vars in env %q of %s/%s (inherited values are kept).\n",
+			boldYellow("env clear"), target, vlt, prj)
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Confirm with"), cyan("byn env clear "+target+" --yes"))
+		return exitErr
+	}
+	dir, err := defaultDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return exitErr
+	}
+	clearScope := scope
+	clearScope.Env = target
+	var resp ipc.EnvClearResp
+	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+		return newClient(dir).Call(ipc.OpEnvClear,
+			ipc.EnvClearReq{Scope: clearScope.ToIPC(), Password: pw}, &resp)
+	})
+	if rc == exitOK {
+		hintf("Cleared %d env-var(s) from %s/%s/%s.", resp.Deleted, vlt, prj, target)
+	}
+	return rc
+}
+
 func runEnvRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("env rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -195,5 +243,6 @@ Usage:
   byn env list [--json]                 List envs
   byn env create NAME                   Create a non-default env
   byn env delete NAME                   Remove a non-default env
+  byn env clear [ENV] --yes             Delete all vars in an env (keeps the env)
   byn env rename OLD NEW                Rename`)
 }

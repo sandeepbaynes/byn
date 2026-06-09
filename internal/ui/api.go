@@ -434,3 +434,39 @@ func (s *Server) handleVaultRename(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// POST /api/byn/write {dir, scope, env_vars[], trust, password?} — writes a
+// .byn scope file into dir and, when trust is set, trusts it (password-gated).
+func (s *Server) handleBynWrite(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Dir           string    `json:"dir"`
+		Scope         scopeBody `json:"scope"`
+		EnvVars       []string  `json:"env_vars"`
+		Trust         bool      `json:"trust"`
+		Password      string    `json:"password"`
+		PresenceToken []byte    `json:"presence_token"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.BynWriteReq{Dir: b.Dir, Scope: b.Scope.toIPC(), EnvVars: b.EnvVars, Trust: b.Trust, PresenceToken: b.PresenceToken}
+	if b.Password != "" {
+		req.Password = []byte(b.Password)
+	}
+	var resp ipc.BynWriteResp
+	if !s.run(w, r, ipc.OpBynWrite, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": resp.Path, "trusted": resp.Trusted})
+}
+
+// GET /api/fs/listdir?path=... lists subdirectories for the directory picker.
+func (s *Server) handleFSListDir(w http.ResponseWriter, r *http.Request) {
+	req := ipc.ListDirReq{Path: r.URL.Query().Get("path")}
+	var resp ipc.ListDirResp
+	if !s.run(w, r, ipc.OpFSListDir, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}

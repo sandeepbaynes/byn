@@ -70,18 +70,20 @@ func TestBynTargetVault_Helper(t *testing.T) {
 // master password to the daemon (granting is never a local write).
 func TestRunTrustAdd_GrantsViaDaemonWithPassword(t *testing.T) {
 	fd := startFakeDaemon(t)
-	fd.onOK(ipc.OpTrustGrant, ipc.TrustGrantResp{Path: "/canon/.byn", SHA256: strings.Repeat("a", 64)})
+	fd.onOK(ipc.OpTrustGrantBulk, ipc.TrustGrantBulkResp{
+		Results: []ipc.TrustGrantResult{{Path: "/canon/.byn", SHA256: strings.Repeat("a", 64)}},
+	})
 	tpath := writeDotByn(t, "[scope]\nvault = \"a\"\n")
 	withStdin(t, "s3cret\n")
 
 	if got := runTrustAdd([]string{"--password-stdin", tpath}); got != exitOK {
 		t.Fatalf("got %d", got)
 	}
-	calls := fd.callsFor(ipc.OpTrustGrant)
+	calls := fd.callsFor(ipc.OpTrustGrantBulk)
 	if len(calls) != 1 {
-		t.Fatalf("expected 1 grant call, got %d", len(calls))
+		t.Fatalf("expected 1 bulk grant call, got %d", len(calls))
 	}
-	var req ipc.TrustGrantReq
+	var req ipc.TrustGrantBulkReq
 	requireUnmarshal(t, calls[0].Body, &req)
 	if req.Vault != "a" {
 		t.Errorf("vault = %q, want a (from .byn [scope])", req.Vault)
@@ -89,14 +91,14 @@ func TestRunTrustAdd_GrantsViaDaemonWithPassword(t *testing.T) {
 	if string(req.Password) != "s3cret" {
 		t.Errorf("password not forwarded to the daemon: %q", req.Password)
 	}
-	if req.Path != tpath {
-		t.Errorf("path = %q, want %q", req.Path, tpath)
+	if len(req.Paths) != 1 || req.Paths[0] != tpath {
+		t.Errorf("paths = %v, want [%q]", req.Paths, tpath)
 	}
 }
 
 func TestRunTrustAdd_DaemonRejectsWrongPassword(t *testing.T) {
 	fd := startFakeDaemon(t)
-	fd.onErr(ipc.OpTrustGrant, ipc.CodeWrongPassword, "could not authorize: wrong password")
+	fd.onErr(ipc.OpTrustGrantBulk, ipc.CodeWrongPassword, "could not authorize: wrong password")
 	tpath := writeDotByn(t, "[scope]\nvault = \"a\"\n")
 	withStdin(t, "wrong\n")
 	if got := runTrustAdd([]string{"--password-stdin", tpath}); got != exitDaemonErr {

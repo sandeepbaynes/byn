@@ -22,9 +22,23 @@ const Filename = "trusted_byn.json"
 
 // Record is one trusted `.byn` file: its canonical path and the SHA-256 of
 // its content at the time trust was granted.
+//
+// Vault/FPMAC/VKMAC harden the store against forgery (see mac.go). They are
+// minted by the daemon at grant time (it holds the keys) and are empty on
+// records written before the hardening landed — such records are treated as
+// untrusted (re-trust required). All three use `omitempty` so the on-disk
+// format stays additive.
 type Record struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
+	// Vault is the target vault whose key keys the VKMAC ("" ⇒ "default").
+	Vault string `json:"vault,omitempty"`
+	// FPMAC binds the record to THIS machine (machine-fingerprint key) and is
+	// verifiable while the vault is locked — blocks cross-machine copies.
+	FPMAC string `json:"fp_mac,omitempty"`
+	// VKMAC binds the record to proof-of-password (vault-key-derived) and is
+	// verified at use-time — blocks a same-UID local forge.
+	VKMAC string `json:"vk_mac,omitempty"`
 }
 
 // Store is the file content.

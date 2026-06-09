@@ -103,6 +103,49 @@ body {
   box-shadow: 0 0 0 3px rgba(52,216,160,.14);
 }
 .input.mono { font-family: var(--mono); }
+
+/* .byn generator: multi-select allowlist + inline checkbox fields */
+.checklist {
+  max-height: 168px; overflow-y: auto;
+  background: var(--ink); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm); padding: 4px;
+}
+.check-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; border-radius: 5px; cursor: pointer;
+  font-family: var(--mono); font-size: 13px; color: var(--text);
+}
+.check-row:hover { background: var(--surface-2); }
+.check-row input, .field.check input { accent-color: var(--signal); margin: 0; }
+.field.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.field.check .field-label {
+  margin: 0; text-transform: none; letter-spacing: normal;
+  font-size: 13px; color: var(--text-dim);
+}
+
+/* directory picker (daemon-backed; opens over the create-.byn dialog) */
+#dirpicker { z-index: 1200; }
+.path-row { display: flex; gap: 8px; align-items: stretch; }
+.path-row .input { flex: 1; }
+.path-browse { white-space: nowrap; }
+.dirpicker-path {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 8px;
+  word-break: break-all; padding: 6px 8px; background: var(--ink);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+}
+.dirpicker-list {
+  max-height: 280px; overflow-y: auto; margin-bottom: 14px;
+  border: 1px solid var(--border-2); border-radius: var(--r-sm); background: var(--ink);
+}
+.dirpicker-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 12px; background: none; border: none; cursor: pointer;
+  color: var(--text); font-family: var(--mono); font-size: 13px; text-align: left;
+  border-bottom: 1px solid var(--surface-2);
+}
+.dirpicker-item:hover { background: var(--surface-2); }
+.dirpicker-item .di-ico { opacity: .85; }
+.dirpicker-empty { padding: 12px; }
 .input.area { resize: vertical; min-height: 130px; line-height: 1.5; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 
 /* import/export toolbar + drag-drop target */
@@ -468,6 +511,9 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .help-list > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px; }
 .help-list dt { color: var(--signal); white-space: nowrap; }
 .help-list dd { color: var(--text-dim); text-align: right; }
+/* version footer — divider above, faint + right-aligned to read as an annotation */
+.help-ver { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-faint); text-align: right; letter-spacing: .04em; }
+.help-ver:empty { display: none; }
 
 /* "+ new …" browse rows */
 .lvl-add { background: rgba(52,216,160,.16); color: var(--signal); }
@@ -476,7 +522,9 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 
 /* reusable dialog (create / confirm) */
 .dialog {
-  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
+  /* Above the passkey panel (.pk-modal, z-index 1000) so the masked
+     password dialog is usable when revoking from that panel. */
+  position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center;
   background: rgba(6,7,10,.66); backdrop-filter: blur(3px); animation: fade .15s ease;
 }
 

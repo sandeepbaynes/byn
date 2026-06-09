@@ -79,6 +79,15 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return mk(ipc.VaultPasswdResp{})
 	case ipc.OpRename, ipc.OpProjectCreate, ipc.OpEnvCreate:
 		return mk(struct{}{})
+	case ipc.OpBynWrite:
+		var pw struct {
+			Password []byte `json:"password"`
+		}
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &pw)
+		f.lastPassword = pw.Password
+		return mk(ipc.BynWriteResp{Path: "/proj/.byn", Trusted: len(pw.Password) > 0})
+	case ipc.OpFSListDir:
+		return mk(ipc.ListDirResp{Path: "/home/u", Parent: "/home", Entries: []ipc.DirEntry{{Name: "proj"}}})
 	case ipc.OpAuditTail:
 		return mk(ipc.AuditTailResp{Events: []ipc.AuditEvent{
 			{Op: "get", Outcome: "ok", EntryName: "API_KEY", CallerComm: "byn", CallerSurface: "socket", TS: 1},
@@ -350,6 +359,52 @@ func TestVaultRename_ForwardsPassword(t *testing.T) {
 	}
 	if string(f.lastPassword) != "rename-pw" {
 		t.Errorf("forwarded password = %q, want rename-pw", f.lastPassword)
+	}
+}
+
+func TestBynWrite_ReachAndForwardsPassword(t *testing.T) {
+	f := &fakeDisp{}
+	ts, c := newTestServer(t, f)
+	resp := post(t, c, ts.URL+"/api/byn/write", "http://localhost:2967",
+		map[string]any{
+			"dir":      "/tmp/proj",
+			"scope":    map[string]any{"vault": "default", "project": "p"},
+			"env_vars": []string{"A", "B"},
+			"trust":    true,
+			"password": "byn-pw",
+		})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if string(f.lastPassword) != "byn-pw" {
+		t.Errorf("forwarded password = %q, want byn-pw", f.lastPassword)
+	}
+	var got struct {
+		Path    string `json:"path"`
+		Trusted bool   `json:"trusted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != "/proj/.byn" || !got.Trusted {
+		t.Errorf("resp = %+v, want path=/proj/.byn trusted=true", got)
+	}
+}
+
+func TestFSListDir_Reach(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := getURL(t, c, ts.URL+"/api/fs/listdir?path=/home/u")
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", r.StatusCode)
+	}
+	var resp ipc.ListDirResp
+	if err := json.NewDecoder(r.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Path != "/home/u" || len(resp.Entries) != 1 || resp.Entries[0].Name != "proj" {
+		t.Fatalf("unexpected resp: %+v", resp)
 	}
 }
 

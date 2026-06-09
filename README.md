@@ -23,6 +23,9 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
 ```
 
+**New to byn? Follow the [5-minute quickstart](docs/quickstart.md)** — install →
+daemon → vault → first secret → portal.
+
 > `go install` does **not** modify your PATH. Ensure `$(go env GOPATH)/bin`
 > (usually `~/go/bin`) is on it — e.g. add `export PATH="$HOME/go/bin:$PATH"` to
 > your shell rc. Homebrew and the install script handle this for you.
@@ -42,7 +45,7 @@ commits with `git commit -s` (Developer Certificate of Origin) — no CLA.
 Then:
 
 ```sh
-byn daemon start
+byn start
 byn init           # create your first vault
 byn unlock
 byn put API_KEY    # value is read from stdin
@@ -231,7 +234,7 @@ make build
 
 export BYN_DIR=/tmp/byn-smoke
 
-bin/byn daemon start
+bin/byn start
 bin/byn status                           # → uninitialized
 bin/byn init                             # prompts for password twice
 bin/byn unlock                           # prompts once
@@ -240,7 +243,7 @@ bin/byn get my-key                       # → s3cr3t-value
 bin/byn list                             # → my-key
 bin/byn lock
 bin/byn get my-key                       # → error: vault is locked
-bin/byn daemon stop
+bin/byn stop
 ```
 
 For non-interactive (CI, scripts) use `--password-stdin`:
@@ -272,9 +275,12 @@ are a hard error. Env-var fallbacks shown in `( )`.
 | `byn init [--password-stdin]` | Create a new vault |
 | `byn unlock [--password-stdin]` | Unlock the vault for this daemon session |
 | `byn lock` | Zero the in-memory vault key |
-| `byn daemon start [--foreground]` | Start the daemon (detached by default) |
-| `byn daemon stop` | SIGTERM the daemon via pidfile |
-| `byn daemon status` / `byn status [--json]` | Print daemon state |
+| `byn start [--foreground]` | Start the daemon (detached by default) |
+| `byn stop` | Stop the daemon (SIGTERM via pidfile) |
+| `byn restart [--foreground]` | Restart the daemon |
+| `byn reload` | Re-read `~/.byn/config` without a restart |
+| `byn status [--json]` | Daemon + vault state |
+| `byn daemon install\|uninstall` | Auto-start the daemon on login |
 
 ### Structure (vault → project → env)
 

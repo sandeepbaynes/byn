@@ -48,6 +48,8 @@ type Event struct {
 	Env           string `json:"env,omitempty"`
 	Kind          string `json:"kind,omitempty"`       // env_var | file
 	EntryName     string `json:"entry_name,omitempty"` // plain name (user decision)
+	BynPath       string `json:"byn_path,omitempty"`   // authorizing .byn for an exec injection
+	Command       string `json:"command,omitempty"`    // the exec'd command the injection ran
 	Op            string `json:"op"`                   // ipc op string, e.g., "put"
 	Outcome       string `json:"outcome"`              // "ok" | "denied" | "not_found" | "error"
 	CallerUID     uint32 `json:"caller_uid,omitempty"`

@@ -158,7 +158,7 @@ func (s *Server) handlePasskeyAuthFinish(w http.ResponseWriter, r *http.Request)
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vault": vaultName, "unlocked": resp.Unlocked})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vault": vaultName, "unlocked": resp.Unlocked, "presence_token": resp.PresenceToken})
 }
 
 // GET /api/passkey/list?vault= — enrolled credentials (names only). Works while

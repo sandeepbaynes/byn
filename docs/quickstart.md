@@ -1,0 +1,87 @@
+# Quickstart — 5 minutes
+
+Get byn running and store your first secret. byn keeps credentials encrypted in
+a local per-user daemon and injects them into commands on demand — values never
+touch your shell history, `argv`, or scrollback, and are never written to disk in
+plaintext.
+
+## 1. Install
+
+```sh
+# Homebrew (macOS/Linux) or the install script — both put `byn` on your PATH:
+brew install sandeepbaynes/tap/byn
+# or
+curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
+# or, with the Go toolchain (builds from source):
+go install github.com/sandeepbaynes/byn/cmd/byn@latest
+```
+
+## 2. Start the daemon
+
+All of byn's logic lives in a background daemon that holds the vault key in
+memory; the CLI is a thin client over a Unix socket.
+
+```sh
+byn start                   # detached
+# …or have it auto-start on login (launchd on macOS, systemd --user on Linux):
+byn daemon install
+```
+
+## 3. Create and unlock the vault
+
+```sh
+byn init                    # creates the vault and sets your master password
+byn unlock                  # unlocks it for this daemon session
+byn status                  # confirm: daemon up, vault unlocked
+```
+
+## 4. Store your first secret
+
+`byn put` reads the value from **stdin**, so it never lands in your shell
+history:
+
+```sh
+printf 'postgres://user:pass@localhost/app' | byn put DATABASE_URL
+byn list                    # → DATABASE_URL
+```
+
+## 5. Use it
+
+Inject scoped secrets into any command — the child process sees them as
+env-vars; you never see the value:
+
+```sh
+byn exec -- your-app                 # runs your-app with DATABASE_URL in its env
+byn exec -- printenv DATABASE_URL    # prove it's there
+```
+
+Or read one explicitly:
+
+```sh
+byn get DATABASE_URL
+```
+
+## 6. The web portal
+
+```sh
+byn web                     # opens the local admin portal in your browser
+```
+
+Store, reveal, rename, import/export, and browse the tamper-evident audit log
+visually. From the portal you can also **enroll a passkey / Touch ID** for
+password-free unlock, and use the **`.byn`** button to pin a project to a scope.
+
+## Next steps
+
+- **Per-project scope:** drop a `.byn` in a project root (or generate it from the
+  portal) so `byn` auto-selects the right vault/project/env there — and
+  `[exec] env` controls exactly which vars `byn exec` injects. See
+  [byn-file-format.md](byn-file-format.md).
+- **Organize:** secrets live at **vault → project → env** —
+  `byn project create`, `byn env create`. Full command list in the
+  [README](../README.md#commands).
+- **Daily driver:** run `byn` with no arguments for the TUI, and `byn doctor` to
+  self-check the daemon, vault, schema, and audit chain.
+
+Your secrets are encrypted at rest, never in plaintext on disk, and never
+exposed to your shell — or to agents that don't go through byn.

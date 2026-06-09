@@ -37,7 +37,7 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	return stdoutBuf.String(), stderrBuf.String(), code
 }
 
-func TestE2E_Discovery_UntrustedFailsJSONMode(t *testing.T) {
+func TestE2E_Exec_UntrustedBynFails(t *testing.T) {
 	s := bootstrapUnlocked(t)
 	// Create a project root with a .byn file.
 	projDir := filepath.Join(s.dir, "myproj")
@@ -51,17 +51,21 @@ func TestE2E_Discovery_UntrustedFailsJSONMode(t *testing.T) {
 	); err != nil {
 		t.Fatalf("write .byn: %v", err)
 	}
-	// Pre-create project so the daemon would otherwise succeed.
+	// Pre-create project so exec would otherwise succeed.
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
 		t.Fatalf("project create alpha failed")
 	}
-	// In JSON mode, untrusted .byn must hard-fail with no prompt.
-	_, stderr, code := s.runInDir(projDir, "", nil, "list", "--json")
+	// byn exec must hard-fail on an untrusted .byn before injecting anything.
+	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "true")
 	if code == 0 {
-		t.Fatalf("agent-mode untrusted should fail; got code 0")
+		t.Fatalf("exec on an untrusted .byn should fail; got code 0")
 	}
 	if !strings.Contains(stderr, "untrusted") || !strings.Contains(stderr, "byn trust") {
-		t.Fatalf("agent-mode rejection should mention untrusted + trust command:\n%s", stderr)
+		t.Fatalf("rejection should mention untrusted + trust command:\n%s", stderr)
+	}
+	// But a non-exec command must pass through — only exec gates on trust.
+	if _, _, code := s.runInDir(projDir, "", nil, "list", "--json"); code != 0 {
+		t.Fatalf("list on an untrusted .byn should pass through; got code %d", code)
 	}
 }
 
@@ -134,13 +138,115 @@ func TestE2E_Discovery_TamperedReprompts(t *testing.T) {
 	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"evil\"\n"), 0o600); err != nil {
 		t.Fatalf("retmper: %v", err)
 	}
-	// A changed-since-trusted file must hard-fail (no silent re-trust).
-	_, stderr, code := s.runInDir(projDir, "", nil, "list", "--json")
+	// A changed-since-trusted file must hard-fail exec (no silent re-trust).
+	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "true")
 	if code == 0 {
-		t.Fatalf("tampered file should fail")
+		t.Fatalf("exec on a changed .byn should fail")
 	}
 	if !strings.Contains(stderr, "CHANGED") {
-		t.Fatalf("tampered file rejection should say CHANGED:\n%s", stderr)
+		t.Fatalf("changed-file rejection should say CHANGED:\n%s", stderr)
+	}
+}
+
+// A trusted .byn lets exec through — it injects the scope and runs the child.
+func TestE2E_Exec_TrustedBynRuns(t *testing.T) {
+	s := bootstrapUnlocked(t)
+	projDir := filepath.Join(s.dir, "exectrust")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	dotPath := filepath.Join(projDir, ".byn")
+	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"alpha\"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
+		t.Fatalf("project create alpha failed")
+	}
+	if _, _, code := s.runInDir(projDir, "correct-horse-battery-staple\n", nil,
+		"trust", "--password-stdin", dotPath); code != 0 {
+		t.Fatalf("trust failed")
+	}
+	stdout, se, code := s.runInDir(projDir, "", nil, "exec", "--", "/bin/echo", "ranok")
+	if code != 0 {
+		t.Fatalf("exec on a trusted .byn should run; code=%d stderr=%q", code, se)
+	}
+	if !strings.Contains(stdout, "ranok") {
+		t.Fatalf("child output missing; stdout=%q", stdout)
+	}
+}
+
+// The .byn [exec] env allowlist injects only the listed vars into the child.
+func TestE2E_Exec_EnvAllowlist(t *testing.T) {
+	s := bootstrapUnlocked(t)
+	projDir := filepath.Join(s.dir, "allowlist")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	dotPath := filepath.Join(projDir, ".byn")
+	if err := os.WriteFile(dotPath,
+		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"X\"]\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
+		t.Fatalf("project create alpha failed")
+	}
+	// Two vars in scope; only X is allowlisted.
+	if _, _, code := s.runInDir(projDir, "valx", nil, "put", "X"); code != 0 {
+		t.Fatalf("put X failed")
+	}
+	if _, _, code := s.runInDir(projDir, "valy", nil, "put", "Y"); code != 0 {
+		t.Fatalf("put Y failed")
+	}
+	if _, _, code := s.runInDir(projDir, "correct-horse-battery-staple\n", nil,
+		"trust", "--password-stdin", dotPath); code != 0 {
+		t.Fatalf("trust failed")
+	}
+	stdout, se, code := s.runInDir(projDir, "", nil,
+		"exec", "--", "/bin/sh", "-c", `printf "X=%s|Y=%s" "$X" "$Y"`)
+	if code != 0 {
+		t.Fatalf("exec failed code=%d stderr=%q", code, se)
+	}
+	if stdout != "X=valx|Y=" {
+		t.Fatalf("allowlist not applied; stdout=%q want %q", stdout, "X=valx|Y=")
+	}
+}
+
+// Bulk trust approves many .byn files (same vault) with a single password.
+func TestE2E_Trust_Bulk(t *testing.T) {
+	s := bootstrapUnlocked(t)
+	var paths []string
+	for _, name := range []string{"p1", "p2", "p3"} {
+		d := filepath.Join(s.dir, name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		bp := filepath.Join(d, ".byn")
+		if err := os.WriteFile(bp, []byte("[scope]\nproject = \""+name+"\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, bp)
+	}
+	// One password, all three trusted (default vault).
+	if _, se, code := s.run("correct-horse-battery-staple\n",
+		"trust", "--paths", strings.Join(paths, ","), "--password-stdin"); code != 0 {
+		t.Fatalf("bulk trust failed: code=%d stderr=%q", code, se)
+	}
+	out, _ := s.mustRun("", "trust", "list", "--json")
+	for _, name := range []string{"p1", "p2", "p3"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("%s/.byn not in trust list:\n%s", name, out)
+		}
+	}
+
+	// Bulk untrust (recursive, no password) revokes them all.
+	if _, se, code := s.run("", "untrust", "--recursive", s.dir); code != 0 {
+		t.Fatalf("bulk untrust failed: code=%d stderr=%q", code, se)
+	}
+	out, _ = s.mustRun("", "trust", "list", "--json")
+	for _, name := range []string{"p1", "p2", "p3"} {
+		if strings.Contains(out, name) {
+			t.Fatalf("%s/.byn still trusted after recursive untrust:\n%s", name, out)
+		}
 	}
 }
 

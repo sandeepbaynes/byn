@@ -46,7 +46,7 @@ func handleCallError(err error) int {
 	}
 	if errors.Is(err, ipc.ErrDaemonDown) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red("byn daemon is not running."))
-		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn daemon start"))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn start"))
 		return exitDaemonDown
 	}
 	var ipcErr *ipc.ErrResponse

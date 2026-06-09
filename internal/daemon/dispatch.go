@@ -117,6 +117,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleEnvList(ctx, env)
 	case ipc.OpEnvDelete:
 		return d.handleEnvDelete(ctx, env)
+	case ipc.OpEnvClear:
+		return d.handleEnvClear(ctx, env)
 	case ipc.OpEnvRename:
 		return d.handleEnvRename(ctx, env)
 
@@ -143,6 +145,14 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleTrustRemove(env)
 	case ipc.OpTrustGrant:
 		return d.handleTrustGrant(ctx, env)
+	case ipc.OpTrustGrantBulk:
+		return d.handleTrustGrantBulk(ctx, env)
+	case ipc.OpTrustVerify:
+		return d.handleTrustVerify(ctx, env)
+	case ipc.OpBynWrite:
+		return d.handleBynWrite(ctx, env)
+	case ipc.OpFSListDir:
+		return d.handleListDir(env)
 	case ipc.OpPasskeyRegisterBegin:
 		return d.handlePasskeyRegisterBegin(ctx, env)
 	case ipc.OpPasskeyRegisterFinish:
@@ -562,9 +572,9 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 		return ipc.NewError(env.ID, ipc.CodeBadRequest,
 			fmt.Sprintf("read %s: %v", req.Path, rerr), "check the path and retry")
 	}
-	canon := trust.Canonicalize(req.Path)
-	hash := trust.Hash(body)
-	changed, gerr := trust.Grant(d.cfg.Dir, canon, hash)
+	// Mint both MACs (vk from the just-verified password so it works on a
+	// locked vault, fp from the machine key) and record {canon path, hash}.
+	canon, hash, changed, gerr := d.putTrustRecord(st, name, req.Path, body, req.Password)
 	if gerr != nil {
 		return internalErr(env.ID, gerr)
 	}
@@ -574,6 +584,132 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 		return internalErr(env.ID, err)
 	}
 	return resp
+}
+
+// handleTrustGrantBulk trusts many .byn paths against ONE vault, verifying the
+// password (and deriving the vk-MAC key) ONCE and reusing it for every path —
+// so trusting N files costs one KDF, not N. A per-file read error is reported
+// in that path's result without failing the rest of the batch.
+func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.TrustGrantBulkReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	defer zeroBytes(req.Password)
+	if len(req.Paths) == 0 {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest, "no paths to trust", "")
+	}
+	if len(req.Password) == 0 {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			"granting trust requires the master password", "")
+	}
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+	st, errEnv := d.storeForVault(env.ID, name)
+	if errEnv != nil {
+		return errEnv
+	}
+	if le := d.authorizeWithPassword(ctx, env.ID, name, st, req.Password); le != nil {
+		return le
+	}
+	vkKey, derr := st.DeriveSubkeyWithPassword(req.Password, trust.VKMACKeyInfo)
+	if derr != nil {
+		return internalErr(env.ID, derr)
+	}
+	defer zeroBytes(vkKey)
+
+	results := make([]ipc.TrustGrantResult, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		body, rerr := os.ReadFile(p) // #nosec G304 -- user-named; daemon runs as the same user
+		if rerr != nil {
+			results = append(results, ipc.TrustGrantResult{Path: p, Error: rerr.Error()})
+			continue
+		}
+		canon, hash, changed, perr := d.putTrustRecordWithKey(name, p, body, vkKey)
+		if perr != nil {
+			results = append(results, ipc.TrustGrantResult{Path: p, Error: perr.Error()})
+			continue
+		}
+		d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK, BynPath: canon})
+		results = append(results, ipc.TrustGrantResult{Path: canon, SHA256: hash, Changed: changed})
+	}
+	out, err := ipc.NewResponse(env.ID, ipc.TrustGrantBulkResp{Results: results})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return out
+}
+
+// handleTrustVerify checks a `.byn` against the hardened trust store. The
+// fp-MAC (machine) layer is verified whenever its key is available — including
+// while the vault is locked, which is what gates discovery. The vk-MAC
+// (vault-key) layer is verified only when the target vault is unlocked, the
+// use-time gate before a value flows. It mutates nothing.
+func (d *Daemon) handleTrustVerify(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.TrustVerifyReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	if req.Path == "" {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest, "path required", "")
+	}
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+	// auditExec records the exec authorization decision in the caller's vault
+	// log: which .byn, which command, and whether trust authorized the
+	// injection (ok) or blocked it (denied). This is what makes a
+	// .byn-authorized injection traceable to its command when reading logs.
+	auditExec := func(path, status string) {
+		outcome := audit.OutcomeDenied
+		if status == string(trust.VerifyTrusted) {
+			outcome = audit.OutcomeOK
+		}
+		d.auditEmit(ctx, name, audit.Event{
+			Op: "exec", Outcome: outcome, BynPath: path, Command: req.Command,
+		})
+	}
+	body, rerr := os.ReadFile(req.Path) // #nosec G304 -- user-named; daemon runs as the same user
+	if rerr != nil {
+		// File gone or unreadable: nothing to trust.
+		auditExec(trust.Canonicalize(req.Path), string(trust.VerifyUntrusted))
+		resp, err := ipc.NewResponse(env.ID, ipc.TrustVerifyResp{
+			Path: req.Path, Status: string(trust.VerifyUntrusted),
+		})
+		if err != nil {
+			return internalErr(env.ID, err)
+		}
+		return resp
+	}
+	canon := trust.Canonicalize(req.Path)
+	hash := trust.Hash(body)
+
+	// vk-MAC key only when the target vault is unlocked (use-time check); while
+	// locked the fp-MAC alone gates discovery.
+	var vkKey []byte
+	if st, errEnv := d.storeForVault(env.ID, name); errEnv == nil && !st.IsLocked() {
+		if k, derr := st.DeriveSubkey(trust.VKMACKeyInfo); derr == nil {
+			vkKey = k
+			defer zeroBytes(vkKey)
+		}
+	}
+
+	status, vkChecked, verr := trust.Verify(d.cfg.Dir, canon, hash, d.fpMACKey, vkKey)
+	if verr != nil {
+		return internalErr(env.ID, verr)
+	}
+	auditExec(canon, string(status))
+	resp, err := ipc.NewResponse(env.ID, ipc.TrustVerifyResp{
+		Path: canon, Status: string(status), VKChecked: vkChecked,
+	})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// zeroBytes wipes a derived-key buffer in place.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 // ---- Project CRUD ------------------------------------------------------
@@ -889,6 +1025,39 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		}
 	}
 	d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", resp)
+	return resp
+}
+
+// handleEnvClear deletes ALL env-vars in the scope's env (the env is kept),
+// gated by the master password like a delete. Returns the count removed.
+func (d *Daemon) handleEnvClear(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.EnvClearReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	defer zero(req.Password)
+	st, scope, errEnv := d.scopeFor(env.ID, req.Scope)
+	if errEnv != nil {
+		d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", errEnv)
+		return errEnv
+	}
+	if le := d.authorizeMutationWhileLocked(ctx, env.ID, req.Scope.Vault, st, req.Password); le != nil {
+		d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", le)
+		return le
+	}
+	var resp *ipc.Envelope
+	if n, err := st.ClearEnvVars(ctx, scope); err != nil {
+		resp = mapVaultErr(env.ID, err)
+	} else {
+		d.touchVault(req.Scope.Vault)
+		out, oerr := ipc.NewResponse(env.ID, ipc.EnvClearResp{Deleted: n})
+		if oerr != nil {
+			resp = internalErr(env.ID, oerr)
+		} else {
+			resp = out
+		}
+	}
+	d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", resp)
 	return resp
 }
 

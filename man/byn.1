@@ -115,6 +115,12 @@ missing keys.
 Remove a non\-default env (cascades to its entries). Refuses
 \fIdefault\fR. See \fBDELETING WHILE LOCKED\fR below.
 .TP
+.B env clear \fR[\fIENV\fR] \fB\-\-yes\fR \fR[\fB\-\-password\-stdin\fR]
+Delete every env\-var in \fIENV\fR (defaults to the active env) while
+keeping the env itself; inherited values from \fIdefault\fR are untouched.
+Destructive, so \fB\-\-yes\fR is required \(em without it, prints a preview
+and exits non\-zero. Password\-gated like a delete.
+.TP
 .B env rename \fIOLD\fR \fINEW\fR
 Rename an env.
 .SS Secret CRUD
@@ -169,6 +175,16 @@ the loaded entries plus the existing environment to the child. The
 child's PID is the same as the byn CLI that invoked it. Values
 never appear in the parent shell or argv. The "\fB\-\-\fR" separator
 is required.
+Only exec verifies the \fB.byn\fR is trusted (machine + vault\-key MAC)
+before injecting; an untrusted, changed, or tampered \fB.byn\fR aborts
+\(em other commands apply a \fB.byn\fR scope without a trust check.
+A discovered \fB.byn\fR also controls which vars exec injects via
+\fB[exec] env\fR: a name list injects only those, \fB"*"\fR injects all
+(with a warning), and an empty or absent list injects nothing; with no
+\fB.byn\fR (ad\-hoc) the whole scope is injected. \fB[exec] env\fR is
+ENV\-VARS ONLY \(em it does not restrict which command runs. The
+\fB.byn\fR is strict TOML: any key outside \fB[scope]\fR / \fB[exec] env\fR
+is a hard parse error.
 See
 .BR byn-exec (1).
 .SS Bulk I/O
@@ -237,9 +253,12 @@ end\-to\-end. Exits 0 with "chain intact" on success; exits 3 with
 "chain BROKEN at event #N" if any link fails verification.
 .SS Trust (\fB.byn\fR TOFU)
 .TP
-.B trust \fR[\fIPATH\fR] \fR[\fB\-\-password\-stdin\fR]
-Approve a \fB.byn\fR file (default:
-.IR ./.byn ).
+.B trust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR] \fR[\fB\-\-password\-stdin\fR]
+Approve one or more \fB.byn\fR files (default:
+.IR ./.byn ;
+a directory resolves to \fI<dir>/.byn\fR, and \fB\-\-recursive\fR walks
+directories for every \fB.byn\fR). Files are grouped by their target vault,
+so each vault's password is asked once.
 \fBAlways prompts for the master password\fR \(em even when the vault is
 unlocked \(em because approving a \fB.byn\fR is a proof\-of\-presence action.
 The daemon (which owns
@@ -254,10 +273,12 @@ the password from stdin in scripts.
 .B trust list \fR[\fB\-\-json\fR]
 Print every trusted path with the first 12 hex chars of its hash.
 .TP
-.B untrust \fR[\fIPATH\fR]
-Revoke trust for a path (default:
-.IR ./.byn ).
-Idempotent.
+.B untrust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR]
+Revoke trust for one or more paths (default:
+.IR ./.byn ),
+using the same path forms as \fBtrust\fR (directories, \fB\-\-paths\fR,
+\fB\-\-recursive\fR). Needs no password \(em revoking is fail-safe \(em and is
+idempotent.
 .SS Visual editor
 .TP
 .B edit, view, byn \fR(no args)
@@ -345,24 +366,36 @@ reveal is audited). Binds loopback only; CSRF is defended by an Origin
 check. Disable with \fB[ui] enabled = false\fR. See \fBbyn-web\fR(1).
 .SS Daemon control
 .TP
-.B daemon start \fR[\fB\-\-foreground\fR]
-Start the daemon (detached by default).
+.B start \fR[\fB\-\-foreground\fR]
+Start the daemon (detached by default). Alias: \fBbyn daemon start\fR.
 .TP
-.B daemon stop
-SIGTERM the daemon via its pidfile.
+.B stop
+SIGTERM the daemon via its pidfile. Alias: \fBbyn daemon stop\fR.
 .TP
-.B daemon restart \fR[\fB\-\-foreground\fR]
+.B restart \fR[\fB\-\-foreground\fR]
 Stop the running daemon (if any) and start a fresh one \- one command
-instead of stop + start. Picks up a new binary and config.
+instead of stop + start. Picks up a new binary and config. Alias:
+\fBbyn daemon restart\fR.
 .TP
-.B daemon reload
+.B reload
 Signal the running daemon (SIGHUP) to re-read
 .I ~/.byn/config
 and apply runtime-changeable settings \- idle_timeout and the web portal
 (enable/disable/port) \- without a restart. Open vaults stay unlocked.
+Alias: \fBbyn daemon reload\fR.
 .TP
 .B daemon status
 Print daemon state and uptime.
+.TP
+.B daemon install
+Register the daemon as a user auto-start service (launchd LaunchAgent on
+macOS, a systemd \fB\-\-user\fR unit on Linux) so it starts on login.
+Writes the service file, loads it best-effort, and respects
+.BR BYN_DIR .
+No root.
+.TP
+.B daemon uninstall
+Disable and remove the auto-start service.
 See
 .BR byn-daemon (1).
 .SS Diagnostics
@@ -492,7 +525,7 @@ Optional TOML configuration (no file extension). Recognised keys:
 string; default 15m, set \fB"0s"\fR to disable vault auto\-relock).
 Unknown keys are rejected with an error. A missing file uses the
 defaults. Loaded at
-.BR "byn daemon start" .
+.BR "byn start" .
 .TP
 .I daemon.sock
 Unix domain socket, mode 0600. The daemon enforces same\-UID access
@@ -662,9 +695,13 @@ $ cat > .byn <<'EOF'
 [scope]
 project = "myapp"
 env = "dev"
+
+[exec]
+env = ["DATABASE_URL", "API_KEY"]   # byn exec injects only these
 EOF
-$ byn trust ./.byn      # first time only
+$ byn trust ./.byn          # first time only
 $ byn list                  # uses myapp/dev automatically
+$ byn exec -- ./run.sh      # runs ./run.sh with those two injected
 .fi
 .RE
 .PP

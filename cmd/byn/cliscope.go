@@ -24,6 +24,13 @@ type cliScope struct {
 	Vault   string
 	Project string
 	Env     string
+	// SourcePath is the `.byn` that supplied this scope via discovery (or "").
+	// `byn exec` verifies trust against it before injecting; other commands
+	// ignore it.
+	SourcePath string
+	// ExecEnv is the [exec] env allowlist from the .byn (nil when no .byn).
+	// byn exec injects only these names; "*" = all (loud); empty = none.
+	ExecEnv []string
 }
 
 // envFallbackKeys maps each scope field to its environment-variable
