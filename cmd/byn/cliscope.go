@@ -24,6 +24,10 @@ type cliScope struct {
 	Vault   string
 	Project string
 	Env     string
+	// SourcePath is the `.byn` that supplied this scope via discovery (or "").
+	// `byn exec` verifies trust against it before injecting; other commands
+	// ignore it.
+	SourcePath string
 }
 
 // envFallbackKeys maps each scope field to its environment-variable

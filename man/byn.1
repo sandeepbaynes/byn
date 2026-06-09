@@ -169,6 +169,9 @@ the loaded entries plus the existing environment to the child. The
 child's PID is the same as the byn CLI that invoked it. Values
 never appear in the parent shell or argv. The "\fB\-\-\fR" separator
 is required.
+Only exec verifies the \fB.byn\fR is trusted (machine + vault\-key MAC)
+before injecting; an untrusted, changed, or tampered \fB.byn\fR aborts
+\(em other commands apply a \fB.byn\fR scope without a trust check.
 See
 .BR byn-exec (1).
 .SS Bulk I/O

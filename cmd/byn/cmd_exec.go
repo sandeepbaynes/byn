@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/trust"
 )
 
 // runExec loads env-var entries from the vault and replaces the
@@ -65,6 +66,15 @@ func runExec(args []string, scope cliScope) int {
 	}
 	client := newClient(dir)
 
+	// Trust gate: byn exec injects secrets into a child process, so a forged,
+	// untrusted, or changed .byn must not redirect which secrets flow. Only
+	// exec gates on trust — other commands pass through (see discoverScope).
+	if scope.SourcePath != "" {
+		if code := verifyExecTrust(client, scope); code != exitOK {
+			return code
+		}
+	}
+
 	// Stage 1: list env-var entries in the active scope.
 	scopeIPC := scope.ToIPC()
 	var listResp ipc.ListResp
@@ -120,4 +130,35 @@ func runExec(args []string, scope cliScope) int {
 	}
 	// Unreachable if Exec succeeded.
 	return exitErr
+}
+
+// verifyExecTrust asks the daemon to MAC-verify the .byn that supplied the
+// scope before exec injects any secrets. Returns exitOK to proceed, or an exit
+// code (after printing an actionable message) to abort.
+func verifyExecTrust(client *ipc.Client, scope cliScope) int {
+	var tv ipc.TrustVerifyResp
+	if err := client.Call(ipc.OpTrustVerify, ipc.TrustVerifyReq{Path: scope.SourcePath, Vault: scope.Vault}, &tv); err != nil {
+		return handleCallError(err)
+	}
+	p := scope.SourcePath
+	switch trust.VerifyStatus(tv.Status) {
+	case trust.VerifyTrusted:
+		return exitOK
+	case trust.VerifyChanged:
+		execTrustError(p, "has CHANGED since you trusted it")
+	case trust.VerifyUntrusted:
+		execTrustError(p, "is untrusted")
+	case trust.VerifyStale:
+		execTrustError(p, "predates tamper-protection")
+	case trust.VerifyTampered:
+		execTrustError(p, "FAILED its tamper check (forged or copied from another machine)")
+	default:
+		fmt.Fprintf(os.Stderr, "%s unexpected trust status %q for %s\n", boldRed("Error:"), tv.Status, p)
+	}
+	return exitErr
+}
+
+func execTrustError(path, why string) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red(path+" "+why+"."))
+	fmt.Fprintf(os.Stderr, "%s %s %s\n", yellow("Run:"), cyan("byn trust "+path), dim("(byn asks for the master password)"))
 }

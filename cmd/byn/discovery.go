@@ -42,7 +42,6 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/sandeepbaynes/byn/internal/trust"
 )
 
 const discoveryFile = ".byn"
@@ -67,7 +66,7 @@ type dotBynScope struct {
 // terminal); the trust decision itself is identical either way.
 //
 // stopHome: the user's home dir; the walk does not go above this.
-func discoverScope(startDir, homeDir, bynDir string, agentMode bool) (cliScope, string, error) {
+func discoverScope(startDir, homeDir, _ string, _ bool) (cliScope, string, error) {
 	if os.Getenv("BYN_NO_DISCOVERY") == "1" {
 		return cliScope{}, "", nil
 	}
@@ -85,28 +84,10 @@ func discoverScope(startDir, homeDir, bynDir string, agentMode bool) (cliScope, 
 			if rerr != nil {
 				return cliScope{}, "", fmt.Errorf("read %s: %w", candidate, rerr)
 			}
-			status, terr := trust.Status(bynDir, trust.Canonicalize(candidate), trust.Hash(body))
-			if terr != nil {
-				return cliScope{}, "", terr
-			}
-			switch status {
-			case trust.StatusChanged:
-				return cliScope{}, "", fmt.Errorf(
-					"%s: this .byn CHANGED since you trusted it — re-approve with `byn trust %s` "+
-						"(byn asks for the master password); discovery never auto-trusts a changed file",
-					candidate, candidate)
-			case trust.StatusUntrusted:
-				where := "approve it with"
-				if agentMode {
-					where = "from a terminal, run"
-				}
-				return cliScope{}, "", fmt.Errorf(
-					"%s: untrusted .byn — %s `byn trust %s` (byn asks for the master password); "+
-						"discovery never auto-trusts",
-					candidate, where, candidate)
-			case trust.StatusTrusted:
-				// fall through to parse + apply
-			}
+			// Discovery resolves the scope but does NOT gate on trust — doing
+			// so would block every command (status, list, get, …) on an
+			// untrusted .byn. Only `byn exec` verifies the file, since it's the
+			// command that injects secrets into a child process (see runExec).
 			var parsed dotBynScope
 			dec := toml.NewDecoder(strings.NewReader(string(body))).DisallowUnknownFields()
 			if derr := dec.Decode(&parsed); derr != nil {

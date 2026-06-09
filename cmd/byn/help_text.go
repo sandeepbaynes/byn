@@ -375,6 +375,12 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
+       Trust: when the scope comes from a discovered .byn, exec verifies
+       it is trusted (machine + vault-key MAC, checked by the daemon)
+       before injecting; an untrusted, changed, or tampered .byn aborts
+       with a re-trust hint. Only exec gates on trust — other commands
+       apply a .byn scope without a trust check. Approve with byn trust.
+
        v1 limitations (iterating):
          - uses the implicit default scope (vault=default,
            project=default, env=default). --vault / --project / --env
