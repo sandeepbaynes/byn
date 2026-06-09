@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/trust"
@@ -28,7 +29,7 @@ func TestDiscoverScope_NoFileReturnsEmpty(t *testing.T) {
 	if src != "" {
 		t.Fatalf("src=%q, want empty", src)
 	}
-	if sc != (cliScope{}) {
+	if !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("scope=%+v", sc)
 	}
 }
@@ -36,7 +37,7 @@ func TestDiscoverScope_NoFileReturnsEmpty(t *testing.T) {
 func TestDiscoverScope_NoDiscoveryEnv(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "1")
 	sc, src, err := discoverScope(t.TempDir(), t.TempDir(), t.TempDir(), false)
-	if err != nil || src != "" || sc != (cliScope{}) {
+	if err != nil || src != "" || !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("expected zero result")
 	}
 }
@@ -51,7 +52,7 @@ func TestDiscoverScope_EmptyFileIsStopMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if src != "" || sc != (cliScope{}) {
+	if src != "" || !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("empty .byn should be a stop marker, got %+v src=%q", sc, src)
 	}
 }

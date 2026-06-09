@@ -77,7 +77,8 @@ func run(args []string) int {
 			}
 			if srcPath != "" {
 				scope = mergeDiscoveryScope(scope, discScope)
-				scope.SourcePath = srcPath // byn exec verifies trust against this
+				scope.SourcePath = srcPath        // byn exec verifies trust against this
+				scope.ExecEnv = discScope.ExecEnv // byn exec injection allowlist
 				hintf("Using scope from %s: %s.", srcPath, scope)
 			}
 		}
@@ -120,6 +121,14 @@ func run(args []string) int {
 		return runInit(rest, scope)
 	case "daemon":
 		return runDaemon(rest)
+	case "start":
+		return runDaemonStart(rest)
+	case "stop":
+		return runDaemonStop(rest)
+	case "restart":
+		return runDaemonRestart(rest)
+	case "reload":
+		return runDaemonReload(rest)
 	case "status":
 		return runStatus(rest)
 	case "unlock":
@@ -175,7 +184,8 @@ func run(args []string) int {
 // otherwise be blocked by an untrusted .byn from running at all.
 func skipDiscoveryFor(cmd string) bool {
 	switch cmd {
-	case "trust", "untrust", "daemon", "version", "--version", "-v",
+	case "trust", "untrust", "daemon", "start", "stop", "restart", "reload",
+		"version", "--version", "-v",
 		"help", "--help", "-h", "doctor", "web", "ui":
 		return true
 	}
@@ -250,11 +260,15 @@ Global flags (work before or after the subcommand):
 
 Lifecycle:
   init                       Create a new vault (prompts for master password)
-  daemon start|stop|status   Manage the background daemon
+  start [--foreground]       Start the background daemon
+  stop                       Stop the daemon
+  restart [--foreground]     Restart the daemon
+  reload                     Re-read ~/.byn/config without a restart
+  status                     Daemon + vault state (also: --json)
   unlock                     Unlock the vault (prompts)
   lock [--all]               Lock the vault (or every vault with --all)
   passwd                     Change the master password (re-wraps the key)
-  status                     Alias for "daemon status" (also: --json)
+  daemon install|uninstall   Auto-start the daemon on login
 
 Structure (CRUD):
   vault list|delete|rename|passwd|init|unlock|lock

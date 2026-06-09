@@ -103,6 +103,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/entry/reveal", s.sameOrigin(s.only(http.MethodPost, s.handleReveal)))
 	s.mux.HandleFunc("/api/entry/delete", s.sameOrigin(s.only(http.MethodPost, s.handleDelete)))
 	s.mux.HandleFunc("/api/entry/rename", s.sameOrigin(s.only(http.MethodPost, s.handleRename)))
+	s.mux.HandleFunc("/api/byn/write", s.sameOrigin(s.only(http.MethodPost, s.handleBynWrite)))
+	s.mux.HandleFunc("/api/fs/listdir", s.sameOrigin(s.only(http.MethodGet, s.handleFSListDir)))
 }
 
 // Listen binds the loopback listener. It binds 127.0.0.1 explicitly —

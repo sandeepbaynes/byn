@@ -48,6 +48,7 @@ const (
 	OpEnvCreate Op = "env.create"
 	OpEnvList   Op = "env.list"
 	OpEnvDelete Op = "env.delete"
+	OpEnvClear  Op = "env.clear" // delete all env-vars in an env, keep the env
 	OpEnvRename Op = "env.rename"
 
 	// Env-var data-plane (scoped). Flat names because they're the
@@ -74,6 +75,8 @@ const (
 	OpTrustRemove Op = "trust.remove"
 	OpTrustGrant  Op = "trust.grant"
 	OpTrustVerify Op = "trust.verify" // MAC-hardened TOFU check (fp + vk layers)
+	OpBynWrite    Op = "byn.write"    // portal writes a .byn scope file (+ optional trust)
+	OpFSListDir   Op = "fs.listdir"   // list subdirectories for the portal directory picker
 
 	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
 	// for navigator.credentials.{create,get}; finish verifies the browser's
@@ -93,10 +96,10 @@ var AllOps = []Op{
 	OpVaultInit, OpVaultUnlock, OpVaultLock, OpVaultList, OpVaultDelete,
 	OpVaultPasswd, OpVaultRename,
 	OpProjectCreate, OpProjectList, OpProjectDelete, OpProjectRename,
-	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvRename,
+	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustVerify,
+	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustVerify, OpBynWrite, OpFSListDir,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
@@ -456,6 +459,18 @@ type DeleteReq struct {
 // DeleteResp is empty.
 type DeleteResp struct{}
 
+// EnvClearReq deletes ALL env-vars in Scope's env (the env itself is kept).
+// Password authorizes the mutation (proof-of-presence), like delete.
+type EnvClearReq struct {
+	Scope    Scope  `json:"scope,omitempty"`
+	Password []byte `json:"password,omitempty"`
+}
+
+// EnvClearResp reports how many env-vars were deleted.
+type EnvClearResp struct {
+	Deleted int `json:"deleted"`
+}
+
 // RenameReq renames an env-var entry in Scope. The entry is
 // re-encrypted under the new name's AAD.
 type RenameReq struct {
@@ -487,6 +502,8 @@ type AuditEvent struct {
 	Env           string `json:"env,omitempty"`
 	Kind          string `json:"kind,omitempty"`
 	EntryName     string `json:"entry_name,omitempty"`
+	BynPath       string `json:"byn_path,omitempty"`
+	Command       string `json:"command,omitempty"`
 	Op            string `json:"op"`
 	Outcome       string `json:"outcome"`
 	CallerUID     uint32 `json:"caller_uid,omitempty"`
@@ -562,6 +579,47 @@ type TrustGrantResp struct {
 	Changed bool   `json:"changed"`
 }
 
+// BynWriteReq writes a .byn scope file into Dir (as Dir/.byn). EnvVars becomes
+// the [exec] env allowlist. When Trust is set, the just-written file is trusted
+// in the same step (Password authorizes the grant, as with trust.grant).
+type BynWriteReq struct {
+	Dir      string   `json:"dir"`
+	Scope    Scope    `json:"scope,omitempty"`
+	EnvVars  []string `json:"env_vars,omitempty"`
+	Trust    bool     `json:"trust,omitempty"`
+	Password []byte   `json:"password,omitempty"`
+	// PresenceToken authorizes trust via a fresh passkey ceremony instead of the
+	// master password (see PasskeyAuthFinishResp.PresenceToken). One of Password
+	// or PresenceToken is required when Trust is set.
+	PresenceToken []byte `json:"presence_token,omitempty"`
+}
+
+// BynWriteResp reports the written path and whether trust was granted.
+type BynWriteResp struct {
+	Path    string `json:"path"`
+	Trusted bool   `json:"trusted"`
+}
+
+// ListDirReq lists the subdirectories of Path (empty ⇒ the user's home dir) for
+// the portal directory picker. The daemon runs as the user, so it exposes only
+// what the user can already read.
+type ListDirReq struct {
+	Path string `json:"path"`
+}
+
+// DirEntry is one subdirectory.
+type DirEntry struct {
+	Name string `json:"name"`
+}
+
+// ListDirResp returns the resolved absolute Path, its Parent ("" at the
+// filesystem root), and the name-sorted subdirectories.
+type ListDirResp struct {
+	Path    string     `json:"path"`
+	Parent  string     `json:"parent,omitempty"`
+	Entries []DirEntry `json:"entries"`
+}
+
 // TrustVerifyReq asks the daemon to verify a `.byn` against the hardened trust
 // store: it canonicalizes Path, reads + hashes the file, and checks the
 // record's MACs. Vault is the file's target vault (keys the vault-key MAC), or
@@ -569,6 +627,9 @@ type TrustGrantResp struct {
 type TrustVerifyReq struct {
 	Path  string `json:"path"`
 	Vault string `json:"vault,omitempty"`
+	// Command is the exec'd command this verification authorizes — recorded in
+	// the audit log so a .byn-authorized injection is traceable to its command.
+	Command string `json:"command,omitempty"`
 }
 
 // TrustVerifyResp reports the status: "trusted", "changed" (content differs),
@@ -646,6 +707,10 @@ type PasskeyAuthFinishReq struct {
 type PasskeyAuthFinishResp struct {
 	CredentialID []byte `json:"credential_id"`
 	Unlocked     bool   `json:"unlocked"`
+	// PresenceToken is a one-time proof-of-presence the portal can pass to a
+	// follow-up trust grant in place of the master password (empty if the vault
+	// is not unlocked). Short-lived and single-use.
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // PasskeyInfo is one enrolled credential, names + timestamps only (no secret).

@@ -24,6 +24,8 @@ func helpFor(name string) string {
 		return commandHelp["rename"]
 	case "view":
 		return commandHelp["edit"]
+	case "start", "stop", "restart", "reload":
+		return commandHelp["daemon"]
 	}
 	return ""
 }
@@ -76,7 +78,7 @@ CHOOSING THE DATA DIRECTORY
        Both the daemon and the CLI must see the same BYN_DIR.
 
            $ export BYN_DIR=/path/to/data
-           $ byn daemon start
+           $ byn start
            $ byn init
 
 EXAMPLES
@@ -88,18 +90,18 @@ EXAMPLES
 
        In a fresh dev sandbox:
            $ export BYN_DIR=/tmp/byn-demo
-           $ byn daemon start
+           $ byn start
            $ byn init
 
        Separate vault per org via BYN_DIR (today's multi-vault):
-           $ BYN_DIR=~/.byn-acme byn daemon start
+           $ BYN_DIR=~/.byn-acme byn start
            $ BYN_DIR=~/.byn-acme byn init
 
 EXIT STATUS
        0    Vault created successfully.
        1    Bad input (password too short, mismatched confirmation,
             etc.).
-       2    Daemon unreachable. Start it with: byn daemon start
+       2    Daemon unreachable. Start it with: byn start
        3    Daemon error (already initialized, internal failure).
 
 SEE ALSO
@@ -381,6 +383,16 @@ DESCRIPTION
        with a re-trust hint. Only exec gates on trust — other commands
        apply a .byn scope without a trust check. Approve with byn trust.
 
+       Allowlist: a discovered .byn controls which vars exec injects via
+       [exec] env — a name list injects only those, "*" (or ["*"]) injects
+       all (with a warning, since later-added secrets auto-inject), and an
+       empty or absent list injects nothing. With no .byn (ad-hoc run) the
+       whole scope is injected.
+         - [exec] env is ENV-VARS ONLY — it does not restrict WHICH
+           command runs; a trusted .byn runs any command you pass.
+         - The .byn is strict TOML: any key outside [scope] / [exec] env
+           is a hard parse error (no silent fallback).
+
        v1 limitations (iterating):
          - uses the implicit default scope (vault=default,
            project=default, env=default). --vault / --project / --env
@@ -537,11 +549,13 @@ SEE ALSO
        byn-daemon - control the background daemon
 
 SYNOPSIS
-       byn daemon start [--foreground]
-       byn daemon stop
-       byn daemon restart [--foreground]
-       byn daemon reload
-       byn daemon status
+       byn start [--foreground]      (alias: byn daemon start)
+       byn stop                      (alias: byn daemon stop)
+       byn restart [--foreground]    (alias: byn daemon restart)
+       byn reload                    (alias: byn daemon reload)
+       byn status                    (alias: byn daemon status)
+       byn daemon install
+       byn daemon uninstall
 
 DESCRIPTION
        Manages the per-user background daemon. The daemon owns the
@@ -580,25 +594,34 @@ SUBCOMMANDS
            Print daemon state, socket path, vault lock state, and
            uptime. "byn status" is an alias.
 
+       install
+           Register the daemon as a user auto-start service (launchd
+           LaunchAgent on macOS, systemd --user unit on Linux) so it
+           comes up on login. Writes the service file, loads it
+           best-effort, and respects BYN_DIR. No root required.
+
+       uninstall
+           Disable and remove the auto-start service.
+
 EXAMPLES
        Start in detached mode:
-           $ byn daemon start
+           $ byn start
 
        Start in foreground (development, supervised launch):
-           $ byn daemon start --foreground
+           $ byn start --foreground
 
        Check status:
-           $ byn daemon status
+           $ byn status
            daemon:  running (version dev)
            socket:  /Users/you/.byn/daemon.sock
            vault:   unlocked
            uptime:  3h25m
 
        Stop:
-           $ byn daemon stop
+           $ byn stop
 
        Apply config edits live (e.g. after changing idle_timeout):
-           $ byn daemon reload
+           $ byn reload
 
 EXIT STATUS
        0    Subcommand succeeded.

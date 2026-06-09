@@ -54,6 +54,24 @@ type dotBynScope struct {
 		Project string `toml:"project,omitempty"`
 		Env     string `toml:"env,omitempty"`
 	} `toml:"scope"`
+	Exec struct {
+		// Env is the `byn exec` allowlist: which scope vars to inject.
+		// "*" (or ["*"]) = all (with a loud warning); a list = only those
+		// names; empty or absent = none. Applied by filterExecEnv.
+		Env execEnvList `toml:"env,omitempty"`
+	} `toml:"exec"`
+}
+
+// execEnvList is the [exec] env allowlist. It accepts either a bare string
+// (env = "*") or a list of strings (env = ["*"] / ["VAR1","VAR2"]).
+type execEnvList []string
+
+// UnmarshalText lets a bare string (env = "*") decode into a one-element list.
+// A TOML array (env = ["*"] / ["VAR1","VAR2"]) decodes natively into []string
+// without this method.
+func (e *execEnvList) UnmarshalText(text []byte) error {
+	*e = execEnvList{string(text)}
+	return nil
 }
 
 // discoverScope walks parents from CWD looking for a .byn. Returns
@@ -97,6 +115,7 @@ func discoverScope(startDir, homeDir, _ string, _ bool) (cliScope, string, error
 				Vault:   parsed.Scope.Vault,
 				Project: parsed.Scope.Project,
 				Env:     parsed.Scope.Env,
+				ExecEnv: []string(parsed.Exec.Env),
 			}, candidate, nil
 		}
 		// Stop conditions.

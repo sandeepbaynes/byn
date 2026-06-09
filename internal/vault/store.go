@@ -997,6 +997,31 @@ func (s *Store) DeleteEnvVar(ctx context.Context, scope Scope, name string) erro
 	return nil
 }
 
+// ClearEnvVars removes ALL env_var entries owned by scope's (project, env);
+// the env itself is kept and inherited values (from default) are untouched.
+// Returns the number deleted. Does NOT require unlock (deletes rows, not
+// values).
+func (s *Store) ClearEnvVars(ctx context.Context, scope Scope) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, err
+	}
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'`,
+		projectID, envID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // RenameEnvVar renames an entry within scope. Requires the entry to
 // exist in the requested env (no rename via inheritance). Refuses if
 // the destination name is taken in the same scope.

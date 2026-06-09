@@ -189,8 +189,17 @@ func auditLine(e ipc.AuditEvent) string {
 	if entryName == "" {
 		entryName = "-"
 	}
-	return fmt.Sprintf("%s  %-14s  %-20s  %-20s  %-9s  %s",
+	// Exec authorizations carry the command + the authorizing .byn instead of
+	// an entry name — surface both so a .byn-driven injection is traceable.
+	if e.Command != "" {
+		entryName = e.Command
+	}
+	line := fmt.Sprintf("%s  %-14s  %-20s  %-20s  %-9s  %s",
 		t, e.Op, scopePath, entryName, e.Outcome, auditCaller(e))
+	if e.BynPath != "" {
+		line += "  via " + e.BynPath
+	}
+	return line
 }
 
 // auditCaller renders the "who" of an audit event for forensics, e.g.

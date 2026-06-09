@@ -35,7 +35,7 @@ func runWeb(args []string) int {
 	// rather than launching a browser at a dead port.
 	if err := newClient(dir).Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err != nil {
 		fmt.Fprintln(os.Stderr, "Error: byn daemon is not running.")
-		fmt.Fprintln(os.Stderr, "Run: byn daemon start")
+		fmt.Fprintln(os.Stderr, "Run: byn start")
 		return exitDaemonDown
 	}
 

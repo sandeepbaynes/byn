@@ -175,6 +175,42 @@ func TestE2E_Exec_TrustedBynRuns(t *testing.T) {
 	}
 }
 
+// The .byn [exec] env allowlist injects only the listed vars into the child.
+func TestE2E_Exec_EnvAllowlist(t *testing.T) {
+	s := bootstrapUnlocked(t)
+	projDir := filepath.Join(s.dir, "allowlist")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	dotPath := filepath.Join(projDir, ".byn")
+	if err := os.WriteFile(dotPath,
+		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"X\"]\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
+		t.Fatalf("project create alpha failed")
+	}
+	// Two vars in scope; only X is allowlisted.
+	if _, _, code := s.runInDir(projDir, "valx", nil, "put", "X"); code != 0 {
+		t.Fatalf("put X failed")
+	}
+	if _, _, code := s.runInDir(projDir, "valy", nil, "put", "Y"); code != 0 {
+		t.Fatalf("put Y failed")
+	}
+	if _, _, code := s.runInDir(projDir, "correct-horse-battery-staple\n", nil,
+		"trust", "--password-stdin", dotPath); code != 0 {
+		t.Fatalf("trust failed")
+	}
+	stdout, se, code := s.runInDir(projDir, "", nil,
+		"exec", "--", "/bin/sh", "-c", `printf "X=%s|Y=%s" "$X" "$Y"`)
+	if code != 0 {
+		t.Fatalf("exec failed code=%d stderr=%q", code, se)
+	}
+	if stdout != "X=valx|Y=" {
+		t.Fatalf("allowlist not applied; stdout=%q want %q", stdout, "X=valx|Y=")
+	}
+}
+
 func TestE2E_Discovery_EmptyBynStopsWalk(t *testing.T) {
 	s := bootstrapUnlocked(t)
 	parent := filepath.Join(s.dir, "parent")

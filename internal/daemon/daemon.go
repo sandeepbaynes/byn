@@ -104,6 +104,10 @@ type Daemon struct {
 	// challenge storage is mandatory — the browser response binds to it.
 	pkChallenges *passkeyChallenges
 
+	// presenceTokens are one-time proofs that a passkey ceremony just succeeded,
+	// letting a trust grant accept the passkey instead of the master password.
+	presenceTokens *presenceTokens
+
 	// reloadMu serializes Reload so two concurrent SIGHUPs can't interleave
 	// portal restarts.
 	reloadMu sync.Mutex
@@ -156,14 +160,15 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		cfg:          cfg,
-		socketPath:   filepath.Join(cfg.Dir, SocketFilename),
-		pidPath:      filepath.Join(cfg.Dir, PIDFilename),
-		limiterPath:  filepath.Join(cfg.Dir, auth.RateLimiterFile),
-		ownerUID:     cfg.OwnerUID,
-		closeCh:      make(chan struct{}),
-		vaults:       make(map[string]*vaultEntry),
-		pkChallenges: newPasskeyChallenges(),
+		cfg:            cfg,
+		socketPath:     filepath.Join(cfg.Dir, SocketFilename),
+		pidPath:        filepath.Join(cfg.Dir, PIDFilename),
+		limiterPath:    filepath.Join(cfg.Dir, auth.RateLimiterFile),
+		ownerUID:       cfg.OwnerUID,
+		closeCh:        make(chan struct{}),
+		vaults:         make(map[string]*vaultEntry),
+		pkChallenges:   newPasskeyChallenges(),
+		presenceTokens: newPresenceTokens(),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
 	d.limiter = auth.NewRateLimiter(d.limiterPath)

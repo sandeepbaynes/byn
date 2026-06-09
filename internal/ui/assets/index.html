@@ -35,6 +35,7 @@
         <button id="add-btn" class="btn btn-primary sm" title="new env-var (n)"><span class="plus">+</span> new</button>
         <button id="audit-btn" class="btn btn-ghost sm" title="audit log for this vault">audit</button>
         <button id="trust-btn" class="btn btn-ghost sm" title="trusted .byn files">trust</button>
+        <button id="byn-btn" class="btn btn-ghost sm" title="create a .byn scope file for a project">.byn</button>
         <button id="passkey-btn" class="btn btn-ghost sm" title="passkeys / Touch ID">passkey</button>
         <div id="help-wrap" class="help-wrap">
           <button id="help-btn" class="btn btn-ghost sm" title="keyboard shortcuts (?)" aria-label="keyboard shortcuts">?</button>
@@ -84,6 +85,19 @@
     <div class="dialog-actions">
       <button id="dialog-cancel" class="btn btn-ghost" type="button">cancel</button>
       <button id="dialog-ok" class="btn btn-primary" type="button">ok</button>
+    </div>
+  </div>
+</div>
+
+<div id="dirpicker" class="dialog" hidden>
+  <div class="dialog-card" role="dialog" aria-modal="true">
+    <h2 class="dialog-title">Pick a directory</h2>
+    <div id="dirpicker-path" class="dirpicker-path mono"></div>
+    <div id="dirpicker-list" class="dirpicker-list"></div>
+    <div id="dirpicker-error" class="form-error"></div>
+    <div class="dialog-actions">
+      <button id="dirpicker-cancel" class="btn btn-ghost" type="button">cancel</button>
+      <button id="dirpicker-use" class="btn btn-primary" type="button">use this folder</button>
     </div>
   </div>
 </div>
