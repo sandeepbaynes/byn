@@ -145,6 +145,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleTrustRemove(env)
 	case ipc.OpTrustGrant:
 		return d.handleTrustGrant(ctx, env)
+	case ipc.OpTrustGrantBulk:
+		return d.handleTrustGrantBulk(ctx, env)
 	case ipc.OpTrustVerify:
 		return d.handleTrustVerify(ctx, env)
 	case ipc.OpBynWrite:
@@ -582,6 +584,59 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 		return internalErr(env.ID, err)
 	}
 	return resp
+}
+
+// handleTrustGrantBulk trusts many .byn paths against ONE vault, verifying the
+// password (and deriving the vk-MAC key) ONCE and reusing it for every path —
+// so trusting N files costs one KDF, not N. A per-file read error is reported
+// in that path's result without failing the rest of the batch.
+func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.TrustGrantBulkReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	defer zeroBytes(req.Password)
+	if len(req.Paths) == 0 {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest, "no paths to trust", "")
+	}
+	if len(req.Password) == 0 {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			"granting trust requires the master password", "")
+	}
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+	st, errEnv := d.storeForVault(env.ID, name)
+	if errEnv != nil {
+		return errEnv
+	}
+	if le := d.authorizeWithPassword(ctx, env.ID, name, st, req.Password); le != nil {
+		return le
+	}
+	vkKey, derr := st.DeriveSubkeyWithPassword(req.Password, trust.VKMACKeyInfo)
+	if derr != nil {
+		return internalErr(env.ID, derr)
+	}
+	defer zeroBytes(vkKey)
+
+	results := make([]ipc.TrustGrantResult, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		body, rerr := os.ReadFile(p) // #nosec G304 -- user-named; daemon runs as the same user
+		if rerr != nil {
+			results = append(results, ipc.TrustGrantResult{Path: p, Error: rerr.Error()})
+			continue
+		}
+		canon, hash, changed, perr := d.putTrustRecordWithKey(name, p, body, vkKey)
+		if perr != nil {
+			results = append(results, ipc.TrustGrantResult{Path: p, Error: perr.Error()})
+			continue
+		}
+		d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK, BynPath: canon})
+		results = append(results, ipc.TrustGrantResult{Path: canon, SHA256: hash, Changed: changed})
+	}
+	out, err := ipc.NewResponse(env.ID, ipc.TrustGrantBulkResp{Results: results})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return out
 }
 
 // handleTrustVerify checks a `.byn` against the hardened trust store. The

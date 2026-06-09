@@ -71,12 +71,13 @@ const (
 	// Trust store (global, not per-vault): the TOFU list of approved
 	// `.byn` files. The portal lists and can revoke entries; granting is
 	// gated by the master password (proof-of-presence).
-	OpTrustList   Op = "trust.list"
-	OpTrustRemove Op = "trust.remove"
-	OpTrustGrant  Op = "trust.grant"
-	OpTrustVerify Op = "trust.verify" // MAC-hardened TOFU check (fp + vk layers)
-	OpBynWrite    Op = "byn.write"    // portal writes a .byn scope file (+ optional trust)
-	OpFSListDir   Op = "fs.listdir"   // list subdirectories for the portal directory picker
+	OpTrustList      Op = "trust.list"
+	OpTrustRemove    Op = "trust.remove"
+	OpTrustGrant     Op = "trust.grant"
+	OpTrustGrantBulk Op = "trust.grant.bulk" // trust many .byn at once (one vault, one password)
+	OpTrustVerify    Op = "trust.verify"     // MAC-hardened TOFU check (fp + vk layers)
+	OpBynWrite       Op = "byn.write"        // portal writes a .byn scope file (+ optional trust)
+	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
 	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
 	// for navigator.credentials.{create,get}; finish verifies the browser's
@@ -99,7 +100,7 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustVerify, OpBynWrite, OpFSListDir,
+	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpBynWrite, OpFSListDir,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
@@ -577,6 +578,30 @@ type TrustGrantResp struct {
 	Path    string `json:"path"`
 	SHA256  string `json:"sha256"`
 	Changed bool   `json:"changed"`
+}
+
+// TrustGrantBulkReq trusts every path in Paths against one Vault, verifying the
+// password ONCE (Argon2id) and reusing the derived key — so trusting N files in
+// a vault costs one KDF, not N. The CLI groups paths by vault and sends one
+// request per vault (each vault's password prompted once).
+type TrustGrantBulkReq struct {
+	Paths    []string `json:"paths"`
+	Vault    string   `json:"vault,omitempty"`
+	Password []byte   `json:"password"`
+}
+
+// TrustGrantResult is one path's outcome. Error is set on a per-file failure
+// (e.g. unreadable); the remaining paths still proceed.
+type TrustGrantResult struct {
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256,omitempty"`
+	Changed bool   `json:"changed,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// TrustGrantBulkResp reports each path's outcome, in request order.
+type TrustGrantBulkResp struct {
+	Results []TrustGrantResult `json:"results"`
 }
 
 // BynWriteReq writes a .byn scope file into Dir (as Dir/.byn). EnvVars becomes

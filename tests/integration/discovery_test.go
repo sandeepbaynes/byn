@@ -211,6 +211,45 @@ func TestE2E_Exec_EnvAllowlist(t *testing.T) {
 	}
 }
 
+// Bulk trust approves many .byn files (same vault) with a single password.
+func TestE2E_Trust_Bulk(t *testing.T) {
+	s := bootstrapUnlocked(t)
+	var paths []string
+	for _, name := range []string{"p1", "p2", "p3"} {
+		d := filepath.Join(s.dir, name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		bp := filepath.Join(d, ".byn")
+		if err := os.WriteFile(bp, []byte("[scope]\nproject = \""+name+"\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, bp)
+	}
+	// One password, all three trusted (default vault).
+	if _, se, code := s.run("correct-horse-battery-staple\n",
+		"trust", "--paths", strings.Join(paths, ","), "--password-stdin"); code != 0 {
+		t.Fatalf("bulk trust failed: code=%d stderr=%q", code, se)
+	}
+	out, _ := s.mustRun("", "trust", "list", "--json")
+	for _, name := range []string{"p1", "p2", "p3"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("%s/.byn not in trust list:\n%s", name, out)
+		}
+	}
+
+	// Bulk untrust (recursive, no password) revokes them all.
+	if _, se, code := s.run("", "untrust", "--recursive", s.dir); code != 0 {
+		t.Fatalf("bulk untrust failed: code=%d stderr=%q", code, se)
+	}
+	out, _ = s.mustRun("", "trust", "list", "--json")
+	for _, name := range []string{"p1", "p2", "p3"} {
+		if strings.Contains(out, name) {
+			t.Fatalf("%s/.byn still trusted after recursive untrust:\n%s", name, out)
+		}
+	}
+}
+
 func TestE2E_Discovery_EmptyBynStopsWalk(t *testing.T) {
 	s := bootstrapUnlocked(t)
 	parent := filepath.Join(s.dir, "parent")

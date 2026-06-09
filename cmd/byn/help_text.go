@@ -977,9 +977,9 @@ SEE ALSO
        byn-trust - approve a .byn discovery file (TOFU)
 
 SYNOPSIS
-       byn trust [PATH]
+       byn trust [PATH...] [--paths "a,b,c"] [--recursive] [--password-stdin]
        byn trust list [--json]
-       byn untrust [PATH]
+       byn untrust [PATH...] [--paths "a,b,c"] [--recursive]
 
 DESCRIPTION
        byn discovers a .byn TOML file by walking up from CWD; its
@@ -992,6 +992,11 @@ DESCRIPTION
        verifies the password (against the vault the .byn targets)
        before recording the canonical path + SHA-256 of the contents.
 
+       Trusting many files at once groups them by their target vault and
+       asks each vault's password ONCE — so a monorepo's per-project .byn
+       files cost one prompt per vault, not one per file. Untrust takes
+       the same path forms but needs no password (revoking is fail-safe).
+
        Discovery itself is read-only and NEVER auto-trusts: a new or a
        CHANGED .byn (its hash no longer matches) is refused — in both
        interactive and agent mode — until you re-approve it with
@@ -1000,12 +1005,19 @@ DESCRIPTION
        can't approve a file whose password it doesn't have.
 
 OPTIONS
-       PATH
-           Path to the .byn file. Default: ./.byn.
+       PATH...
+           One or more .byn files. A directory resolves to <dir>/.byn.
+           Default: ./.byn.
+
+       --paths "a,b,c"
+           Comma-separated list of .byn files or directories to (un)trust.
+
+       --recursive
+           Walk each given directory for every .byn under it.
 
        --password-stdin (trust only)
            Read the master password from stdin instead of prompting
-           (for scripts/CI).
+           (for scripts/CI). With multiple vaults, run interactively.
 
        --json (trust list only)
            Print the trust store as a JSON array.

@@ -253,9 +253,12 @@ end\-to\-end. Exits 0 with "chain intact" on success; exits 3 with
 "chain BROKEN at event #N" if any link fails verification.
 .SS Trust (\fB.byn\fR TOFU)
 .TP
-.B trust \fR[\fIPATH\fR] \fR[\fB\-\-password\-stdin\fR]
-Approve a \fB.byn\fR file (default:
-.IR ./.byn ).
+.B trust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR] \fR[\fB\-\-password\-stdin\fR]
+Approve one or more \fB.byn\fR files (default:
+.IR ./.byn ;
+a directory resolves to \fI<dir>/.byn\fR, and \fB\-\-recursive\fR walks
+directories for every \fB.byn\fR). Files are grouped by their target vault,
+so each vault's password is asked once.
 \fBAlways prompts for the master password\fR \(em even when the vault is
 unlocked \(em because approving a \fB.byn\fR is a proof\-of\-presence action.
 The daemon (which owns
@@ -270,10 +273,12 @@ the password from stdin in scripts.
 .B trust list \fR[\fB\-\-json\fR]
 Print every trusted path with the first 12 hex chars of its hash.
 .TP
-.B untrust \fR[\fIPATH\fR]
-Revoke trust for a path (default:
-.IR ./.byn ).
-Idempotent.
+.B untrust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR]
+Revoke trust for one or more paths (default:
+.IR ./.byn ),
+using the same path forms as \fBtrust\fR (directories, \fB\-\-paths\fR,
+\fB\-\-recursive\fR). Needs no password \(em revoking is fail-safe \(em and is
+idempotent.
 .SS Visual editor
 .TP
 .B edit, view, byn \fR(no args)
