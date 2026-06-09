@@ -166,6 +166,12 @@ func resolveBynPaths(inputs []string, recursive bool) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(p string) {
+		// Absolute paths: the daemon reads these relative to ITS cwd, not the
+		// caller's, so a relative path (e.g. from a recursive walk of ".") would
+		// 404. The daemon canonicalizes for the trust record.
+		if abs, aerr := filepath.Abs(p); aerr == nil {
+			p = abs
+		}
 		if !seen[p] {
 			seen[p] = true
 			out = append(out, p)

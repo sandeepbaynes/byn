@@ -38,4 +38,22 @@ func TestResolveBynPaths(t *testing.T) {
 	if got := resolveBynPaths([]string{loose, loose}, false); len(got) != 1 {
 		t.Fatalf("dedup = %v", got)
 	}
+
+	// Relative inputs resolve to ABSOLUTE paths — the daemon reads them relative
+	// to its own cwd, not the caller's, so relative paths would 404 (regression:
+	// `byn trust --recursive` from a project directory).
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	rel := resolveBynPaths([]string{"."}, true)
+	if len(rel) != 3 {
+		t.Fatalf("recursive from cwd found %d, want 3: %v", len(rel), rel)
+	}
+	for _, p := range rel {
+		if !filepath.IsAbs(p) {
+			t.Fatalf("resolved path is not absolute: %q", p)
+		}
+	}
 }
