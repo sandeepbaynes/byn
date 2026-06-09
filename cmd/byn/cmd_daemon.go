@@ -40,7 +40,7 @@ func daemonConfigFor(dir string) (daemon.Config, error) {
 
 func runDaemon(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: byn daemon {start|stop|restart|reload|status} [--foreground]")
+		fmt.Fprintln(os.Stderr, "Usage: byn daemon {start|stop|restart|reload|status|install|uninstall} [--foreground]")
 		return exitErr
 	}
 	switch args[0] {
@@ -54,6 +54,10 @@ func runDaemon(args []string) int {
 		return runDaemonReload(args[1:])
 	case "status":
 		return runDaemonStatus(args[1:])
+	case "install":
+		return runDaemonInstall(args[1:])
+	case "uninstall":
+		return runDaemonUninstall(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "byn daemon: unknown subcommand %q\n", args[0])
 		return exitErr
@@ -97,7 +101,7 @@ func runDaemonReload(args []string) int {
 		return exitErr
 	}
 	if !ok {
-		fmt.Fprintln(os.Stderr, "byn daemon: not running. Start it with: byn daemon start")
+		fmt.Fprintln(os.Stderr, "byn daemon: not running. Start it with: byn start")
 		return exitErr
 	}
 	p, err := os.FindProcess(pid)

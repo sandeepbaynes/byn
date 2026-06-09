@@ -85,6 +85,8 @@ func auditToWire(e audit.Event) ipc.AuditEvent {
 		Env:           e.Env,
 		Kind:          e.Kind,
 		EntryName:     e.EntryName,
+		BynPath:       e.BynPath,
+		Command:       e.Command,
 		Op:            e.Op,
 		Outcome:       e.Outcome,
 		CallerUID:     e.CallerUID,

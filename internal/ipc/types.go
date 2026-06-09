@@ -48,6 +48,7 @@ const (
 	OpEnvCreate Op = "env.create"
 	OpEnvList   Op = "env.list"
 	OpEnvDelete Op = "env.delete"
+	OpEnvClear  Op = "env.clear" // delete all env-vars in an env, keep the env
 	OpEnvRename Op = "env.rename"
 
 	// Env-var data-plane (scoped). Flat names because they're the
@@ -70,9 +71,13 @@ const (
 	// Trust store (global, not per-vault): the TOFU list of approved
 	// `.byn` files. The portal lists and can revoke entries; granting is
 	// gated by the master password (proof-of-presence).
-	OpTrustList   Op = "trust.list"
-	OpTrustRemove Op = "trust.remove"
-	OpTrustGrant  Op = "trust.grant"
+	OpTrustList      Op = "trust.list"
+	OpTrustRemove    Op = "trust.remove"
+	OpTrustGrant     Op = "trust.grant"
+	OpTrustGrantBulk Op = "trust.grant.bulk" // trust many .byn at once (one vault, one password)
+	OpTrustVerify    Op = "trust.verify"     // MAC-hardened TOFU check (fp + vk layers)
+	OpBynWrite       Op = "byn.write"        // portal writes a .byn scope file (+ optional trust)
+	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
 	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
 	// for navigator.credentials.{create,get}; finish verifies the browser's
@@ -92,10 +97,10 @@ var AllOps = []Op{
 	OpVaultInit, OpVaultUnlock, OpVaultLock, OpVaultList, OpVaultDelete,
 	OpVaultPasswd, OpVaultRename,
 	OpProjectCreate, OpProjectList, OpProjectDelete, OpProjectRename,
-	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvRename,
+	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove, OpTrustGrant,
+	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpBynWrite, OpFSListDir,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
@@ -455,6 +460,18 @@ type DeleteReq struct {
 // DeleteResp is empty.
 type DeleteResp struct{}
 
+// EnvClearReq deletes ALL env-vars in Scope's env (the env itself is kept).
+// Password authorizes the mutation (proof-of-presence), like delete.
+type EnvClearReq struct {
+	Scope    Scope  `json:"scope,omitempty"`
+	Password []byte `json:"password,omitempty"`
+}
+
+// EnvClearResp reports how many env-vars were deleted.
+type EnvClearResp struct {
+	Deleted int `json:"deleted"`
+}
+
 // RenameReq renames an env-var entry in Scope. The entry is
 // re-encrypted under the new name's AAD.
 type RenameReq struct {
@@ -486,6 +503,8 @@ type AuditEvent struct {
 	Env           string `json:"env,omitempty"`
 	Kind          string `json:"kind,omitempty"`
 	EntryName     string `json:"entry_name,omitempty"`
+	BynPath       string `json:"byn_path,omitempty"`
+	Command       string `json:"command,omitempty"`
 	Op            string `json:"op"`
 	Outcome       string `json:"outcome"`
 	CallerUID     uint32 `json:"caller_uid,omitempty"`
@@ -561,6 +580,95 @@ type TrustGrantResp struct {
 	Changed bool   `json:"changed"`
 }
 
+// TrustGrantBulkReq trusts every path in Paths against one Vault, verifying the
+// password ONCE (Argon2id) and reusing the derived key — so trusting N files in
+// a vault costs one KDF, not N. The CLI groups paths by vault and sends one
+// request per vault (each vault's password prompted once).
+type TrustGrantBulkReq struct {
+	Paths    []string `json:"paths"`
+	Vault    string   `json:"vault,omitempty"`
+	Password []byte   `json:"password"`
+}
+
+// TrustGrantResult is one path's outcome. Error is set on a per-file failure
+// (e.g. unreadable); the remaining paths still proceed.
+type TrustGrantResult struct {
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256,omitempty"`
+	Changed bool   `json:"changed,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// TrustGrantBulkResp reports each path's outcome, in request order.
+type TrustGrantBulkResp struct {
+	Results []TrustGrantResult `json:"results"`
+}
+
+// BynWriteReq writes a .byn scope file into Dir (as Dir/.byn). EnvVars becomes
+// the [exec] env allowlist. When Trust is set, the just-written file is trusted
+// in the same step (Password authorizes the grant, as with trust.grant).
+type BynWriteReq struct {
+	Dir      string   `json:"dir"`
+	Scope    Scope    `json:"scope,omitempty"`
+	EnvVars  []string `json:"env_vars,omitempty"`
+	Trust    bool     `json:"trust,omitempty"`
+	Password []byte   `json:"password,omitempty"`
+	// PresenceToken authorizes trust via a fresh passkey ceremony instead of the
+	// master password (see PasskeyAuthFinishResp.PresenceToken). One of Password
+	// or PresenceToken is required when Trust is set.
+	PresenceToken []byte `json:"presence_token,omitempty"`
+}
+
+// BynWriteResp reports the written path and whether trust was granted.
+type BynWriteResp struct {
+	Path    string `json:"path"`
+	Trusted bool   `json:"trusted"`
+}
+
+// ListDirReq lists the subdirectories of Path (empty ⇒ the user's home dir) for
+// the portal directory picker. The daemon runs as the user, so it exposes only
+// what the user can already read.
+type ListDirReq struct {
+	Path string `json:"path"`
+}
+
+// DirEntry is one subdirectory.
+type DirEntry struct {
+	Name string `json:"name"`
+}
+
+// ListDirResp returns the resolved absolute Path, its Parent ("" at the
+// filesystem root), and the name-sorted subdirectories.
+type ListDirResp struct {
+	Path    string     `json:"path"`
+	Parent  string     `json:"parent,omitempty"`
+	Entries []DirEntry `json:"entries"`
+}
+
+// TrustVerifyReq asks the daemon to verify a `.byn` against the hardened trust
+// store: it canonicalizes Path, reads + hashes the file, and checks the
+// record's MACs. Vault is the file's target vault (keys the vault-key MAC), or
+// "default".
+type TrustVerifyReq struct {
+	Path  string `json:"path"`
+	Vault string `json:"vault,omitempty"`
+	// Command is the exec'd command this verification authorizes — recorded in
+	// the audit log so a .byn-authorized injection is traceable to its command.
+	Command string `json:"command,omitempty"`
+}
+
+// TrustVerifyResp reports the status: "trusted", "changed" (content differs),
+// "untrusted" (no record), "stale" (record predates MAC hardening — re-trust to
+// protect), or "tampered" (a MAC failed — forged or copied from another
+// machine). VKChecked is true when the vault-key MAC was verified (target vault
+// unlocked); when false only the machine-fingerprint MAC was checked (e.g.
+// locked discovery).
+type TrustVerifyResp struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	VKChecked bool   `json:"vk_checked"`
+}
+
 // ---- Portal passkey (WebAuthn) ------------------------------------------
 
 // PasskeyRegisterBeginReq starts enrollment of a new passkey for Vault. The
@@ -624,6 +732,10 @@ type PasskeyAuthFinishReq struct {
 type PasskeyAuthFinishResp struct {
 	CredentialID []byte `json:"credential_id"`
 	Unlocked     bool   `json:"unlocked"`
+	// PresenceToken is a one-time proof-of-presence the portal can pass to a
+	// follow-up trust grant in place of the master password (empty if the vault
+	// is not unlocked). Short-lived and single-use.
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // PasskeyInfo is one enrolled credential, names + timestamps only (no secret).

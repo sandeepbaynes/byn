@@ -123,6 +123,43 @@ function openDialog(o) {
 
     const inputs = {};
     fields.forEach((f) => {
+      if (f.type === "checkbox") {
+        const cw = el("label", "field check");
+        const cb = el("input"); cb.type = "checkbox"; cb.checked = !!f.value;
+        cw.appendChild(cb); cw.appendChild(el("span", "field-label", f.label || ""));
+        box.appendChild(cw); inputs[f.key] = cb;
+        return;
+      }
+      if (f.type === "checklist") {
+        const cw = el("div", "field");
+        if (f.label) cw.appendChild(el("span", "field-label", f.label));
+        const list = el("div", "checklist");
+        if (!(f.options || []).length) list.appendChild(el("span", "muted", "no env-vars in this scope"));
+        (f.options || []).forEach((opt) => {
+          const row = el("label", "check-row");
+          const cb = el("input"); cb.type = "checkbox"; cb.value = opt; cb.checked = f.allChecked !== false;
+          row.appendChild(cb); row.appendChild(el("span", "mono", opt));
+          list.appendChild(row);
+        });
+        cw.appendChild(list); box.appendChild(cw); inputs[f.key] = list;
+        return;
+      }
+      if (f.type === "path") {
+        const pwrap = el("label", "field");
+        if (f.label) pwrap.appendChild(el("span", "field-label", f.label));
+        const prow = el("div", "path-row");
+        const pin = el("input", "input mono");
+        pin.type = "text"; pin.placeholder = f.placeholder || ""; pin.value = f.value || "";
+        pin.autocomplete = "off"; pin.spellcheck = false; pin.autocapitalize = "off";
+        const browse = el("button", "btn btn-ghost sm path-browse", "browse…");
+        browse.type = "button";
+        browse.onclick = async () => { const p = await pickDirectory(pin.value); if (p) { pin.value = p; err.textContent = ""; } };
+        pin.oninput = () => { err.textContent = ""; };
+        pin.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
+        prow.appendChild(pin); prow.appendChild(browse);
+        pwrap.appendChild(prow); box.appendChild(pwrap); inputs[f.key] = pin;
+        return;
+      }
       const wrap = el("label", "field");
       if (f.label) wrap.appendChild(el("span", "field-label", f.label));
       const isArea = f.type === "textarea";
@@ -140,7 +177,7 @@ function openDialog(o) {
     });
 
     dlg.hidden = false;
-    setTimeout(() => { const t = fields.length ? inputs[fields[0].key] : ok; t.focus(); if (fields.length) inputs[fields[0].key].select(); }, 30);
+    setTimeout(() => { const t = fields.length ? inputs[fields[0].key] : ok; t.focus(); if (fields.length && inputs[fields[0].key].select) inputs[fields[0].key].select(); }, 30);
 
     function cleanup() { dlg.hidden = true; ok.onclick = cancel.onclick = null; document.removeEventListener("keydown", onKey, true); }
     function finish(v) { if (done) return; done = true; cleanup(); resolve(v); }
@@ -148,6 +185,11 @@ function openDialog(o) {
       if (!fields.length) { finish(true); return; }
       const vals = {};
       for (const f of fields) {
+        if (f.type === "checkbox") { vals[f.key] = inputs[f.key].checked; continue; }
+        if (f.type === "checklist") {
+          vals[f.key] = Array.from(inputs[f.key].querySelectorAll("input:checked")).map((c) => c.value);
+          continue;
+        }
         const raw = f.type === "password" || f.type === "textarea";
         const v = raw ? inputs[f.key].value : inputs[f.key].value.trim();
         const fe = f.validate ? f.validate(v) : null;
@@ -165,6 +207,51 @@ function openDialog(o) {
   });
 }
 function dialogOpen() { return !$("#dialog").hidden; }
+
+function joinPath(base, name) { return base.endsWith("/") ? base + name : base + "/" + name; }
+
+// pickDirectory opens the daemon-backed directory browser and resolves to the
+// chosen absolute path, or null if cancelled. Browsers can't return a real OS
+// path from a native file dialog, so byn lists directories via the daemon
+// (which runs as the user and sees only what the user can already read).
+function pickDirectory(start) {
+  return new Promise((resolve) => {
+    const dlg = $("#dirpicker"), pathEl = $("#dirpicker-path"), listEl = $("#dirpicker-list");
+    const err = $("#dirpicker-error"), use = $("#dirpicker-use"), cancel = $("#dirpicker-cancel");
+    let cur = start || "";
+    let done = false;
+
+    async function load(path) {
+      err.textContent = "";
+      try {
+        const d = await api("GET", "/api/fs/listdir" + (path ? "?path=" + enc(path) : ""));
+        cur = d.path; pathEl.textContent = d.path;
+        listEl.innerHTML = "";
+        if (d.parent) {
+          const up = el("button", "dirpicker-item up");
+          up.appendChild(el("span", "di-ico", "↑")); up.appendChild(el("span", null, ".."));
+          up.onclick = () => load(d.parent);
+          listEl.appendChild(up);
+        }
+        if (!d.entries.length) listEl.appendChild(el("div", "muted dirpicker-empty", "no subfolders"));
+        d.entries.forEach((e) => {
+          const it = el("button", "dirpicker-item");
+          it.appendChild(el("span", "di-ico", "📁")); it.appendChild(el("span", null, e.name));
+          it.onclick = () => load(joinPath(cur, e.name));
+          listEl.appendChild(it);
+        });
+      } catch (e) { err.textContent = e.message; }
+    }
+    function cleanup() { dlg.hidden = true; use.onclick = cancel.onclick = null; document.removeEventListener("keydown", onKey, true); }
+    function finish(v) { if (done) return; done = true; cleanup(); resolve(v); }
+    function onKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(null); } }
+    use.onclick = () => finish(cur);
+    cancel.onclick = () => finish(null);
+    document.addEventListener("keydown", onKey, true);
+    dlg.hidden = false;
+    load(cur);
+  });
+}
 
 // ---- tree ---------------------------------------------------------------
 
@@ -197,6 +284,7 @@ function twistSpan(onToggle) {
 async function renderTree() {
   const tree = $("#tree"); tree.innerHTML = "";
   const st = await api("GET", "/api/status");
+  if (st && st.version) setHelpVersion(st.version);
   state.vaults = (st.vaults || []).filter((v) => v.initialized);
   for (const v of state.vaults) {
     const open = state.open.vaults.has(v.name);
@@ -586,15 +674,18 @@ async function renderAuditView() {
   for (const e of events) {
     const row = el("div", "audit-row" + (e.outcome && e.outcome !== "ok" ? " bad" : ""));
     row.appendChild(el("span", "a-time", fmtAuditTime(e.ts)));
-    row.appendChild(el("span", "a-op", e.op + (e.entry_name ? " " + e.entry_name : "")));
+    row.appendChild(el("span", "a-op", e.op + (e.command ? " " + e.command : (e.entry_name ? " " + e.entry_name : ""))));
     row.appendChild(el("span", "a-out", e.outcome + (e.error_code ? " (" + e.error_code + ")" : "")));
-    row.appendChild(el("span", "a-scope", auditScope(e)));
+    const sc = el("span", "a-scope", auditScope(e));
+    if (e.byn_path) sc.title = e.byn_path;
+    row.appendChild(sc);
     row.appendChild(el("span", "a-caller", auditCaller(e)));
     tbl.appendChild(row);
   }
   box.appendChild(tbl);
 }
 function auditScope(e) {
+  if (e.byn_path) return e.byn_path; // exec authorization: show the authorizing .byn
   const parts = [e.project, e.env].filter(Boolean);
   return parts.length ? parts.join("/") : "—";
 }
@@ -848,7 +939,7 @@ function entryRow(s, i) {
   row.style.animationDelay = Math.min(i * 14, 280) + "ms";
   row.appendChild(el("span", "bdg" + (bd ? " " + bd.cls : ""), bd ? bd.glyph : ""));
   const name = el("span", "cell name", s.name);
-  if (!inherited) { name.title = "double-click to rename"; name.ondblclick = () => editName(s, name); }
+  if (!inherited) { name.title = "double-click to rename"; name.ondblclick = (e) => { e.stopPropagation(); editName(s, name); }; }
   else { name.title = "inherited from default"; }
   row.appendChild(name);
   const val = el("span", "cell val"); val.appendChild(maskDots());
@@ -859,7 +950,7 @@ function entryRow(s, i) {
   // distinguishes the two so a double-click doesn't also reveal.
   let ct = null;
   val.onclick = () => { if (ct) return; ct = setTimeout(() => { ct = null; toggleReveal(s, val); }, 200); };
-  val.ondblclick = () => { if (ct) { clearTimeout(ct); ct = null; } editValue(s, val); };
+  val.ondblclick = (e) => { e.stopPropagation(); if (ct) { clearTimeout(ct); ct = null; } editValue(s, val); };
   row.appendChild(val);
   const acts = el("span", "acts");
   acts.appendChild(iconBtn("eye", "reveal", "reveal value", () => reveal(s, val)));
@@ -897,6 +988,7 @@ async function copyValue(s) {
 }
 
 function editName(s, cell) {
+  if (vaultLocked(state.scope.vault)) { toast("unlock the vault to rename", true); return; }
   const input = el("input", "inline-input"); input.value = s.name;
   cell.replaceWith(input); input.focus(); input.select();
   const done = (commit) => async () => {
@@ -909,6 +1001,7 @@ function editName(s, cell) {
   input.onblur = done(false);
 }
 async function editValue(s, cell) {
+  if (vaultLocked(state.scope.vault)) { toast("unlock the vault to edit values", true); return; }
   let current = "";
   try { current = await revealValue(s); } catch (e) { toast(e.message, true); return; }
   const ta = el("textarea", "inline-input mono"); ta.value = current; ta.rows = 1;
@@ -959,6 +1052,63 @@ function addNewRow() {
     setTimeout(() => autoGrow(valIn), 0);
   };
 }
+// generateByn pins the current scope (and a chosen exec allowlist) into a
+// project directory's .byn, optionally trusting it on the spot.
+async function generateByn() {
+  const sc = curScope();
+  if (state.view !== "entries" || !sc.env) { toast("pick a scope first", true); return; }
+  const vars = (state.entries || []).map((e) => e.name);
+  const r = await openDialog({
+    title: "Create .byn",
+    message: `Pin ${sc.vault}/${sc.project}/${sc.env} into a project directory's .byn.`,
+    okText: "write .byn",
+    fields: [
+      { key: "dir", label: "project directory", placeholder: "/path/to/project", type: "path" },
+      { key: "vars", label: "exec allowlist — vars byn exec may inject", type: "checklist", options: vars },
+      { key: "trust", label: "trust now (so byn exec works immediately)", type: "checkbox" },
+    ],
+    validate: (v) => v.dir ? null : "a project directory is required",
+  });
+  if (!r) return;
+
+  // Trust is passkey-first: if a passkey can authorize, a single ceremony does
+  // it. Otherwise (no passkey, or the user cancels it) fall back to the master
+  // password. Either credential is requested ONLY when "trust now" is checked.
+  let trust = false, password = "", presence = "";
+  if (r.trust) {
+    presence = (await tryPasskeyPresence(sc.vault)) || "";
+    if (presence) {
+      trust = true;
+    } else {
+      const pw = await openDialog({
+        title: "Trust this .byn",
+        message: `Enter your master password to trust ${r.dir}/.byn so byn exec can use it.`,
+        okText: "trust",
+        fields: [{ key: "password", label: "master password", type: "password" }],
+        validate: (v) => v.password ? null : "the master password is required to trust",
+      });
+      if (pw && pw.password) { trust = true; password = pw.password; }
+      else { toast("writing .byn without trust (cancelled)", true); }
+    }
+  }
+  try {
+    const resp = await api("POST", "/api/byn/write", {
+      dir: r.dir, scope: sc, env_vars: r.vars, trust, password, presence_token: presence,
+    });
+    toast(".byn written → " + resp.path + (resp.trusted ? " · trusted" : ""));
+  } catch (e) { toast(e.message, true); }
+}
+
+// tryPasskeyPresence runs a passkey ceremony to authorize a trust grant and
+// returns its one-time presence token, or null if no passkey can authorize or
+// the user cancels — in which case the caller falls back to the password.
+async function tryPasskeyPresence(vault) {
+  try {
+    if (!(window.bynPasskey && await window.bynPasskey.canUnlock(vault))) return null;
+    const r = await window.bynPasskey.signIn(vault);
+    return r && r.presence_token ? r.presence_token : null;
+  } catch (e) { return null; }
+}
 async function doDelete(s) {
   const c = await confirmDelete(state.scope.vault, "Delete env-var",
     `Delete “${s.name}” from ${state.scope.vault}/${state.scope.project}/${state.scope.env}?`);
@@ -978,6 +1128,12 @@ function toast(msg, isErr) {
 function isTyping() { const a = document.activeElement; return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable); }
 function toggleHelp() { const p = $("#help-pop"); p.hidden = !p.hidden; }
 function hideHelp() { $("#help-pop").hidden = true; }
+function setHelpVersion(v) {
+  const el = $("#help-ver");
+  if (!el || !v) return;
+  const label = /^[0-9]/.test(v) ? "byn v" + v : "byn " + v; // 0.0.1 -> "byn v0.0.1"
+  if (el.textContent !== label) el.textContent = label;
+}
 
 // ---- spotlight palette (Ctrl/⌘+P) ---------------------------------------
 
@@ -1118,6 +1274,7 @@ function wire() {
   });
   $("#audit-btn").addEventListener("click", toggleAudit);
   $("#trust-btn").addEventListener("click", toggleTrust);
+  $("#byn-btn").addEventListener("click", generateByn);
   $("#help-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleHelp(); });
   $("#filter").addEventListener("input", (e) => { state.filter = e.target.value; if (state.view === "entries") renderEntries(); });
   document.addEventListener("click", (e) => { if (!e.target.closest("#help-wrap")) hideHelp(); });

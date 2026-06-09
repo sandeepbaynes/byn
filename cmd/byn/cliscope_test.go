@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -160,7 +161,7 @@ func TestPreParseGlobals_Forms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("err: %v", err)
 			}
-			if sc != tc.wantSC {
+			if !reflect.DeepEqual(sc, tc.wantSC) {
 				t.Fatalf("scope = %+v, want %+v", sc, tc.wantSC)
 			}
 			if len(out) != len(tc.wantOut) {

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/trust"
 )
 
 // runExec loads env-var entries from the vault and replaces the
@@ -65,12 +67,24 @@ func runExec(args []string, scope cliScope) int {
 	}
 	client := newClient(dir)
 
+	// Trust gate: byn exec injects secrets into a child process, so a forged,
+	// untrusted, or changed .byn must not redirect which secrets flow. Only
+	// exec gates on trust — other commands pass through (see discoverScope).
+	if scope.SourcePath != "" {
+		if code := verifyExecTrust(client, scope, execCommandLabel(childArgv)); code != exitOK {
+			return code
+		}
+	}
+
 	// Stage 1: list env-var entries in the active scope.
 	scopeIPC := scope.ToIPC()
 	var listResp ipc.ListResp
 	if err := client.Call(ipc.OpList, ipc.ListReq{Scope: scopeIPC}, &listResp); err != nil {
 		return handleCallError(err)
 	}
+
+	// Stage 1b: apply the .byn [exec] env allowlist before fetching values.
+	secrets := filterExecEnv(listResp.Secrets, scope)
 
 	// Stage 2: fetch each entry's value. N+1 round-trips; fine for
 	// v1, replaceable with a getMany op when perf signal appears.
@@ -79,8 +93,8 @@ func runExec(args []string, scope cliScope) int {
 	// underlying byte slices from the IPC responses immediately, but
 	// the constructed env strings persist until syscall.Exec replaces
 	// the process image.
-	extraEnv := make([]string, 0, len(listResp.Secrets))
-	for _, meta := range listResp.Secrets {
+	extraEnv := make([]string, 0, len(secrets))
+	for _, meta := range secrets {
 		var got ipc.GetResp
 		if err := client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name}, &got); err != nil {
 			return handleCallError(err)
@@ -120,4 +134,82 @@ func runExec(args []string, scope cliScope) int {
 	}
 	// Unreachable if Exec succeeded.
 	return exitErr
+}
+
+// execCommandLabel renders the child argv for the audit log (so a
+// .byn-authorized injection is traceable to the command it ran), capped to keep
+// audit lines bounded.
+func execCommandLabel(argv []string) string {
+	s := strings.Join(argv, " ")
+	const maxLen = 200
+	if len(s) > maxLen {
+		return s[:maxLen] + "…"
+	}
+	return s
+}
+
+// verifyExecTrust asks the daemon to MAC-verify the .byn that supplied the
+// scope before exec injects any secrets. The command is forwarded so the
+// daemon can audit which .byn authorized which command. Returns exitOK to
+// proceed, or an exit code (after printing an actionable message) to abort.
+func verifyExecTrust(client *ipc.Client, scope cliScope, command string) int {
+	var tv ipc.TrustVerifyResp
+	if err := client.Call(ipc.OpTrustVerify, ipc.TrustVerifyReq{Path: scope.SourcePath, Vault: scope.Vault, Command: command}, &tv); err != nil {
+		return handleCallError(err)
+	}
+	p := scope.SourcePath
+	switch trust.VerifyStatus(tv.Status) {
+	case trust.VerifyTrusted:
+		return exitOK
+	case trust.VerifyChanged:
+		execTrustError(p, "has CHANGED since you trusted it")
+	case trust.VerifyUntrusted:
+		execTrustError(p, "is untrusted")
+	case trust.VerifyStale:
+		execTrustError(p, "predates tamper-protection")
+	case trust.VerifyTampered:
+		execTrustError(p, "FAILED its tamper check (forged or copied from another machine)")
+	default:
+		fmt.Fprintf(os.Stderr, "%s unexpected trust status %q for %s\n", boldRed("Error:"), tv.Status, p)
+	}
+	return exitErr
+}
+
+func execTrustError(path, why string) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red(path+" "+why+"."))
+	fmt.Fprintf(os.Stderr, "%s %s %s\n", yellow("Run:"), cyan("byn trust "+path), dim("(byn asks for the master password)"))
+}
+
+// filterExecEnv applies the .byn [exec] env allowlist to the scope's entries.
+// With no .byn (ad-hoc exec) it injects the whole scope (today's behavior).
+// With a .byn: "*" injects all (loud — any secret added later auto-injects), an
+// explicit list injects only those names, and an empty/absent list injects
+// nothing (the secure default: a project declares the vars it needs).
+func filterExecEnv(all []ipc.SecretMeta, scope cliScope) []ipc.SecretMeta {
+	if scope.SourcePath == "" {
+		return all // ad-hoc run, no .byn — inject the whole scope
+	}
+	for _, name := range scope.ExecEnv {
+		if name == "*" {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+				yellow(fmt.Sprintf("%s permits ALL %d scoped var(s) via \"*\" — any secret added later is auto-injected.",
+					scope.SourcePath, len(all))))
+			return all
+		}
+	}
+	allow := make(map[string]bool, len(scope.ExecEnv))
+	for _, name := range scope.ExecEnv {
+		allow[name] = true
+	}
+	out := make([]ipc.SecretMeta, 0, len(allow))
+	for _, m := range all {
+		if allow[m.Name] {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		fmt.Fprintf(os.Stderr, "%s\n",
+			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", scope.SourcePath)))
+	}
+	return out
 }
