@@ -220,44 +220,61 @@ func (s *Server) handleEnvs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /api/project/delete {vault, name, password?}. Password authorizes
-// the delete when the vault is locked (one-shot verify, no unlock).
+// POST /api/project/delete {vault, name, password?, presence_token?}. Password
+// (or presence_token) authorizes the delete when the vault is locked or when
+// [security] per_action_auth is on (one-shot verify, no unlock).
 func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
-	var b struct{ Vault, Name, Password string }
+	var b struct {
+		Vault         string `json:"vault"`
+		Name          string `json:"name"`
+		Password      string `json:"password"`
+		PresenceToken []byte `json:"presence_token"`
+	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.ProjectDeleteReq{Vault: b.Vault, Name: b.Name, Password: []byte(b.Password)}
+	req := ipc.ProjectDeleteReq{Vault: b.Vault, Name: b.Name, Password: []byte(b.Password), PresenceToken: b.PresenceToken}
 	if !s.run(w, r, ipc.OpProjectDelete, req, nil) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// POST /api/env/delete {vault, project, name, password?}.
+// POST /api/env/delete {vault, project, name, password?, presence_token?}.
 func (s *Server) handleEnvDelete(w http.ResponseWriter, r *http.Request) {
-	var b struct{ Vault, Project, Name, Password string }
+	var b struct {
+		Vault         string `json:"vault"`
+		Project       string `json:"project"`
+		Name          string `json:"name"`
+		Password      string `json:"password"`
+		PresenceToken []byte `json:"presence_token"`
+	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.EnvDeleteReq{Vault: b.Vault, Project: b.Project, Name: b.Name, Password: []byte(b.Password)}
+	req := ipc.EnvDeleteReq{Vault: b.Vault, Project: b.Project, Name: b.Name, Password: []byte(b.Password), PresenceToken: b.PresenceToken}
 	if !s.run(w, r, ipc.OpEnvDelete, req, nil) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// POST /api/vault/delete {name, password?} — the default vault is
-// protected; a locked vault can be deleted by supplying the password.
+// POST /api/vault/delete {name, password?, presence_token?} — the default
+// vault is protected; a locked vault can be deleted by supplying the password
+// (or presence_token when [security] per_action_auth is on).
 func (s *Server) handleVaultDelete(w http.ResponseWriter, r *http.Request) {
-	var b struct{ Name, Password string }
+	var b struct {
+		Name          string `json:"name"`
+		Password      string `json:"password"`
+		PresenceToken []byte `json:"presence_token"`
+	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.VaultDeleteReq{Name: b.Name, Password: []byte(b.Password)}
+	req := ipc.VaultDeleteReq{Name: b.Name, Password: []byte(b.Password), PresenceToken: b.PresenceToken}
 	if !s.run(w, r, ipc.OpVaultDelete, req, nil) {
 		return
 	}
@@ -299,16 +316,18 @@ func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPost:
 		var body struct {
-			Scope      scopeBody `json:"scope"`
-			Name       string    `json:"name"`
-			Value      string    `json:"value"`
-			CreateOnly bool      `json:"create_only"`
+			Scope         scopeBody `json:"scope"`
+			Name          string    `json:"name"`
+			Value         string    `json:"value"`
+			CreateOnly    bool      `json:"create_only"`
+			Password      string    `json:"password"`
+			PresenceToken []byte    `json:"presence_token"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		req := ipc.PutReq{Scope: body.Scope.toIPC(), Name: body.Name, Value: []byte(body.Value), CreateOnly: body.CreateOnly}
+		req := ipc.PutReq{Scope: body.Scope.toIPC(), Name: body.Name, Value: []byte(body.Value), CreateOnly: body.CreateOnly, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
 		if !s.run(w, r, ipc.OpPut, req, &ipc.PutResp{}) {
 			return
 		}
@@ -318,18 +337,22 @@ func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /api/entry/reveal {scope, name} — the audited value read.
+// POST /api/entry/reveal {scope, name, password?, presence_token?} — the audited value read.
+// When [security] per_action_auth is on the daemon returns auth_required unless
+// the caller supplies either a master password or a one-time presence_token.
 func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Scope scopeBody `json:"scope"`
-		Name  string    `json:"name"`
+		Scope         scopeBody `json:"scope"`
+		Name          string    `json:"name"`
+		Password      string    `json:"password"`
+		PresenceToken []byte    `json:"presence_token"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	var resp ipc.GetResp
-	req := ipc.GetReq{Scope: body.Scope.toIPC(), Name: body.Name}
+	req := ipc.GetReq{Scope: body.Scope.toIPC(), Name: body.Name, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
 	if !s.run(w, r, ipc.OpGet, req, &resp) {
 		return
 	}
@@ -340,37 +363,43 @@ func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/entry/delete {scope, name, password?}. Password authorizes the
-// delete when the vault is locked (one-shot verify, no unlock).
+// POST /api/entry/delete {scope, name, password?, presence_token?}. Password
+// (or presence_token) authorizes the delete when the vault is locked or when
+// [security] per_action_auth is on (one-shot verify, no unlock).
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Scope    scopeBody `json:"scope"`
-		Name     string    `json:"name"`
-		Password string    `json:"password"`
+		Scope         scopeBody `json:"scope"`
+		Name          string    `json:"name"`
+		Password      string    `json:"password"`
+		PresenceToken []byte    `json:"presence_token"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.DeleteReq{Scope: body.Scope.toIPC(), Name: body.Name, Password: []byte(body.Password)}
+	req := ipc.DeleteReq{Scope: body.Scope.toIPC(), Name: body.Name, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
 	if !s.run(w, r, ipc.OpDelete, req, &ipc.DeleteResp{}) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// POST /api/entry/rename {scope, old_name, new_name}.
+// POST /api/entry/rename {scope, old_name, new_name, password?, presence_token?}.
+// When [security] per_action_auth is on the daemon requires a master password
+// or presence_token to authorize the rename.
 func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Scope   scopeBody `json:"scope"`
-		OldName string    `json:"old_name"`
-		NewName string    `json:"new_name"`
+		Scope         scopeBody `json:"scope"`
+		OldName       string    `json:"old_name"`
+		NewName       string    `json:"new_name"`
+		Password      string    `json:"password"`
+		PresenceToken []byte    `json:"presence_token"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.RenameReq{Scope: body.Scope.toIPC(), OldName: body.OldName, NewName: body.NewName}
+	req := ipc.RenameReq{Scope: body.Scope.toIPC(), OldName: body.OldName, NewName: body.NewName, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
 	if !s.run(w, r, ipc.OpRename, req, &ipc.RenameResp{}) {
 		return
 	}
@@ -416,19 +445,22 @@ func (s *Server) handleEnvRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// POST /api/vault/rename {old_name, new_name, password?} — Password
-// authorizes the rename when the vault is locked. The vault is left locked.
+// POST /api/vault/rename {old_name, new_name, password?, presence_token?} — Password
+// (or presence_token) authorizes the rename when the vault is locked or when
+// [security] per_action_auth is on (one-shot verify, no unlock). The vault is
+// left locked after rename.
 func (s *Server) handleVaultRename(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		OldName  string `json:"old_name"`
-		NewName  string `json:"new_name"`
-		Password string `json:"password"`
+		OldName       string `json:"old_name"`
+		NewName       string `json:"new_name"`
+		Password      string `json:"password"`
+		PresenceToken []byte `json:"presence_token"`
 	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.VaultRenameReq{OldName: b.OldName, NewName: b.NewName, Password: []byte(b.Password)}
+	req := ipc.VaultRenameReq{OldName: b.OldName, NewName: b.NewName, Password: []byte(b.Password), PresenceToken: b.PresenceToken}
 	if !s.run(w, r, ipc.OpVaultRename, req, &ipc.VaultRenameResp{}) {
 		return
 	}

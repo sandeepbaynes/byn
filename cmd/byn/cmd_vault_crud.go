@@ -112,7 +112,7 @@ func runVaultDelete(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
 		return newClient(dir).Call(ipc.OpVaultDelete,
 			ipc.VaultDeleteReq{Name: name, Password: pw}, &ipc.VaultDeleteResp{})
 	})
@@ -155,7 +155,7 @@ func runVaultRename(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
 		return newClient(dir).Call(ipc.OpVaultRename,
 			ipc.VaultRenameReq{OldName: oldName, NewName: newName, Password: pw},
 			&ipc.VaultRenameResp{})

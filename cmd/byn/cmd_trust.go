@@ -19,8 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
 	"github.com/sandeepbaynes/byn/internal/auth"
+	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/trust"
 )
@@ -297,9 +297,8 @@ func runTrustList(args []string) int {
 // unspecified or unparseable — the daemon then gates on the default vault).
 // The target vault's master password is what authorizes trusting the file.
 func bynTargetVault(body []byte) string {
-	var parsed dotBynScope
-	dec := toml.NewDecoder(strings.NewReader(string(body))).DisallowUnknownFields()
-	if err := dec.Decode(&parsed); err != nil {
+	parsed, err := bynfile.Parse(body)
+	if err != nil {
 		return ""
 	}
 	return parsed.Scope.Vault

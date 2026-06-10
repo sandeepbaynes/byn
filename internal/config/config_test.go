@@ -82,8 +82,9 @@ func TestRoundTrip_MarshalThenLoad(t *testing.T) {
 	// A non-default config marshalled to TOML and reloaded must compare
 	// equal — exercises Duration.MarshalText and the decode path together.
 	want := Config{
-		UI:     UI{Enabled: false, Port: 8080},
-		Daemon: Daemon{IdleTimeout: Duration(30 * time.Minute)},
+		UI:       UI{Enabled: false, Port: 8080},
+		Daemon:   Daemon{IdleTimeout: Duration(30 * time.Minute)},
+		Security: Security{PerActionAuth: true},
 	}
 	out, err := toml.Marshal(want)
 	if err != nil {
@@ -217,6 +218,51 @@ func TestLoad_WrongType_Errors(t *testing.T) {
 	path := writeConfig(t, "[ui]\nport = \"nope\"\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load(port as string) error = nil, want error")
+	}
+}
+
+func TestSecurityPerActionAuthDefaultsFalse(t *testing.T) {
+	cfg := Default()
+	if cfg.Security.PerActionAuth {
+		t.Errorf("Default().Security.PerActionAuth = true, want false")
+	}
+}
+
+func TestSecurityPerActionAuthLoads(t *testing.T) {
+	path := writeConfig(t, "[security]\nper_action_auth = true\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if !got.Security.PerActionAuth {
+		t.Errorf("Security.PerActionAuth = false, want true")
+	}
+}
+
+func TestSecuritySectionAbsentDefaultsFalse(t *testing.T) {
+	// A config file without a [security] section should default to false.
+	path := writeConfig(t, "[ui]\nenabled = true\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if got.Security.PerActionAuth {
+		t.Errorf("Security.PerActionAuth = true, want false (absent section)")
+	}
+}
+
+func TestLoad_UnknownSecurityKey_Errors(t *testing.T) {
+	path := writeConfig(t, "[security]\nper_action_auth_x = 1\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load(unknown [security] key) error = nil, want error")
+	}
+}
+
+func TestLoad_SecurityPerActionAuth_WrongType_Errors(t *testing.T) {
+	// per_action_auth must be a boolean; a string value must fail.
+	path := writeConfig(t, "[security]\nper_action_auth = \"yes\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load(per_action_auth as string) error = nil, want error")
 	}
 }
 

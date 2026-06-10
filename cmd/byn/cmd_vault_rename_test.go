@@ -62,3 +62,23 @@ func TestRunVaultRename_BadArgs(t *testing.T) {
 		t.Fatalf("got %d, want exitErr", got)
 	}
 }
+
+// TestRunVaultRename_AuthRequiredRetries verifies the per_action_auth retry
+// path: first call returns auth_required, retry with password succeeds.
+func TestRunVaultRename_AuthRequiredRetries(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.on(ipc.OpVaultRename, authRequiredThenOK(ipc.VaultRenameResp{}))
+	withStdin(t, "s3cret\n")
+	if got := runVaultRename([]string{"--password-stdin", "acme", "brand"}, cliScope{}); got != exitOK {
+		t.Fatalf("got %d, want exitOK", got)
+	}
+	calls := fd.callsFor(ipc.OpVaultRename)
+	if len(calls) != 2 {
+		t.Fatalf("got %d rename calls, want 2 (auth_required then retry)", len(calls))
+	}
+	var req ipc.VaultRenameReq
+	requireUnmarshal(t, calls[1].Body, &req)
+	if string(req.Password) != "s3cret" {
+		t.Errorf("retry password = %q, want s3cret", req.Password)
+	}
+}

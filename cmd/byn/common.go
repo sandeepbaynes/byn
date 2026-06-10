@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/daemon"
@@ -85,24 +86,74 @@ func isLockedErr(err error) bool {
 	return errors.As(err, &er) && er.Code == ipc.CodeLocked
 }
 
-// mutateWithLockRetry runs a key-free mutation (delete or rename) via
-// call(nil) — the normal, already-unlocked path. If the daemon reports the
-// vault is locked, it obtains the master password (from stdin when pwStdin is
-// set, else an interactive secure prompt) and retries once with it. This
-// authorizes the change WITHOUT unlocking the vault, so its values are never
-// exposed to a process watching daemon memory. Returns a process exit code.
+// isAuthRequiredErr reports whether err is the daemon's per_action_auth gate reply.
+func isAuthRequiredErr(err error) bool {
+	var er *ipc.ErrResponse
+	return errors.As(err, &er) && er.Code == ipc.CodeAuthRequired
+}
+
+// mutateWithAuthRetry is the unified retry helper for IPC operations that may
+// require authorization. On first call it tries with no password; on a gated
+// response it either prompts (TTY path) or reads from stdin and retries once.
+// In jsonMode it never prompts — it prints an actionable error and returns
+// exitErr.
+//
+// retryOnLocked controls whether a CodeLocked response triggers the
+// password-and-retry path:
+//
+//   - true  — delete-family operations that support authorizeMutationWhileLocked
+//     (entry delete, env delete/clear, project delete, vault delete, and the
+//     rename variants). A locked vault can be operated on by supplying the
+//     master password: the daemon verifies without unlocking.
+//   - false — get / put (overwrite) / entry rename. A correct password still
+//     yields CodeLocked because those ops need the vault key in memory. The
+//     retry loop is a dead end; fail fast with the standard locked rendering
+//     and "byn unlock" hint instead.
 //
 // call builds and issues the IPC request with the supplied password (nil on
-// the first, unlocked attempt).
-func mutateWithLockRetry(pwStdin bool, call func(password []byte) error) int {
+// the first attempt, non-nil on the retry).
+func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, call func(password []byte) error) int {
 	err := call(nil)
 	if err == nil {
 		return exitOK
 	}
-	if !isLockedErr(err) {
+
+	locked := isLockedErr(err)
+	authRequired := isAuthRequiredErr(err)
+
+	if !locked && !authRequired {
 		return handleCallError(err)
 	}
-	pw, wipe, perr := authorizingPassword(pwStdin)
+
+	// JSON guard (no piped password): never prompt; print an actionable
+	// message and exit. Branch on the specific gate.
+	if jsonMode && !pwStdin {
+		if locked {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red("vault is locked"))
+			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn unlock"))
+		} else {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"),
+				red("authorization required ([security] per_action_auth is on)"))
+			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Use:"), cyan("--password-stdin"))
+		}
+		return exitErr
+	}
+
+	// If the vault is locked and this op cannot proceed while locked, fail fast
+	// with the standard locked rendering (handleCallError prints the daemon's
+	// message + recover hint, which is already "byn unlock"). This covers the
+	// non-JSON paths for get/put (overwrite)/entry-rename.
+	if locked && !retryOnLocked {
+		return handleCallError(err)
+	}
+
+	var leadIn string
+	if locked {
+		leadIn = yellow("Vault is locked.") + dim(" Enter the master password to authorize this.")
+	} else {
+		leadIn = yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+	}
+	pw, wipe, perr := authorizingPasswordWithLeadIn(pwStdin, leadIn)
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
 		return exitErr
@@ -111,10 +162,10 @@ func mutateWithLockRetry(pwStdin bool, call func(password []byte) error) int {
 	return handleCallError(call(pw))
 }
 
-// authorizingPassword obtains the master password used to authorize a
-// key-free mutation on a locked vault. The returned wipe func MUST be
-// deferred.
-func authorizingPassword(pwStdin bool) (pw []byte, wipe func(), err error) {
+// authorizingPasswordWithLeadIn obtains the master password for a locked-vault
+// or per_action_auth-gated operation. leadIn is printed before the prompt when
+// stdin is a TTY. The returned wipe func MUST be deferred.
+func authorizingPasswordWithLeadIn(pwStdin bool, leadIn string) (pw []byte, wipe func(), err error) {
 	if pwStdin {
 		pw, err = readPasswordStdin()
 		if err != nil {
@@ -122,8 +173,10 @@ func authorizingPassword(pwStdin bool) (pw []byte, wipe func(), err error) {
 		}
 		return pw, func() { zero(pw) }, nil
 	}
-	fmt.Fprintln(os.Stderr, yellow("Vault is locked.")+dim(" Enter the master password to authorize this."))
-	fmt.Fprintln(os.Stderr, dim("The vault stays locked — its values are never exposed."))
+	fmt.Fprintln(os.Stderr, leadIn)
+	if strings.Contains(leadIn, "locked") {
+		fmt.Fprintln(os.Stderr, dim("The vault stays locked — its values are never exposed."))
+	}
 	buf, err := auth.PromptStdinSecure("Master password: ")
 	if err != nil {
 		return nil, func() {}, err

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
-	"github.com/sandeepbaynes/byn/internal/trust"
 )
 
 // runExec loads env-var entries from the vault and replaces the
@@ -24,18 +24,20 @@ import (
 //   - cleaner ps tree: an agent invoked via `byn exec` looks like
 //     a top-level process, not a byn sub-process.
 //   - the values we just decrypted live in our heap only between
-//     OpGet response and the exec syscall. After exec, our process
-//     image is replaced and the strings are gone with it. (Best-effort
-//     hygiene; values do briefly exist as Go strings in our heap.)
+//     the exec.fetch response and the exec syscall. After exec, our
+//     process image is replaced and the strings are gone with it.
+//     (Best-effort hygiene; values do briefly exist as Go strings
+//     in our heap.)
+//
+// exec.fetch returns the full injection set in one round-trip: the
+// daemon trust-verifies the .byn, applies the [exec] env allowlist
+// server-side, and returns only approved name/value pairs.
 //
 // Limitations of v1 (intentional, to be iterated on):
 //
-//   - N+1 IPC round-trips (one List + one Get per entry). A future
-//     OpExecPrep op can return all values in one frame; deferred until
-//     we have a real perf signal.
 //   - injected values briefly exist as Go strings in heap between
-//     OpGet and syscall.Exec. Mitigatable later with secmem + a
-//     direct execve wrapper; not worth the cgo for v1.
+//     exec.fetch and syscall.Exec. Mitigatable later with secmem +
+//     a direct execve wrapper; not worth the cgo for v1.
 //   - shell builtins (cd, source, etc.) cannot be exec'd directly —
 //     wrap them via `bash -c '...'`.
 func runExec(args []string, scope cliScope) int {
@@ -67,63 +69,72 @@ func runExec(args []string, scope cliScope) int {
 	}
 	client := newClient(dir)
 
-	// Trust gate: byn exec injects secrets into a child process, so a forged,
-	// untrusted, or changed .byn must not redirect which secrets flow. Only
-	// exec gates on trust — other commands pass through (see discoverScope).
-	if scope.SourcePath != "" {
-		if code := verifyExecTrust(client, scope, execCommandLabel(childArgv)); code != exitOK {
-			return code
-		}
-	}
-
-	// Stage 1: list env-var entries in the active scope.
-	scopeIPC := scope.ToIPC()
-	var listResp ipc.ListResp
-	if err := client.Call(ipc.OpList, ipc.ListReq{Scope: scopeIPC}, &listResp); err != nil {
-		return handleCallError(err)
-	}
-
-	// Stage 1b: apply the .byn [exec] env allowlist before fetching values.
-	secrets := filterExecEnv(listResp.Secrets, scope)
-
-	// Stage 2: fetch each entry's value. N+1 round-trips; fine for
-	// v1, replaceable with a getMany op when perf signal appears.
+	// One round-trip: the daemon verifies trust, enforces the .byn's
+	// [exec] env allowlist server-side, and returns only approved values
+	// (a compromised CLI can't widen the list — NU-1).
 	//
-	// Values land in our heap as Go strings (KEY=value). We zero the
-	// underlying byte slices from the IPC responses immediately, but
-	// the constructed env strings persist until syscall.Exec replaces
-	// the process image.
-	extraEnv := make([]string, 0, len(secrets))
-	for _, meta := range secrets {
-		var got ipc.GetResp
-		if err := client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name}, &got); err != nil {
-			return handleCallError(err)
-		}
-		extraEnv = append(extraEnv, meta.Name+"="+string(got.Value))
-		// Wipe the response buffer; the env-string copy is already
-		// made.
-		for i := range got.Value {
-			got.Value[i] = 0
+	// Ad-hoc exec (no .byn) is gated under [security] per_action_auth:
+	// if the first call returns auth_required, prompt once and retry with
+	// the password. Trusted-.byn exec is always credential-free.
+	cmd := execCommandLabel(childArgv)
+	req := ipc.ExecFetchReq{
+		Path:    scope.SourcePath,
+		Scope:   scope.ToIPC(),
+		Command: cmd,
+	}
+	var fetched ipc.ExecFetchResp
+	callErr := client.Call(ipc.OpExecFetch, req, &fetched)
+	if callErr != nil {
+		if isAuthRequiredErr(callErr) && scope.SourcePath == "" {
+			// Ad-hoc exec auth_required. Non-TTY path: fail with actionable
+			// hint (no --password-stdin for exec — it would break sub-command
+			// argv parsing; run from a .byn dir to avoid the prompt entirely).
+			if !stdinIsTTY() {
+				fmt.Fprintf(os.Stderr, "%s ad-hoc exec requires authorization ([security] per_action_auth).\n", boldRed("Error:"))
+				fmt.Fprintf(os.Stderr, "%s %s\n",
+					dim("Hint:"), dim("run from a directory with a trusted .byn (credential-free), or unlock the vault's UI portal"))
+				return exitDaemonErr
+			}
+			// Interactive TTY path: prompt once and retry.
+			leadIn := yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+			pw, wipe, perr := authorizingPasswordWithLeadIn(false, leadIn)
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
+				return exitErr
+			}
+			defer wipe()
+			req.Password = pw
+			if retryErr := client.Call(ipc.OpExecFetch, req, &fetched); retryErr != nil {
+				return handleExecFetchError(retryErr)
+			}
+		} else {
+			return handleExecFetchError(callErr)
 		}
 	}
+	renderAllowlistNotes(fetched, scope.SourcePath)
 
-	// Stage 3: resolve the binary in PATH. We do this BEFORE the env
-	// merge so a missing binary fails fast with a clear message,
-	// without ever materializing the env vars in a syscall.
+	extraEnv := make([]string, 0, len(fetched.Values))
+	for _, v := range fetched.Values {
+		extraEnv = append(extraEnv, v.Name+"="+string(v.Value))
+		zero(v.Value)
+	}
+
+	// Resolve the binary in PATH. We do this BEFORE the env merge so a
+	// missing binary fails fast with a clear message, without ever
+	// materializing the env vars in a syscall.
 	cmdPath, err := exec.LookPath(childArgv[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return exitErr
 	}
 
-	// Stage 4: build the env. Parent's environ first so injected vars
-	// can shadow it (last value wins per POSIX, and most shells/libs
-	// follow that). This means a stored DB_URL overrides any DB_URL
-	// already exported in the parent shell — usually what the user
-	// wants.
+	// Build the env. Parent's environ first so injected vars can shadow it
+	// (last value wins per POSIX, and most shells/libs follow that). This
+	// means a stored DB_URL overrides any DB_URL already exported in the
+	// parent shell — usually what the user wants.
 	envv := append(os.Environ(), extraEnv...)
 
-	// Stage 5: replace the process. On success, this never returns.
+	// Replace the process. On success, this never returns.
 	// gosec G204 flags subprocess launches with variable paths;
 	// suppressed because variable path IS the operation here —
 	// the user explicitly named the command, and we resolved it
@@ -148,68 +159,51 @@ func execCommandLabel(argv []string) string {
 	return s
 }
 
-// verifyExecTrust asks the daemon to MAC-verify the .byn that supplied the
-// scope before exec injects any secrets. The command is forwarded so the
-// daemon can audit which .byn authorized which command. Returns exitOK to
-// proceed, or an exit code (after printing an actionable message) to abort.
-func verifyExecTrust(client *ipc.Client, scope cliScope, command string) int {
-	var tv ipc.TrustVerifyResp
-	if err := client.Call(ipc.OpTrustVerify, ipc.TrustVerifyReq{Path: scope.SourcePath, Vault: scope.Vault, Command: command}, &tv); err != nil {
-		return handleCallError(err)
-	}
-	p := scope.SourcePath
-	switch trust.VerifyStatus(tv.Status) {
-	case trust.VerifyTrusted:
-		return exitOK
-	case trust.VerifyChanged:
-		execTrustError(p, "has CHANGED since you trusted it")
-	case trust.VerifyUntrusted:
-		execTrustError(p, "is untrusted")
-	case trust.VerifyStale:
-		execTrustError(p, "predates tamper-protection")
-	case trust.VerifyTampered:
-		execTrustError(p, "FAILED its tamper check (forged or copied from another machine)")
-	default:
-		fmt.Fprintf(os.Stderr, "%s unexpected trust status %q for %s\n", boldRed("Error:"), tv.Status, p)
-	}
-	return exitErr
-}
-
-func execTrustError(path, why string) {
-	fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red(path+" "+why+"."))
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", yellow("Run:"), cyan("byn trust "+path), dim("(byn asks for the master password)"))
-}
-
-// filterExecEnv applies the .byn [exec] env allowlist to the scope's entries.
-// With no .byn (ad-hoc exec) it injects the whole scope (today's behavior).
-// With a .byn: "*" injects all (loud — any secret added later auto-injects), an
-// explicit list injects only those names, and an empty/absent list injects
-// nothing (the secure default: a project declares the vars it needs).
-func filterExecEnv(all []ipc.SecretMeta, scope cliScope) []ipc.SecretMeta {
-	if scope.SourcePath == "" {
-		return all // ad-hoc run, no .byn — inject the whole scope
-	}
-	for _, name := range scope.ExecEnv {
-		if name == "*" {
-			fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
-				yellow(fmt.Sprintf("%s permits ALL %d scoped var(s) via \"*\" — any secret added later is auto-injected.",
-					scope.SourcePath, len(all))))
-			return all
+// handleExecFetchError renders exec.fetch failures. Trust denials carry
+// the daemon's reason + the recovery command; an unknown_op means the
+// daemon predates exec.fetch; auth_required means the ad-hoc exec is
+// gated and no credentials were supplied (or the retry path reached here
+// with a wrong-password error).
+func handleExecFetchError(err error) int {
+	var em *ipc.ErrResponse
+	if errors.As(err, &em) {
+		switch em.Code {
+		case ipc.CodeTrustDenied:
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red(em.Message+"."))
+			if em.Recover != "" {
+				hint := ""
+				if strings.HasPrefix(em.Recover, "byn trust") {
+					hint = " " + dim("(byn asks for the master password)")
+				}
+				fmt.Fprintf(os.Stderr, "%s %s%s\n", yellow("Run:"), cyan(em.Recover), hint)
+			}
+			return exitDaemonErr
+		case ipc.CodeAuthRequired:
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red(em.Message+"."))
+			fmt.Fprintf(os.Stderr, "%s %s\n",
+				dim("Hint:"), dim("run from a directory with a trusted .byn (credential-free), or supply the master password"))
+			return exitDaemonErr
+		case ipc.CodeUnknownOp:
+			fmt.Fprintf(os.Stderr, "%s daemon is older than this CLI.\n", boldRed("Error:"))
+			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn restart"))
+			return exitErr
 		}
 	}
-	allow := make(map[string]bool, len(scope.ExecEnv))
-	for _, name := range scope.ExecEnv {
-		allow[name] = true
+	return handleCallError(err)
+}
+
+// renderAllowlistNotes prints the wildcard warning / empty-allowlist note
+// the daemon's flags request (messages match the pre-NU client-side text).
+func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
+	if sourcePath == "" {
+		return
 	}
-	out := make([]ipc.SecretMeta, 0, len(allow))
-	for _, m := range all {
-		if allow[m.Name] {
-			out = append(out, m)
-		}
-	}
-	if len(out) == 0 {
+	if resp.Wildcard {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%s permits ALL %d scoped var(s) via \"*\" — any secret added later is auto-injected.",
+				sourcePath, len(resp.Values))))
+	} else if resp.NoneDeclared {
 		fmt.Fprintf(os.Stderr, "%s\n",
-			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", scope.SourcePath)))
+			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", sourcePath)))
 	}
-	return out
 }

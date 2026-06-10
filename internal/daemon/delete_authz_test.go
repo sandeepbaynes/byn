@@ -160,6 +160,49 @@ func TestEnvDelete_LockedWithPassword(t *testing.T) {
 	}
 }
 
+// ---- default-project refusal -------------------------------------------
+
+// TestDaemonRefusesDefaultProjectDelete: deleting the "default" project is
+// refused with CodeBadRequest regardless of lock state or flag setting. The
+// daemon-side guard mirrors the default-env protection in vault.DeleteEnv.
+func TestDaemonRefusesDefaultProjectDelete(t *testing.T) {
+	// Case 1: unlocked, flag off (base case).
+	t.Run("unlocked_flag_off", func(t *testing.T) {
+		_, c := startTestDaemon(t)
+		pw := []byte(authzPW)
+		initUnlocked(t, c, pw)
+		err := c.Call(ipc.OpProjectDelete, ipc.ProjectDeleteReq{Name: "default"}, &ipc.ProjectDeleteResp{})
+		if code := errCode(t, err); code != ipc.CodeBadRequest {
+			t.Fatalf("code = %v, want bad_request", code)
+		}
+	})
+	// Case 2: locked + password still refused (auth check must not run first).
+	t.Run("locked_with_password", func(t *testing.T) {
+		d, c := startTestDaemon(t)
+		pw := []byte(authzPW)
+		initUnlocked(t, c, pw)
+		lockVaultStore(t, d, "default")
+		err := c.Call(ipc.OpProjectDelete, ipc.ProjectDeleteReq{Name: "default", Password: pw}, &ipc.ProjectDeleteResp{})
+		if code := errCode(t, err); code != ipc.CodeBadRequest {
+			t.Fatalf("locked+pw code = %v, want bad_request", code)
+		}
+	})
+}
+
+// TestDaemonRefusesDefaultProjectRename: renaming the "default" project is
+// refused with CodeBadRequest regardless of lock state.
+func TestDaemonRefusesDefaultProjectRename(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	err := c.Call(ipc.OpProjectRename,
+		ipc.ProjectRenameReq{OldName: "default", NewName: "renamed"},
+		&ipc.ProjectRenameResp{})
+	if code := errCode(t, err); code != ipc.CodeBadRequest {
+		t.Fatalf("code = %v, want bad_request", code)
+	}
+}
+
 // ---- vault delete -------------------------------------------------------
 
 func TestVaultDelete_Unlocked(t *testing.T) {

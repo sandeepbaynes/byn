@@ -39,40 +39,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/pelletier/go-toml/v2"
+	"github.com/sandeepbaynes/byn/internal/bynfile"
 )
 
 const discoveryFile = ".byn"
-
-// dotBynScope is the on-disk format. Unknown keys fail (strict
-// parser, Decode with DisallowUnknownFields).
-type dotBynScope struct {
-	Scope struct {
-		Vault   string `toml:"vault,omitempty"`
-		Project string `toml:"project,omitempty"`
-		Env     string `toml:"env,omitempty"`
-	} `toml:"scope"`
-	Exec struct {
-		// Env is the `byn exec` allowlist: which scope vars to inject.
-		// "*" (or ["*"]) = all (with a loud warning); a list = only those
-		// names; empty or absent = none. Applied by filterExecEnv.
-		Env execEnvList `toml:"env,omitempty"`
-	} `toml:"exec"`
-}
-
-// execEnvList is the [exec] env allowlist. It accepts either a bare string
-// (env = "*") or a list of strings (env = ["*"] / ["VAR1","VAR2"]).
-type execEnvList []string
-
-// UnmarshalText lets a bare string (env = "*") decode into a one-element list.
-// A TOML array (env = ["*"] / ["VAR1","VAR2"]) decodes natively into []string
-// without this method.
-func (e *execEnvList) UnmarshalText(text []byte) error {
-	*e = execEnvList{string(text)}
-	return nil
-}
 
 // discoverScope walks parents from CWD looking for a .byn. Returns
 // (scope, sourcePath) on success. If no file is found, returns empty
@@ -106,16 +77,14 @@ func discoverScope(startDir, homeDir, _ string, _ bool) (cliScope, string, error
 			// so would block every command (status, list, get, …) on an
 			// untrusted .byn. Only `byn exec` verifies the file, since it's the
 			// command that injects secrets into a child process (see runExec).
-			var parsed dotBynScope
-			dec := toml.NewDecoder(strings.NewReader(string(body))).DisallowUnknownFields()
-			if derr := dec.Decode(&parsed); derr != nil {
+			parsed, derr := bynfile.Parse(body)
+			if derr != nil {
 				return cliScope{}, "", fmt.Errorf("%s: parse: %w", candidate, derr)
 			}
 			return cliScope{
 				Vault:   parsed.Scope.Vault,
 				Project: parsed.Scope.Project,
 				Env:     parsed.Scope.Env,
-				ExecEnv: []string(parsed.Exec.Env),
 			}, candidate, nil
 		}
 		// Stop conditions.

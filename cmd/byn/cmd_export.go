@@ -5,6 +5,13 @@
 // plaintext on stdout. Use --to-clipboard if available later. For now
 // the user is responsible for the destination — same caveat as
 // `byn get` writing to stdout.
+//
+// When [security] per_action_auth is on, each get requires a master
+// password. Use --password-stdin to read it once and reuse for every
+// entry. Without --password-stdin, on the first auth_required the CLI
+// prompts once interactively and reuses the same password for all
+// subsequent gets. Each entry re-verifies the password (Argon2id), so
+// large exports are slow under the flag — sessions (NU-3) will fix this.
 package main
 
 import (
@@ -25,6 +32,8 @@ func runExport(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	format := fs.String("format", "env", "output format: env|yaml|json")
 	output := fs.String("output", "-", "output path or '-' for stdout")
+	pwStdin := fs.Bool("password-stdin", false,
+		"if [security] per_action_auth is on, read the master password from stdin (non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -41,19 +50,52 @@ func runExport(args []string, scope cliScope) int {
 	if err := client.Call(ipc.OpList, ipc.ListReq{Scope: scopeIPC}, &lresp); err != nil {
 		return handleCallError(err)
 	}
+
+	// Fetch each entry's value, handling per_action_auth transparently.
+	// Strategy: try the first get with no password; on auth_required, read the
+	// password once and reuse it for the remainder of the loop.
+	var pw []byte       // nil until first auth_required
+	var wipePw func()   // zeroes pw on return
+	pwAcquired := false // true once we've read the password
+
+	defer func() {
+		if wipePw != nil {
+			wipePw()
+		}
+	}()
+
 	entries := make(map[string]string, len(lresp.Secrets))
 	keys := make([]string, 0, len(lresp.Secrets))
 	for _, meta := range lresp.Secrets {
 		var got ipc.GetResp
-		if err := client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name}, &got); err != nil {
+		err := client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name, Password: pw}, &got)
+		if err != nil && isAuthRequiredErr(err) && !pwAcquired {
+			// First auth_required: acquire the password once.
+			leadIn := yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+			var perr error
+			pw, wipePw, perr = authorizingPasswordWithLeadIn(*pwStdin, leadIn)
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
+				return exitErr
+			}
+			pwAcquired = true
+			// Retry this entry with the now-known password.
+			err = client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name, Password: pw}, &got)
+		}
+		if err != nil {
 			return handleCallError(err)
 		}
 		entries[meta.Name] = string(got.Value)
 		keys = append(keys, meta.Name)
-		for i := range got.Value {
-			got.Value[i] = 0
-		}
+		zero(got.Value)
 	}
+
+	// Zero the password buffer once all entries are fetched.
+	if wipePw != nil {
+		wipePw()
+		wipePw = nil
+	}
+
 	sort.Strings(keys)
 
 	var rendered string

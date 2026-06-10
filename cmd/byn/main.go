@@ -77,8 +77,7 @@ func run(args []string) int {
 			}
 			if srcPath != "" {
 				scope = mergeDiscoveryScope(scope, discScope)
-				scope.SourcePath = srcPath        // byn exec verifies trust against this
-				scope.ExecEnv = discScope.ExecEnv // byn exec injection allowlist
+				scope.SourcePath = srcPath // byn exec verifies trust against this
 				hintf("Using scope from %s: %s.", srcPath, scope)
 			}
 		}

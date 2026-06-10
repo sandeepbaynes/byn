@@ -310,6 +310,22 @@ will open their own connections.
   parent process inheriting the unwrapped values, no shell variable
   with the secret, no ps line showing it.
 
+### Server-side exec allowlist
+
+`byn exec` is authorized in a single IPC round-trip: the daemon reads,
+trust-verifies, and parses the `.byn` itself, then returns **only** the
+entries listed in `[exec] env`. A compromised client process cannot
+widen the allowlist by sending a different request — the daemon owns the
+entire path from trust check to env assembly. Denial messages
+(untrusted / changed / tampered / stale) originate in the daemon.
+Every exec attempt — including locked-vault and trust failures — is
+written to the audit log with the full command line.
+
+`byn exec` on a locked vault is a hard failure ("vault is locked").
+Unlike the delete family, exec cannot proceed with a password alone;
+the vault must be unlocked first. This is intentional: a compromised
+client should not be able to use exec to partially bypass lock state.
+
 ### Secrets are never in the shell
 
 `byn exec -- CMD ARGS` builds the env vector and replaces the
@@ -327,6 +343,79 @@ but does help against accidental disk swap on memory pressure.
 
 ## CLI-level controls
 
+### Per-action auth (`[security] per_action_auth`)
+
+An opt-in mode that requires a fresh authorization — master password or
+a portal presence token — for every sensitive call, **even while the
+vault is already unlocked**. Toggled in `~/.byn/config` and hot-applied
+via `byn daemon reload` without restarting.
+
+**Gated operations:** `get`, overwrite-`put`, `delete`, `rename`,
+`env clear`, `env delete`, `project delete`, `vault delete`,
+`vault rename`, and **ad-hoc `exec`** (no `.byn`). Insert (new name),
+`list`, and trusted-`.byn` `exec` stay free — the `.byn` is the
+authorization for exec. Ad-hoc exec (no `.byn`) is gated because it
+hands out the entire scope; running from a directory with a trusted
+`.byn` is the zero-prompt alternative.
+
+**CLI flow:** when the daemon returns `auth_required`, the CLI prompts
+once ("Authorization required. \[security\] per_action_auth is on.")
+and retries with the supplied password. `--password-stdin` is supported
+for non-interactive use. In `--json` (agent) mode no prompt is shown;
+the call fails actionably so the caller can supply `--password-stdin`
+and retry. A wrong password is rejected and rate-limited exactly like
+`byn unlock`.
+
+**`put --password-stdin` contract:** with `--password-stdin`, the
+**first line** of stdin is always the master password and the
+**remainder** (after the first newline) is the secret value. The first
+line is consumed unconditionally — even when the daemon does not ask
+for authorization (e.g., for a new key where per_action_auth doesn't
+apply). This makes the contract byte-stable regardless of config:
+
+```sh
+# works whether or not per_action_auth is on
+{ echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
+```
+
+For `get` / `rename` / `delete` with `--password-stdin`, the entire
+stdin (no newline split) is read as the password.
+
+**Locked vault vs. auth_required:** the behaviors are different.
+
+| Scenario | Recovery |
+|---|---|
+| `get` / `put` / `rename` on a **locked vault** | Hard fail with "byn unlock" hint — a password alone cannot decrypt a locked vault |
+| `get` / `put` / `rename` with **per_action_auth on** (vault is unlocked) | Prompt / `--password-stdin` once; daemon verifies without changing lock state |
+| `delete`-family on a **locked vault** | Password alone authorizes — vault stays locked, no values exposed |
+| `delete`-family with **per_action_auth on** (vault is unlocked) | Same password flow as above |
+
+**Portal step-up:** when per_action_auth is on, the web portal shows
+an "Authorize" modal on any write/delete/reveal. Passkey (Touch ID /
+iCloud Keychain) is tried first; password is the fallback. On success,
+the daemon issues a **single-use presence token** (32 random bytes,
+consumed on first use, never stored beyond the one request). A wrong
+password or expired/unknown token is rejected and does not change the
+vault's lock state.
+
+**`export` under per_action_auth:** `byn export` issues one `get` per
+entry. With `--password-stdin`, the password is read once from stdin
+and reused for every get (CLI path). Without `--password-stdin`, the
+CLI prompts once interactively on the first `auth_required` and reuses
+the same password for the rest. Each entry still re-verifies via
+Argon2id, so large exports are slow under this flag — session tokens
+(NU-3) will fix this. Portal export steps up per-entry (presence tokens
+are single-use; batch authorization lands with sessions/NU-3).
+
+**Honest ceiling:** per_action_auth raises the per-call cost for
+a same-UID adversary that controls the terminal — it can no longer
+draw on an ambient unlocked session silently. It does **not** stop a
+process running as you from calling the daemon socket directly (same-UID
+peer-credential check is unchanged), ptracing the daemon while unlocked,
+or keylogging the password prompt. Session tokens (NU-3) will restore
+one-auth-per-session ergonomics. Privilege separation (NU-5/6) is the
+path to a stronger UID boundary.
+
 ### Agent mode (`--json`)
 
 When `--json` appears anywhere before `--` in argv, byn refuses
@@ -334,6 +423,8 @@ to interactively prompt for anything. Specifically:
 
 - Untrusted `.byn` file → hard error (not a y/N prompt).
 - Tampered `.byn` file → hard error.
+- `auth_required` (per_action_auth) → hard fail; supply
+  `--password-stdin` instead.
 
 Agents and CI can never silently auto-trust a malicious config.
 
@@ -396,7 +487,8 @@ deployment surface grows.
 | `--quiet` flag | `BYN_HINTS=0` + shell redirection works | When users ask for it |
 | Constant-time `wrong_password` vs vault-not-found | Same response today (existence oracle defense) | If we ever change that |
 | **OS deny-read layer** (Seatbelt/Landlock) paired with the shim | A PATH-shim alone is bypassable (abs path, `PATH` rewrite, direct file read); containment needs a kernel deny-read on the cred files. Out of scope pre-public. | Phase 3, when shims land; see internal design notes |
-| **Per-operation biometric auth** | Removes the persistent unlock window for value egress, but brutal UX without a biometric tap; revisits the deferred per-read analysis | Post-launch, with Touch ID/WebAuthn; see internal design notes |
+| **Session tokens** (NU-3) | per_action_auth ships the per-call gate; session tokens restore one-auth-per-session ergonomics so power users aren't re-prompted for the same workflow | NU-3 slice; designed |
+| **Privilege separation** (NU-5/6) | A same-UID process can still ptrace the daemon or connect to the socket; true isolation needs the daemon on a different UID/sandbox | NU-5/6; kernel-level change |
 | **Fingerprinted exec allowlist** | Only pre-authorized commands get exec rights — strong for sealed tools, defeated for agent-authored interpreters | Phase 3, with shims |
 | **Ephemeral scoped credential broker** | Vend short-lived STS tokens via AWS `credential_process` so the durable key never leaves the daemon (Case B cloud creds) | Post-launch; larger scope (cloud integration) |
 

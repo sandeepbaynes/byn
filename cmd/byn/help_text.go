@@ -177,7 +177,7 @@ SEE ALSO
        byn-put - store a secret
 
 SYNOPSIS
-       byn put [--create-only] NAME
+       byn put [--create-only] [--password-stdin] NAME
 
 DESCRIPTION
        Stores or updates a secret called NAME. The secret value is
@@ -189,10 +189,28 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
+       When [security] per_action_auth is on in the daemon config,
+       overwriting an existing secret requires the master password.
+       The CLI prompts interactively; scripts should use --password-stdin.
+       New secrets (with --create-only or the first put of a name) do
+       not require per-action auth.
+
 OPTIONS
        --create-only
            Fail with "already exists" instead of overwriting an
            existing secret with the same name.
+
+       --password-stdin
+           If [security] per_action_auth is on and the overwrite requires
+           authorization, read the master password from stdin instead of
+           prompting at the terminal. Useful for scripts and CI.
+
+           Contract: the FIRST LINE of stdin is the master password;
+           the REMAINDER (after the first newline) is the secret value.
+           The first line is always consumed when --password-stdin is set,
+           even if the daemon never asks for authorization. Example:
+
+               $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 
 EXAMPLES
        From a pipe:
@@ -210,6 +228,9 @@ EXAMPLES
 
        Refuse to overwrite an existing secret:
            $ echo -n "new" | byn put aws-access-key --create-only
+
+       Authorize an overwrite non-interactively (per_action_auth on):
+           $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 
 EXIT STATUS
        0    Stored.
@@ -233,7 +254,7 @@ SEE ALSO
        byn-get - print a secret's value to stdout
 
 SYNOPSIS
-       byn get NAME
+       byn get [--json] [--password-stdin] NAME
        byn cat NAME
 
 DESCRIPTION
@@ -248,6 +269,19 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
+       When [security] per_action_auth is on in the daemon config,
+       get requires the master password on every call. The CLI prompts
+       interactively; scripts should use --password-stdin.
+
+OPTIONS
+       --json
+           Emit {"name":"...","value":"..."} JSON instead of the raw value.
+
+       --password-stdin
+           If [security] per_action_auth is on, read the master password
+           from stdin instead of prompting at the terminal. Useful for
+           scripts and CI.
+
 EXAMPLES
        Print the value:
            $ byn get aws-access-key
@@ -261,6 +295,9 @@ EXAMPLES
 
        Inspect non-ASCII byte content:
            $ byn get binary-blob | xxd | head
+
+       Non-interactive get with per_action_auth on:
+           $ echo "$MASTER_PW" | byn get my-secret --password-stdin
 
 EXIT STATUS
        0    Value written to stdout.
@@ -318,7 +355,7 @@ SEE ALSO
        byn-delete - remove a secret from the vault
 
 SYNOPSIS
-       byn delete NAME
+       byn delete [--password-stdin] NAME
        byn rm NAME
 
 DESCRIPTION
@@ -329,12 +366,26 @@ DESCRIPTION
        Without versioning enabled, deletion is immediate and
        unrecoverable.
 
+       When the vault is locked or [security] per_action_auth is on,
+       the master password is required to authorize the deletion. The
+       CLI prompts interactively; scripts should use --password-stdin.
+
+OPTIONS
+       --password-stdin
+           The non-interactive way to supply the master password —
+           reads it from stdin instead of prompting at the terminal.
+           Useful for scripts and CI when the vault is locked or
+           per_action_auth is on.
+
 EXAMPLES
        Delete an entry:
            $ byn delete tls-key
 
        Delete using the alias:
            $ byn rm old-token
+
+       Delete while vault is locked / per_action_auth on:
+           $ echo "$MASTER_PW" | byn delete tls-key --password-stdin
 
 EXIT STATUS
        0    Deleted.
@@ -377,6 +428,19 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
+       Server-side authorization (one round-trip): the daemon reads,
+       trust-verifies, and parses the .byn itself and returns ONLY the
+       entries listed in [exec] env — a compromised client cannot widen
+       the allowlist. Denial messages (untrusted / changed / tampered /
+       stale) come from the daemon with a "byn trust" recovery hint.
+       Every exec attempt — allowed or denied, including locked-vault
+       denials — is written to the vault's audit log with the full
+       command line.
+
+       Vault locked: exec always fails with "vault is locked". Unlike
+       the delete family, exec cannot proceed with a password alone;
+       run "byn unlock" first.
+
        Trust: when the scope comes from a discovered .byn, exec verifies
        it is trusted (machine + vault-key MAC, checked by the daemon)
        before injecting; an untrusted, changed, or tampered .byn aborts
@@ -393,12 +457,16 @@ DESCRIPTION
          - The .byn is strict TOML: any key outside [scope] / [exec] env
            is a hard parse error (no silent fallback).
 
+       Per-action auth ([security] per_action_auth): ad-hoc exec (no
+       .byn) is gated — the daemon returns auth_required, the CLI
+       prompts once for the master password and retries. Trusted-.byn
+       exec stays FREE — the .byn is the authorization. To avoid the
+       prompt, run from a directory that has a trusted .byn.
+
        v1 limitations (iterating):
          - uses the implicit default scope (vault=default,
            project=default, env=default). --vault / --project / --env
            flags will land in a later iteration.
-         - performs one IPC round-trip per stored entry (a "get all"
-           daemon op will replace this when needed).
          - shell builtins (cd, source, ulimit, etc.) cannot be exec'd
            directly — wrap them in "bash -c '...'".
 
@@ -425,9 +493,10 @@ EXIT STATUS
 
        Exit codes BEFORE successful exec:
        0    (never; execve doesn't return on success)
-       1    Bad usage, missing binary, vault locked, daemon issue.
+       1    Bad usage or missing binary.
        2    Daemon unreachable.
-       3    Daemon error (vault locked, etc.).
+       3    Daemon error: vault locked (always a hard failure for exec),
+            untrusted/changed/tampered .byn (re-trust with byn trust).
 
 SECURITY NOTES
        Once a value is in the child's environment, it is visible to
@@ -448,7 +517,7 @@ SEE ALSO
        byn-rename - rename a secret
 
 SYNOPSIS
-       byn rename OLD NEW
+       byn rename [--password-stdin] OLD NEW
        byn mv OLD NEW
 
 DESCRIPTION
@@ -458,12 +527,24 @@ DESCRIPTION
 
        Refuses if NEW is already taken.
 
+       When [security] per_action_auth is on in the daemon config,
+       rename requires the master password. The CLI prompts interactively;
+       scripts should use --password-stdin.
+
+OPTIONS
+       --password-stdin
+           If [security] per_action_auth is on, read the master password
+           from stdin instead of prompting at the terminal.
+
 EXAMPLES
        Rename a credential after rotation:
            $ byn rename aws-access-key-old aws-access-key
 
        Using the alias:
            $ byn mv foo bar
+
+       Non-interactive with per_action_auth on:
+           $ echo "$MASTER_PW" | byn rename old-name new-name --password-stdin
 
 EXIT STATUS
        0    Renamed.
@@ -584,11 +665,11 @@ SUBCOMMANDS
 
        reload
            Signal the running daemon (SIGHUP) to re-read ~/.byn/config
-           and apply the runtime-changeable settings — idle_timeout
-           and the web portal (enable/disable/port) — WITHOUT a
-           restart. Open vaults stay unlocked. Use this for config
-           tweaks; use restart to pick up a new binary. Applied
-           changes are logged to the daemon log.
+           and apply the runtime-changeable settings — idle_timeout,
+           [security] per_action_auth, and the web portal
+           (enable/disable/port) — WITHOUT a restart. Open vaults stay
+           unlocked. Use this for config tweaks; use restart to pick up
+           a new binary. Applied changes are logged to the daemon log.
 
        status
            Print daemon state, socket path, vault lock state, and
@@ -620,7 +701,8 @@ EXAMPLES
        Stop:
            $ byn stop
 
-       Apply config edits live (e.g. after changing idle_timeout):
+       Apply config edits live (e.g. after changing idle_timeout or
+       toggling [security] per_action_auth):
            $ byn reload
 
 EXIT STATUS
@@ -678,8 +760,12 @@ DESCRIPTION
        There is no portal login. Like "byn ls", the scope tree and
        entry names are visible, but reading or editing VALUES requires
        the target vault to be unlocked -- a per-vault lock/unlock toggle
-       in the UI. The portal binds loopback only (127.0.0.1), never the
-       network; its CSRF defense is an Origin check.
+       in the UI. When [security] per_action_auth is on, write/delete/
+       reveal actions trigger an in-page "Authorize" step-up: passkey
+       (Touch ID) first, then password fallback. On success, the daemon
+       issues a single-use presence token consumed by the retry. The
+       portal binds loopback only (127.0.0.1), never the network; its
+       CSRF defense is an Origin check.
 
        Disable the portal entirely with [ui] enabled = false in
        ~/.byn/config (then restart the daemon).
@@ -762,14 +848,30 @@ SEE ALSO
 
 SYNOPSIS
        byn vault list [--json]
-       byn vault delete NAME
+       byn vault delete NAME [--password-stdin]
+       byn vault rename OLD NEW [--password-stdin]
        byn vault init | unlock | lock
 
 DESCRIPTION
        Vaults are top-level containers. The "default" vault is
-       protected — it cannot be deleted. Use --vault NAME (or
-       BYN_VAULT) to target a non-default vault for any other
-       command.
+       protected — it cannot be deleted or renamed. Use --vault NAME
+       (or BYN_VAULT) to target a non-default vault for any command.
+
+       vault delete NAME [--password-stdin]
+           Securely remove a vault from disk. Refuses the "default"
+           vault. When the vault is locked or [security] per_action_auth
+           is on, the master password is required (--password-stdin for
+           scripts).
+
+       vault rename OLD NEW [--password-stdin]
+           Rename a vault and its audit trail. Refuses the "default"
+           vault and an existing destination. The vault is left LOCKED
+           afterwards. Requires the master password when locked or when
+           [security] per_action_auth is on (--password-stdin for
+           scripts).
+
+       vault init | unlock | lock
+           Aliases for the top-level lifecycle commands.
 
 SEE ALSO
        byn-init(1), byn-unlock(1)
@@ -781,13 +883,24 @@ SEE ALSO
 SYNOPSIS
        byn project list [--json]
        byn project create NAME
-       byn project delete NAME
+       byn project delete NAME [--password-stdin]
        byn project rename OLD NEW
 
 DESCRIPTION
-       Projects partition env-vars and files inside a vault. Default
-       project is "default" and cannot be deleted. Cascading delete
-       removes all envs and entries under the project.
+       Projects partition env-vars and files inside a vault. The
+       "default" project cannot be deleted or renamed — it is the
+       inheritance base and the implicit scope for every command.
+
+       project delete NAME [--password-stdin]
+           Cascade-delete: removes the project + every env + every
+           entry + every entry_version. Refuses "default". When the
+           vault is locked or [security] per_action_auth is on, the
+           master password is required (--password-stdin for scripts).
+
+       project rename OLD NEW
+           Rename a project. Refuses to rename "default" (renaming it
+           would break implicit scope resolution for every command that
+           defaults to "default").
 
 SEE ALSO
        byn-env(1)
@@ -799,13 +912,29 @@ SEE ALSO
 SYNOPSIS
        byn env list [--json]
        byn env create NAME
-       byn env delete NAME
+       byn env delete NAME [--password-stdin]
+       byn env clear [ENV] --yes [--password-stdin]
        byn env rename OLD NEW
 
 DESCRIPTION
        Envs are the leaf scope (e.g. dev, staging, prod). The
-       project's default env cannot be deleted. Non-default envs fall
-       back to default for missing keys (inheritance).
+       project's "default" env cannot be deleted or renamed. Non-default
+       envs fall back to default for missing keys (inheritance).
+
+       env delete NAME [--password-stdin]
+           Delete a non-default env and cascade to its entries.
+           Refuses "default". When the vault is locked or [security]
+           per_action_auth is on, the master password is required
+           (--password-stdin for scripts).
+
+       env clear [ENV] --yes [--password-stdin]
+           Delete every env-var in ENV (defaults to the active env)
+           while keeping the env itself. --yes is required to proceed.
+           Treated as a destructive operation: the master password is
+           required when the vault is locked or per_action_auth is on.
+
+       env rename OLD NEW
+           Rename an env. Refuses "default".
 
 SEE ALSO
        byn-project(1)
@@ -880,11 +1009,20 @@ SEE ALSO
 
 SYNOPSIS
        byn export [--format env|yaml|json] [--output PATH]
+                  [--password-stdin]
 
 DESCRIPTION
        Materializes all env-var entries in the active scope as a
        single flat key→value document. Writes to stdout by default,
        or to PATH with --output (mode 0600).
+
+       When [security] per_action_auth is on, each entry's get
+       requires the master password. Use --password-stdin to supply
+       it once non-interactively; without the flag, the CLI prompts
+       once interactively on the first auth_required and reuses the
+       password for the rest. Each entry re-verifies via Argon2id, so
+       large exports are slow under the flag (session tokens in NU-3
+       will fix this).
 
 OPTIONS
        --format env|yaml|json
@@ -892,6 +1030,12 @@ OPTIONS
 
        --output PATH | -
            Destination file, or "-" for stdout.
+
+       --password-stdin
+           The non-interactive way to supply the master password when
+           [security] per_action_auth is on — reads it from stdin
+           instead of prompting at the terminal. Useful for scripts
+           and CI.
 
 CAVEATS
        This command MATERIALIZES PLAINTEXT. Treat the destination as

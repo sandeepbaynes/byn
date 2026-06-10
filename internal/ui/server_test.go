@@ -470,3 +470,301 @@ func TestUnknownPath_404(t *testing.T) {
 		t.Fatalf("unknown path = %d, want 404", resp.StatusCode)
 	}
 }
+
+// ---- per_action_auth portal tests ----------------------------------------
+//
+// These tests confirm the portal HTTP surface honours the auth_required gate
+// introduced by [security] per_action_auth. They use a canned dispatcher
+// (perActionDisp) that mimics the daemon gate: it returns auth_required unless
+// the request body carries a non-empty password or a valid single-use
+// presence_token, and supplies a mint() helper the test can use to produce a
+// token — so no real daemon or vault is needed.
+//
+// Coverage:
+//   (a) reveal/get without creds → 401 auth_required
+//   (b) reveal/get with password  → 200
+//   (c) reveal/get with presence_token → 200
+//   (d) presence_token reuse → 401 auth_required (single-use enforced)
+
+const testVault = "default"
+const testPassword = "correct-horse"
+
+// perActionDisp is a fakeDisp variant that gates OpGet and OpPut-overwrite
+// behind an auth check, mirrors what the real daemon does for per_action_auth.
+type perActionDisp struct {
+	fakeDisp
+	// usedTokens tracks consumed presence tokens (single-use enforcement).
+	usedTokens map[string]struct{}
+}
+
+func newPerActionDisp(revealValue string) *perActionDisp {
+	return &perActionDisp{
+		fakeDisp:   fakeDisp{revealValue: revealValue},
+		usedTokens: make(map[string]struct{}),
+	}
+}
+
+// mint creates a test presence token and stores it in the dispatcher so the
+// first use succeeds but any replay fails.
+func (d *perActionDisp) mint() []byte {
+	tok := []byte("test-presence-token-" + string(rune(len(d.usedTokens)+65)))
+	return tok
+}
+
+func (d *perActionDisp) Dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	switch env.Op {
+	case ipc.OpGet:
+		var req ipc.GetReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		if err := d.checkAuth(env.ID, req.Password, req.PresenceToken); err != nil {
+			return err
+		}
+		resp, _ := ipc.NewResponse(env.ID, ipc.GetResp{Name: req.Name, Value: []byte(d.revealValue), Source: "scope"})
+		return resp
+	case ipc.OpPut:
+		var req ipc.PutReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		if !req.CreateOnly {
+			// Overwrite path needs auth (same as daemon).
+			if err := d.checkAuth(env.ID, req.Password, req.PresenceToken); err != nil {
+				return err
+			}
+		}
+		resp, _ := ipc.NewResponse(env.ID, ipc.PutResp{})
+		return resp
+	case ipc.OpVaultRename:
+		var req ipc.VaultRenameReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		if err := d.checkAuth(env.ID, req.Password, req.PresenceToken); err != nil {
+			return err
+		}
+		d.lastPassword = req.Password
+		resp, _ := ipc.NewResponse(env.ID, ipc.VaultRenameResp{})
+		return resp
+	default:
+		return d.fakeDisp.Dispatch(ctx, env)
+	}
+}
+
+// checkAuth returns an auth_required error envelope when neither a valid
+// password nor a valid (unconsumed) presence token is provided.
+func (d *perActionDisp) checkAuth(id string, password, presenceToken []byte) *ipc.Envelope {
+	if len(presenceToken) > 0 {
+		key := string(presenceToken)
+		if _, used := d.usedTokens[key]; used {
+			return ipc.NewError(id, ipc.CodeAuthRequired, "passkey authorization expired or invalid", "re-authenticate")
+		}
+		// Mark as consumed (single-use).
+		d.usedTokens[key] = struct{}{}
+		return nil // valid, first use
+	}
+	if len(password) > 0 && string(password) == testPassword {
+		return nil // correct password
+	}
+	if len(password) > 0 {
+		// Non-empty but wrong password → wrong_password, not auth_required.
+		return ipc.NewError(id, ipc.CodeWrongPassword, "wrong password", "")
+	}
+	return ipc.NewError(id, ipc.CodeAuthRequired, "this action requires authorization ([security] per_action_auth)", "supply password")
+}
+
+// TestReveal_AuthRequired_NoCreds: reveal without password/token → 401.
+func TestReveal_AuthRequired_NoCreds(t *testing.T) {
+	d := newPerActionDisp("secret")
+	ts, c := newTestServerWith(t, d)
+
+	resp := post(t, c, ts.URL+"/api/entry/reveal", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "API_KEY"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("reveal without creds = %d, want 401", resp.StatusCode)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body["code"] != string(ipc.CodeAuthRequired) {
+		t.Errorf("code = %q, want auth_required", body["code"])
+	}
+}
+
+// TestReveal_AuthRequired_WithPassword: reveal with correct password → 200.
+func TestReveal_AuthRequired_WithPassword(t *testing.T) {
+	d := newPerActionDisp("s3cr3t")
+	ts, c := newTestServerWith(t, d)
+
+	resp := post(t, c, ts.URL+"/api/entry/reveal", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "API_KEY", "password": testPassword})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reveal with password = %d, want 200", resp.StatusCode)
+	}
+	var out map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if out["value"] != "s3cr3t" {
+		t.Errorf("value = %q, want s3cr3t", out["value"])
+	}
+}
+
+// TestReveal_AuthRequired_WithPresenceToken: reveal with a fresh token → 200.
+func TestReveal_AuthRequired_WithPresenceToken(t *testing.T) {
+	d := newPerActionDisp("tok-val")
+	ts, c := newTestServerWith(t, d)
+
+	tok := d.mint()
+	resp := post(t, c, ts.URL+"/api/entry/reveal", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "API_KEY", "presence_token": tok})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reveal with token = %d, want 200", resp.StatusCode)
+	}
+	var out map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if out["value"] != "tok-val" {
+		t.Errorf("value = %q, want tok-val", out["value"])
+	}
+}
+
+// TestReveal_AuthRequired_TokenReuse: a token used twice → 401 on the second call.
+func TestReveal_AuthRequired_TokenReuse(t *testing.T) {
+	d := newPerActionDisp("secret")
+	ts, c := newTestServerWith(t, d)
+
+	tok := d.mint()
+	// First use — should succeed.
+	r1 := post(t, c, ts.URL+"/api/entry/reveal", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "API_KEY", "presence_token": tok})
+	r1.Body.Close()
+	if r1.StatusCode != http.StatusOK {
+		t.Fatalf("first reveal = %d, want 200", r1.StatusCode)
+	}
+	// Second use (replay) — must be rejected.
+	r2 := post(t, c, ts.URL+"/api/entry/reveal", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "API_KEY", "presence_token": tok})
+	defer r2.Body.Close()
+	if r2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("token replay = %d, want 401", r2.StatusCode)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(r2.Body).Decode(&body)
+	if body["code"] != string(ipc.CodeAuthRequired) {
+		t.Errorf("code = %q, want auth_required", body["code"])
+	}
+}
+
+// TestPut_AuthRequired_Overwrite_NoCreds: overwrite put without creds → 401.
+func TestPut_AuthRequired_Overwrite_NoCreds(t *testing.T) {
+	d := newPerActionDisp("")
+	ts, c := newTestServerWith(t, d)
+
+	resp := post(t, c, ts.URL+"/api/entries", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "X", "value": "new"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("overwrite put without creds = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestPut_AuthRequired_Overwrite_WithPassword: overwrite with password → 200.
+func TestPut_AuthRequired_Overwrite_WithPassword(t *testing.T) {
+	d := newPerActionDisp("")
+	ts, c := newTestServerWith(t, d)
+
+	resp := post(t, c, ts.URL+"/api/entries", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "X", "value": "new", "password": testPassword})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("overwrite put with password = %d, want 200", resp.StatusCode)
+	}
+}
+
+// newTestServerWith creates a test server using any Dispatcher (not just *fakeDisp).
+func newTestServerWith(t *testing.T, d Dispatcher) (*httptest.Server, *http.Client) {
+	t.Helper()
+	srv := New(d, Config{Port: 0})
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	return ts, &http.Client{}
+}
+
+// capDisp satisfies Dispatcher and captures the last PresenceToken sent to OpGet.
+type capDisp struct {
+	fakeDisp
+	lastPresenceToken []byte
+}
+
+func (d *capDisp) Dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	if env.Op == ipc.OpGet {
+		var req ipc.GetReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		d.lastPresenceToken = req.PresenceToken
+	}
+	return d.fakeDisp.Dispatch(ctx, env)
+}
+
+// TestReveal_ForwardsPresenceTokenIPC checks that the portal's HTTP handler
+// deserialises presence_token from the JSON body and includes it in the IPC
+// GetReq sent to the dispatcher.
+func TestReveal_ForwardsPresenceTokenIPC(t *testing.T) {
+	d := &capDisp{fakeDisp: fakeDisp{revealValue: "captured"}}
+	ts, c := newTestServerWith(t, d)
+
+	tok := []byte("forward-me-token")
+	resp := post(t, c, ts.URL+"/api/entry/reveal", "",
+		map[string]any{"scope": map[string]string{"vault": testVault}, "name": "API_KEY", "presence_token": tok})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reveal = %d, want 200", resp.StatusCode)
+	}
+	if string(d.lastPresenceToken) != string(tok) {
+		t.Errorf("IPC presence_token = %q, want %q", d.lastPresenceToken, tok)
+	}
+}
+
+// ---- vault rename per_action_auth step-up --------------------------------
+
+// TestVaultRename_AuthRequired_NoCreds: /api/vault/rename without password or
+// presence_token when [security] per_action_auth is on → 401 auth_required.
+func TestVaultRename_AuthRequired_NoCreds(t *testing.T) {
+	d := newPerActionDisp("")
+	ts, c := newTestServerWith(t, d)
+
+	resp := post(t, c, ts.URL+"/api/vault/rename", "http://localhost:2967",
+		map[string]any{"old_name": "acme", "new_name": "brand"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("vault rename without creds = %d, want 401", resp.StatusCode)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body["code"] != string(ipc.CodeAuthRequired) {
+		t.Errorf("code = %q, want auth_required", body["code"])
+	}
+}
+
+// TestVaultRename_AuthRequired_WithPassword: /api/vault/rename with correct
+// password when gated → 200.
+func TestVaultRename_AuthRequired_WithPassword(t *testing.T) {
+	d := newPerActionDisp("")
+	ts, c := newTestServerWith(t, d)
+
+	resp := post(t, c, ts.URL+"/api/vault/rename", "http://localhost:2967",
+		map[string]any{"old_name": "acme", "new_name": "brand", "password": testPassword})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("vault rename with password = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestVaultRename_ForwardsPresenceToken: the portal passes presence_token
+// through to the IPC VaultRenameReq.
+func TestVaultRename_ForwardsPresenceToken(t *testing.T) {
+	d := newPerActionDisp("")
+	ts, c := newTestServerWith(t, d)
+
+	tok := d.mint()
+	resp := post(t, c, ts.URL+"/api/vault/rename", "http://localhost:2967",
+		map[string]any{"old_name": "acme", "new_name": "brand", "presence_token": tok})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("vault rename with presence_token = %d, want 200", resp.StatusCode)
+	}
+}

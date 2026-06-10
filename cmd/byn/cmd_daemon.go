@@ -30,11 +30,12 @@ func daemonConfigFor(dir string) (daemon.Config, error) {
 		return daemon.Config{}, err
 	}
 	return daemon.Config{
-		Dir:         dir,
-		Version:     version,
-		IdleTimeout: time.Duration(cfg.Daemon.IdleTimeout),
-		UIEnabled:   cfg.UI.Enabled,
-		UIPort:      cfg.UI.Port,
+		Dir:           dir,
+		Version:       version,
+		IdleTimeout:   time.Duration(cfg.Daemon.IdleTimeout),
+		UIEnabled:     cfg.UI.Enabled,
+		UIPort:        cfg.UI.Port,
+		PerActionAuth: cfg.Security.PerActionAuth,
 	}, nil
 }
 

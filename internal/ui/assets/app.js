@@ -79,6 +79,63 @@ async function api(method, path, body) {
   return data;
 }
 
+// ---- per_action_auth step-up --------------------------------------------
+
+// authorizeStepUp shows an authorization step-up for an action gated by
+// [security] per_action_auth. Passkey-first (mirrors the trust-grant flow);
+// falls back to the password dialog. Returns { password, presence_token } with
+// exactly one of them set, or null when the user cancels.
+//
+// The returned credential is SINGLE-USE: do not store it; pass it directly
+// into the retried request body and discard it after.
+async function authorizeStepUp(vault) {
+  // Try passkey first — same pattern as tryPasskeyPresence for trust grants.
+  const token = await tryPasskeyPresence(vault);
+  if (token) return { presence_token: token, password: "" };
+
+  // Fall back to the master-password dialog.
+  const r = await openDialog({
+    title: "Authorize action",
+    okText: "authorize",
+    message:
+      "[security] per_action_auth is on — enter the master password to authorize this action.",
+    fields: [
+      { key: "password", label: "master password", type: "password",
+        validate: (v) => (v ? null : "password required") },
+    ],
+  });
+  if (!r) return null;
+  const pw = r.password;
+  // Clear the stored reference after extracting the value so it does not
+  // linger in a closure or variable past this call.
+  r.password = "";
+  return { password: pw, presence_token: null };
+}
+
+// apiWithAuth wraps api() and handles auth_required transparently: on first
+// auth_required it shows the step-up (passkey or password), merges the
+// credential into the request body, and retries exactly once. A second
+// auth_required (wrong password, expired token) falls through to the caller
+// as a normal error. vault is the vault name for the presence-token scope
+// check (used by tryPasskeyPresence).
+async function apiWithAuth(method, path, body, vault) {
+  try {
+    return await api(method, path, body);
+  } catch (e) {
+    if (e.code !== "auth_required") throw e;
+    // First auth_required: ask for credentials.
+    const creds = await authorizeStepUp(vault || state.scope.vault);
+    if (!creds) throw e; // user cancelled — propagate the original error
+    // Merge creds into a fresh body copy (never mutate the original).
+    const retryBody = Object.assign({}, body, {
+      password: creds.password || "",
+      presence_token: creds.presence_token || undefined,
+    });
+    // Single retry — any further auth_required propagates normally.
+    return await api(method, path, retryBody);
+  }
+}
+
 // confirmDelete shows the delete confirmation. If the target vault is locked
 // the dialog ALSO asks for the master password — a one-shot authorization
 // that does NOT unlock the vault, so its values are never exposed to a
@@ -487,7 +544,7 @@ async function deleteVault(name) {
     `Delete the entire vault “${name}” and all its projects, envs and secrets?\nThis cannot be undone.`);
   if (!c) return;
   try {
-    await api("POST", "/api/vault/delete", { name, password: c.password }); toast("deleted vault " + name);
+    await apiWithAuth("POST", "/api/vault/delete", { name, password: c.password }, name); toast("deleted vault " + name);
     if (state.scope.vault === name) { state.scope = { vault: "", project: "", env: "" }; $("#content-body").innerHTML = ""; $("#crumbs").innerHTML = ""; }
     await renderTree();
   } catch (e) { toast(e.message, true); }
@@ -497,7 +554,7 @@ async function deleteProject(vault, name) {
     `Delete project “${name}” and all its envs and secrets in ${vault}?`);
   if (!c) return;
   try {
-    await api("POST", "/api/project/delete", { vault, name, password: c.password }); toast("deleted project " + name);
+    await apiWithAuth("POST", "/api/project/delete", { vault, name, password: c.password }, vault); toast("deleted project " + name);
     state.open.projects.delete(vault + "/" + name);
     if (state.scope.vault === vault && state.scope.project === name) { state.scope.project = ""; state.scope.env = ""; $("#content-body").innerHTML = ""; }
     await renderTree();
@@ -508,7 +565,7 @@ async function deleteEnv(vault, project, name) {
     `Delete env “${name}” and its secrets in ${vault}/${project}?`);
   if (!c) return;
   try {
-    await api("POST", "/api/env/delete", { vault, project, name, password: c.password }); toast("deleted env " + name);
+    await apiWithAuth("POST", "/api/env/delete", { vault, project, name, password: c.password }, vault); toast("deleted env " + name);
     if (state.scope.vault === vault && state.scope.project === project && state.scope.env === name) { state.scope.env = ""; $("#content-body").innerHTML = ""; }
     await renderTree();
   } catch (e) { toast(e.message, true); }
@@ -538,7 +595,7 @@ async function renameVault(name) {
     `Rename vault “${name}”. It will be locked afterwards — re-unlock to keep using it.`, name, "vault name");
   if (!c) return;
   try {
-    await api("POST", "/api/vault/rename", { old_name: name, new_name: c.name, password: c.password });
+    await apiWithAuth("POST", "/api/vault/rename", { old_name: name, new_name: c.name, password: c.password }, name);
     toast(`renamed vault → ${c.name}`);
     if (state.open.vaults.has(name)) { state.open.vaults.delete(name); state.open.vaults.add(c.name); }
     if (state.scope.vault === name) state.scope.vault = c.name;
@@ -797,7 +854,10 @@ async function exportEnv() {
   const lines = [];
   for (const e of state.entries) {
     try {
-      const r = await api("POST", "/api/entry/reveal", { scope: curScope(), name: e.name });
+      // Portal export: presence tokens are single-use, so each entry here re-triggers
+      // the passkey/password step-up via apiWithAuth. Batch authorization (one step-up
+      // covers all entries) lands with session tokens in NU-3.
+      const r = await apiWithAuth("POST", "/api/entry/reveal", { scope: curScope(), name: e.name }, s.vault);
       lines.push(dotenvLine(e.name, r.value));
     } catch (err) { toast(`export failed at ${e.name}: ${err.message}`, true); return; }
   }
@@ -835,7 +895,7 @@ async function applyImport(pairs) {
   if (!pairs.length) { toast("no KEY=value lines found", true); return; }
   let ok = 0;
   for (const [k, v] of pairs) {
-    try { await api("POST", "/api/entries", { scope: curScope(), name: k, value: v }); ok++; }
+    try { await apiWithAuth("POST", "/api/entries", { scope: curScope(), name: k, value: v }, state.scope.vault); ok++; }
     catch (err) { toast(`import failed at ${k}: ${err.message}`, true); break; }
   }
   toast(`imported ${ok}/${pairs.length} vars`);
@@ -964,7 +1024,9 @@ function maskDots() { return el("span", "mask", "•••••••••"); 
 
 async function revealValue(s) {
   const env = s.source === "default" ? "default" : state.scope.env;
-  const data = await api("POST", "/api/entry/reveal", { scope: { vault: state.scope.vault, project: state.scope.project, env }, name: s.name });
+  const data = await apiWithAuth("POST", "/api/entry/reveal",
+    { scope: { vault: state.scope.vault, project: state.scope.project, env }, name: s.name },
+    state.scope.vault);
   return data.value;
 }
 async function reveal(s, valEl) {
@@ -994,7 +1056,7 @@ function editName(s, cell) {
   const done = (commit) => async () => {
     const next = input.value.trim();
     if (!commit || !next || next === s.name) { renderEntries(); return; }
-    try { await api("POST", "/api/entry/rename", { scope: curScope(), old_name: s.name, new_name: next }); toast("renamed → " + next); await loadEntries(); }
+    try { await apiWithAuth("POST", "/api/entry/rename", { scope: curScope(), old_name: s.name, new_name: next }, state.scope.vault); toast("renamed → " + next); await loadEntries(); }
     catch (e) { toast(e.message, true); renderEntries(); }
   };
   input.onkeydown = (e) => { if (e.key === "Enter") done(true)(); if (e.key === "Escape") done(false)(); };
@@ -1009,7 +1071,7 @@ async function editValue(s, cell) {
   const done = (commit) => async () => {
     if (!commit) { renderEntries(); return; }
     try {
-      await api("POST", "/api/entries", { scope: curScope(), name: s.name, value: ta.value });
+      await apiWithAuth("POST", "/api/entries", { scope: curScope(), name: s.name, value: ta.value }, state.scope.vault);
       toast((s.source === "default" ? "overrode " : "updated ") + s.name + (s.source === "default" ? " in " + state.scope.env : ""));
       await loadEntries();
     } catch (e) { toast(e.message, true); renderEntries(); }
@@ -1113,7 +1175,7 @@ async function doDelete(s) {
   const c = await confirmDelete(state.scope.vault, "Delete env-var",
     `Delete “${s.name}” from ${state.scope.vault}/${state.scope.project}/${state.scope.env}?`);
   if (!c) return;
-  try { await api("POST", "/api/entry/delete", { scope: curScope(), name: s.name, password: c.password }); toast("deleted " + s.name); await loadEntries(); }
+  try { await apiWithAuth("POST", "/api/entry/delete", { scope: curScope(), name: s.name, password: c.password }, state.scope.vault); toast("deleted " + s.name); await loadEntries(); }
   catch (e) { toast(e.message, true); }
 }
 

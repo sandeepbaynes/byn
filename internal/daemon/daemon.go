@@ -53,6 +53,10 @@ type Config struct {
 	// config.UI at daemon start.
 	UIEnabled bool
 	UIPort    int
+
+	// PerActionAuth gates get/overwrite-put/delete on a fresh per-action
+	// authorization even while unlocked. Wired from config.Security.
+	PerActionAuth bool
 }
 
 // vaultEntry is the daemon's handle on one open vault.
@@ -85,6 +89,12 @@ type Daemon struct {
 	// janitor goroutine reads it while Reload writes it. Read via
 	// idleTimeoutDur.
 	idleNanos atomic.Int64
+
+	// perActionFlag is the live [security] per_action_auth value. Atomic so
+	// Reload can flip it without holding any lock while handlers read it via
+	// perActionAuth(). The accessor returns the live value — read it at the
+	// start of each handler, not cached across IPC calls.
+	perActionFlag atomic.Bool
 
 	// janitorOnce guards a single idle-janitor goroutine. Start launches it
 	// when idle is enabled at boot; Reload launches it lazily when a config
@@ -171,6 +181,7 @@ func New(cfg Config) (*Daemon, error) {
 		presenceTokens: newPresenceTokens(),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
+	d.perActionFlag.Store(cfg.PerActionAuth)
 	d.limiter = auth.NewRateLimiter(d.limiterPath)
 	if cfg.Clock != nil {
 		d.limiter.SetClock(cfg.Clock)
@@ -340,6 +351,12 @@ func (d *Daemon) idleTimeoutDur() time.Duration {
 	return time.Duration(d.idleNanos.Load())
 }
 
+// perActionAuth reports whether [security] per_action_auth is currently on.
+// Read atomically so Reload can flip it without races.
+func (d *Daemon) perActionAuth() bool {
+	return d.perActionFlag.Load()
+}
+
 // ensureJanitor starts the idle-janitor goroutine exactly once for the
 // daemon's lifetime. Safe to call from Start (idle enabled at boot) and
 // from Reload (idle enabled later). A no-op once shutting down.
@@ -429,11 +446,12 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 // ---- live config reload -------------------------------------------------
 
 // Reload re-reads ~/.byn/config and applies the settings that can change at
-// runtime without dropping daemon state: the idle re-lock timeout and the
-// embedded browser portal (enable / disable / port). Open vaults stay open
-// and unlocked across a reload. It returns a human-readable list of what
-// changed (empty when nothing did). The data dir, owner UID and binary
-// version are fixed at start and are never reloaded — those need a restart.
+// runtime without dropping daemon state: the idle re-lock timeout, the
+// embedded browser portal (enable / disable / port), and the per-action auth
+// flag. Open vaults stay open and unlocked across a reload. It returns a
+// human-readable list of what changed (empty when nothing did). The data dir,
+// owner UID and binary version are fixed at start and are never reloaded —
+// those need a restart.
 func (d *Daemon) Reload() ([]string, error) {
 	cfg, err := config.Load(config.Path(d.cfg.Dir))
 	if err != nil {
@@ -451,6 +469,16 @@ func (d *Daemon) Reload() ([]string, error) {
 		changes = append(changes, fmt.Sprintf("idle_timeout %s → %s", idleStr(old), idleStr(newIdle)))
 		if newIdle > 0 {
 			d.ensureJanitor()
+		}
+	}
+
+	// Per-action auth flag.
+	if old := d.perActionFlag.Load(); old != cfg.Security.PerActionAuth {
+		d.perActionFlag.Store(cfg.Security.PerActionAuth)
+		if cfg.Security.PerActionAuth {
+			changes = append(changes, "per_action_auth enabled")
+		} else {
+			changes = append(changes, "per_action_auth disabled")
 		}
 	}
 

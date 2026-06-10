@@ -133,6 +133,9 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 	case ipc.OpRename:
 		return d.handleRename(ctx, env)
 
+	case ipc.OpExecFetch:
+		return d.handleExecFetch(ctx, env)
+
 	case ipc.OpAuditTail:
 		return d.handleAuditTail(ctx, env)
 	case ipc.OpAuditVerify:
@@ -381,7 +384,16 @@ func (d *Daemon) handleVaultDelete(ctx context.Context, env *ipc.Envelope) *ipc.
 	if errEnv != nil {
 		return errEnv
 	}
-	if le := d.authorizeMutationWhileLocked(ctx, env.ID, name, st, req.Password); le != nil {
+	if d.perActionAuth() {
+		if le := d.authorizeAction(ctx, env.ID, name, st, req.Password, req.PresenceToken); le != nil {
+			d.auditEmit(ctx, name, audit.Event{
+				Op:        "vault.delete",
+				Outcome:   audit.OutcomeDenied,
+				ErrorCode: string(le.Err.Code),
+			})
+			return le
+		}
+	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, name, st, req.Password); le != nil {
 		return le
 	}
 	// Record the deletion BEFORE teardown: the audit log lives outside the
@@ -458,6 +470,7 @@ func (d *Daemon) handleVaultRename(ctx context.Context, env *ipc.Envelope) *ipc.
 		return badRequest(env.ID, err)
 	}
 	defer zero(req.Password)
+	defer zero(req.PresenceToken)
 	oldName := defaultIfEmpty(req.OldName, vault.DefaultVaultName)
 	if err := vault.ValidateVaultName(oldName); err != nil {
 		return ipc.NewError(env.ID, ipc.CodeBadName, err.Error(), "")
@@ -473,7 +486,16 @@ func (d *Daemon) handleVaultRename(ctx context.Context, env *ipc.Envelope) *ipc.
 	if errEnv != nil {
 		return errEnv
 	}
-	if le := d.authorizeMutationWhileLocked(ctx, env.ID, oldName, st, req.Password); le != nil {
+	if d.perActionAuth() {
+		if le := d.authorizeAction(ctx, env.ID, oldName, st, req.Password, req.PresenceToken); le != nil {
+			d.auditEmit(ctx, oldName, audit.Event{
+				Op:        "vault.rename",
+				Outcome:   audit.OutcomeDenied,
+				ErrorCode: string(le.Err.Code),
+			})
+			return le
+		}
+	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, oldName, st, req.Password); le != nil {
 		return le
 	}
 	// Record the rename in the OLD vault's audit log before teardown; the
@@ -767,16 +789,36 @@ func (d *Daemon) handleProjectDelete(ctx context.Context, env *ipc.Envelope) *ip
 		return badRequest(env.ID, err)
 	}
 	defer zero(req.Password)
+	// The default project is the base for inheritance and cannot be removed.
+	// This check mirrors the default-env protection in vault.DeleteEnv and the
+	// default-vault protection in handleVaultDelete — all three must refuse at
+	// the daemon layer regardless of lock state or flag setting.
+	if req.Name == vault.DefaultProjectName {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			"the default project cannot be deleted",
+			"create a new project (`byn project create NAME`) or delete a non-default one")
+	}
+	vaultName := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
 	st, errEnv := d.storeForVault(env.ID, req.Vault)
 	if errEnv != nil {
 		return errEnv
 	}
-	if le := d.authorizeMutationWhileLocked(ctx, env.ID, req.Vault, st, req.Password); le != nil {
+	if d.perActionAuth() {
+		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+			d.auditEmit(ctx, vaultName, audit.Event{
+				Op:        string(ipc.OpProjectDelete),
+				Outcome:   audit.OutcomeDenied,
+				ErrorCode: string(le.Err.Code),
+			})
+			return le
+		}
+	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
 		return le
 	}
 	if err := st.DeleteProject(ctx, req.Name); err != nil {
 		return mapVaultErr(env.ID, err)
 	}
+	d.auditEmit(ctx, vaultName, audit.Event{Op: string(ipc.OpProjectDelete), Outcome: audit.OutcomeOK})
 	resp, err := ipc.NewResponse(env.ID, ipc.ProjectDeleteResp{})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -790,6 +832,14 @@ func (d *Daemon) handleProjectRename(ctx context.Context, env *ipc.Envelope) *ip
 		return badRequest(env.ID, err)
 	}
 	defer zero(req.Password)
+	// The default project cannot be renamed (it is the inheritance base).
+	// Mirror the default-env protection in vault.RenameEnv and the
+	// default-vault guard in handleVaultRename — enforced at the daemon layer.
+	if req.OldName == vault.DefaultProjectName {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			"the default project cannot be renamed",
+			"create a new project (`byn project create NAME`) instead")
+	}
 	st, errEnv := d.storeForVault(env.ID, req.Vault)
 	if errEnv != nil {
 		return errEnv
@@ -865,17 +915,28 @@ func (d *Daemon) handleEnvDelete(ctx context.Context, env *ipc.Envelope) *ipc.En
 		return badRequest(env.ID, err)
 	}
 	defer zero(req.Password)
+	vaultName := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
 	st, errEnv := d.storeForVault(env.ID, req.Vault)
 	if errEnv != nil {
 		return errEnv
 	}
-	if le := d.authorizeMutationWhileLocked(ctx, env.ID, req.Vault, st, req.Password); le != nil {
+	if d.perActionAuth() {
+		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+			d.auditEmit(ctx, vaultName, audit.Event{
+				Op:        string(ipc.OpEnvDelete),
+				Outcome:   audit.OutcomeDenied,
+				ErrorCode: string(le.Err.Code),
+			})
+			return le
+		}
+	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
 		return le
 	}
 	project := defaultIfEmpty(req.Project, vault.DefaultProjectName)
 	if err := st.DeleteEnv(ctx, project, req.Name); err != nil {
 		return mapVaultErr(env.ID, err)
 	}
+	d.auditEmit(ctx, vaultName, audit.Event{Op: string(ipc.OpEnvDelete), Outcome: audit.OutcomeOK})
 	resp, err := ipc.NewResponse(env.ID, ipc.EnvDeleteResp{})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -914,21 +975,53 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
 		return badRequest(env.ID, err)
 	}
+	defer zero(req.Password)
 	st, scope, errEnv := d.scopeFor(env.ID, req.Scope)
 	if errEnv != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", errEnv)
 		return errEnv
 	}
+
 	var resp *ipc.Envelope
-	if err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: req.CreateOnly}); err != nil {
-		resp = mapVaultErr(env.ID, err)
-	} else {
-		d.touchVault(req.Scope.Vault)
-		out, err := ipc.NewResponse(env.ID, ipc.PutResp{})
+	if d.perActionAuth() {
+		// Insert stays FREE (additive, leaks nothing — the autonomy matrix);
+		// only an OVERWRITE of an existing entry is an "update" needing auth.
+		// Try create-only first: success = a free insert in one call.
+		// CreateOnly=true checks exact scope (project_id + env_id + name), so
+		// a name that exists only in the default env does NOT trigger ErrExists
+		// for a non-default env scope — inserting an override stays free.
+		err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: true})
+		if errors.Is(err, vault.ErrExists) && !req.CreateOnly {
+			// Row exists in this scope — this is an overwrite, needs auth.
+			vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+			if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+				d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
+				return le
+			}
+			err = st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{})
+		}
 		if err != nil {
-			resp = internalErr(env.ID, err)
+			resp = mapVaultErr(env.ID, err)
 		} else {
-			resp = out
+			d.touchVault(req.Scope.Vault)
+			out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
+			if oerr != nil {
+				resp = internalErr(env.ID, oerr)
+			} else {
+				resp = out
+			}
+		}
+	} else {
+		if err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: req.CreateOnly}); err != nil {
+			resp = mapVaultErr(env.ID, err)
+		} else {
+			d.touchVault(req.Scope.Vault)
+			out, err := ipc.NewResponse(env.ID, ipc.PutResp{})
+			if err != nil {
+				resp = internalErr(env.ID, err)
+			} else {
+				resp = out
+			}
 		}
 	}
 	d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", resp)
@@ -940,10 +1033,15 @@ func (d *Daemon) handleGet(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
 		return badRequest(env.ID, err)
 	}
+	defer zero(req.Password)
 	st, scope, errEnv := d.scopeFor(env.ID, req.Scope)
 	if errEnv != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", errEnv)
 		return errEnv
+	}
+	if le := d.authorizeAction(ctx, env.ID, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), st, req.Password, req.PresenceToken); le != nil {
+		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", le)
+		return le
 	}
 	var resp *ipc.Envelope
 	got, err := st.GetEnvVar(ctx, scope, req.Name)
@@ -1008,7 +1106,16 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", errEnv)
 		return errEnv
 	}
-	if le := d.authorizeMutationWhileLocked(ctx, env.ID, req.Scope.Vault, st, req.Password); le != nil {
+	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	if d.perActionAuth() {
+		// Flag on: authorizeAction covers both locked and unlocked cases —
+		// a fresh password (which also verifies without unlocking) or a
+		// presence token is required even while the vault is already unlocked.
+		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le)
+			return le
+		}
+	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le)
 		return le
 	}
@@ -1041,7 +1148,15 @@ func (d *Daemon) handleEnvClear(ctx context.Context, env *ipc.Envelope) *ipc.Env
 		d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", errEnv)
 		return errEnv
 	}
-	if le := d.authorizeMutationWhileLocked(ctx, env.ID, req.Scope.Vault, st, req.Password); le != nil {
+	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	if d.perActionAuth() {
+		// Flag on: authorizeAction covers both locked and unlocked cases —
+		// a fresh password or presence token is required even while unlocked.
+		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+			d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", le)
+			return le
+		}
+	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", le)
 		return le
 	}
@@ -1066,14 +1181,24 @@ func (d *Daemon) handleRename(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
 		return badRequest(env.ID, err)
 	}
+	defer zero(req.Password)
 	st, scope, errEnv := d.scopeFor(env.ID, req.Scope)
 	if errEnv != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.OldName, "rename", errEnv)
 		return errEnv
 	}
+	// requireUnlocked runs first: rename always needs the vault key (re-encryption
+	// under new AAD). It's a cheap, actionable error before the auth gate.
 	if le := requireUnlocked(env.ID, st); le != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.OldName, "rename", le)
 		return le
+	}
+	if d.perActionAuth() {
+		vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+			d.auditPlane(ctx, req.Scope, "env_var", req.OldName, "rename", le)
+			return le
+		}
 	}
 	var resp *ipc.Envelope
 	if err := st.RenameEnvVar(ctx, scope, req.OldName, req.NewName); err != nil {
@@ -1197,6 +1322,32 @@ func (d *Daemon) authorizeWithPassword(ctx context.Context, id, vaultName string
 	}
 	_ = d.limiter.RecordSuccess()
 	return nil
+}
+
+// authorizeAction gates a value-touching op (get / overwrite-put / delete)
+// when [security] per_action_auth is on: a fresh master password or a
+// one-time presence token is required EVEN while the vault is unlocked (NU-1
+// posture; NU-3 sessions restore ergonomics). No-op when the flag is off.
+// Trusted-.byn exec never calls this — the .byn is the authorization (spec
+// §4.4).
+func (d *Daemon) authorizeAction(ctx context.Context, id, vaultName string, st *vault.Store, password, presenceToken []byte) *ipc.Envelope {
+	if !d.perActionAuth() {
+		return nil
+	}
+	if len(presenceToken) > 0 {
+		if d.presenceTokens.consume(presenceToken, vaultName, time.Now()) {
+			return nil
+		}
+		return ipc.NewError(id, ipc.CodeAuthRequired,
+			"passkey authorization expired or invalid",
+			"re-authenticate with your passkey, or use your password")
+	}
+	if len(password) == 0 {
+		return ipc.NewError(id, ipc.CodeAuthRequired,
+			"this action requires authorization ([security] per_action_auth)",
+			"supply the master password to authorize this action")
+	}
+	return d.authorizeWithPassword(ctx, id, vaultName, st, password)
 }
 
 // storeForVault returns the open *vault.Store for the named vault, or
@@ -1340,7 +1491,8 @@ func outcomeFor(resp *ipc.Envelope) (outcome, code string) {
 	case ipc.CodeNotFound, ipc.CodeProjectNotFound, ipc.CodeEnvNotFound, ipc.CodeVaultNotFound:
 		return audit.OutcomeNotFound, string(resp.Err.Code)
 	case ipc.CodeLocked, ipc.CodeWrongPassword, ipc.CodeRateLimited, ipc.CodeAlreadyExists,
-		ipc.CodeAlreadyInit, ipc.CodeBadName, ipc.CodeBadRequest, ipc.CodeEnvProtected:
+		ipc.CodeAlreadyInit, ipc.CodeBadName, ipc.CodeBadRequest, ipc.CodeEnvProtected,
+		ipc.CodeTrustDenied, ipc.CodeAuthRequired:
 		return audit.OutcomeDenied, string(resp.Err.Code)
 	default:
 		return audit.OutcomeError, string(resp.Err.Code)

@@ -115,10 +115,17 @@ Print:
 List every vault present under `~/.byn/vaults/`. Human output
 shows name + state (`unlocked`/`locked`/`uninitialized`).
 
-### `byn vault delete NAME`
+### `byn vault delete NAME [--password-stdin]`
 
 Cascade-delete: removes the vault directory and all entries. Refuses
-`default`.
+`default`. Password required when locked or `[security] per_action_auth`
+is on.
+
+### `byn vault rename OLD NEW [--password-stdin]`
+
+Rename a vault and its audit trail. Refuses `default` and an existing
+destination. The vault is left **locked** after the rename. Password
+required when locked or `[security] per_action_auth` is on.
 
 ### `byn vault {init,unlock,lock}`
 
@@ -135,10 +142,11 @@ Create a project. Implicitly creates a `default` env for it.
 
 - `NAME` can be a positional or `--project NAME` (the scope flag).
 
-### `byn project delete NAME`
+### `byn project delete NAME [--password-stdin]`
 
 Cascade-delete: removes the project + every env + every entry +
-every entry_version. Refuses `default`.
+every entry_version. Refuses `default`. Password required when locked
+or `[security] per_action_auth` is on.
 
 ### `byn project rename OLD NEW`
 
@@ -153,10 +161,11 @@ rest are alphabetical.
 
 Create a non-default env in the active project.
 
-### `byn env delete NAME`
+### `byn env delete NAME [--password-stdin]`
 
 Delete a non-default env. Refuses `default`. Cascades to its entries
-+ entry versions.
++ entry versions. Password required when locked or `[security]
+per_action_auth` is on.
 
 ### `byn env rename OLD NEW`
 
@@ -166,7 +175,7 @@ Rename. Refuses `default`.
 
 ## Env-vars (active scope)
 
-### `byn put NAME [--create-only]`
+### `byn put NAME [--create-only] [--password-stdin]`
 
 Store an env-var entry under `(scope.Project, scope.Env)`.
 
@@ -175,6 +184,18 @@ Store an env-var entry under `(scope.Project, scope.Env)`.
 - `--create-only` fails with `already_exists` if the name is taken
   (used by `import --skip-existing`).
 - Hint on success: `Stored "NAME" in vault/project/env.`
+- When `[security] per_action_auth` is on, overwriting an existing
+  entry requires the master password. New entries (first put of a name,
+  or `--create-only`) do not.
+- `--password-stdin` contract: the **first line** of stdin is always
+  the master password; the **remainder** (after the first `\n`) is the
+  secret value. The first line is always consumed when `--password-stdin`
+  is set, even if the daemon never requests authorization:
+  ```sh
+  { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
+  ```
+- Locked vault with `--password-stdin`: hard fail ("byn unlock") — a
+  password alone cannot decrypt a locked vault for a write.
 
 Examples:
 ```sh
@@ -182,7 +203,7 @@ echo 's3cr3t' | byn put DB_PASSWORD
 byn put TLS_CERT < server.crt
 ```
 
-### `byn get NAME [--json]` (alias: `byn cat NAME`)
+### `byn get NAME [--json] [--password-stdin]` (alias: `byn cat NAME`)
 
 Print the decrypted value to stdout.
 
@@ -192,6 +213,11 @@ Print the decrypted value to stdout.
 - Non-TTY: raw bytes, no trailing newline (safe for piping/redirection).
 - `--json` emits `{"name": ..., "value": ...}` — use only in trusted
   harnesses; values land in your agent's context.
+- When `[security] per_action_auth` is on, the master password is
+  required on every call. `--password-stdin` reads the entire stdin as
+  the password (no newline split — contrast with `put`).
+- Locked vault: always a hard fail ("byn unlock"); a password cannot
+  decrypt a locked vault.
 
 ### `byn list [--json]` (alias: `byn ls`)
 
@@ -208,16 +234,29 @@ List entry names + per-entry metadata. JSON emits:
 ]
 ```
 
-Allowed while locked (names are not secret).
+Allowed while locked (names are not secret). Not gated by
+`per_action_auth`.
 
-### `byn delete NAME` (alias: `byn rm NAME`)
+### `byn delete NAME [--password-stdin]` (alias: `byn rm NAME`)
 
 Remove an entry. No inheritance — must exist in `scope.Env`.
-Allowed while locked.
+Allowed while locked (names only, no values touched).
 
-### `byn rename OLD NEW` (alias: `byn mv OLD NEW`)
+- When the vault is locked or `[security] per_action_auth` is on, the
+  master password is required. `--password-stdin` reads entire stdin
+  as the password.
+- A locked vault accepts `delete` with the password (unlike `get`/`put`
+  which require unlock for value operations).
+
+### `byn rename OLD NEW [--password-stdin]` (alias: `byn mv OLD NEW`)
 
 Move within `scope.Env`. Daemon re-encrypts under the new AAD.
+Requires unlock (re-encryption needs the vault key).
+
+- When `[security] per_action_auth` is on, the master password is
+  required. `--password-stdin` reads entire stdin as the password.
+- Locked vault: hard fail ("byn unlock") — re-encryption requires the
+  vault key.
 
 ---
 
@@ -265,7 +304,7 @@ Dotenv parser understands:
 YAML/JSON values are coerced: bool → `"true"`/`"false"`, numbers →
 printed, null → empty string.
 
-### `byn export [--format env|yaml|json] [--output PATH]`
+### `byn export [--format env|yaml|json] [--output PATH] [--password-stdin]`
 
 Dump active scope as a flat key→value document.
 
@@ -275,6 +314,12 @@ Dump active scope as a flat key→value document.
 - Keys sorted alphabetically.
 - Dotenv quoting: values containing `\s\n#="` get wrapped in
   `"..."` with `\n`/`\\`/`\"` escapes.
+- `--password-stdin`: when `[security] per_action_auth` is on, read
+  the master password once from stdin and reuse it for every get
+  (non-interactive path). Without the flag, the CLI prompts once
+  interactively on the first `auth_required` and reuses the same
+  password for the rest. Each entry re-verifies via Argon2id — large
+  exports are slow under this flag; session tokens (NU-3) will fix this.
 
 **Caveat:** this materializes plaintext. Treat the output like a
 `.env` file — never commit, never share. Same warning as `byn get`.
@@ -292,19 +337,26 @@ its environment.
   consumes flags meant for the child.
 - Implemented via `syscall.Exec`: the child gets the same PID as the
   CLI that invoked it.
-- Stage 1: `OpList{Scope}` to enumerate entries
-- Stage 2: `OpGet{Scope, Name}` per entry (N+1; replaceable with
-  `OpExecPrep` later)
-- Stage 3: `exec.LookPath` to vet the binary
-- Stage 4: parent's environ + injected vars (last value wins, so
+- **Server-side authorization (one round-trip):** the CLI sends a
+  single `OpExecFetch` request. The daemon reads, trust-verifies, and
+  parses the `.byn` itself, then returns **only** the entries listed in
+  `[exec] env`. A compromised client cannot widen the allowlist — the
+  daemon owns the entire path from trust check to env assembly.
+- Denial messages (untrusted / changed / tampered / stale) come from
+  the daemon with a `byn trust` recovery hint.
+- Every exec attempt — allowed or denied, including locked-vault
+  failures — is audited with the full command line.
+- **Vault locked:** always a hard failure ("vault is locked"). Unlike
+  `delete`, exec cannot proceed with a password; `byn unlock` first.
+- Stage 1: `exec.LookPath` to vet the binary
+- Stage 2: parent's environ + injected vars (last value wins, so
   vault values shadow shell exports)
-- Stage 5: `syscall.Exec`
+- Stage 3: `syscall.Exec`
 
-**Limitations** (documented in `cmd_exec.go`):
-- Values briefly live as Go strings in heap between OpGet and exec
+**Limitations:**
+- Values briefly live as Go strings in heap between OpExecFetch and exec
 - Shell builtins (`cd`, `source`) can't be exec'd — wrap via
   `bash -c '...'`
-- N+1 IPC round-trips (perf optimization deferred until measurable)
 
 ### `byn edit` / `byn view` / `byn` (no args)
 
@@ -401,6 +453,36 @@ Print the binary version.
 
 Print the top-level usage or per-command help. Routed through
 `$PAGER` when stdout is a TTY.
+
+---
+
+## Config file (`~/.byn/config`)
+
+Optional TOML file (no extension). A missing file uses built-in
+defaults. Unknown keys are rejected with an error. Changes to
+`[security]` and `[daemon]` hot-apply via `byn daemon reload` without
+restart; `[ui]` changes also hot-apply.
+
+| Key | Default | Effect |
+|---|---|---|
+| `[ui] enabled` | `true` | Enable/disable the web portal |
+| `[ui] port` | `2967` | Port for the local admin portal |
+| `[daemon] idle_timeout` | `"15m"` | Auto-relock after inactivity; `"0s"` to disable |
+| `[security] per_action_auth` | `false` | Require a fresh password/presence-token for every sensitive call (get, overwrite-put, delete, rename, env clear/delete, project delete, vault delete, vault rename) even while unlocked |
+
+Example:
+
+```toml
+[daemon]
+idle_timeout = "30m"
+
+[security]
+per_action_auth = true
+
+[ui]
+port = 2967
+enabled = true
+```
 
 ---
 

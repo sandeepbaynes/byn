@@ -152,7 +152,7 @@ func runEnvDelete(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
 		return newClient(dir).Call(ipc.OpEnvDelete,
 			ipc.EnvDeleteReq{Vault: scope.Vault, Project: projectOrDefault(scope.Project), Name: name, Password: pw},
 			&ipc.EnvDeleteResp{})
@@ -198,7 +198,7 @@ func runEnvClear(args []string, scope cliScope) int {
 	clearScope := scope
 	clearScope.Env = target
 	var resp ipc.EnvClearResp
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
 		return newClient(dir).Call(ipc.OpEnvClear,
 			ipc.EnvClearReq{Scope: clearScope.ToIPC(), Password: pw}, &resp)
 	})
@@ -225,7 +225,7 @@ func runEnvRename(args []string, scope cliScope) int {
 		return exitErr
 	}
 	old, neu := fs.Arg(0), fs.Arg(1)
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
 		return newClient(dir).Call(ipc.OpEnvRename,
 			ipc.EnvRenameReq{Vault: scope.Vault, Project: projectOrDefault(scope.Project), OldName: old, NewName: neu, Password: pw},
 			&ipc.EnvRenameResp{})

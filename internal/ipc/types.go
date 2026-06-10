@@ -79,6 +79,8 @@ const (
 	OpBynWrite       Op = "byn.write"        // portal writes a .byn scope file (+ optional trust)
 	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
+	OpExecFetch Op = "exec.fetch"
+
 	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
 	// for navigator.credentials.{create,get}; finish verifies the browser's
 	// response. Enrollment requires the vault unlocked; revoke is password-gated.
@@ -101,6 +103,7 @@ var AllOps = []Op{
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpBynWrite, OpFSListDir,
+	OpExecFetch,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
@@ -152,6 +155,10 @@ const (
 	CodeVaultNotFound ErrCode = "vault_not_found"
 	CodeVaultExists   ErrCode = "vault_exists"
 	CodeFingerprint   ErrCode = "fingerprint_mismatch"
+
+	// Exec / per-action authorization (NU-1).
+	CodeTrustDenied  ErrCode = "trust_denied"  // .byn untrusted/changed/tampered — exec blocked
+	CodeAuthRequired ErrCode = "auth_required" // [security] per_action_auth gate: supply password/presence token
 
 	// Project / env.
 	CodeProjectNotFound ErrCode = "project_not_found"
@@ -252,10 +259,12 @@ type VaultListResp struct {
 // VaultDeleteReq removes a vault from disk. Refuses if Name is empty
 // or doesn't validate. Password authorizes the delete when the vault is
 // locked (one-shot verify; the vault is NOT left unlocked) — empty when
-// the vault is already unlocked.
+// the vault is already unlocked. PresenceToken is the portal's passkey
+// alternative to Password (one-time, short-lived).
 type VaultDeleteReq struct {
-	Name     string `json:"name"`
-	Password []byte `json:"password,omitempty"`
+	Name          string `json:"name"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // VaultPasswdReq changes a vault's master password by re-wrapping the
@@ -273,12 +282,14 @@ type VaultPasswdResp struct{}
 
 // VaultRenameReq renames a vault on disk (and its audit trail). Password
 // authorizes the rename when the vault is locked (one-shot verify, no
-// unlock); empty when the vault is already unlocked. Refuses the default
-// vault and an existing destination name.
+// unlock); empty when the vault is already unlocked. PresenceToken is
+// the portal's passkey alternative to Password (one-time, short-lived).
+// Refuses the default vault and an existing destination name.
 type VaultRenameReq struct {
-	OldName  string `json:"old_name"`
-	NewName  string `json:"new_name"`
-	Password []byte `json:"password,omitempty"`
+	OldName       string `json:"old_name"`
+	NewName       string `json:"new_name"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // VaultRenameResp is empty.
@@ -319,10 +330,12 @@ type ProjectInfo struct {
 // ProjectDeleteReq removes a project (and cascades to its envs +
 // entries + entry_versions). Password authorizes the delete when the
 // vault is locked (one-shot verify, no unlock); empty when unlocked.
+// PresenceToken is the portal's passkey alternative to Password (one-time, short-lived).
 type ProjectDeleteReq struct {
-	Vault    string `json:"vault,omitempty"`
-	Name     string `json:"name"`
-	Password []byte `json:"password,omitempty"`
+	Vault         string `json:"vault,omitempty"`
+	Name          string `json:"name"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // ProjectDeleteResp is empty.
@@ -375,12 +388,13 @@ type EnvInfo struct {
 
 // EnvDeleteReq removes a non-default env. Password authorizes the delete
 // when the vault is locked (one-shot verify, no unlock); empty when
-// unlocked.
+// unlocked. PresenceToken is the portal's passkey alternative to Password (one-time, short-lived).
 type EnvDeleteReq struct {
-	Vault    string `json:"vault,omitempty"`
-	Project  string `json:"project"`
-	Name     string `json:"name"`
-	Password []byte `json:"password,omitempty"`
+	Vault         string `json:"vault,omitempty"`
+	Project       string `json:"project"`
+	Name          string `json:"name"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // EnvDeleteResp is empty.
@@ -407,6 +421,11 @@ type PutReq struct {
 	Name       string `json:"name"`
 	Value      []byte `json:"value"`
 	CreateOnly bool   `json:"create_only,omitempty"`
+	// Password authorizes the write when [security] per_action_auth is on
+	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
+	// portal's passkey-ceremony alternative (one-time, short-lived).
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // PutResp is empty.
@@ -417,6 +436,11 @@ type PutResp struct{}
 type GetReq struct {
 	Scope Scope  `json:"scope,omitempty"`
 	Name  string `json:"name"`
+	// Password authorizes the read when [security] per_action_auth is on
+	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
+	// portal's passkey-ceremony alternative (one-time, short-lived).
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // GetResp returns the decrypted value, metadata, and an inheritance
@@ -455,6 +479,8 @@ type DeleteReq struct {
 	Scope    Scope  `json:"scope,omitempty"`
 	Name     string `json:"name"`
 	Password []byte `json:"password,omitempty"`
+	// PresenceToken is the portal's passkey alternative to Password.
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // DeleteResp is empty.
@@ -465,6 +491,8 @@ type DeleteResp struct{}
 type EnvClearReq struct {
 	Scope    Scope  `json:"scope,omitempty"`
 	Password []byte `json:"password,omitempty"`
+	// PresenceToken is the portal's passkey alternative to Password.
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // EnvClearResp reports how many env-vars were deleted.
@@ -478,6 +506,11 @@ type RenameReq struct {
 	Scope   Scope  `json:"scope,omitempty"`
 	OldName string `json:"old_name"`
 	NewName string `json:"new_name"`
+	// Password authorizes the rename when [security] per_action_auth is on
+	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
+	// portal's passkey-ceremony alternative (one-time, short-lived).
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // RenameResp is empty.
@@ -667,6 +700,45 @@ type TrustVerifyResp struct {
 	Path      string `json:"path"`
 	Status    string `json:"status"`
 	VKChecked bool   `json:"vk_checked"`
+}
+
+// ---- Exec data plane -------------------------------------------------------
+
+// ExecFetchReq asks the daemon to authorize a `byn exec` and return the
+// values to inject, enforcing the trusted .byn's [exec] env allowlist
+// SERVER-side (the daemon reads + parses the file itself; nothing the
+// client sends can widen the list). Path="" = ad-hoc exec with no .byn
+// (whole-scope injection, the pre-NU behavior). Scope is the CLI-resolved
+// scope; the vk-MAC binds the trust record to its vault, so pointing the
+// scope at a different vault fails verification.
+//
+// Password and PresenceToken are only consulted when Path="" (ad-hoc exec)
+// and [security] per_action_auth is on. Trusted-.byn exec (Path!="") is
+// always credential-free — the .byn is the authorization.
+type ExecFetchReq struct {
+	Path    string `json:"path,omitempty"`
+	Scope   Scope  `json:"scope,omitempty"`
+	Command string `json:"command,omitempty"` // child argv label, for audit
+	// Password authorizes ad-hoc exec when [security] per_action_auth is on
+	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
+	// portal's passkey-ceremony alternative (one-time, short-lived).
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
+}
+
+// ExecFetchValue is one env var to inject. Callers must zero Value buffers after use.
+type ExecFetchValue struct {
+	Name  string `json:"name"`
+	Value []byte `json:"value"`
+}
+
+// ExecFetchResp returns the injection set. Wildcard=true: the allowlist
+// was "*" (CLI prints the loud warning). NoneDeclared=true: a .byn was
+// present but declared no [exec] env (CLI prints the note).
+type ExecFetchResp struct {
+	Values       []ExecFetchValue `json:"values"`
+	Wildcard     bool             `json:"wildcard,omitempty"`
+	NoneDeclared bool             `json:"none_declared,omitempty"`
 }
 
 // ---- Portal passkey (WebAuthn) ------------------------------------------

@@ -130,6 +130,38 @@ func readPasswordStdin() ([]byte, error) {
 	return data, nil
 }
 
+// readFirstLineStdin reads exactly the first line from stdin (up to and
+// including the newline terminator) and returns the content WITHOUT the
+// trailing newline. The remainder of stdin (after the newline) is left
+// intact for subsequent reads. If stdin ends before a newline is found,
+// all of stdin is returned.
+//
+// This is used by runPut to implement the --password-stdin contract:
+//
+//	{ echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
+//
+// Line 1 = master password (consumed here), remainder = secret value.
+func readFirstLineStdin() ([]byte, error) {
+	var line []byte
+	buf := make([]byte, 1)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if n > 0 {
+			if buf[0] == '\n' {
+				break
+			}
+			line = append(line, buf[0])
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+	}
+	return line, nil
+}
+
 func runLock(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("lock", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -161,6 +193,7 @@ func runPut(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("put", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	createOnly := fs.Bool("create-only", false, "fail if name already exists")
+	pwStdin := fs.Bool("password-stdin", false, "if per_action_auth is on, read the authorizing password from stdin")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -194,6 +227,36 @@ func runPut(args []string, scope cliScope) int {
 	}
 	name := fs.Arg(0)
 
+	// When --password-stdin is set, the FIRST LINE of stdin is the master
+	// password and the REMAINDER (after the first newline) is the secret
+	// value. We pre-read the password line here — before readSecretValue
+	// drains the rest of stdin — so both pieces are captured up front.
+	//
+	// The first line is ALWAYS consumed when --password-stdin is set, even
+	// if the daemon never asks for authorization (the value still comes from
+	// the remainder). This makes the contract deterministic for callers:
+	//
+	//   { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
+	//
+	// Fail fast when --password-stdin is set but stdin is a TTY: reading
+	// from a terminal would echo the password to the screen before
+	// readSecretValue's own TTY check fires, giving no indication that
+	// echoing is happening.
+	var prereadPw []byte
+	if *pwStdin {
+		if stdinIsTTY() {
+			fmt.Fprintln(os.Stderr, "Error: --password-stdin requires piped stdin (stdin is a terminal)")
+			return exitErr
+		}
+		var perr error
+		prereadPw, perr = readFirstLineStdin()
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", perr)
+			return exitErr
+		}
+		defer zero(prereadPw)
+	}
+
 	value, err := readSecretValue()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -206,20 +269,44 @@ func runPut(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	err = newClient(dir).Call(ipc.OpPut,
-		ipc.PutReq{Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly},
-		&ipc.PutResp{})
-	if rc := handleCallError(err); rc != exitOK {
-		return rc
+
+	// putCall issues the IPC put with the given password (nil = no auth yet).
+	putCall := func(pw []byte) error {
+		return newClient(dir).Call(ipc.OpPut,
+			ipc.PutReq{Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly, Password: pw},
+			&ipc.PutResp{})
 	}
-	hintf("Stored %q in %s.", name, scope)
-	return exitOK
+
+	var rc int
+	if *pwStdin {
+		// Inline retry that uses prereadPw on the auth-required retry instead
+		// of reading from stdin (which now points at the value remainder).
+		// Only retry on CodeAuthRequired (per_action_auth gate) — CodeLocked
+		// is a dead end for put because the vault key must be in memory.
+		firstErr := putCall(nil)
+		switch {
+		case firstErr == nil:
+			rc = exitOK
+		case isAuthRequiredErr(firstErr):
+			rc = handleCallError(putCall(prereadPw))
+		default:
+			rc = handleCallError(firstErr)
+		}
+	} else {
+		rc = mutateWithAuthRetry(false, false, false, putCall)
+	}
+
+	if rc == exitOK {
+		hintf("Stored %q in %s.", name, scope)
+	}
+	return rc
 }
 
 func runGet(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit {name,value} JSON instead of raw")
+	pwStdin := fs.Bool("password-stdin", false, "if per_action_auth is on, read the authorizing password from stdin")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -232,16 +319,19 @@ func runGet(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
+	name := fs.Arg(0)
 	var resp ipc.GetResp
-	err = newClient(dir).Call(ipc.OpGet, ipc.GetReq{Scope: scope.ToIPC(), Name: fs.Arg(0)}, &resp)
-	if rc := handleCallError(err); rc != exitOK {
+	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, func(pw []byte) error {
+		return newClient(dir).Call(ipc.OpGet, ipc.GetReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &resp)
+	})
+	if rc != exitOK {
 		return rc
 	}
 	if *jsonOut {
 		out, _ := json.Marshal(struct {
 			Name  string `json:"name"`
 			Value string `json:"value"`
-		}{Name: fs.Arg(0), Value: string(resp.Value)})
+		}{Name: name, Value: string(resp.Value)})
 		fmt.Println(string(out))
 		return exitOK
 	}
@@ -367,7 +457,7 @@ func runDelete(args []string, scope cliScope) int {
 		return exitErr
 	}
 	name := fs.Arg(0)
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
+	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
 		return newClient(dir).Call(ipc.OpDelete,
 			ipc.DeleteReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &ipc.DeleteResp{})
 	})
@@ -380,6 +470,7 @@ func runDelete(args []string, scope cliScope) int {
 func runRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	pwStdin := fs.Bool("password-stdin", false, "if per_action_auth is on, read the authorizing password from stdin")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -392,14 +483,16 @@ func runRename(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	err = newClient(dir).Call(ipc.OpRename,
-		ipc.RenameReq{Scope: scope.ToIPC(), OldName: fs.Arg(0), NewName: fs.Arg(1)},
-		&ipc.RenameResp{})
-	if rc := handleCallError(err); rc != exitOK {
-		return rc
+	old, neu := fs.Arg(0), fs.Arg(1)
+	rc := mutateWithAuthRetry(*pwStdin, false, false, func(pw []byte) error {
+		return newClient(dir).Call(ipc.OpRename,
+			ipc.RenameReq{Scope: scope.ToIPC(), OldName: old, NewName: neu, Password: pw},
+			&ipc.RenameResp{})
+	})
+	if rc == exitOK {
+		hintf("Renamed %q → %q in %s.", old, neu, scope)
 	}
-	hintf("Renamed %q → %q in %s.", fs.Arg(0), fs.Arg(1), scope)
-	return exitOK
+	return rc
 }
 
 // readSecretValue reads the value to store from stdin. If stdin is a

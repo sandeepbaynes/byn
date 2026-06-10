@@ -52,8 +52,9 @@ func (d Duration) MarshalText() ([]byte, error) {
 // Config is the parsed ~/.byn/config. Use Default() for the baseline and
 // Load() to read from disk; the Go zero value is not a valid config.
 type Config struct {
-	UI     UI     `toml:"ui"`
-	Daemon Daemon `toml:"daemon"`
+	UI       UI       `toml:"ui"`
+	Daemon   Daemon   `toml:"daemon"`
+	Security Security `toml:"security"`
 }
 
 // UI configures the local browser admin portal (Phase 2). Port is read
@@ -71,12 +72,23 @@ type Daemon struct {
 	IdleTimeout Duration `toml:"idle_timeout"`
 }
 
+// Security configures the NU-track per-action authorization gates.
+type Security struct {
+	// PerActionAuth requires a fresh authorization (master password or a
+	// one-time presence token) for get, overwrite-put, and delete EVEN
+	// while the vault is unlocked. Opt-in until sessions (NU-3) restore
+	// one-auth-per-session ergonomics. Trusted-.byn exec is unaffected:
+	// the .byn is the authorization. Insert and list stay free.
+	PerActionAuth bool `toml:"per_action_auth"`
+}
+
 // Default returns the built-in defaults, applied when the file is absent
 // or a key is omitted.
 func Default() Config {
 	return Config{
-		UI:     UI{Enabled: true, Port: DefaultUIPort},
-		Daemon: Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
+		UI:       UI{Enabled: true, Port: DefaultUIPort},
+		Daemon:   Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
+		Security: Security{PerActionAuth: false},
 	}
 }
 

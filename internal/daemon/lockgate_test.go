@@ -37,7 +37,11 @@ func TestScopeMutations_RequireUnlock(t *testing.T) {
 	mustLocked(ipc.OpEnvCreate, ipc.EnvCreateReq{Project: "default", Name: "e"})
 	mustLocked(ipc.OpProjectDelete, ipc.ProjectDeleteReq{Name: "p"})
 	mustLocked(ipc.OpEnvDelete, ipc.EnvDeleteReq{Project: "default", Name: "e"})
-	mustLocked(ipc.OpProjectRename, ipc.ProjectRenameReq{OldName: "default", NewName: "x"})
+	// "svc" does not exist; the lock gate fires before the name lookup,
+	// so the code is CodeLocked (not CodeProjectNotFound). The default
+	// project is deliberately NOT used here — it is protected by a
+	// separate CodeBadRequest guard that fires before the lock check.
+	mustLocked(ipc.OpProjectRename, ipc.ProjectRenameReq{OldName: "svc", NewName: "x"})
 	mustLocked(ipc.OpEnvRename, ipc.EnvRenameReq{Project: "default", OldName: "default", NewName: "x"})
 
 	// After unlock, a structural mutation succeeds.
