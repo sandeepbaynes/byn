@@ -1,21 +1,24 @@
 # Maintainer: Sandeep Baynes <https://github.com/sandeepbaynes/byn>
 #
-# Reserves `byn` on the AUR using the prebuilt binary (source stays private).
-# After `make dist` + hosting, replace the SKIP checksums with the real ones
-# from dist/byn-0.0.1.sha256, then push to ssh://aur@aur.archlinux.org/byn.git
+# Reserves `byn` on the AUR using the prebuilt release tarball (source stays
+# private). Keep pkgver in sync with the GitHub release. After `make dist` +
+# hosting, replace the SKIP checksums with the real ones from
+# dist/byn-$pkgver.sha256, then push to ssh://aur@aur.archlinux.org/byn.git
 # (run `makepkg --printsrcinfo > .SRCINFO` first).
 pkgname=byn
-pkgver=0.0.1
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Local-first secure secrets vault and credential manager"
 arch=('x86_64' 'aarch64')
 url="https://github.com/sandeepbaynes/byn"
 license=('custom:BUSL-1.1')
-source_x86_64=("byn-$pkgver-x86_64::https://github.com/sandeepbaynes/byn/releases/download/v$pkgver/byn-linux-amd64")
-source_aarch64=("byn-$pkgver-aarch64::https://github.com/sandeepbaynes/byn/releases/download/v$pkgver/byn-linux-arm64")
+source_x86_64=("byn-$pkgver-x86_64.tar.gz::https://github.com/sandeepbaynes/byn/releases/download/v$pkgver/byn-linux-amd64.tar.gz")
+source_aarch64=("byn-$pkgver-aarch64.tar.gz::https://github.com/sandeepbaynes/byn/releases/download/v$pkgver/byn-linux-arm64.tar.gz")
 sha256sums_x86_64=('SKIP')
 sha256sums_aarch64=('SKIP')
 
 package() {
-  install -Dm755 "$srcdir/byn-$pkgver-$CARCH" "$pkgdir/usr/bin/byn"
+  install -Dm755 "$srcdir/byn" "$pkgdir/usr/bin/byn"
+  install -Dm644 "$srcdir/man/byn.1" "$pkgdir/usr/share/man/man1/byn.1"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
