@@ -1321,12 +1321,19 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 }
 .theme-btn {
   background: none; border: none; border-radius: 5px;
-  padding: 3px 8px; font-family: var(--mono); font-size: 11px;
+  /* Square icon button — equal padding on all sides keeps the row height
+     stable and centres the 16px SVG cleanly. */
+  padding: 4px; display: flex; align-items: center; justify-content: center;
   color: var(--text-faint); cursor: pointer;
   transition: background .12s, color .12s;
-  line-height: 1.4; white-space: nowrap;
 }
 .theme-btn:hover { color: var(--text); }
 .theme-btn.active {
   background: var(--surface-2); color: var(--text);
+}
+/* Icon inside each theme button: fixed 16×16, inherits stroke colour. */
+.theme-ico {
+  width: 16px; height: 16px; display: block;
+  fill: none; stroke: currentColor;
+  overflow: visible; pointer-events: none;
 }

@@ -425,12 +425,67 @@ function _applyTheme(pref) {
   }
 }
 
+// _buildThemeIcon returns a <svg> element for the given theme key built
+// entirely with createElementNS — no innerHTML, no user data interpolated.
+// All shapes use stroke="currentColor" so they inherit the button's colour
+// in both light and dark modes. viewBox 0 0 16 16, stroke-width 1.3.
+function _buildThemeIcon(key) {
+  function svgEl(tag, attrs) {
+    const n = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    return n;
+  }
+  const BASE = { fill: "none", stroke: "currentColor", "stroke-width": "1.3" };
+  const ROUND = { ...BASE, "stroke-linecap": "round", "stroke-linejoin": "round" };
+
+  const svg = svgEl("svg", { viewBox: "0 0 16 16", class: "theme-ico",
+    "aria-hidden": "true", focusable: "false" });
+
+  if (key === "dark") {
+    // Crescent moon (Feather-style, scaled to the 16px viewBox) —
+    // visually verified at small sizes; a hand-rolled arc path here
+    // previously rendered as a lumpy blob.
+    svg.appendChild(svgEl("path", { ...ROUND,
+      d: "M14 8.53A6 6 0 1 1 7.47 2 4.67 4.67 0 0 0 14 8.53z" }));
+
+  } else if (key === "light") {
+    // Sun: small circle centre + 8 short ray stubs.
+    svg.appendChild(svgEl("circle", { ...BASE, cx: "8", cy: "8", r: "3" }));
+    const rays = [
+      "M8 1v2", "M8 13v2", "M1 8h2", "M13 8h2",
+      "M3.22 3.22l1.41 1.41", "M11.37 11.37l1.41 1.41",
+      "M3.22 12.78l1.41-1.41", "M11.37 4.63l1.41-1.41",
+    ];
+    for (const d of rays) svg.appendChild(svgEl("path", { ...ROUND, d }));
+
+  } else {
+    // Monitor / system: screen rectangle + stand stem + base.
+    svg.appendChild(svgEl("rect", { ...ROUND,
+      x: "1.5", y: "2.5", width: "13", height: "9", rx: "1.5" }));
+    svg.appendChild(svgEl("path", { ...ROUND, d: "M5.5 14.5h5M8 11.5v3" }));
+  }
+  return svg;
+}
+
+// _injectThemeIcons stamps an SVG icon into each theme button using safe
+// DOM methods (createElementNS). Called once from wire() when the DOM is ready.
+function _injectThemeIcons() {
+  const map = { "theme-dark": "dark", "theme-light": "light", "theme-system": "system" };
+  for (const [id, key] of Object.entries(map)) {
+    const btn = document.getElementById(id);
+    if (btn && !btn.querySelector(".theme-ico")) btn.appendChild(_buildThemeIcon(key));
+  }
+}
+
 function _syncThemeBtns(pref) {
   const ids = ["theme-dark", "theme-light", "theme-system"];
   const prefs = ["dark", "light", "system"];
   ids.forEach((id, i) => {
     const btn = document.getElementById(id);
-    if (btn) btn.classList.toggle("active", prefs[i] === pref);
+    if (!btn) return;
+    const active = prefs[i] === pref;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
   });
 }
 
@@ -4393,7 +4448,8 @@ function paletteActivate(item) {
 // ---- boot ---------------------------------------------------------------
 
 function wire() {
-  // Theme switcher buttons.
+  // Theme switcher: inject SVG icons then wire click handlers.
+  _injectThemeIcons();
   const themeDark   = document.getElementById("theme-dark");
   const themeLight  = document.getElementById("theme-light");
   const themeSystem = document.getElementById("theme-system");
