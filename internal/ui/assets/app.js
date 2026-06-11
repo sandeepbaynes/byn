@@ -1043,7 +1043,7 @@ async function createVault() {
 
 async function deleteVault(name) {
   const c = await confirmDelete(name, "Delete vault",
-    `Delete the entire vault “${name}” and all its projects, envs and secrets?\nThis cannot be undone.`);
+    `Delete vault “${name}”?\n\nThis removes EVERYTHING in this vault — projects, envs, vars, passkeys, audit log.\nThis cannot be undone.`);
   if (!c) return;
   try {
     await apiWithAuth("POST", "/api/vault/delete", { name, password: c.password }, name); toast("deleted vault " + name);
@@ -1053,7 +1053,7 @@ async function deleteVault(name) {
 }
 async function deleteProject(vault, name) {
   const c = await confirmDelete(vault, "Delete project",
-    `Delete project “${name}” and all its envs and secrets in ${vault}?`);
+    `Delete project “${name}” in ${vault}?\n\nAll envs and their vars are deleted.\nThis cannot be undone.`);
   if (!c) return;
   try {
     await apiWithAuth("POST", "/api/project/delete", { vault, name, password: c.password }, vault); toast("deleted project " + name);
@@ -1064,7 +1064,7 @@ async function deleteProject(vault, name) {
 }
 async function deleteEnv(vault, project, name) {
   const c = await confirmDelete(vault, "Delete env",
-    `Delete env “${name}” and its secrets in ${vault}/${project}?`);
+    `Delete env “${name}” in ${vault}/${project}?\n\nAll env-vars in it are deleted.\nThis cannot be undone.`);
   if (!c) return;
   try {
     await apiWithAuth("POST", "/api/env/delete", { vault, project, name, password: c.password }, vault); toast("deleted env " + name);
