@@ -163,6 +163,18 @@ func runTrustAdd(args []string) int {
 	return exitOK
 }
 
+// absForDaemon makes a path absolute against the CLIENT's working directory
+// before it is sent to the daemon. The daemon resolves relative paths against
+// ITS OWN cwd (wherever it was started), not the caller's shell — so a raw
+// relative path would canonicalize to the wrong file (or 404). Falls back to
+// the input on the rare filepath.Abs error.
+func absForDaemon(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
 // resolveBynPaths expands trust inputs into a deduped list of .byn file paths.
 // A directory input resolves to <dir>/.byn; with recursive, each directory is
 // walked for every .byn under it. A file (or unstattable) input is taken as-is.
@@ -173,12 +185,7 @@ func resolveBynPaths(inputs []string, recursive bool) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(p string) {
-		// Absolute paths: the daemon reads these relative to ITS cwd, not the
-		// caller's, so a relative path (e.g. from a recursive walk of ".") would
-		// 404. The daemon canonicalizes for the trust record.
-		if abs, aerr := filepath.Abs(p); aerr == nil {
-			p = abs
-		}
+		p = absForDaemon(p)
 		if !seen[p] {
 			seen[p] = true
 			out = append(out, p)
@@ -315,7 +322,9 @@ func runTrustDiff(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s byn trust diff ./.byn\n", yellow("Example:"))
 		return exitErr
 	}
-	path := args[0]
+	// Absolutize against the caller's cwd: the daemon resolves a relative path
+	// against ITS OWN cwd, not the user's shell (see absForDaemon).
+	path := absForDaemon(args[0])
 
 	dir, err := defaultDir()
 	if err != nil {
@@ -355,7 +364,7 @@ func runTrustDiff(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s generating diff: %v\n", boldRed("Error:"), derr)
 		return exitErr
 	}
-	fmt.Print(text)
+	fmt.Print(colorizeDiff(text))
 	fmt.Fprintf(os.Stderr, "%s re-trust to approve the new content:\n", yellow("Hint:"))
 	fmt.Fprintf(os.Stderr, "%s byn trust %s\n", yellow("Run:"), resp.Path)
 	return exitErr // exit 1 — content changed, re-trust needed

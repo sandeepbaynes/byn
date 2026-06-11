@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,6 +107,43 @@ func TestRunTrustDiff_Identical_ExitsOK(t *testing.T) {
 
 	if got := runTrustDiff([]string{"/proj/.byn"}); got != exitOK {
 		t.Fatalf("got %d, want exitOK(0) for identical content", got)
+	}
+}
+
+// TestRunTrustDiff_RelativePath_AbsolutizedBeforeSend verifies that a relative
+// path is made absolute against the CLIENT's CWD before being sent to the
+// daemon. The daemon resolves relative paths against ITS OWN cwd, so sending a
+// raw relative path would diff the wrong file. Regression for the "trust diff
+// resolves against the daemon dir, not the process dir" bug.
+func TestRunTrustDiff_RelativePath_AbsolutizedBeforeSend(t *testing.T) {
+	fd := startFakeDaemon(t)
+	content := []byte("[scope]\nproject = \"svc\"\n")
+	fd.onOK(ipc.OpTrustDiff, ipc.TrustDiffResp{
+		Path:        "/proj/.byn",
+		Trusted:     true,
+		OldSnapshot: content,
+		NewContent:  content,
+	})
+
+	rel := "apps/chat-window/.byn"
+	want, err := filepath.Abs(rel)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+
+	// Identical content → exitOK; we only assert the path that was sent.
+	if got := runTrustDiff([]string{rel}); got != exitOK {
+		t.Fatalf("got exit %d, want exitOK", got)
+	}
+
+	calls := fd.callsFor(ipc.OpTrustDiff)
+	if len(calls) != 1 {
+		t.Fatalf("got %d TrustDiff calls, want 1", len(calls))
+	}
+	var req ipc.TrustDiffReq
+	requireUnmarshal(t, calls[0].Body, &req)
+	if req.Path != want {
+		t.Errorf("daemon received Path %q, want absolutized %q", req.Path, want)
 	}
 }
 
