@@ -2537,11 +2537,10 @@ function applyParsedToState(parsed, vaultVarNames) {
       studioState.envVarSwitches[name] = false;
     }
   }
-  // When the parsed file declares a wildcard actions entry, ensure "*" appears
-  // in the actions array so the builder's wildcard warning row fires correctly.
-  const parsedActions = (parsed.actions || []).slice();
-  if (parsed.actions_wildcard && !parsedActions.includes("*")) parsedActions.unshift("*");
-  studioState.actions = parsedActions;
+  // Actions wildcard ("*") is represented by the "allow ALL commands" checkbox
+  // (mirrors env "*") — not a literal "*" row. Filter any "*" out of the list.
+  studioState.actionsAll = !!parsed.actions_wildcard;
+  studioState.actions = (parsed.actions || []).filter((a) => a !== "*");
   studioState.aliases = Object.entries(parsed.aliases || {}).map(([n, c]) => ({ name: n, cmd: c }));
   const authKeys = ["get", "update", "delete", "exec"];
   studioState.auth = { get: "default", update: "default", delete: "default", exec: "default" };
@@ -2586,19 +2585,21 @@ function serializeStudio(st) {
     .filter(([, on]) => on).map(([name]) => name);
   const customVars = (st.envVars || []).filter((v) => v.trim());
   const envVars = [...vaultIncluded, ...customVars];
-  const envAll    = st.envAll || false;
-  const actions   = (st.actions  || []).filter((a) => a.trim());
-  if (envVars.length || envAll || actions.length) {
+  const envAll     = st.envAll || false;
+  const actionsAll = st.actionsAll || false;
+  const actions    = (st.actions  || []).filter((a) => a.trim());
+  const mode = st.formatMode === "pretty" ? "pretty" : "minified";
+  if (envVars.length || envAll || actions.length || actionsAll) {
     lines.push("[exec]");
     if (envAll) {
-      lines.push("env     = [\"*\"]");
+      lines.push(...fmtTomlArray("env", ["*"], mode));
     } else if (envVars.length) {
-      lines.push("env     = [" + envVars.map(tomlStr).join(", ") + "]");
+      lines.push(...fmtTomlArray("env", envVars, mode));
     }
-    if (actions.length) {
-      lines.push("actions = [");
-      for (const a of actions) lines.push("    " + tomlStr(a) + ",");
-      lines.push("]");
+    if (actionsAll) {
+      lines.push(...fmtTomlArray("actions", ["*"], mode));
+    } else if (actions.length) {
+      lines.push(...fmtTomlArray("actions", actions, mode));
     }
     lines.push("");
   }
@@ -2628,6 +2629,81 @@ function serializeStudio(st) {
 function tomlStr(s) {
   // Minimal TOML basic string: escape backslash and double-quote.
   return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+// fmtTomlArray renders a TOML "key = [...]" assignment honoring the studio's
+// chosen format mode. Keys are left-padded to 7 columns so "env" and "actions"
+// line up. "pretty" puts each element on its own line (4-space indent, trailing
+// comma) — env and actions look identical; "minified" keeps the array on one
+// line. Returns an array of lines.
+function fmtTomlArray(key, items, mode) {
+  const lbl = key.padEnd(7);
+  if (mode === "pretty") {
+    const out = [lbl + " = ["];
+    for (const it of items) out.push("    " + tomlStr(it) + ",");
+    out.push("]");
+    return out;
+  }
+  return [lbl + " = [" + items.map(tomlStr).join(", ") + "]"];
+}
+
+// Studio .byn array format preference ("minified" | "pretty"), persisted in
+// localStorage like the theme switcher. Defaults to "minified".
+const STUDIO_FORMAT_KEY = "byn.studio.format";
+function loadStudioFormat() {
+  return localStorage.getItem(STUDIO_FORMAT_KEY) === "pretty" ? "pretty" : "minified";
+}
+
+// toggleStudioFormat flips the array format mode, persists it, updates the
+// topbar label, and reflows the current view. In builder mode the form is
+// unchanged — only the serialized output / dirty-state shifts. In raw mode the
+// textarea is re-parsed via byn.validate and re-serialized; invalid or empty
+// content is left exactly as typed (we never mangle unparseable TOML).
+async function toggleStudioFormat() {
+  if (!studioState) return;
+  const next = studioState.formatMode === "pretty" ? "minified" : "pretty";
+  studioState.formatMode = next;
+  localStorage.setItem(STUDIO_FORMAT_KEY, next);
+  if (studioState.formatCb) {
+    studioState.formatCb.checked = next === "pretty";
+  }
+  if (!studioState.rawMode) {
+    // Builder mode: re-validate so the save payload preview stays in sync.
+    scheduleValidation();
+    return;
+  }
+  // Raw mode: reformat by round-tripping the textarea through the parser.
+  const rawContent = studioState.rawContent || "";
+  if (rawContent.trim() === "") return;
+  let resp;
+  try {
+    resp = await api("POST", "/api/byn/validate", { content: rawContent });
+  } catch (e) {
+    resp = { errors: [], warnings: [], parsed: null };
+  }
+  const errors = (resp && resp.errors) || [];
+  if (errors.length > 0 || !resp.parsed) {
+    // Can't safely reformat invalid/unparseable TOML — leave it as typed.
+    if (studioState.rawPanel) {
+      const old = studioState.rawPanel.querySelector(".studio-format-notice");
+      if (old) old.remove();
+      const notice = el("div", "studio-switch-notice studio-format-notice");
+      notice.textContent = "fix the errors below to reformat — content left as typed";
+      studioState.rawPanel.insertBefore(notice, studioState.rawPanel.firstChild);
+    }
+    scheduleValidation();
+    return;
+  }
+  // Valid — carry the parsed values into state and re-serialize in the new mode.
+  applyParsedToState(resp.parsed, studioState.vaultVarNames);
+  const content = serializeStudio(studioState);
+  studioState.rawContent = content;
+  if (studioState.rawTA) studioState.rawTA.value = content;
+  if (studioState.rawPanel) {
+    const old = studioState.rawPanel.querySelector(".studio-format-notice");
+    if (old) old.remove();
+  }
+  scheduleValidation();
 }
 
 // currentContent returns the TOML string for validation/simulate/save.
@@ -2855,9 +2931,12 @@ async function studioLoadFile(resp) {
     studioState.trustChip.className = "studio-trust-chip trust-" + trustStatus;
     studioState.trustChip.hidden = false;
   }
-  // Update the dir field to the containing directory.
+  // Update the dir field to the containing directory. Record it as the loaded
+  // dir so the dir-input blur handler won't redundantly reload it (which would
+  // re-run this function and clobber a switch-to-raw — see the blur handler).
   const dir = path.replace(/\/[^/]+$/, "");
   if (studioState.dirInput) studioState.dirInput.value = dir;
+  studioState.loadedDir = dir;
 
   if (parsed) {
     // Clean parse → pre-populate builder and stay in builder mode.
@@ -3024,11 +3103,14 @@ function openBynStudio(opts) {
     vaultVarNames: [],
     envAll:  false,
     actions: [],
+    actionsAll: false,
     auth:    { get: "default", update: "default", delete: "default", exec: "default" },
     aliases: [],
     rawMode: false,
     rawContent: "",
+    formatMode: loadStudioFormat(),
     filePath: null,
+    loadedDir: null,
     originalParsed: null,
     dirInput: null,
     rawTA: null,
@@ -3039,6 +3121,7 @@ function openBynStudio(opts) {
     simResult: null,
     saveBtn: null,
     modeToggle: null,
+    formatCb: null,
     trustChip: null,
     resetBtn: null,
     dirDropdownEl: null,
@@ -3093,7 +3176,7 @@ function openBynStudio(opts) {
 
   // Reset button — top-right of builder (hidden when in raw mode).
   const resetBtn = el("button", "btn btn-ghost sm studio-reset-btn", "reset");
-  resetBtn.title = "reset builder to defaults (or to the original loaded file)";
+  resetBtn.title = "reset to defaults (or to the original loaded file)";
   resetBtn.onclick = studioReset;
   studioState.resetBtn = resetBtn;
   right.appendChild(resetBtn);
@@ -3163,12 +3246,14 @@ function openBynStudio(opts) {
   dirInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); studioLoadFromDir(dirInput.value.trim()); }
   });
-  // On blur, trigger a load for manually-typed paths (when a dropdown option
-  // was NOT clicked — mousedown is handled by makeCombobox internally).
+  // On blur, trigger a load for manually-typed paths only. Skip when the value
+  // already equals the loaded dir (e.g. it was just picked from the dropdown) —
+  // otherwise this redundant reload re-runs studioLoadFile and clobbers a
+  // switch-to-raw the user made right after opening the file.
   dirInput.addEventListener("blur", () => {
     setTimeout(() => {
       const v = dirInput.value.trim();
-      if (v && studioState) studioLoadFromDir(v);
+      if (v && studioState && v !== studioState.loadedDir) studioLoadFromDir(v);
     }, 200);
   });
 
@@ -3224,6 +3309,19 @@ function openBynStudio(opts) {
     scheduleValidation();
   };
   rawPanel.appendChild(rawTA);
+
+  // Format checkbox (below the textarea, raw-mode only): pretty vs minified
+  // array layout. Persisted in localStorage; reformats the textarea on toggle.
+  const fmtRow = el("label", "studio-check-row studio-raw-fmt");
+  const fmtCb = el("input"); fmtCb.type = "checkbox";
+  fmtCb.checked = studioState.formatMode === "pretty";
+  fmtCb.title = "lay out [exec] env and actions one entry per line (persists)";
+  fmtCb.onchange = toggleStudioFormat;
+  studioState.formatCb = fmtCb;
+  fmtRow.appendChild(fmtCb);
+  fmtRow.appendChild(el("span", null, "pretty"));
+  rawPanel.appendChild(fmtRow);
+
   editorCol.appendChild(rawPanel);
 
   cols.appendChild(editorCol);
@@ -3365,8 +3463,6 @@ async function toggleStudioMode() {
       studioState.modeToggle.textContent = "switch to builder";
       studioState.modeToggle.dataset.mode = "raw";
     }
-    // Hide the reset button in raw mode.
-    if (studioState.resetBtn) studioState.resetBtn.hidden = true;
   } else {
     // raw → builder: validate the CURRENT raw textarea content first.
     // Errors → stay in raw with an inline notice (nothing discarded, nothing lost).
@@ -3413,7 +3509,6 @@ async function toggleStudioMode() {
       studioState.modeToggle.textContent = "switch to raw";
       studioState.modeToggle.dataset.mode = "builder";
     }
-    if (studioState.resetBtn) studioState.resetBtn.hidden = false;
     // Re-render the builder to pick up the newly carried values.
     if (studioState.builderPanel) renderBuilderPanel(studioState.builderPanel);
   }
@@ -3496,6 +3591,7 @@ async function studioLoadFromDir(dir) {
       studioState.trustChip.hidden = true;
     }
     if (studioState.dirInput) studioState.dirInput.value = dir;
+    studioState.loadedDir = dir;
     // Reset form fields to defaults (same path as studioReset without dialog).
     studioState.vault   = "";
     studioState.project = "";
@@ -3506,6 +3602,7 @@ async function studioLoadFromDir(dir) {
       studioState.envVarSwitches[k] = false;
     }
     studioState.actions = [];
+    studioState.actionsAll = false;
     studioState.aliases = [];
     studioState.auth = { get: "default", update: "default", delete: "default", exec: "default" };
     if (!studioState.rawMode && studioState.builderPanel) {
@@ -3545,10 +3642,23 @@ async function studioReset() {
       studioState.envVarSwitches[k] = false;
     }
     studioState.actions = [];
+    studioState.actionsAll = false;
     studioState.aliases = [];
     studioState.auth = { get: "default", update: "default", delete: "default", exec: "default" };
   }
   if (studioState.builderPanel) renderBuilderPanel(studioState.builderPanel);
+  // In raw mode, reflow the textarea to the reset content too — currentContent()
+  // reads the textarea in raw mode, so the re-seed must happen BEFORE the
+  // baseline reset below, otherwise reset would leave the raw editor untouched.
+  if (studioState.rawMode) {
+    const content = serializeStudio(studioState);
+    studioState.rawContent = content;
+    if (studioState.rawTA) studioState.rawTA.value = content;
+    if (studioState.rawPanel) {
+      const oldNotice = studioState.rawPanel.querySelector(".studio-switch-notice");
+      if (oldNotice) oldNotice.remove();
+    }
+  }
   // After reset the editor content equals the new baseline — clear dirty flag.
   studioBaseline = currentContent();
   scheduleValidation();
@@ -3742,12 +3852,28 @@ function renderBuilderPanel(panel) {
   const actList = el("div", "studio-list");
   const wildcardWarn = el("div", "studio-warn");
   wildcardWarn.textContent = "Warning: \"*\" allows ALL commands to run without authorization — avoid in production.";
-  wildcardWarn.hidden = true;
-  actCard.appendChild(wildcardWarn);
 
   const updateWildcardWarn = () => {
-    wildcardWarn.hidden = !studioState.actions.some((a) => a.trim() === "*");
+    wildcardWarn.hidden = !(studioState.actionsAll || studioState.actions.some((a) => a.trim() === "*"));
   };
+
+  // Wildcard "*" toggle with loud warning (mirrors the env "inject ALL" toggle).
+  const actAllRow = el("label", "studio-check-row");
+  const actAllCb = el("input"); actAllCb.type = "checkbox"; actAllCb.checked = !!studioState.actionsAll;
+  actAllCb.onchange = () => {
+    studioState.actionsAll = actAllCb.checked;
+    actList.hidden = actAllCb.checked;
+    updateWildcardWarn();
+    scheduleValidation();
+  };
+  actAllRow.appendChild(actAllCb);
+  actAllRow.appendChild(el("span", null, "allow ALL commands (\"*\")"));
+  actCard.appendChild(actAllRow);
+  actCard.appendChild(wildcardWarn);
+
+  // Per-action rows are hidden while the wildcard toggle is on.
+  actList.hidden = !!studioState.actionsAll;
+  updateWildcardWarn();
 
   for (let i = 0; i < studioState.actions.length; i++) {
     actList.appendChild(studioActionRow(i, actList, updateWildcardWarn));

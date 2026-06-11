@@ -104,11 +104,24 @@ The **builder** tab presents a structured form:
 - **Vault / project / env scope** — drop-downs (populated from the live daemon)
   that fill the `[scope]` table.
 - **Env-vars to inject** — a checkbox list of every entry in the selected
-  scope; tick the ones `byn exec` should inject into the child process.
+  scope; tick the ones `byn exec` should inject into the child process. An
+  **inject ALL vars ("\*")** toggle injects every secret instead of a list.
+- **Actions allowlist** — commands that may run without per-call auth. An
+  **allow ALL commands ("\*")** toggle mirrors the env wildcard toggle.
 
 Switch to **raw** mode at any time to hand-edit the generated TOML directly.
 Builder and raw stay in sync: switching back re-parses the raw TOML and
-reflects the values in the form.
+reflects the values in the form. **Reset** (top-right) restores the editor to
+the loaded file — or blank defaults — and is available in both modes.
+
+A **pretty format** checkbox below the raw editor (shown in raw mode only)
+chooses how arrays are laid out in the generated `.byn`: unchecked
+(**minified**) keeps each array on one line (`env = ["A", "B"]`), checked
+(**pretty**) puts one element per line. `[exec] env` and `actions` are formatted
+identically either way. The choice persists in the browser (like the theme
+switcher) and also governs files saved from builder mode. Toggling it reformats
+the textarea by re-parsing the TOML; invalid or unparseable content is left
+exactly as typed.
 
 ### Validator (inline)
 

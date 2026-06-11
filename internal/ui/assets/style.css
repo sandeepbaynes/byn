@@ -831,7 +831,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 
 /* Inline warning boxes */
 .studio-warn {
-  padding: 8px 12px; border-radius: var(--r-sm); margin-top: 6px;
+  padding: 8px 12px; border-radius: var(--r-sm); margin-top: 6px; margin-bottom: 6px;
   background: var(--danger-bg); border: 1px solid var(--danger-border);
   color: var(--studio-warn-text); font-size: 12px; line-height: 1.5;
 }
@@ -842,6 +842,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   font-size: 13px; color: var(--text-dim); cursor: pointer; margin-bottom: 6px;
 }
 .studio-check-row input { accent-color: var(--signal); }
+/* Format checkbox under the raw textarea */
+.studio-raw-fmt { margin-top: 10px; }
 
 /* Auth select: "none" value gets an amber tint */
 .auth-none-warn { border-color: var(--amber-ring) !important; color: var(--amber); }
