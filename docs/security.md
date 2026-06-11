@@ -58,11 +58,11 @@ We protect a user's secrets against the following adversaries.
 | Adversary | What they have | What we prevent |
 |---|---|---|
 | **Another local user** on a shared machine | Their own UID's permissions | Reading or modifying our vault, our socket, our audit log. Enforced by file modes (0600) and peer-UID check on the socket. |
-| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret. Without the password + machine fingerprint, the vault key is unrecoverable. |
+| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret **value**. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with `Argon2id(master password)` — **the password is the only barrier**. The vault file is deliberately **portable** (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id makes each guess expensive (~1s), but a weak password falls. **What the file does NOT hide:** entry/project/env *names*, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see "Audit & forensics" below); and the audit chain's HMAC seed travels in the file, so the *thief's copy* of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). |
 | **A shoulder-surfer** of the user's terminal | Visual access to scrollback, history, `ps` | Seeing secret values — they never appear in argv, environment, prompts, history, or scrollback. |
 | **A careless or semi-trusted agent** (coding agent, evil VSCode extension, compromised CI) running as the user | Can run `byn` commands | (a) **Detection over prevention:** a same-UID agent *can* invoke `get`/`exec`, so the guarantee is that **every value access is audited** (`byn audit`) — harness deny rules are best-effort and not relied upon. The primary win is that there is no plaintext `.env` on disk to read accidentally. (b) `byn exec` injects vars only into the child it spawns; the parent shell sees nothing — but the child's own `/proc/<pid>/environ` is readable by a same-UID process, so env values reach the workload (this is an accepted limitation, not concealment from it). (c) Untrusted `.byn` files hard-fail in agent mode (`--json`) so the agent can't be silently redirected. |
 | **IDE code-completion / inline-suggestion models** (Copilot, Cursor Tab, JetBrains AI, …) running as you | A continuous read of your editor buffer + neighbouring tabs, streamed to (usually cloud) inference on every keystroke | A secret typed as a *literal into source* is ingested the instant it lands in the buffer — and with cloud inference it has **already left the machine before you finish the line** (the model suggesting the cred back, or offering to move it, is proof it read it; it may then propagate it into other files/commits). byn's mitigation is structural: secrets live in the vault and are referenced by *name* / injected at runtime via `byn exec`, so there is no literal in the buffer to slurp. byn can't intercept the IDE itself — keeping literals out of source is the control byn makes practical. |
-| **A tampering attacker** with write access to `vault.db` or the audit log | Can modify on-disk state without the key | (a) Tampered ciphertext fails AEAD auth → vault refuses to open / decrypt. (b) Tampered audit log fails HMAC chain → `byn audit verify` flags first bad index → daemon error to user. |
+| **A tampering attacker** with write access to `vault.db` or the audit log | Can modify on-disk state without the key | (a) Tampered ciphertext fails AEAD auth → vault refuses to open / decrypt. (b) Tampered audit log fails HMAC chain → `byn audit verify` flags first bad index → daemon error to user. **Honest limit:** the chain's HMAC seed is stored in the DB `meta` table, so an attacker who can read the file can also re-seal a rewritten chain — the HMAC defends against blind tampering, not against an adversary holding the whole file. Off-box anchoring of the chain head (journald / os_log / remote syslog) is the planned fix (ST-1). |
 | **An attacker with write access to a project directory** | Can plant or modify a `.byn` | TOFU SHA-256 binds trust to specific file contents. A new or changed `.byn` is **refused** — discovery never auto-trusts; approval is a separate, password-gated `byn trust` (proof of presence). A *changed* previously-trusted file is never silently re-trusted. |
 
 ### Out of scope
@@ -619,9 +619,20 @@ maison-agent/staging.` Never `Stored "DB_URL=…" in …`. Set
 ## Audit & forensics
 
 - Audit chain is HMAC-signed → tampering detectable but not preventable.
-- Plain-text names so investigators see *what* was accessed. The
-  trade-off was debated; we landed on forensic value > marginal
-  hiding (internal design notes).
+  **Caveat:** the HMAC seed lives in the DB itself, so this detects
+  tampering by adversaries who *don't* hold the file; a thief with the
+  whole file can re-seal a rewritten chain. Off-box chain-head anchoring
+  (ST-1) is the planned fix; until it ships, treat a stolen file's audit
+  trail as unverifiable.
+- **At-rest metadata is deliberately visible (owner decision, 2026-06-12).**
+  Entry/project/env names, kinds, timestamps, version counts, and file
+  metadata are readable from `vault.db` without any key — only *values*
+  are encrypted. This is the price of two product promises: names are
+  listable while the vault is locked (the agent workflow), and
+  investigators see *what* was accessed without unlocking. Know that a
+  copy of your vault file is a map of what you keep, even if every value
+  stays sealed. If that exposure matters in your environment, full-disk
+  encryption of the host is the right control today.
 - Caller UID + PID captured per event when the OS surfaces them.
   Helps trace which agent or shim made the call.
 - `byn doctor` runs verify on every vault's chain at any time.
