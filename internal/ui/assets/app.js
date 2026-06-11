@@ -153,7 +153,7 @@ async function guardDirtyNav(proceed, repushURL) {
   const ok = await openDialog({
     title,
     message: body,
-    okText:  "Discard",
+    okText:  "discard",
     danger:  true,
   });
 
@@ -1622,7 +1622,7 @@ async function renderSettingsView() {
 
   const daemonBtns = el("div", "cfg-daemon-btns");
 
-  const reloadBtn = el("button", "btn btn-ghost sm", "Reload config");
+  const reloadBtn = el("button", "btn btn-ghost sm", "reload config");
   reloadBtn.title = "Hot-apply config changes without restarting the daemon (same as SIGHUP / `byn daemon reload`)";
   reloadBtn.onclick = async () => {
     reloadBtn.disabled = true;
@@ -1638,12 +1638,12 @@ async function renderSettingsView() {
     } finally {
       reloadBtn.disabled = false;
       restartBtn.disabled = false;
-      reloadBtn.textContent = "Reload config";
+      reloadBtn.textContent = "reload config";
     }
   };
   daemonBtns.appendChild(reloadBtn);
 
-  const restartBtn = el("button", "btn btn-ghost sm cfg-restart-btn", "Restart daemon");
+  const restartBtn = el("button", "btn btn-ghost sm cfg-restart-btn", "restart daemon");
   restartBtn.title = "Graceful shutdown — the portal will disconnect; auto-start or `byn start` relaunches the daemon";
   restartBtn.onclick = async () => {
     const confirmed = await openDialog({
@@ -1669,7 +1669,7 @@ async function renderSettingsView() {
       if (Date.now() > deadline) {
         showConfigNotes(daemonNotes, ["daemon did not come back within 60s — run `byn start` to restart manually"], true);
         restartBtn.disabled = false;
-        restartBtn.textContent = "Restart daemon";
+        restartBtn.textContent = "restart daemon";
         return;
       }
       try {
@@ -1678,7 +1678,7 @@ async function renderSettingsView() {
         showConfigNotes(daemonNotes, ["daemon restarted"], false);
         reloadBtn.disabled = false;
         restartBtn.disabled = false;
-        restartBtn.textContent = "Restart daemon";
+        restartBtn.textContent = "restart daemon";
       } catch (_) {
         setTimeout(poll, 500);
       }
@@ -3196,7 +3196,7 @@ function studioShowDeepLinkError(path, daemonMsg) {
   pathEl.textContent = path;
   const msgEl = el("div", "studio-deeplink-err-msg");
   msgEl.textContent = daemonMsg || "file not found or could not be read";
-  const backBtn = el("button", "btn btn-ghost sm", "Back to studio");
+  const backBtn = el("button", "btn btn-ghost sm", "back to studio");
   backBtn.onclick = () => {
     studioState = null;
     // Reopen studio in create mode.
