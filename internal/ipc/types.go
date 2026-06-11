@@ -999,6 +999,8 @@ type ConfigParsed struct {
 	UIPort int `json:"ui_port"`
 	// IdleTimeout mirrors [daemon] idle_timeout as a Go duration string ("15m0s").
 	IdleTimeout string `json:"idle_timeout"`
+	// RevealHideAfter mirrors [ui] reveal_hide_after as a Go duration string ("15s").
+	RevealHideAfter string `json:"reveal_hide_after"`
 	// PerActionAuth mirrors [security] per_action_auth.
 	PerActionAuth bool `json:"per_action_auth"`
 }

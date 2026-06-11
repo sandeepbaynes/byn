@@ -38,6 +38,53 @@ func TestDefault(t *testing.T) {
 	if DefaultIdleTimeout != 15*time.Minute {
 		t.Errorf("DefaultIdleTimeout = %v, want 15m", DefaultIdleTimeout)
 	}
+	if got := time.Duration(d.UI.RevealHideAfter); got != DefaultRevealHideAfter {
+		t.Errorf("Default().UI.RevealHideAfter = %v, want %v", got, DefaultRevealHideAfter)
+	}
+	if DefaultRevealHideAfter != 15*time.Second {
+		t.Errorf("DefaultRevealHideAfter = %v, want 15s", DefaultRevealHideAfter)
+	}
+}
+
+func TestLoad_RevealHideAfter_Set(t *testing.T) {
+	path := writeConfig(t, "[ui]\nreveal_hide_after = \"30s\"\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if d := time.Duration(got.UI.RevealHideAfter); d != 30*time.Second {
+		t.Errorf("UI.RevealHideAfter = %v, want 30s", d)
+	}
+}
+
+func TestLoad_RevealHideAfter_ZeroDisablesAutoHide(t *testing.T) {
+	path := writeConfig(t, "[ui]\nreveal_hide_after = \"0s\"\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if d := time.Duration(got.UI.RevealHideAfter); d != 0 {
+		t.Errorf("UI.RevealHideAfter = %v, want 0 (auto-hide disabled)", d)
+	}
+}
+
+func TestLoad_RevealHideAfter_DefaultPreservedWhenOmitted(t *testing.T) {
+	// A [ui] section with no reveal_hide_after keeps the default.
+	path := writeConfig(t, "[ui]\nport = 4000\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if d := time.Duration(got.UI.RevealHideAfter); d != DefaultRevealHideAfter {
+		t.Errorf("UI.RevealHideAfter = %v, want default %v", d, DefaultRevealHideAfter)
+	}
+}
+
+func TestLoad_RevealHideAfter_Negative_Errors(t *testing.T) {
+	path := writeConfig(t, "[ui]\nreveal_hide_after = \"-5s\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load(negative reveal_hide_after) error = nil, want error")
+	}
 }
 
 func TestLoad_IdleTimeout_Set(t *testing.T) {
@@ -354,12 +401,14 @@ func TestParse_EmptyBytes(t *testing.T) {
 // Keep these default values in sync with the comment above serializeCfg in
 // internal/ui/assets/app.js:
 //
-//	uiEnabled=true, uiPort=2967, idleTimeout="15m0s", perActionAuth=false
+//	uiEnabled=true, uiPort=2967, revealHideAfter="15s", idleTimeout="15m0s",
+//	perActionAuth=false
 func TestSerializeCfgDefaultForm(t *testing.T) {
 	// This is the verbatim output of serializeCfg({
-	//   uiEnabled:true, uiPort:2967, idleTimeout:"15m0s", perActionAuth:false
+	//   uiEnabled:true, uiPort:2967, revealHideAfter:"15s", idleTimeout:"15m0s",
+	//   perActionAuth:false
 	// }) as of the last sync with app.js.
-	jsSerialized := "[ui]\nenabled = true\nport    = 2967\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n[security]\nper_action_auth = false\n"
+	jsSerialized := "[ui]\nenabled = true\nport    = 2967\nreveal_hide_after = \"15s\"\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n[security]\nper_action_auth = false\n"
 
 	got, err := Parse([]byte(jsSerialized))
 	if err != nil {
@@ -370,6 +419,9 @@ func TestSerializeCfgDefaultForm(t *testing.T) {
 	}
 	if got.UI.Port != DefaultUIPort {
 		t.Errorf("UI.Port = %d, want %d", got.UI.Port, DefaultUIPort)
+	}
+	if time.Duration(got.UI.RevealHideAfter) != DefaultRevealHideAfter {
+		t.Errorf("UI.RevealHideAfter = %v, want %v", time.Duration(got.UI.RevealHideAfter), DefaultRevealHideAfter)
 	}
 	if time.Duration(got.Daemon.IdleTimeout) != DefaultIdleTimeout {
 		t.Errorf("Daemon.IdleTimeout = %v, want %v", time.Duration(got.Daemon.IdleTimeout), DefaultIdleTimeout)

@@ -794,7 +794,11 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .studio-card-head {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
   color: var(--text-faint); margin-bottom: 10px; font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
 }
+/* Reveal-all button sits at the right of the env card header; reset the
+   inherited uppercase/letter-spacing so it reads like a normal button. */
+.studio-reveal-btn { text-transform: none; letter-spacing: normal; }
 .studio-card-desc { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 
 /* 3-col grid for scope fields */
@@ -1124,6 +1128,17 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   flex: 1; font-family: var(--mono); font-size: 13px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Reveal-all value column: masked dots by default, plaintext when revealed.
+   Revealed values wrap + are selectable so the full secret is visible. */
+.studio-var-val {
+  font-family: var(--mono); font-size: 12px; color: var(--text-faint);
+  max-width: 50%; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.studio-var-val.revealed {
+  color: var(--text); white-space: normal; word-break: break-all; user-select: all;
+}
+.studio-var-val.studio-val-empty { color: var(--text-faint); font-style: italic; }
 
 /* "Not in vault" subgroup chip / label */
 .studio-subgroup-label {

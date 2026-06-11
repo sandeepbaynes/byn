@@ -1412,6 +1412,7 @@ const DEFAULT_CONFIG_TEMPLATE = `# byn global configuration
 [ui]
 # enabled = true        # set false to disable the portal entirely
 # port    = 2967        # loopback port the portal listens on (needs restart)
+# reveal_hide_after = "15s"  # re-mask revealed secret values after this long; "0s" = never (hot-apply)
 
 [daemon]
 # idle_timeout = "0s"   # lock all vaults after inactivity; "0s" disables (hot-apply)
@@ -1469,8 +1470,10 @@ async function cfgReset() {
     }
     cfgState.uiEnabled     = p.ui_enabled;
     cfgState.uiPort        = p.ui_port;
+    cfgState.revealHideAfter = p.reveal_hide_after;
     cfgState.idleTimeout   = p.idle_timeout;
     cfgState.perActionAuth = p.per_action_auth;
+    setRevealHideAfter(p.reveal_hide_after);
     cfgState.basePerActionAuth = p.per_action_auth;
     // Re-render the form to reflect the reset values.
     // renderSettingsView re-creates cfgState and sets cfgBaseline.
@@ -1504,6 +1507,7 @@ async function renderSettingsView() {
     box.appendChild(emptyHint("could not load config: " + e.message));
     return;
   }
+  if (configParsed) setRevealHideAfter(configParsed.reveal_hide_after);
 
   // cfgState tracks visual-form values and the current mode (form vs raw).
   // rawMode starts false (form is the default) unless the file is unparseable.
@@ -1512,6 +1516,7 @@ async function renderSettingsView() {
     // Visual-form fields, seeded from the daemon-parsed values (or defaults).
     uiEnabled:     configParsed ? configParsed.ui_enabled     : true,
     uiPort:        configParsed ? configParsed.ui_port        : 2967,
+    revealHideAfter: configParsed ? configParsed.reveal_hide_after : "15s",
     idleTimeout:   configParsed ? configParsed.idle_timeout   : "15m0s",
     perActionAuth: configParsed ? configParsed.per_action_auth : false,
     // The "baseline" per_action_auth: used for the consequence modal on save.
@@ -1580,6 +1585,7 @@ async function renderSettingsView() {
   const refRows = [
     ["[ui] enabled",               "hot-apply on save"],
     ["[ui] port",                  "hot-apply on save (needs restart to rebind)"],
+    ["[ui] reveal_hide_after",     "hot-apply on save"],
     ["[daemon] idle_timeout",      "hot-apply on save"],
     ["[security] per_action_auth", "hot-apply on save"],
   ];
@@ -1633,6 +1639,30 @@ async function renderSettingsView() {
   portLabel.appendChild(portInput);
   portWrap.appendChild(portLabel); portWrap.appendChild(portHint);
   uiCard.appendChild(portWrap);
+
+  // reveal_hide_after: a single seconds input (reveal timeouts are short).
+  // Stored as a Go duration string; "0s" (0 seconds) disables auto-hide.
+  const revWrap = el("div", "cfg-form-row");
+  const revLabel = el("span", "cfg-field-label"); revLabel.textContent = "reveal hide after";
+  const revPair = el("div", "cfg-idle-pair");
+  const revSecsIn = el("input", "input mono cfg-idle-num");
+  revSecsIn.type = "number"; revSecsIn.min = "0"; revSecsIn.step = "1";
+  const revInit = parseDurationToMins(cfgState.revealHideAfter || "15s");
+  revSecsIn.value = String(revInit.mins * 60 + revInit.secs);
+  revSecsIn.placeholder = "15";
+  revSecsIn.autocomplete = "off";
+  revSecsIn.title = "seconds";
+  revSecsIn.oninput = () => {
+    const s = Math.max(0, parseInt(revSecsIn.value, 10) || 0);
+    cfgState.revealHideAfter = serializeDuration(Math.floor(s / 60), s % 60);
+  };
+  // Normalize cfgState.revealHideAfter to the serializer's form up front.
+  revSecsIn.oninput();
+  revPair.appendChild(revSecsIn);
+  revPair.appendChild(el("span", "cfg-idle-unit", "s"));
+  const revHint = el("span", "cfg-field-hint", "re-mask revealed values after this long; 0 = never · hot-apply");
+  revWrap.appendChild(revLabel); revWrap.appendChild(revPair); revWrap.appendChild(revHint);
+  uiCard.appendChild(revWrap);
   formPanel.appendChild(uiCard);
 
   // [daemon] section
@@ -1861,12 +1891,14 @@ function serializeDuration(mins, secs) {
 // DEFAULT FORM VALUES (keep in sync with TestSerializeCfgDefaultForm in
 // internal/config/config_test.go — that test feeds these exact bytes to
 // config.Parse to guard serializer drift):
-//   uiEnabled=true, uiPort=2967, idleTimeout="15m0s", perActionAuth=false
+//   uiEnabled=true, uiPort=2967, revealHideAfter="15s", idleTimeout="15m0s",
+//   perActionAuth=false
 function serializeCfg(st) {
   const lines = [];
   lines.push("[ui]");
   lines.push("enabled = " + (st.uiEnabled ? "true" : "false"));
   lines.push("port    = " + String(st.uiPort || 2967));
+  lines.push("reveal_hide_after = " + tomlStr(st.revealHideAfter || "15s"));
   lines.push("");
   lines.push("[daemon]");
   lines.push("idle_timeout = " + tomlStr(st.idleTimeout || "0s"));
@@ -1984,6 +2016,9 @@ async function saveCfg() {
     cfgState.basePerActionAuth = willEnable;
     // Update dirty-tracking baseline so the guard does not fire after a clean save.
     cfgBaseline = newContent;
+    // Refresh the cached reveal auto-hide timeout from the authoritative saved
+    // config (covers raw-mode edits where cfgState.revealHideAfter is stale).
+    loadRevealHideConfig();
     showConfigNotes(notesEl, resp.change_notes || [], false);
     toast("config saved");
   } catch (e) {
@@ -2310,6 +2345,41 @@ function entryRow(s, i) {
 }
 function maskDots() { return el("span", "mask", "•••••••••"); }
 
+// ---- reveal auto-hide timeout (configurable: [ui] reveal_hide_after) ------
+
+// revealHideAfterMs is how long a revealed secret stays visible before
+// re-masking, mirroring [ui] reveal_hide_after from ~/.byn/config. 0 = never
+// auto-hide (stays until manually hidden / the studio closes). Cached on boot
+// and refreshed when settings load/save; defaults to 15s until loaded.
+let revealHideAfterMs = 15000;
+
+// goDurationMs parses a Go duration string ("15s", "1m30s", "500ms", "0s")
+// into milliseconds, or null when unparseable.
+function goDurationMs(str) {
+  if (!str) return null;
+  const re = /(\d+(?:\.\d+)?)(ms|s|m|h)/g;
+  const unit = { ms: 1, s: 1000, m: 60000, h: 3600000 };
+  let total = 0, matched = false, m;
+  while ((m = re.exec(str)) !== null) { matched = true; total += parseFloat(m[1]) * unit[m[2]]; }
+  return matched ? total : null;
+}
+
+// setRevealHideAfter updates the cached timeout from a Go duration string,
+// ignoring unparseable input (keeps the previous value).
+function setRevealHideAfter(durStr) {
+  const ms = goDurationMs(durStr);
+  if (ms !== null) revealHideAfterMs = ms;
+}
+
+// loadRevealHideConfig fetches the config once (non-blocking) to seed the
+// cached reveal timeout. Failures are silent — the default stands.
+async function loadRevealHideConfig() {
+  try {
+    const d = await api("GET", "/api/config");
+    if (d && d.parsed && d.parsed.reveal_hide_after) setRevealHideAfter(d.parsed.reveal_hide_after);
+  } catch (_) { /* keep default */ }
+}
+
 async function revealValue(s) {
   const env = s.source === "default" ? "default" : state.scope.env;
   const data = await apiWithAuth("POST", "/api/entry/reveal",
@@ -2322,7 +2392,9 @@ async function reveal(s, valEl) {
     const value = await revealValue(s);
     valEl.classList.add("revealed"); valEl.textContent = value;
     clearTimeout(state.revealTimers[s.name]);
-    state.revealTimers[s.name] = setTimeout(() => hideReveal(s, valEl), 10000);
+    if (revealHideAfterMs > 0) {
+      state.revealTimers[s.name] = setTimeout(() => hideReveal(s, valEl), revealHideAfterMs);
+    }
   } catch (e) { toast(e.message, true); }
 }
 function hideReveal(s, valEl) {
@@ -3126,6 +3198,12 @@ function openBynStudio(opts) {
     resetBtn: null,
     dirDropdownEl: null,
     trustEntries: [],
+    // Reveal-all state: shows real env-var values inline (gated by unlock/auth).
+    revealed: false,
+    revealValues: {},   // name → plaintext (only while revealed)
+    revealValueEls: {}, // name → value <span> (rebuilt each render)
+    revealTimer: null,
+    revealBtn: null,
   };
   // Pre-populate envVarSwitches from already-loaded entries (the entries that
   // are currently displayed in the vault scope the studio was opened from).
@@ -3435,6 +3513,7 @@ function studioShowDeepLinkError(path, daemonMsg) {
 // Guarded: shows a byn modal when the studio has unsaved edits.
 async function closeStudio() {
   await guardDirtyNav(() => {
+    if (studioState) clearTimeout(studioState.revealTimer); // drop any reveal timer
     studioState = null;
     leaveOverlayView();
   });
@@ -3451,6 +3530,7 @@ async function closeStudio() {
 // when byn.validate succeeds — we carry the validated parsed values through).
 async function toggleStudioMode() {
   if (!studioState) return;
+  studioHideAll(); // never carry revealed plaintext across a mode switch
   if (!studioState.rawMode) {
     // builder → raw: seed textarea from current form state.
     const content = serializeStudio(studioState);
@@ -3664,6 +3744,113 @@ async function studioReset() {
   scheduleValidation();
 }
 
+// ---- studio reveal-all (show real env-var values, gated by unlock/auth) ----
+
+// studioToggleRevealAll reveals (or re-masks) the actual values for every vault
+// var in the scope being edited. Reveal is gated by the daemon's reveal path:
+// the vault must be unlocked and per_action_auth (if on) triggers a step-up.
+// Bound to the env-card button and the `R` shortcut.
+async function studioToggleRevealAll() {
+  if (!studioState) return;
+  if (studioState.revealed) { studioHideAll(); return; }
+  const names = studioState.vaultVarNames || [];
+  if (!names.length || studioState.envAll) return; // nothing to reveal
+  const vault = (studioState.vault || "").trim();
+  if (!vault) { toast("set a vault in [scope] to reveal values", true); return; }
+  const scope = {
+    vault,
+    project: (studioState.project || "").trim() || "default",
+    env:     (studioState.env     || "").trim() || "default",
+  };
+  if (studioState.revealBtn) { studioState.revealBtn.disabled = true; studioState.revealBtn.textContent = "revealing…"; }
+  const vals = await studioRevealScopeValues(scope, names);
+  if (!studioState) return; // studio closed mid-fetch
+  if (studioState.revealBtn) studioState.revealBtn.disabled = false;
+  if (!vals) { studioUpdateRevealBtn(); return; } // cancelled / locked / failed
+  studioState.revealValues = vals;
+  studioState.revealed = true;
+  studioApplyReveal();
+  studioUpdateRevealBtn();
+  clearTimeout(studioState.revealTimer);
+  if (revealHideAfterMs > 0) {
+    studioState.revealTimer = setTimeout(() => studioHideAll(), revealHideAfterMs);
+  }
+}
+
+// studioRevealScopeValues fetches plaintext for `names` in `scope`, authorizing
+// once up front when per_action_auth requires it: a password is reused across
+// reads; single-use passkey tokens cover one read, so the rest re-prompt (same
+// as the .env export). Returns { name → value }, or null on cancel / locked
+// vault / failure (with a toast). Each read is an audited `get`.
+async function studioRevealScopeValues(scope, names) {
+  const out = {};
+  let creds = null; // reusable password; passkey tokens are single-use
+  for (const name of names) {
+    const base = { scope, name };
+    if (creds && creds.password) base.password = creds.password;
+    let data;
+    try {
+      data = await api("POST", "/api/entry/reveal", base);
+    } catch (e) {
+      if (e.code !== "auth_required") {
+        toast(e.message || ("could not reveal " + name), true);
+        return null;
+      }
+      if (!creds) {
+        creds = await authorizeStepUp(scope.vault);
+        if (!creds) return null; // user cancelled the step-up
+      }
+      try {
+        data = await api("POST", "/api/entry/reveal", Object.assign({}, base, {
+          password: creds.password || "",
+          presence_token: creds.presence_token || undefined,
+        }));
+      } catch (e2) {
+        toast(e2.message || ("could not reveal " + name), true);
+        return null;
+      }
+      // A single-use passkey token is now spent; keep a reusable password.
+      if (creds.presence_token && !creds.password) creds = null;
+    }
+    out[name] = data.value;
+  }
+  return out;
+}
+
+// studioApplyReveal writes the cached plaintext into the per-row value spans.
+function studioApplyReveal() {
+  if (!studioState || !studioState.revealed) return;
+  const vals = studioState.revealValues || {};
+  for (const [name, span] of Object.entries(studioState.revealValueEls || {})) {
+    if (!(name in vals)) continue;
+    const v = vals[name];
+    span.classList.add("revealed");
+    span.classList.toggle("studio-val-empty", v === ""); // namespaced — global .empty has 54px padding
+    span.textContent = v === "" ? "(empty)" : v; // textContent — XSS-safe, clears children
+  }
+}
+
+// studioHideAll re-masks all values, clears the cache + timer, and resets state.
+function studioHideAll() {
+  if (!studioState) return;
+  clearTimeout(studioState.revealTimer);
+  studioState.revealTimer = null;
+  studioState.revealed = false;
+  studioState.revealValues = {};
+  for (const span of Object.values(studioState.revealValueEls || {})) {
+    span.classList.remove("revealed", "studio-val-empty");
+    span.textContent = ""; // clears children (XSS-safe), then re-mask
+    span.appendChild(maskDots());
+  }
+  studioUpdateRevealBtn();
+}
+
+// studioUpdateRevealBtn syncs the env-card button label to the reveal state.
+function studioUpdateRevealBtn() {
+  if (!studioState || !studioState.revealBtn) return;
+  studioState.revealBtn.textContent = studioState.revealed ? "hide all" : "reveal all";
+}
+
 // renderBuilderPanel fills the builder section cards into el.
 function renderBuilderPanel(panel) {
   panel.innerHTML = "";
@@ -3743,6 +3930,29 @@ function renderBuilderPanel(panel) {
   // Keys that appear in envVarSwitches but are not in the current vault scope.
   const staleKeys = Object.keys(switches).filter((k) => !vaultSet.has(k));
 
+  // Reveal-all: value spans are rebuilt every render, so reset the registry and
+  // re-attach the header button. Reveal only makes sense when the per-var list
+  // is shown (real scope vars, not the "*" wildcard).
+  studioState.revealValueEls = {};
+  studioState.revealBtn = null;
+  const canReveal = vaultNames.length > 0 && !studioState.envAll;
+  if (!canReveal && studioState.revealed) {
+    clearTimeout(studioState.revealTimer);
+    studioState.revealTimer = null;
+    studioState.revealed = false;
+    studioState.revealValues = {};
+  }
+  if (canReveal) {
+    const revealBtn = el("button", "btn btn-ghost sm studio-reveal-btn",
+      studioState.revealed ? "hide all" : "reveal all");
+    revealBtn.type = "button";
+    revealBtn.title = "show the real values for this scope (R) — vault must be unlocked";
+    revealBtn.onclick = studioToggleRevealAll;
+    studioState.revealBtn = revealBtn;
+    const head = injCard.querySelector(".studio-card-head");
+    if (head) head.appendChild(revealBtn);
+  }
+
   if (vaultNames.length > 0) {
     // -- Select all / none row (covers vault-scope vars only) --
     const selAllRow = el("div", "studio-selall-row");
@@ -3781,14 +3991,23 @@ function renderBuilderPanel(panel) {
     selAllRow.appendChild(selAllLabel);
     envList.appendChild(selAllRow);
 
-    // Per vault-var toggle switch rows.
+    // Per vault-var toggle switch rows, each with a (masked) value span that
+    // reveal-all populates.
     for (const name of vaultNames) {
-      envList.appendChild(studioSwitchRow(name, !!switches[name], (checked) => {
+      const swRow = studioSwitchRow(name, !!switches[name], (checked) => {
         studioState.envVarSwitches[name] = checked;
         refreshSelectAll();
         scheduleValidation();
-      }));
+      });
+      const valSpan = el("span", "studio-var-val mono");
+      valSpan.appendChild(maskDots());
+      studioState.revealValueEls[name] = valSpan;
+      swRow.appendChild(valSpan);
+      envList.appendChild(swRow);
     }
+    // Re-apply revealed values to the freshly-built spans (reveal survives a
+    // re-render, e.g. toggling a switch, until the timer or hide-all fires).
+    studioApplyReveal();
   } else {
     // Vault names unavailable (locked/empty vault or no scope).
     const notice = el("div", "studio-vault-notice",
@@ -4649,6 +4868,8 @@ function wire() {
       lockChordArmed = true; setTimeout(() => { lockChordArmed = false; }, 700);
     }
     else if (e.key === "a" && lockChordArmed) { lockChordArmed = false; lockAllVaults(); }
+    // R reveals all scope values in the studio (matches the TUI's R reveal).
+    else if (e.key === "R" && state.view === "studio") { e.preventDefault(); studioToggleRevealAll(); }
     else if (e.key === "?") { e.preventDefault(); toggleHelp(); }
     else if (e.key === "Escape") hideHelp();
   });
@@ -4683,6 +4904,8 @@ async function boot() {
   });
   $("#app").hidden = false;
   startStatusSync();
+  // Seed the cached reveal auto-hide timeout from config (non-blocking).
+  loadRevealHideConfig();
   // Use the current URL to determine what to render on initial load.
   // renderFromLocation calls renderTree internally for each view.
   await renderFromLocation();

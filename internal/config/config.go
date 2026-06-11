@@ -30,6 +30,12 @@ const DefaultUIPort = 2967
 // via [daemon] idle_timeout; "0s" disables auto-relock.
 const DefaultIdleTimeout = 15 * time.Minute
 
+// DefaultRevealHideAfter is how long the browser portal shows a revealed
+// secret value before re-masking it. Overridable via [ui] reveal_hide_after;
+// "0s" keeps values shown until manually hidden. Display-only (browser-side);
+// the daemon stores and serves it but does not act on it.
+const DefaultRevealHideAfter = 15 * time.Second
+
 // Duration is a time.Duration that decodes from a TOML duration string
 // such as "15m" or "0s" (Go's time.ParseDuration syntax).
 type Duration time.Duration
@@ -63,6 +69,10 @@ type Config struct {
 type UI struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
+	// RevealHideAfter is how long the portal shows a revealed secret value
+	// before re-masking it. "0s" keeps it shown until manually hidden.
+	// Browser-side display behavior only — the daemon serves it, never acts.
+	RevealHideAfter Duration `toml:"reveal_hide_after"`
 }
 
 // Daemon configures daemon-wide behavior.
@@ -86,7 +96,7 @@ type Security struct {
 // or a key is omitted.
 func Default() Config {
 	return Config{
-		UI:       UI{Enabled: true, Port: DefaultUIPort},
+		UI:       UI{Enabled: true, Port: DefaultUIPort, RevealHideAfter: Duration(DefaultRevealHideAfter)},
 		Daemon:   Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
 		Security: Security{PerActionAuth: false},
 	}
@@ -143,6 +153,10 @@ func (c Config) validate() error {
 	if time.Duration(c.Daemon.IdleTimeout) < 0 {
 		return fmt.Errorf("daemon.idle_timeout %v must not be negative (use \"0s\" to disable)",
 			time.Duration(c.Daemon.IdleTimeout))
+	}
+	if time.Duration(c.UI.RevealHideAfter) < 0 {
+		return fmt.Errorf("ui.reveal_hide_after %v must not be negative (use \"0s\" to disable auto-hide)",
+			time.Duration(c.UI.RevealHideAfter))
 	}
 	return nil
 }

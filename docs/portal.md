@@ -106,6 +106,12 @@ The **builder** tab presents a structured form:
 - **Env-vars to inject** — a checkbox list of every entry in the selected
   scope; tick the ones `byn exec` should inject into the child process. An
   **inject ALL vars ("\*")** toggle injects every secret instead of a list.
+  **Reveal all** (top-right of the card, or press **`R`** — same key as the
+  TUI) shows the real value next to every scope var so you don't have to switch
+  to the env view. Reveal goes through the audited reveal path: the vault must
+  be unlocked, and with `per_action_auth` on it prompts for your password or
+  passkey first. Values re-mask after `[ui] reveal_hide_after` (default 15s) and
+  when you leave the studio.
 - **Actions allowlist** — commands that may run without per-call auth. An
   **allow ALL commands ("\*")** toggle mirrors the env wildcard toggle.
 
@@ -200,8 +206,11 @@ Notable settings visible in the panel:
 |---|---|---|
 | `[ui] port` | `2967` | Portal listen port |
 | `[ui] enabled` | `true` | Disable the portal |
+| `[ui] reveal_hide_after` | `"15s"` | Re-mask revealed values after this long; `"0s"` = never |
 | `[security] per_action_auth` | `false` | Require step-up auth for every value read/write |
-| `[security] idle_lock_minutes` | `0` (off) | Auto-lock after inactivity |
+| `[daemon] idle_timeout` | `"15m0s"` | Auto-lock all vaults after inactivity; `"0s"` disables |
+
+Durations use Go syntax (`"15s"`, `"1m30s"`, `"0s"`).
 
 ---
 

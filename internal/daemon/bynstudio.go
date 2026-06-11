@@ -503,10 +503,11 @@ func (d *Daemon) handleConfigGet(ctx context.Context, env *ipc.Envelope) *ipc.En
 // ConfigParsed for the portal's visual settings editor.
 func configParsedFromConfig(c config.Config) *ipc.ConfigParsed {
 	return &ipc.ConfigParsed{
-		UIEnabled:     c.UI.Enabled,
-		UIPort:        c.UI.Port,
-		IdleTimeout:   time.Duration(c.Daemon.IdleTimeout).String(),
-		PerActionAuth: c.Security.PerActionAuth,
+		UIEnabled:       c.UI.Enabled,
+		UIPort:          c.UI.Port,
+		IdleTimeout:     time.Duration(c.Daemon.IdleTimeout).String(),
+		RevealHideAfter: time.Duration(c.UI.RevealHideAfter).String(),
+		PerActionAuth:   c.Security.PerActionAuth,
 	}
 }
 
