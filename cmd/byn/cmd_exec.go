@@ -33,6 +33,19 @@ import (
 // daemon trust-verifies the .byn, applies the [exec] env allowlist
 // server-side, and returns only approved name/value pairs.
 //
+// Two grammars:
+//
+//	byn exec -- COMMAND [ARGS...]    (direct form)
+//	byn exec NAME [ARGS...]          (alias form)
+//
+// In the direct form, "--" is required so COMMAND's own flags are not
+// misinterpreted by the exec flag parser. In the alias form, the first
+// token after "exec" (not "--" and not a flag) is the alias name; the
+// daemon expands it from the trusted .byn's [aliases] table.
+//
+// Alias shadowing: `byn exec test` with alias "test" defined runs the
+// alias; `byn exec -- test` runs the literal binary "test".
+//
 // Limitations of v1 (intentional, to be iterated on):
 //
 //   - injected values briefly exist as Go strings in heap between
@@ -41,25 +54,52 @@ import (
 //   - shell builtins (cd, source, etc.) cannot be exec'd directly —
 //     wrap them via `bash -c '...'`.
 func runExec(args []string, scope cliScope) int {
-	// Find the "--" separator. Everything after it is the child argv.
-	sepIdx := -1
-	for i, a := range args {
-		if a == "--" {
-			sepIdx = i
-			break
+	// Dispatch: alias form vs direct form.
+	// Alias form: first arg is non-empty, does not start with "-", and is not "--".
+	// Direct form: first arg is "--" (or we get the usage error below).
+	var (
+		aliasName   string   // non-empty only for alias form
+		extraArgs   []string // alias passthrough args (alias form) or full argv (direct)
+		childArgv   []string // the argv we locally track for LookPath/fallback
+		isAliasExec bool
+	)
+
+	if len(args) > 0 && args[0] != "--" && !strings.HasPrefix(args[0], "-") {
+		// Alias form: NAME [ARGS...]
+		if scope.SourcePath == "" {
+			fmt.Fprintln(os.Stderr, boldRed("Error:")+" no .byn in scope — aliases are defined in a trusted .byn ([aliases])")
+			fmt.Fprintln(os.Stderr, dim("Hint: run from a directory with a trusted .byn, or use `byn exec -- COMMAND` for direct exec"))
+			return exitErr
 		}
-	}
-	if sepIdx < 0 {
-		fmt.Fprintln(os.Stderr, "Usage: byn exec -- COMMAND [ARGS...]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, dim("The `--` separator is required to disambiguate exec's own flags"))
-		fmt.Fprintln(os.Stderr, dim("from the child command's flags. See `byn exec help` for examples."))
-		return exitErr
-	}
-	childArgv := args[sepIdx+1:]
-	if len(childArgv) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: byn exec -- COMMAND [ARGS...]")
-		return exitErr
+		aliasName = args[0]
+		extraArgs = args[1:]
+		isAliasExec = true
+		// childArgv is not known until the daemon responds with ResolvedArgv.
+		// We use a placeholder; it will be replaced by ResolvedArgv below.
+		childArgv = nil
+	} else {
+		// Direct form: find the "--" separator.
+		sepIdx := -1
+		for i, a := range args {
+			if a == "--" {
+				sepIdx = i
+				break
+			}
+		}
+		if sepIdx < 0 {
+			fmt.Fprintln(os.Stderr, "Usage: byn exec -- COMMAND [ARGS...]")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, dim("The `--` separator is required to disambiguate exec's own flags"))
+			fmt.Fprintln(os.Stderr, dim("from the child command's flags. See `byn exec help` for examples."))
+			fmt.Fprintln(os.Stderr, dim("To run an alias defined in the .byn, use: byn exec NAME [ARGS...]"))
+			return exitErr
+		}
+		childArgv = args[sepIdx+1:]
+		if len(childArgv) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: byn exec -- COMMAND [ARGS...]")
+			return exitErr
+		}
+		extraArgs = childArgv
 	}
 
 	dir, err := defaultDir()
@@ -70,48 +110,117 @@ func runExec(args []string, scope cliScope) int {
 	client := newClient(dir)
 
 	// One round-trip: the daemon verifies trust, enforces the .byn's
-	// [exec] env allowlist server-side, and returns only approved values
-	// (a compromised CLI can't widen the list — NU-1).
+	// [exec] env allowlist AND [exec] actions pinlist server-side, and
+	// returns only approved values (a compromised CLI can't widen either
+	// list — NU-1 + NU-2).
 	//
-	// Ad-hoc exec (no .byn) is gated under [security] per_action_auth:
-	// if the first call returns auth_required, prompt once and retry with
-	// the password. Trusted-.byn exec is always credential-free.
-	cmd := execCommandLabel(childArgv)
-	req := ipc.ExecFetchReq{
-		Path:    scope.SourcePath,
-		Scope:   scope.ToIPC(),
-		Command: cmd,
-	}
-	var fetched ipc.ExecFetchResp
-	callErr := client.Call(ipc.OpExecFetch, req, &fetched)
-	if callErr != nil {
-		if isAuthRequiredErr(callErr) && scope.SourcePath == "" {
-			// Ad-hoc exec auth_required. Non-TTY path: fail with actionable
-			// hint (no --password-stdin for exec — it would break sub-command
-			// argv parsing; run from a .byn dir to avoid the prompt entirely).
-			if !stdinIsTTY() {
-				fmt.Fprintf(os.Stderr, "%s ad-hoc exec requires authorization ([security] per_action_auth).\n", boldRed("Error:"))
-				fmt.Fprintf(os.Stderr, "%s %s\n",
-					dim("Hint:"), dim("run from a directory with a trusted .byn (credential-free), or unlock the vault's UI portal"))
-				return exitDaemonErr
-			}
-			// Interactive TTY path: prompt once and retry.
-			leadIn := yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
-			pw, wipe, perr := authorizingPasswordWithLeadIn(false, leadIn)
-			if perr != nil {
-				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
-				return exitErr
-			}
-			defer wipe()
-			req.Password = pw
-			if retryErr := client.Call(ipc.OpExecFetch, req, &fetched); retryErr != nil {
-				return handleExecFetchError(retryErr)
-			}
-		} else {
-			return handleExecFetchError(callErr)
+	// Auth-retry cases (prompt once, then retry with password):
+	//   1. Ad-hoc exec (no .byn) when [security] per_action_auth is on.
+	//   2. Trusted-.byn exec when the command is NOT pinned in [exec] actions
+	//      (the daemon returns auth_required with the "not pinned" message).
+	// Both cases prompt on TTY; on non-TTY they fail with an actionable hint.
+	// For direct exec: Argv is sent untruncated for actions matching;
+	// Command is the ≤200-char audit label.
+	// For alias exec: Alias holds the name; Argv holds the extra args only.
+	var req ipc.ExecFetchReq
+	if isAliasExec {
+		req = ipc.ExecFetchReq{
+			Path:    scope.SourcePath,
+			Scope:   scope.ToIPC(),
+			Command: "alias " + aliasName, // label overridden by daemon to resolved form
+			Alias:   aliasName,
+			Argv:    extraArgs,
+		}
+	} else {
+		cmd := execCommandLabel(childArgv)
+		req = ipc.ExecFetchReq{
+			Path:    scope.SourcePath,
+			Scope:   scope.ToIPC(),
+			Command: cmd,
+			Argv:    childArgv,
 		}
 	}
+
+	var fetched ipc.ExecFetchResp
+	callErr := client.Call(ipc.OpExecFetch, req, &fetched)
+	switch {
+	case callErr == nil:
+		// success — fall through
+	case isAuthRequiredErr(callErr):
+		// Auth_required fires for two cases:
+		//   (a) ad-hoc exec (Path == "") under per_action_auth
+		//   (b) trusted-.byn exec with an unmatched/empty [exec] actions
+		// Both take the same retry path. The daemon's message distinguishes
+		// them for the user; we just need to get the password and retry.
+		if !stdinIsTTY() {
+			// Non-TTY path: fail with an actionable hint.
+			// Extract the daemon message if available for a richer hint.
+			var em *ipc.ErrResponse
+			if errors.As(callErr, &em) {
+				fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red(em.Message+"."))
+				if scope.SourcePath != "" {
+					// Trusted-.byn unmatched: hint about adding to [exec] actions.
+					fmt.Fprintf(os.Stderr, "%s %s\n",
+						dim("Hint:"), dim("add the command to [exec] actions in "+scope.SourcePath+" and re-trust, or run interactively to supply the password"))
+				} else {
+					// Ad-hoc: hint about .byn.
+					fmt.Fprintf(os.Stderr, "%s %s\n",
+						dim("Hint:"), dim("run from a directory with a trusted .byn (credential-free), or unlock the vault's UI portal"))
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "%s exec requires authorization.\n", boldRed("Error:"))
+				fmt.Fprintf(os.Stderr, "%s %s\n",
+					dim("Hint:"), dim("run from a directory with a trusted .byn (credential-free), or supply the password interactively"))
+			}
+			return exitDaemonErr
+		}
+		// Interactive TTY path: prompt once and retry.
+		var leadIn string
+		if scope.SourcePath != "" {
+			// Trusted .byn, but command not pinned in [exec] actions.
+			var em *ipc.ErrResponse
+			if errors.As(callErr, &em) {
+				leadIn = yellow("Authorization required.") + dim(" "+em.Message+".")
+			} else {
+				leadIn = yellow("Authorization required.") + dim(" Command not pinned in [exec] actions.")
+			}
+		} else {
+			leadIn = yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+		}
+		pw, wipe, perr := authorizingPasswordWithLeadIn(false, leadIn)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
+			return exitErr
+		}
+		defer wipe()
+		req.Password = pw
+		if retryErr := client.Call(ipc.OpExecFetch, req, &fetched); retryErr != nil {
+			return handleExecFetchError(retryErr)
+		}
+	case isAliasExec:
+		// Alias-specific error rendering.
+		var em *ipc.ErrResponse
+		if errors.As(callErr, &em) && em.Code == ipc.CodeNotFound {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), em.Message)
+			return exitDaemonErr
+		}
+		return handleExecFetchError(callErr)
+	default:
+		return handleExecFetchError(callErr)
+	}
 	renderAllowlistNotes(fetched, scope.SourcePath)
+
+	// Use the daemon's ResolvedArgv as the authoritative argv. For direct exec
+	// this matches childArgv. For alias exec this is the expanded form. The CLI
+	// always prefers ResolvedArgv — single contract from the daemon.
+	if len(fetched.ResolvedArgv) > 0 {
+		childArgv = fetched.ResolvedArgv
+	} else if isAliasExec {
+		// Should not happen on a well-behaved daemon; fail fast.
+		fmt.Fprintln(os.Stderr, boldRed("Error:")+" daemon did not return ResolvedArgv for alias exec")
+		return exitErr
+	}
+	// childArgv is already set for direct exec (and confirmed via ResolvedArgv when available).
 
 	extraEnv := make([]string, 0, len(fetched.Values))
 	for _, v := range fetched.Values {
@@ -194,6 +303,7 @@ func handleExecFetchError(err error) int {
 
 // renderAllowlistNotes prints the wildcard warning / empty-allowlist note
 // the daemon's flags request (messages match the pre-NU client-side text).
+// Also prints the [exec] actions wildcard warning when ActionsWildcard=true.
 func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
 	if sourcePath == "" {
 		return
@@ -205,5 +315,9 @@ func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
 	} else if resp.NoneDeclared {
 		fmt.Fprintf(os.Stderr, "%s\n",
 			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", sourcePath)))
+	}
+	if resp.ActionsWildcard {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%s pins NO specific actions — \"*\" lets ANY command run re-auth-free.", sourcePath)))
 	}
 }

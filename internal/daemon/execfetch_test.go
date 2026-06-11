@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -68,10 +69,12 @@ func TestExecFetchInjectsOnlyAllowlistedVars(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "EXTRA", []byte("should-not-appear"))
 
 	// Write a .byn that only allows DB_URL and API_KEY.
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DB_URL\", \"API_KEY\"]\n")
+	// actions = "*" so that any command runs free (this test is about env
+	// filtering, not actions enforcement — actions are tested separately).
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DB_URL\", \"API_KEY\"]\nactions = \"*\"\n")
 	grantBynFile(t, c, byn, pw)
 
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "aws s3 ls"})
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "aws s3 ls", Argv: []string{"aws", "s3", "ls"}})
 	if err != nil {
 		t.Fatalf("exec.fetch: %v", err)
 	}
@@ -105,11 +108,13 @@ func TestExecFetchEmptyAllowlistInjectsNothing(t *testing.T) {
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "SECRET", []byte("val"))
 
-	// .byn with no [exec] section.
-	byn := writeBynContent(t, "[scope]\n")
+	// .byn with no [exec] env section, but actions = "*" so the command runs
+	// free (this test is about env filtering — empty env injects nothing;
+	// actions are tested separately).
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = \"*\"\n")
 	grantBynFile(t, c, byn, pw)
 
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
 	if err != nil {
 		t.Fatalf("exec.fetch: %v", err)
 	}
@@ -124,7 +129,7 @@ func TestExecFetchEmptyAllowlistInjectsNothing(t *testing.T) {
 	}
 }
 
-// ---- Test 3: wildcard → all scope vars ------------------------------------
+// ---- Test 3: wildcard env → all scope vars --------------------------------
 
 func TestExecFetchWildcard(t *testing.T) {
 	_, c := startTestDaemon(t)
@@ -133,10 +138,11 @@ func TestExecFetchWildcard(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "FOO", []byte("foo-val"))
 	putVar(t, c, ipc.Scope{}, "BAR", []byte("bar-val"))
 
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\n")
+	// actions = "*" so the command runs free; this test is about env wildcard.
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = \"*\"\n")
 	grantBynFile(t, c, byn, pw)
 
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
 	if err != nil {
 		t.Fatalf("exec.fetch: %v", err)
 	}
@@ -220,22 +226,57 @@ func TestExecFetchChangedDenied(t *testing.T) {
 	}
 }
 
-// ---- Test 11: trusted but syntactically invalid .byn → bad_request, audited
+// ---- Test 11: trusted-but-malformed record (hand-written) → bad_request, audited
+//
+// This is NU-1's defense-in-depth test. Grant time now refuses malformed .byn
+// files (Task 3), so we hand-write a malformed-but-MAC'd record directly into
+// the trust store to prove exec still fails closed + audits at USE-TIME even
+// when a rogue record bypasses the grant gate (e.g. hand-crafted JSON).
 
 func TestExecFetchTrustedButMalformedAudited(t *testing.T) {
-	_, c := startTestDaemon(t)
+	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
-	// Write a file that is syntactically invalid TOML so bynfile.Parse will fail.
-	// Trust is granted against the raw bytes without parsing, so the file can
-	// be trusted yet still fail at exec-time parse.
-	byn := writeBynContent(t, "not toml [[[")
-	grantBynFile(t, c, byn, pw)
+	const malformedBody = "not toml [[["
+	byn := writeBynContent(t, malformedBody)
+	canon := trust.Canonicalize(byn)
+	hash := trust.Hash([]byte(malformedBody))
 
+	// Derive the vk-MAC key directly from the store (vault is unlocked).
+	entry, err := d.openVault(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("openVault: %v", err)
+	}
+	vkKey, err := entry.store.DeriveSubkey(trust.VKMACKeyInfo)
+	if err != nil {
+		t.Fatalf("DeriveSubkey: %v", err)
+	}
+
+	// Stat the file so mtime is valid (makes it a v2 record).
+	fi, serr := os.Stat(byn)
+	if serr != nil {
+		t.Fatalf("stat: %v", serr)
+	}
+
+	// Hand-write a malformed-but-MAC'd v2 trust record directly into the store,
+	// bypassing the grant gate. This simulates a rogue edit of trusted_byn.json.
+	rec := trust.Record{
+		Path:          canon,
+		SHA256:        hash,
+		Vault:         "default",
+		MTimeUnixNano: fi.ModTime().UnixNano(),
+		Snapshot:      malformedBody, // syntactically invalid
+	}
+	rec.SetMACs(d.fpMACKey, vkKey)
+	if _, perr := trust.Put(d.cfg.Dir, rec); perr != nil {
+		t.Fatalf("Put: %v", perr)
+	}
+
+	// Exec against the malformed (but MAC-valid) record must fail closed.
 	const cmd = "evil --malformed"
-	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: cmd})
-	if code := errCode(t, err); code != ipc.CodeBadRequest {
+	_, execErr := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: cmd})
+	if code := errCode(t, execErr); code != ipc.CodeBadRequest {
 		t.Fatalf("code = %v, want bad_request", code)
 	}
 
@@ -250,8 +291,8 @@ func TestExecFetchTrustedButMalformedAudited(t *testing.T) {
 	if ev.ErrorCode != string(ipc.CodeBadRequest) {
 		t.Errorf("error_code = %q, want %q", ev.ErrorCode, string(ipc.CodeBadRequest))
 	}
-	if ev.BynPath != trust.Canonicalize(byn) {
-		t.Errorf("byn_path = %q, want %q", ev.BynPath, trust.Canonicalize(byn))
+	if ev.BynPath != canon {
+		t.Errorf("byn_path = %q, want %q", ev.BynPath, canon)
 	}
 	if ev.Command != cmd {
 		t.Errorf("command = %q, want %q", ev.Command, cmd)
@@ -360,10 +401,12 @@ func TestExecFetchAuditsCommand(t *testing.T) {
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "TOKEN", []byte("tok"))
 
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"TOKEN\"]\n")
+	// Pin the command in [exec] actions so it runs free (this test is about
+	// audit recording, not actions enforcement).
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"TOKEN\"]\nactions = [\"kubectl apply\"]\n")
 	grantBynFile(t, c, byn, pw)
 
-	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "kubectl apply"})
+	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "kubectl apply", Argv: []string{"kubectl", "apply"}})
 	if err != nil {
 		t.Fatalf("exec.fetch: %v", err)
 	}
@@ -405,10 +448,11 @@ func TestExecFetchAllowlistedNameMissingFromVault(t *testing.T) {
 	// Store only DB_URL; allowlist requests both DB_URL and GHOST.
 	putVar(t, c, ipc.Scope{}, "DB_URL", []byte("postgres://localhost/db"))
 
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DB_URL\", \"GHOST\"]\n")
+	// actions = "*" so any command runs free (this test is about env filtering).
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DB_URL\", \"GHOST\"]\nactions = \"*\"\n")
 	grantBynFile(t, c, byn, pw)
 
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
 	if err != nil {
 		t.Fatalf("exec.fetch: %v", err)
 	}
@@ -456,12 +500,14 @@ func TestExecFetchInheritedVarThroughAllowlist(t *testing.T) {
 	// Request with a non-default scope but allowlist the shared var.
 	// The allowlist includes SHARED, demonstrating that the list gates
 	// what names are allowed to flow, regardless of scope.
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SHARED\"]\n")
+	// actions = "*" so any command runs free (this test is about env inheritance).
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SHARED\"]\nactions = \"*\"\n")
 	grantBynFile(t, c, byn, pw)
 
 	resp, err := execFetch(t, c, ipc.ExecFetchReq{
 		Path:  byn,
 		Scope: ipc.Scope{},
+		Argv:  []string{"any-cmd"},
 	})
 	if err != nil {
 		t.Fatalf("exec.fetch: %v", err)

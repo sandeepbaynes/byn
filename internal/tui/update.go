@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,6 +122,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case entryValueMsg:
 		if msg.Err != nil {
+			// auth_required: open the Authorize overlay for a get (reveal/edit).
+			if m.isAuthRequired(msg.Err) {
+				cause := authRequiredCause(msg.Err)
+				m.authReq = &authReqState{
+					Cause:     cause,
+					kind:      authRetryGet,
+					priorMode: m.Mode, // ModeReveal or ModeInsert
+					scope:     msg.Scope,
+					name:      msg.Name,
+				}
+				m.Mode = ModeAuthRequired
+				return m, nil
+			}
 			m.flash("get: "+msg.Err.Error(), false)
 			return m, nil
 		}
@@ -149,11 +163,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			strconv.Itoa(msg.Bytes)+" bytes; reveal in audit log)", true)
 		return m, loadAuditCmd(m.client, m.scope.Vault, 10)
 
+	case authRetryMsg:
+		return m.handleAuthRetry(msg)
+
 	case opCompleteMsg:
 		if msg.Err != nil {
+			// auth_required: open the Authorize overlay using the context
+			// carried inside the message. The context was captured at dispatch
+			// time so a second op dispatched before this response lands cannot
+			// clobber it.
+			if m.isAuthRequired(msg.Err) && msg.authCtx != nil {
+				msg.authCtx.Cause = authRequiredCause(msg.Err)
+				m.authReq = msg.authCtx
+				m.Mode = ModeAuthRequired
+				return m, nil
+			}
+			// No carried context (shouldn't normally happen) — surface as flash.
+			m.authReq = nil
 			m.flash(msg.Op+" failed: "+msg.Err.Error(), false)
 			return m, nil
 		}
+		// Success: clear any stale auth context.
+		m.authReq = nil
 		m.flash(msg.Op+" "+msg.Note+" ok", true)
 		return m, tea.Batch(
 			loadEntriesCmd(m.client, m.scope),
@@ -229,6 +260,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keyAudit(msg)
 	case ModeHelp:
 		return m.keyHelp(msg)
+	case ModeAuthRequired:
+		return m.keyAuthRequired(msg)
 	}
 	// NORMAL mode below.
 	return m.keyNormal(msg)
@@ -1033,28 +1066,46 @@ func (m Model) commitEdit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		val := []byte(m.edit.Value)
+		scope := m.scope
 		m.edit = nil
 		m.Mode = ModeNormal
+		// Capture the auth-retry context at dispatch time and carry it
+		// inside the message so a second op dispatched before this result
+		// lands cannot overwrite the pending context on the model.
+		ctx := &authReqState{
+			kind: authRetryPut, scope: scope, name: name, value: val, createOnly: true,
+		}
 		// CreateOnly=true on the daemon side catches the racy case
 		// where another writer added the same name between our list
 		// fetch and our put.
-		return m, addEntryCmd(m.client, m.scope, name, val)
+		return m, addEntryCmd(m.client, scope, name, val, ctx)
 	case ModeInsert:
 		name := m.edit.Name
 		val := []byte(m.edit.Value)
+		scope := m.scope
 		m.edit = nil
 		m.Mode = ModeNormal
-		return m, putValueCmd(m.client, m.scope, name, val)
+		ctx := &authReqState{
+			kind: authRetryPut, scope: scope, name: name, value: val,
+		}
+		return m, putValueCmd(m.client, scope, name, val, ctx)
 	case ModeRename:
-		old := m.edit.Name // before edit
-		// We stored the editable name in Value as well; reuse Value.
+		// OriginalVal holds the entry's name before the user started
+		// editing. Name/Value are both mutated in place as the user
+		// types, so OriginalVal is the reliable source of the old name.
+		old := m.edit.OriginalVal
+		// Value mirrors Name during rename editing; use Value for the new name.
 		newName := m.edit.Value
+		scope := m.scope
 		m.edit = nil
 		m.Mode = ModeNormal
 		if old == newName || strings.TrimSpace(newName) == "" {
 			return m, nil
 		}
-		return m, renameEntryCmd(m.client, m.scope, old, newName)
+		ctx := &authReqState{
+			kind: authRetryRename, scope: scope, name: old, newName: newName,
+		}
+		return m, renameEntryCmd(m.client, scope, old, newName, ctx)
 	}
 	return m, nil
 }
@@ -1113,7 +1164,12 @@ func (m Model) keyConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearScopeIfDeleted(cf)
 			return m, scopeDeleteCmd(m.client, cf.Kind, cf.Vault, cf.Project, cf.Name)
 		}
-		return m, deleteEntryCmd(m.client, m.scope, cf.Name)
+		scope := m.scope
+		name := cf.Name
+		ctx := &authReqState{
+			kind: authRetryDelete, scope: scope, name: name,
+		}
+		return m, deleteEntryCmd(m.client, scope, name, ctx)
 	case "esc", "q", "n":
 		m.confirm = nil
 		m.Mode = ModeNormal
@@ -1495,4 +1551,155 @@ func (m Model) keyHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// ---- AUTH REQUIRED mode -------------------------------------------------
+//
+// keyAuthRequired handles input for the "Authorize" password overlay.
+// The user types their vault password (masked), presses Enter to retry the
+// pending op, or Esc to cancel (original denial surfaced as a flash message).
+
+func (m Model) keyAuthRequired(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	ar := m.authReq
+	if ar == nil {
+		m.Mode = ModeNormal
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		// Cancel: clear overlay, flash the original denial reason.
+		m.Mode = ModeNormal
+		m.authReq = nil
+		m.flash("auth_required: "+ar.Cause, false)
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "enter":
+		if len(ar.buf) == 0 {
+			ar.retryErr = "password required"
+			return m, nil
+		}
+		pw := []byte(string(ar.buf))
+		// Zero the rune buffer; the byte slice pw is passed to the retry
+		// command and zeroed there after c.Call.
+		// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+		for i := range ar.buf {
+			ar.buf[i] = 0
+		}
+		ar.buf = ar.buf[:0]
+		ar.cur = 0
+		ar.retryErr = ""
+		// Issue the retry command.
+		var cmd tea.Cmd
+		switch ar.kind {
+		case authRetryGet:
+			cmd = authRetryGetCmd(m.client, ar.scope, ar.name, pw)
+		case authRetryPut:
+			if ar.createOnly {
+				cmd = authRetryAddCmd(m.client, ar.scope, ar.name, ar.value, pw)
+			} else {
+				cmd = authRetryPutCmd(m.client, ar.scope, ar.name, ar.value, pw)
+			}
+		case authRetryDelete:
+			cmd = authRetryDeleteCmd(m.client, ar.scope, ar.name, pw)
+		case authRetryRename:
+			cmd = authRetryRenameCmd(m.client, ar.scope, ar.name, ar.newName, pw)
+		}
+		return m, cmd
+	case "backspace":
+		if ar.cur > 0 {
+			ar.buf = append(ar.buf[:ar.cur-1], ar.buf[ar.cur:]...)
+			ar.cur--
+		}
+		return m, nil
+	}
+	// Plain rune input: append at cursor (no echo).
+	if rs := msg.Runes; len(rs) > 0 {
+		tail := append([]rune{}, ar.buf[ar.cur:]...)
+		ar.buf = append(append(ar.buf[:ar.cur], rs...), tail...)
+		ar.cur += len(rs)
+	}
+	return m, nil
+}
+
+// handleAuthRetry folds the result of an auth-step-up retry into the model.
+// On success it replicates the success path of the original op; on failure it
+// either shows the error inside the overlay (allowing re-entry) or transitions
+// back to normal with a flash message.
+func (m Model) handleAuthRetry(msg authRetryMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		// Wrong password or other retryable error: stay in the overlay.
+		if m.authReq != nil {
+			m.authReq.retryErr = msg.err.Error()
+		}
+		return m, nil
+	}
+	// Success: dismiss overlay.
+	m.Mode = ModeNormal
+	ar := m.authReq
+	m.authReq = nil
+
+	switch msg.kind {
+	case authRetryGet:
+		// Resume the original get destination based on the mode that
+		// initiated the op (recorded in ar.priorMode).
+		switch {
+		case ar != nil && ar.priorMode == ModeReveal:
+			// Re-enter reveal with the value.
+			m.Mode = ModeReveal
+			m.reveal = &revealState{
+				Name:      ar.name,
+				Value:     string(msg.getResp.Value),
+				ExpiresAt: time.Now().Add(7 * time.Second),
+			}
+		case ar != nil && ar.priorMode == ModeInsert && m.edit != nil && m.edit.Name == msg.name:
+			// Prefill the insert buffer.
+			m.edit.OriginalVal = string(msg.getResp.Value)
+			m.edit.Value = m.edit.OriginalVal
+			m.edit.CursorIdx = len(m.edit.Value)
+			m.Mode = ModeInsert
+		default:
+			// Fallback: enter reveal.
+			if ar != nil {
+				m.Mode = ModeReveal
+				m.reveal = &revealState{
+					Name:      ar.name,
+					Value:     string(msg.getResp.Value),
+					ExpiresAt: time.Now().Add(7 * time.Second),
+				}
+			}
+		}
+		return m, nil
+	case authRetryPut:
+		m.flash("put "+msg.name+" ok", true)
+	case authRetryDelete:
+		m.flash("delete "+msg.name+" ok", true)
+	case authRetryRename:
+		m.flash("rename → "+msg.name+" ok", true)
+	}
+	return m, tea.Batch(
+		loadEntriesCmd(m.client, m.scope),
+		loadAuditCmd(m.client, m.scope.Vault, 10),
+	)
+}
+
+// isAuthRequired reports whether err is a CodeAuthRequired response.
+func (m Model) isAuthRequired(err error) bool {
+	var er *ipc.ErrResponse
+	if errors.As(err, &er) {
+		return er.Code == ipc.CodeAuthRequired
+	}
+	return false
+}
+
+// authRequiredCause extracts the daemon's Message from a CodeAuthRequired
+// error. Falls back to the full error string if the type assertion fails.
+func authRequiredCause(err error) string {
+	var er *ipc.ErrResponse
+	if errors.As(err, &er) {
+		if er.Message != "" {
+			return er.Message
+		}
+	}
+	return err.Error()
 }

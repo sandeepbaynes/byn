@@ -75,7 +75,21 @@ password-free unlock, and use the **`.byn`** button to pin a project to a scope.
 
 - **Per-project scope:** drop a `.byn` in a project root (or generate it from the
   portal) so `byn` auto-selects the right vault/project/env there — and
-  `[exec] env` controls exactly which vars `byn exec` injects. See
+  `[exec] env` controls exactly which vars `byn exec` injects. Use
+  `[exec] actions` to pin the specific commands that run without per-call
+  authorization (the secure default requires it):
+
+  ```toml
+  [scope]
+  project = "myapp"
+
+  [exec]
+  env     = ["DATABASE_URL", "AWS_ACCESS_KEY_ID"]
+  actions = ["/usr/bin/env", "/usr/local/bin/your-app"]
+  ```
+
+  Approve the file once with `byn trust ./.byn`, then `byn exec` injects
+  env-vars password-free for the listed commands. See
   [byn-file-format.md](byn-file-format.md).
 - **Organize:** secrets live at **vault → project → env** —
   `byn project create`, `byn env create`. Full command list in the

@@ -38,6 +38,54 @@ func TestExecFetchRespBinaryValueRoundTrip(t *testing.T) {
 	assert.Equal(t, resp, got)
 }
 
+// TestExecFetchReqArgvRoundTrip verifies that Argv round-trips correctly and
+// that an ExecFetchReq without Argv marshals without the "argv" key (omitempty
+// contract — old CLIs that don't send Argv must not break the wire format).
+func TestExecFetchReqArgvRoundTrip(t *testing.T) {
+	t.Run("with Argv", func(t *testing.T) {
+		req := ExecFetchReq{Path: "/p/.byn", Argv: []string{"pnpm", "run", "start"}}
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), "argv", "argv must be present when non-empty")
+
+		var got ExecFetchReq
+		require.NoError(t, json.Unmarshal(b, &got))
+		assert.Equal(t, req.Argv, got.Argv)
+	})
+
+	t.Run("without Argv omitted", func(t *testing.T) {
+		req := ExecFetchReq{Path: "/p/.byn", Command: "pnpm run start"}
+		b, err := json.Marshal(req)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "argv", "argv must be absent when nil (omitempty)")
+	})
+}
+
+// TestExecFetchRespActionsWildcardOmitEmpty verifies that ActionsWildcard=false
+// is omitted from the wire (omitempty) so old clients receiving a response from
+// a new daemon are not surprised by the new field.
+func TestExecFetchRespActionsWildcardOmitEmpty(t *testing.T) {
+	t.Run("false is omitted", func(t *testing.T) {
+		resp := ExecFetchResp{Values: []ExecFetchValue{{Name: "K", Value: []byte("v")}}}
+		b, err := json.Marshal(resp)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "actions_wildcard",
+			"ActionsWildcard=false must be absent (omitempty)")
+	})
+
+	t.Run("true is present and round-trips", func(t *testing.T) {
+		resp := ExecFetchResp{ActionsWildcard: true}
+		b, err := json.Marshal(resp)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), "actions_wildcard",
+			"ActionsWildcard=true must be present")
+
+		var got ExecFetchResp
+		require.NoError(t, json.Unmarshal(b, &got))
+		assert.True(t, got.ActionsWildcard)
+	})
+}
+
 func TestAuthFieldsOmittedWhenEmpty(t *testing.T) {
 	// Version-skew contract: a request without per-action auth must
 	// marshal to the same wire bytes as before the fields existed.
@@ -82,5 +130,26 @@ func TestAuthFieldsOmittedWhenEmpty(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotContains(t, string(b), "password")
 		assert.NotContains(t, string(b), "presence_token")
+	})
+	t.Run("TrustGrantReq", func(t *testing.T) {
+		b, err := json.Marshal(TrustGrantReq{Path: "/tmp/.byn"})
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "password")
+		assert.NotContains(t, string(b), "presence_token")
+	})
+	t.Run("TrustGrantBulkReq", func(t *testing.T) {
+		b, err := json.Marshal(TrustGrantBulkReq{Paths: []string{"/tmp/.byn"}})
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "password")
+		assert.NotContains(t, string(b), "presence_token")
+	})
+	t.Run("ExecFetchReq", func(t *testing.T) {
+		// An ExecFetchReq with no password/presence_token/argv must omit those
+		// fields — old-version compatibility (version-skew contract).
+		b, err := json.Marshal(ExecFetchReq{Path: "/p/.byn", Command: "cmd"})
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "password")
+		assert.NotContains(t, string(b), "presence_token")
+		assert.NotContains(t, string(b), "argv")
 	})
 }

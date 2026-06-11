@@ -94,7 +94,9 @@ func TestRunExec_UnknownOp(t *testing.T) {
 }
 
 // TestRunExec_WireBody asserts the exec.fetch request body contains the
-// expected Path, Scope, and Command fields.
+// expected Path, Scope, Command, and Argv fields (NU-2: Argv is the
+// untruncated exact argv for actions matching; Command is the ≤200-char
+// audit label).
 func TestRunExec_WireBody(t *testing.T) {
 	fd := startFakeDaemon(t)
 	fd.onOK(ipc.OpExecFetch, ipc.ExecFetchResp{})
@@ -125,6 +127,98 @@ func TestRunExec_WireBody(t *testing.T) {
 	wantCmd := "byn-no-such-binary-zzz --flag"
 	if req.Command != wantCmd {
 		t.Errorf("Command = %q, want %q", req.Command, wantCmd)
+	}
+	// Argv must be sent as the exact child argv (for actions matching).
+	if len(req.Argv) != 2 || req.Argv[0] != "byn-no-such-binary-zzz" || req.Argv[1] != "--flag" {
+		t.Errorf("Argv = %v, want [byn-no-such-binary-zzz --flag]", req.Argv)
+	}
+}
+
+// TestRunExec_ActionsWildcardWarning: when the daemon returns
+// ActionsWildcard=true, the CLI prints a loud warning to stderr.
+func TestRunExec_ActionsWildcardWarning(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpExecFetch, ipc.ExecFetchResp{ActionsWildcard: true})
+
+	bynPath := "/proj/.byn"
+	var errOut string
+	captureStderr(t, func() {
+		// Missing binary triggers LookPath failure after IPC, which is fine.
+		_ = runExec([]string{"--", "byn-no-such-binary-zzz"}, cliScope{SourcePath: bynPath})
+	})
+	errOut = captureStderr(t, func() {
+		_ = runExec([]string{"--", "byn-no-such-binary-zzz"}, cliScope{SourcePath: bynPath})
+	})
+	if !strings.Contains(errOut, "pins NO specific actions") {
+		t.Errorf("stderr = %q, want 'pins NO specific actions' warning", errOut)
+	}
+	if !strings.Contains(errOut, bynPath) {
+		t.Errorf("stderr = %q, want path %q in warning", errOut, bynPath)
+	}
+	if !strings.Contains(errOut, `"*"`) {
+		t.Errorf("stderr = %q, want '\"*\"' in warning", errOut)
+	}
+}
+
+// TestRunExec_TrustedBynUnmatchedNonTTY: trusted .byn exec gets
+// auth_required (unmatched action). Non-TTY path: fail with the "not pinned"
+// hint and exitDaemonErr.
+func TestRunExec_TrustedBynUnmatchedNonTTY(t *testing.T) {
+	fd := startFakeDaemon(t)
+	bynPath := "/proj/.byn"
+	fd.on(ipc.OpExecFetch, func(_ []byte) (any, *ipc.ErrMsg) {
+		return nil, &ipc.ErrMsg{
+			Code:    ipc.CodeAuthRequired,
+			Message: "command not pinned in " + bynPath + " [exec] actions",
+			Recover: "add it to [exec] actions and re-trust, or supply the password",
+		}
+	})
+	// Use a pipe stdin so stdinIsTTY() returns false.
+	withStdin(t, "")
+
+	var rc int
+	errOut := captureStderr(t, func() {
+		rc = runExec([]string{"--", "byn-no-such-binary-zzz"}, cliScope{SourcePath: bynPath})
+	})
+	if rc != exitDaemonErr {
+		t.Errorf("rc = %d, want exitDaemonErr (%d)", rc, exitDaemonErr)
+	}
+	if !strings.Contains(errOut, "not pinned") {
+		t.Errorf("stderr = %q, want 'not pinned' in message", errOut)
+	}
+	if !strings.Contains(errOut, "[exec] actions") {
+		t.Errorf("stderr = %q, want '[exec] actions' in hint", errOut)
+	}
+	// Exactly one IPC call — non-TTY must NOT retry.
+	if calls := fd.callsFor(ipc.OpExecFetch); len(calls) != 1 {
+		t.Errorf("non-TTY unmatched made %d calls, want exactly 1", len(calls))
+	}
+}
+
+// TestRunExec_ArgvSentOnWire: the CLI sends the full untruncated Argv for
+// actions matching, distinct from the ≤200-char Command audit label.
+func TestRunExec_ArgvSentOnWire(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpExecFetch, ipc.ExecFetchResp{})
+
+	// Build a 10-token argv — short enough not to truncate Command but
+	// distinct from Command format.
+	argv := []string{"byn-no-such-binary-zzz", "a", "b", "c", "d"}
+	_ = runExec(append([]string{"--"}, argv...), cliScope{})
+
+	calls := fd.callsFor(ipc.OpExecFetch)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 exec.fetch call, got %d", len(calls))
+	}
+	var req ipc.ExecFetchReq
+	requireUnmarshal(t, calls[0].Body, &req)
+	if len(req.Argv) != len(argv) {
+		t.Fatalf("Argv len = %d, want %d", len(req.Argv), len(argv))
+	}
+	for i, a := range argv {
+		if req.Argv[i] != a {
+			t.Errorf("Argv[%d] = %q, want %q", i, req.Argv[i], a)
+		}
 	}
 }
 

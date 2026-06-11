@@ -328,13 +328,35 @@ Dump active scope as a flat key→value document.
 
 ## Execution
 
-### `byn exec -- COMMAND [ARGS]`
+### `byn exec -- COMMAND [ARGS]` (direct form)
+### `byn exec NAME [ARGS]` (alias form)
 
-Replace the CLI process with COMMAND, injecting vault env-vars into
-its environment.
+Replace the CLI process with COMMAND (direct form) or with the command
+expanded from the `.byn` `[aliases]` table (alias form), injecting vault
+env-vars into its environment.
 
-- The `--` separator is **required** — without it, the wrapper
-  consumes flags meant for the child.
+**Two grammars:**
+
+- `byn exec -- COMMAND [ARGS]` — direct form. The `--` separator is
+  **required** to disambiguate byn's own flags from the child's flags.
+- `byn exec NAME [ARGS]` — alias form. `NAME` must be defined in the
+  trusted `.byn`'s `[aliases]` table. The alias value is the base
+  command; extra `ARGS` are appended before exec. A `.byn` must be in
+  scope.
+
+**Strict passthrough for alias form:** everything after `NAME` (including
+`--flag`, `--help`, `--vault`, etc.) is passed opaquely to the child — byn
+does NOT scan those tokens for its own flags.
+
+Examples:
+
+```sh
+byn exec -- /usr/bin/env                      # direct: exec /usr/bin/env
+byn exec deploy                               # alias: expands from .byn [aliases]
+byn exec deploy --env prod                    # alias + extra args (passthrough)
+byn --vault myv exec deploy                   # globals before subcommand still work
+```
+
 - Implemented via `syscall.Exec`: the child gets the same PID as the
   CLI that invoked it.
 - **Server-side authorization (one round-trip):** the CLI sends a
@@ -342,10 +364,31 @@ its environment.
   parses the `.byn` itself, then returns **only** the entries listed in
   `[exec] env`. A compromised client cannot widen the allowlist — the
   daemon owns the entire path from trust check to env assembly.
+- **Alias not found:** if the alias name is not in the trust record, the
+  daemon returns an error listing up to 8 available alias names.
+- **Alias shadowing:** `byn exec test` (no `--`) runs the alias if one is
+  defined; `byn exec -- test` always runs the literal binary `test`.
 - Denial messages (untrusted / changed / tampered / stale) come from
   the daemon with a `byn trust` recovery hint.
+- **`[exec] actions` — command allowlist (three states):**
+  Controls which commands may run without per-call authorization. For the
+  alias form, matching is performed against the *resolved* argv (alias
+  base + extra args) — the same as the direct form.
+  - *Absent or empty:* every exec requires authorization (password/token).
+  - `actions = ["/usr/bin/env", "/usr/local/bin/make"]`: listed commands
+    run freely (authorization is the act of pinning); unlisted commands
+    require authorization on each run. Entries may use typed placeholders
+    (`{{uuid}}`, `{{args}}`, etc.) — see
+    [byn-file-format.md](byn-file-format.md#actions-pattern-placeholders).
+  - `actions = ["*"]` or `actions = "*"`: all commands run freely
+    (wildcard — shown as a warning at `byn trust` time; use with care).
+  Actions policy is read from the MAC-bound trust record, not the live
+  file — editing the `.byn` post-trust cannot change the effective policy
+  without re-trusting (which requires the master password). Actions
+  enforcement is **independent** of `[security] per_action_auth`.
 - Every exec attempt — allowed or denied, including locked-vault
-  failures — is audited with the full command line.
+  failures — is audited with the full command line. Alias execs are
+  audited as `alias <name> → <resolved command>`.
 - **Vault locked:** always a hard failure ("vault is locked"). Unlike
   `delete`, exec cannot proceed with a password; `byn unlock` first.
 - Stage 1: `exec.LookPath` to vet the binary
@@ -420,15 +463,65 @@ Approve a `.byn` file (default: `./.byn`). **Always prompts for the
 master password** — granting trust is a proof-of-presence action, so it
 requires the password even when the vault is unlocked. The daemon (which
 owns `~/.byn/trusted_byn.json`) verifies the password against the vault
-the `.byn` targets, then records the canonical path + SHA-256.
+the `.byn` targets, then records the canonical path + SHA-256 + mtime
+snapshot + vault-key MAC (v2 trust record).
 
 If the `.byn` already exists in the store with a *different* hash (it
 changed since you trusted it), `byn trust` warns loudly before
 re-approving. Discovery itself never auto-trusts — a new or changed
 `.byn` is refused until you run this command.
 
+**At grant time**, the daemon also displays the effective `[auth]` policy
+and `[exec] actions` from the file so you can confirm what you're
+approving.
+
+**64KB cap:** `.byn` files larger than 65536 bytes are refused at both
+grant time and exec.
+
+**Malformed `.byn`:** invalid TOML is rejected at grant time with a parse
+error; the file is not recorded in the trust store.
+
 - `--password-stdin` — read the password from stdin (for scripts), e.g.
   `printf '%s' "$PW" | byn trust --password-stdin ./.byn`.
+- `--paths "a,b,c"` — comma-separated list of paths to trust at once.
+- `--recursive DIR` — trust every `.byn` under DIR.
+
+### `[auth]` table — per-scope per-action authorization policy
+
+A `.byn` may carry an `[auth]` table that overrides the global
+`[security] per_action_auth` flag for operations in this file's scope:
+
+| Key | Value | Effect |
+|---|---|---|
+| `get` / `update` / `delete` / `exec` | `"always"` | Fresh auth required unconditionally, even when `per_action_auth` is OFF |
+| `get` / `update` / `delete` / `exec` | `"none"` | Gate skipped entirely, even when `per_action_auth` is ON |
+| (absent) | — | Global `per_action_auth` flag decides |
+
+`update` covers overwrite-put and rename. `delete` covers delete, env
+clear/delete, project delete, vault delete.
+
+**Ad-hoc exec exclusion:** the `[auth] exec` key applies only to
+trusted-`.byn` exec (Path ≠ ""). Ad-hoc exec (no `.byn`) is governed
+solely by `[security] per_action_auth`.
+
+**Structural-ops note:** vault-level ops (`vault.delete`, `vault.rename`)
+pass an empty Scope (no project/env) to the policy gate. A record scoped
+broadly to an entire vault matches and therefore gates those ops.
+
+Policy is MAC-bound at grant time — editing the `.byn` post-trust cannot
+change the effective policy without re-trusting.
+
+### `byn trust diff PATH`
+
+Compare the current `.byn` content against the snapshot recorded at
+trust time, and print a unified diff.
+
+- **Exit 0** — content and mtime are both identical (still trusted).
+- **Exit 1** — content differs OR mtime-only changed (re-trust required
+  either way). For mtime-only: prints "content identical; modification
+  time changed".
+- **Exit 2** — daemon not running.
+- **Exit 3** — daemon error (path not trusted, file exceeds 64KB, etc.).
 
 ### `byn untrust [PATH]`
 
@@ -437,6 +530,7 @@ Revoke trust (default: `./.byn`). Idempotent. Routed through the daemon.
 ### `byn trust list [--json]`
 
 Print every trusted path and the first 12 hex chars of its hash.
+With `--json`, emit a JSON array of trust records.
 
 See [`.byn` file format](byn-file-format.md) for the discovery
 algorithm.

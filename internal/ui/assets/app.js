@@ -1157,8 +1157,67 @@ async function generateByn() {
     const resp = await api("POST", "/api/byn/write", {
       dir: r.dir, scope: sc, env_vars: r.vars, trust, password, presence_token: presence,
     });
-    toast(".byn written → " + resp.path + (resp.trusted ? " · trusted" : ""));
+    let msg = ".byn written → " + resp.path + (resp.trusted ? " · trusted" : "");
+    let toastDur = 2000;
+    if (resp.trusted) {
+      const policyLines = buildPolicyLines(resp);
+      if (policyLines.length) { msg += "\n" + policyLines.join("\n"); toastDur = 6000; }
+    }
+    toast(msg, false, toastDur);
   } catch (e) { toast(e.message, true); }
+}
+
+// buildPolicyLines returns a short array of human-readable lines describing the
+// policy a .byn grants (spec §4.5 footgun guard). Shown in the portal after
+// a trust grant so the user sees what they approved.
+//
+// LOUD warnings are shown for:
+//   - any action containing "{{args}}" (permits arbitrary extra arguments)
+//   - any action whose first token is a known shell interpreter and has a
+//     placeholder (wildcard-equivalent shell injection risk)
+function buildPolicyLines(resp) {
+  const lines = [];
+  // When [auth] exec="none" is set, any command runs re-auth-free on this
+  // scope. Show that fact instead of the misleading "every exec requires auth"
+  // line (which would be false when exec=none is in effect).
+  const execNone = resp.auth && resp.auth["exec"] === "none";
+  if (resp.actions_wildcard) {
+    lines.push('policy: actions "*" — ALL commands run re-auth-free');
+  } else if (resp.actions && resp.actions.length) {
+    lines.push("policy: actions: " + resp.actions.join(", "));
+    // Per-action LOUD warnings for high-risk patterns.
+    const shellInterpreters = new Set(["sh","bash","zsh","dash","ksh","fish","python","python3","node","perl","ruby"]);
+    for (const action of resp.actions) {
+      if (action === "*") continue;
+      // {{args}} tail: permits arbitrary extra arguments.
+      if (action.indexOf("{{args}}") !== -1) {
+        lines.push('Warning: action "' + action + '" permits ARBITRARY extra arguments');
+      }
+      // Shell interpreter with placeholder: wildcard-equivalent.
+      const tokens = action.split(/\s+/);
+      const base = tokens[0] ? tokens[0].replace(/^.*[\\/]/, "") : "";
+      const hasPlaceholder = action.indexOf("{{") !== -1;
+      if (shellInterpreters.has(base) && hasPlaceholder) {
+        lines.push('Warning: action "' + action + '" is wildcard-equivalent — it pins a shell interpreter with a free argument');
+      }
+    }
+  } else if (execNone) {
+    lines.push('policy: auth policy exec="none" — ANY command runs re-auth-free on this scope');
+  } else {
+    lines.push("policy: no [exec] actions — every byn exec will require authorization");
+  }
+  if (resp.env_wildcard) {
+    lines.push('policy: env "*" — ALL scoped vars are injected on exec');
+  }
+  if (resp.auth && Object.keys(resp.auth).length) {
+    const pairs = Object.keys(resp.auth).sort().map((k) => k + "=" + resp.auth[k]);
+    lines.push("policy: auth overrides: " + pairs.join(", "));
+  }
+  if (resp.aliases && Object.keys(resp.aliases).length) {
+    const pairs = Object.keys(resp.aliases).sort().map((k) => k + " → " + resp.aliases[k]);
+    lines.push("policy: aliases: " + pairs.join(", "));
+  }
+  return lines;
 }
 
 // tryPasskeyPresence runs a passkey ceremony to authorize a trust grant and
@@ -1182,10 +1241,13 @@ async function doDelete(s) {
 // ---- toast + help -------------------------------------------------------
 
 let toastTimer = null;
-function toast(msg, isErr) {
+// toast(msg, isErr, dur) — dur overrides the auto-timeout (ms); defaults:
+//   2000ms for ok, 4200ms for err. Policy-bearing toasts pass dur=6000.
+function toast(msg, isErr, dur) {
   const t = $("#toast"); t.textContent = msg; t.className = "toast " + (isErr ? "err" : "ok");
   t.hidden = false; clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, isErr ? 4200 : 2000);
+  const ms = dur != null ? dur : (isErr ? 4200 : 2000);
+  toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 function isTyping() { const a = document.activeElement; return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable); }
 function toggleHelp() { const p = $("#help-pop"); p.hidden = !p.hidden; }

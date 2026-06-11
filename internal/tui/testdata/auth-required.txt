@@ -1,0 +1,30 @@
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                               ╭────────────────────────────────────╮                               
+                               │  Authorize                         │                               
+                               │                                    │                               
+                               │  [security] per_action_auth is on  │                               
+                               │                                    │                               
+                               │  Password: (enter password)█       │                               
+                               │                                    │                               
+                               │  Enter submit  ESC cancel          │                               
+                               ╰────────────────────────────────────╯                               
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+AUTHORIZE  default/billing/staging  unlocked                                Enter submit  ESC cancel

@@ -51,7 +51,9 @@ func bootstrapExecFetch(t *testing.T, bynContent string) (*session, string, stri
 // --------------------------------------------------------------------------
 
 func TestE2E_ExecFetch_AllowlistEnforced(t *testing.T) {
-	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"DB_URL\"]\n"
+	// Pin /usr/bin/env in [exec] actions so it runs re-auth-free (this test is
+	// about env allowlist filtering, not the actions gate).
+	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"DB_URL\"]\nactions = [\"/usr/bin/env\"]\n"
 	s, projDir, dotPath := bootstrapExecFetch(t, bynContent)
 
 	// Store two secrets in the alpha scope.
@@ -90,7 +92,8 @@ func TestE2E_ExecFetch_AllowlistEnforced(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestE2E_ExecFetch_ChangedBynDenied(t *testing.T) {
-	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"DB_URL\"]\n"
+	// Pin /usr/bin/env so the first exec (before tampering) succeeds re-auth-free.
+	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"DB_URL\"]\nactions = [\"/usr/bin/env\"]\n"
 	s, projDir, dotPath := bootstrapExecFetch(t, bynContent)
 
 	if so, se, code := s.runInDir(projDir, "myval", nil, "put", "DB_URL"); code != 0 {
@@ -242,7 +245,10 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	dotPath := filepath.Join(projDir, ".byn")
-	bynContent := "[scope]\nproject = \"default\"\n[exec]\nenv = [\"DB_URL\"]\n"
+	// Pin /usr/bin/env in [exec] actions — exec must run re-auth-free on a
+	// matched pinned command even while per_action_auth is on. The .byn's own
+	// contract (pinned action = authorization) is independent of the global flag.
+	bynContent := "[scope]\nproject = \"default\"\n[exec]\nenv = [\"DB_URL\"]\nactions = [\"/usr/bin/env\"]\n"
 	if err := os.WriteFile(dotPath, []byte(bynContent), 0o600); err != nil {
 		t.Fatalf("write .byn: %v", err)
 	}
@@ -251,7 +257,8 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 		t.Fatalf("trust .byn: code=%d stderr=%q", code, se2)
 	}
 
-	// exec via the trusted .byn injects DB_URL WITHOUT any interactive password.
+	// exec via the trusted .byn injects DB_URL WITHOUT any interactive password
+	// (pinned action = authorization; per_action_auth flag is irrelevant here).
 	execOut, execSe, execCode := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
 	if execCode != 0 {
 		t.Fatalf("exec under per_action_auth: code=%d stderr=%q", execCode, execSe)
@@ -272,7 +279,9 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 
 func TestE2E_ExecFetch_NoCredLeak(t *testing.T) {
 	const secretValue = "x7Qp-no-leak-secret-v1"
-	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"SECRET_VAR\"]\n"
+	// Pin /usr/bin/env so exec runs re-auth-free (this test is about cred-leak,
+	// not the actions gate).
+	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"SECRET_VAR\"]\nactions = [\"/usr/bin/env\"]\n"
 	s, projDir, dotPath := bootstrapExecFetch(t, bynContent)
 
 	if so, se, code := s.runInDir(projDir, secretValue, nil, "put", "SECRET_VAR"); code != 0 {
@@ -379,5 +388,43 @@ func TestE2E_ExecFetch_LockedExecDenied(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "locked") {
 		t.Errorf("stderr should mention vault locked:\n%s", stderr)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Test 6 — Unlisted command non-TTY → authorization required
+//
+// Trust a .byn with specific [exec] actions (pinning /usr/bin/env) and then
+// exec an UNLISTED command (/usr/bin/true) in a non-TTY context (no password
+// available). The daemon must refuse with nonzero exit and stderr must mention
+// "[exec] actions". This pins the unconditional credential check for unmatched
+// commands, independent of the global per_action_auth flag.
+// --------------------------------------------------------------------------
+
+func TestE2E_ExecFetch_UnlistedCommandNonTTY(t *testing.T) {
+	// Pin only /usr/bin/env; /usr/bin/true is NOT in the list.
+	bynContent := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"DB_URL\"]\nactions = [\"/usr/bin/env\"]\n"
+	s, projDir, dotPath := bootstrapExecFetch(t, bynContent)
+
+	if so, se, code := s.runInDir(projDir, "myval", nil, "put", "DB_URL"); code != 0 {
+		t.Fatalf("put DB_URL: code=%d stdout=%q stderr=%q", code, so, se)
+	}
+
+	// Trust the .byn file.
+	if _, se, code := s.runInDir(projDir, execfetchPW+"\n", nil,
+		"trust", "--password-stdin", dotPath); code != 0 {
+		t.Fatalf("trust: code=%d stderr=%q", code, se)
+	}
+
+	// Exec a command NOT in [exec] actions, no password → must fail.
+	// Exit code is non-zero; depending on whether stdin is a TTY the CLI may
+	// return exitDaemonErr (3, non-TTY path) or exitErr (1, TTY path after
+	// failed prompt) — both are acceptable; we only assert nonzero.
+	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/true")
+	if code == 0 {
+		t.Fatal("exec of unlisted command should fail; got code 0")
+	}
+	if !strings.Contains(stderr, "[exec] actions") {
+		t.Errorf("stderr should mention '[exec] actions':\n%s", stderr)
 	}
 }

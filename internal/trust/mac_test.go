@@ -3,6 +3,7 @@ package trust
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -118,7 +119,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got != r {
+	if !reflect.DeepEqual(got, r) {
 		t.Fatalf("roundtrip mismatch:\n got %+v\nwant %+v", got, r)
 	}
 	if !got.VerifyFPMAC(fpKey) || !got.VerifyVKMAC(vkKey) {

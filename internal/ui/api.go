@@ -490,7 +490,7 @@ func (s *Server) handleBynWrite(w http.ResponseWriter, r *http.Request) {
 	if !s.run(w, r, ipc.OpBynWrite, req, &resp) {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": resp.Path, "trusted": resp.Trusted})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // GET /api/fs/listdir?path=... lists subdirectories for the directory picker.

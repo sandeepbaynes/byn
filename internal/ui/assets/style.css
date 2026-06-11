@@ -316,6 +316,7 @@ select.input { appearance: none; cursor: pointer; }
   background: var(--raised); border: 1px solid var(--border-2); color: var(--text);
   padding: 10px 16px; border-radius: var(--r-sm); font-size: 12.5px; z-index: 300;
   box-shadow: var(--shadow); animation: toastIn .2s var(--ease);
+  white-space: pre-line;
 }
 /* Dedicated keyframe that keeps the translateX(-50%) centering throughout —
    the shared `rise` animation overrides transform and made the toast jump

@@ -326,6 +326,50 @@ Unlike the delete family, exec cannot proceed with a password alone;
 the vault must be unlocked first. This is intentional: a compromised
 client should not be able to use exec to partially bypass lock state.
 
+### [exec] actions: which commands may run free
+
+The env allowlist (`[exec] env`) controls *which variables* are injected.
+The actions pinlist (`[exec] actions`) controls *which commands* may run
+without fresh per-call authorization. The two are independent — a command
+can be pinned without any env vars flowing, or env vars can flow into a
+command that requires auth each time.
+
+**Three-state semantics (NU-2):**
+
+| State | Behavior |
+|---|---|
+| `actions` absent or empty | **Secure default.** No command runs free — every `byn exec` requires authorization (password or presence token). Existing `.byn` files without `[exec] actions` behave this way after re-trust. |
+| `actions = "*"` or `["*"]` | **Wildcard.** Any command runs without re-authorization. CLI prints a loud warning on every exec. Use only in fully-trusted environments. |
+| `actions = ["cmd arg", ...]` | **Explicit list.** Only exact argv matches (joined with spaces) run free; all others require authorization. |
+
+**[auth] exec policy** (optional, in the `.byn` `[auth]` table):
+- `"always"` — fresh auth for every exec, even pinned/wildcard commands. Strongest.
+- `"none"` — no auth for any command. Equivalent to `actions = "*"` but bypasses
+  the wildcard warning at exec time. The warning is shown at `byn trust` time (Task 3).
+- `"trusted"` — default; let the actions list decide.
+
+**Tamper-evidence:** actions and auth policy are MAC-bound into the trust
+record at grant time. The daemon reads policy from the record, not from the
+live file, so editing the `.byn` after trust is granted cannot change the
+effective actions policy without re-trusting (which requires the password).
+
+**Independence from `per_action_auth`:** the actions gate applies regardless
+of the global `[security] per_action_auth` flag. The flag governs operations
+that have no `.byn` contract (ad-hoc exec, `get`, `put`, `delete`, …). A
+`.byn`'s `[exec] actions` list is the contract for trusted-`.byn` exec.
+Turning on `per_action_auth` does NOT add extra prompts to a trusted-`.byn`
+exec that has a pinned command.
+
+**`[auth] exec` scope:** the `exec` key in `[auth]` applies only to
+trusted-`.byn` exec (Path present). Ad-hoc exec (no `.byn`) is governed solely
+by `[security] per_action_auth` — `.byn` policy is never consulted for ad-hoc
+exec, because ad-hoc exec injects the whole scope with no env allowlist, and a
+`.byn`'s policy contract is tied to that file's own env allowlist.
+
+**Migration:** existing `.byn` files have no `[exec] actions` after re-trust
+— every exec will prompt for authorization until you add `actions`. This is
+intentional: the secure default is that no command runs free.
+
 ### Secrets are never in the shell
 
 `byn exec -- CMD ARGS` builds the env vector and replaces the
@@ -416,6 +460,79 @@ or keylogging the password prompt. Session tokens (NU-3) will restore
 one-auth-per-session ergonomics. Privilege separation (NU-5/6) is the
 path to a stronger UID boundary.
 
+### `.byn` `[auth]` per-scope policy
+
+The `[auth]` table in a `.byn` file can override the global
+`per_action_auth` flag **per operation, per scope**. This lets a
+team commit a policy alongside the project config and have it take
+effect automatically for anyone who trusts the file — without
+changing the global flag.
+
+**Keys:** `get`, `update` (overwrite-put, rename, vault-rename),
+`delete` (delete, env.clear, env.delete, project.delete, vault.delete),
+`exec`. Values: `always`, `none`. (The `exec` key is enforced
+separately via the `[exec]` actions gate; see the actions section.)
+
+**Values and their effect on the per-action gate:**
+
+| Value | Effect |
+|---|---|
+| `always` | Fresh auth unconditionally, **even when `per_action_auth` is off**. Tightens. |
+| `none` | Gate skipped entirely for the matched scope, **even when `per_action_auth` is on**. Relaxes. |
+| absent | Flag decides (existing `per_action_auth` semantics). |
+
+**Policy lookup rules:**
+
+1. **Vault must be unlocked.** The policy is bound to the trust record
+   by VKMAC (vault-key-derived HMAC). Without the vault key the MAC
+   cannot be verified, so policy is ignored and flag semantics apply.
+   This is intentional — a policy that can't be verified is not
+   trustworthy.
+
+2. **Only v2 records with non-empty `[auth]`.** v1 records (no mtime
+   or snapshot, pre-NU-2 format) are never policy sources.
+
+3. **VKMAC must verify.** A record whose Auth field was edited after
+   grant (breaking the VKMAC) is silently ignored. Re-trust to mint a
+   fresh MAC.
+
+4. **Scope matching with specificity.** A record's `[scope]` is
+   compared to the request's (vault, project, env), with `""`
+   normalizing to `"default"` on both sides. Three specificity levels:
+
+   | Level | Match |
+   |---|---|
+   | 3 (most) | vault + project + env all present and matching |
+   | 2 | vault + project match; env unset on the record |
+   | 1 (least) | vault only; project and env unset on the record |
+
+   The most specific matching record wins per key. A vault-only record
+   (`[scope]` with no project/env) applies to ALL scopes within that
+   vault unless overridden by a more-specific record.
+
+5. **Tie at the same specificity → strictest value wins.** If two
+   records match at the same level and declare the same key, `"always"`
+   beats `"none"` beats absent. This ensures that layering a relaxing
+   policy on top of a tightening one never silently widens access.
+
+6. **No caching.** The trust store is read on every call. This keeps
+   a freshly-granted `.byn` effective immediately without a daemon
+   restart, at the cost of one small JSON read per gated op.
+
+**Structural-ops scope note:** vault-level operations (`vault.delete`,
+`vault.rename`) pass `Scope{}` (no project/env) to the policy gate. A
+vault-only record (project and env both unset in `[scope]`) matches `Scope{}`
+and therefore also gates vault-level ops. A record broadly scoped to an entire
+vault is deliberate: the operator knows they are granting policy for the whole
+vault.
+
+**Security note:** like all `.byn` trust, the policy is MAC-bound at
+grant time. A same-UID process can write `trusted_byn.json` directly
+(mode 0600 keeps others out but not you), which is the same user-space
+ceiling as the trust store itself. Re-signing with a daemon-resident
+key is deferred hardening (see table above); the VKMAC layer is the
+current protection against offline forgery.
+
 ### Agent mode (`--json`)
 
 When `--json` appears anywhere before `--` in argv, byn refuses
@@ -468,6 +585,78 @@ maison-agent/staging.` Never `Stored "DB_URL=…" in …`. Set
 - Caller UID + PID captured per event when the OS surfaces them.
   Helps trace which agent or shim made the call.
 - `byn doctor` runs verify on every vault's chain at any time.
+
+---
+
+## NU-2 migration guide
+
+NU-2 (released after v0.1.0) hardened the trust store with per-record
+snapshots, mtime tracking, vault-key MACs, and an `[exec] actions` command
+allowlist. Existing trust records created before NU-2 are classified as
+**stale** and blocked from exec until re-trusted.
+
+### What you will see
+
+```
+Error: /path/to/project/.byn predates tamper-protection — run `byn trust /path/to/project/.byn`
+```
+
+This is expected for every `.byn` you trusted before NU-2. Re-trusting
+upgrades the record to v2 (snapshot + mtime + MACs).
+
+### One-time re-trust
+
+```sh
+# Single file:
+byn trust ./.byn
+
+# Many files at once (one password prompt per vault):
+byn trust --paths "a/.byn,b/.byn,c/.byn"
+
+# Whole monorepo tree:
+byn trust --recursive ~/projects
+```
+
+### Re-trusted .byns without [exec] actions
+
+A `.byn` re-trusted without an `[exec] actions` key will prompt for
+authorization on **every** `byn exec` invocation — this is intentional.
+`[exec] actions` is the mechanism that pre-authorizes a specific command
+list so those commands run password-free; without it, every exec requires
+explicit approval. To avoid repeated prompts, add the commands you want to
+run freely:
+
+```toml
+[exec]
+actions = ["/usr/bin/env", "/usr/local/bin/make"]
+```
+
+### byn trust diff workflow
+
+When exec fails with `CHANGED` or `STALE`, inspect what changed before
+re-trusting:
+
+```sh
+byn exec -- make build      # fails: .byn has CHANGED
+byn trust diff ./.byn       # exits 1; prints unified diff to stdout
+                             # (mtime-only: "content identical; modification time changed")
+byn trust ./.byn            # re-approve (prompts for password)
+byn exec -- make build      # succeeds
+```
+
+`byn trust diff` exits **0** when content and mtime are both unchanged
+(file is still trusted, nothing to do), **1** when either differs
+(re-trust required), **2** when the daemon is not running, or **3** when
+the daemon returns an error (path not trusted, file exceeds 64KB, etc.).
+
+### Provider seam (for Enterprise Edition)
+
+The auth-provider registry introduced in NU-2 exposes a public interface
+(`auth.Provider`) that the EE can use to register additional authentication
+methods (phone approval, SSO, hardware token) without forking this
+repository. The base ships `password` and `passkey` providers. EE registers
+additional providers at startup via the exported registry — this is the
+extension point for NU-4's premium auth surfaces.
 
 ---
 

@@ -156,7 +156,11 @@ func TestE2E_Exec_TrustedBynRuns(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	dotPath := filepath.Join(projDir, ".byn")
-	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"alpha\"\n"), 0o600); err != nil {
+	// Pin the exact command+args in [exec] actions so exec runs free.
+	// NU-2: actions matching is token-wise, so the full argv must be listed.
+	// Use wildcard "*" here since we just want to verify trusted exec runs.
+	if err := os.WriteFile(dotPath,
+		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nactions = [\"*\"]\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
@@ -183,8 +187,10 @@ func TestE2E_Exec_EnvAllowlist(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	dotPath := filepath.Join(projDir, ".byn")
+	// Use wildcard actions so any command runs free. NU-2: [exec] actions required.
+	// This test is about env allowlist (X vs Y), not the actions gate.
 	if err := os.WriteFile(dotPath,
-		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"X\"]\n"), 0o600); err != nil {
+		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"X\"]\nactions = [\"*\"]\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {

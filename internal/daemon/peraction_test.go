@@ -6,6 +6,7 @@ package daemon
 
 import (
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -99,6 +100,14 @@ func TestPerActionGetWrongPasswordDenied(t *testing.T) {
 	err = c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY", Password: []byte("nope2")}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeRateLimited {
 		t.Fatalf("second wrong pw: code = %v, want rate_limited", code)
+	}
+	// Pin the retry-after rendering: the Recover hint must include a duration
+	// in seconds (e.g. "retry after 1s").
+	var rateLimitErr *ipc.ErrResponse
+	if errors.As(err, &rateLimitErr) {
+		if !regexp.MustCompile(`retry after \d+s`).MatchString(rateLimitErr.Recover) {
+			t.Errorf("rate-limited Recover = %q, want to match `retry after \\d+s`", rateLimitErr.Recover)
+		}
 	}
 }
 
@@ -593,23 +602,26 @@ func TestPerActionRenameFlagOffUnchanged(t *testing.T) {
 // ---- exec.fetch trusted .byn is unaffected --------------------------------
 
 // TestPerActionExecFetchUnaffected: exec.fetch returns values with NO password
-// while per_action_auth is on. The trusted .byn is the authorization.
+// while per_action_auth is on. The trusted .byn + pinned action is the
+// authorization. per_action_auth does NOT gate trusted-.byn exec — only the
+// .byn's own [exec] actions contract matters.
 func TestPerActionExecFetchUnaffected(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "SECRET", []byte("s3cret"))
 
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\n")
+	// Pin "myapp" in [exec] actions so it runs free regardless of per_action_auth.
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"myapp\"]\n")
 	grantBynFile(t, c, byn, pw)
 
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "myapp"})
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "myapp", Argv: []string{"myapp"}})
 	if err != nil {
-		t.Fatalf("exec.fetch with per_action_auth on: %v", err)
+		t.Fatalf("exec.fetch with per_action_auth on (pinned action): %v", err)
 	}
 	m := valueMap(resp.Values)
 	if m["SECRET"] != "s3cret" {
-		t.Errorf("SECRET = %q, want s3cret (exec.fetch must not be gated)", m["SECRET"])
+		t.Errorf("SECRET = %q, want s3cret (pinned action must run free)", m["SECRET"])
 	}
 }
 
@@ -693,22 +705,24 @@ func TestExecFetchAdHocFlagOffUnchanged(t *testing.T) {
 	}
 }
 
-// TestExecFetchTrustedStillFreeWithFlagOn: trusted .byn exec stays
-// credential-free even with per_action_auth on — the .byn IS the
-// authorization.
+// TestExecFetchTrustedStillFreeWithFlagOn: trusted .byn exec with a pinned
+// action stays credential-free even with per_action_auth on — the .byn
+// contract (the .byn + the pinned action) is the authorization.
 func TestExecFetchTrustedStillFreeWithFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "KEY", []byte("value"))
 
-	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"KEY\"]\n")
+	// Pin "myapp" in [exec] actions — the per_action_auth flag does NOT gate
+	// trusted-.byn exec; only the .byn's own actions contract matters.
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"KEY\"]\nactions = [\"myapp\"]\n")
 	grantBynFile(t, c, byn, pw)
 
-	// No password in the request — must succeed because Path is set.
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "myapp"})
+	// No password in the request — must succeed because Path is set and "myapp" is pinned.
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "myapp", Argv: []string{"myapp"}})
 	if err != nil {
-		t.Fatalf("trusted exec with flag on (no password): %v", err)
+		t.Fatalf("trusted exec with flag on and pinned action (no password): %v", err)
 	}
 	m := valueMap(resp.Values)
 	if m["KEY"] != "value" {

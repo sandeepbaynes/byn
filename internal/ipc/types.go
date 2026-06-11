@@ -76,6 +76,7 @@ const (
 	OpTrustGrant     Op = "trust.grant"
 	OpTrustGrantBulk Op = "trust.grant.bulk" // trust many .byn at once (one vault, one password)
 	OpTrustVerify    Op = "trust.verify"     // MAC-hardened TOFU check (fp + vk layers)
+	OpTrustDiff      Op = "trust.diff"       // diff current file vs the trusted snapshot
 	OpBynWrite       Op = "byn.write"        // portal writes a .byn scope file (+ optional trust)
 	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
@@ -102,7 +103,7 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpBynWrite, OpFSListDir,
+	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpFSListDir,
 	OpExecFetch,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
@@ -594,42 +595,68 @@ type TrustRemoveResp struct {
 
 // TrustGrantReq grants TOFU trust to the `.byn` at Path, gated by the master
 // password of Vault (the vault the file targets — its [scope] vault, or
-// "default"). The password is ALWAYS required, even when the vault is already
-// unlocked: granting trust is a proof-of-presence action, not an ambient one.
-// The daemon canonicalizes Path, reads + hashes the file itself, verifies the
-// password, then records {canonical path, hash}.
+// "default"). Granting trust is a proof-of-presence action, not an ambient
+// one: an unlocked session is not sufficient consent. Exactly one of Password
+// or PresenceToken must be supplied. Password works whether the vault is
+// locked or unlocked; PresenceToken requires the vault to be unlocked (to
+// derive the vk-MAC key).
 type TrustGrantReq struct {
 	Path     string `json:"path"`
 	Vault    string `json:"vault,omitempty"`
-	Password []byte `json:"password"`
+	Password []byte `json:"password,omitempty"`
+	// PresenceToken authorizes trust via a fresh passkey ceremony instead of
+	// the master password (see PasskeyAuthFinishResp.PresenceToken). One of
+	// Password or PresenceToken is required. The token is consumed (one-time)
+	// and the vault must be unlocked for the vk-MAC derivation.
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // TrustGrantResp reports the result. Changed=true means the path was already
 // trusted with a DIFFERENT hash (a re-approval of a modified file), so the
 // caller can surface a louder confirmation. SHA256 is the recorded fingerprint.
+// Actions, Auth, Aliases, EnvWildcard, and ActionsWildcard carry the policy
+// parsed from the .byn at grant time (spec §4.5 footgun guard — show at
+// approval).
 type TrustGrantResp struct {
-	Path    string `json:"path"`
-	SHA256  string `json:"sha256"`
-	Changed bool   `json:"changed"`
+	Path            string            `json:"path"`
+	SHA256          string            `json:"sha256"`
+	Changed         bool              `json:"changed"`
+	Actions         []string          `json:"actions,omitempty"`
+	Auth            map[string]string `json:"auth,omitempty"`
+	Aliases         map[string]string `json:"aliases,omitempty"`
+	EnvWildcard     bool              `json:"env_wildcard,omitempty"`
+	ActionsWildcard bool              `json:"actions_wildcard,omitempty"`
 }
 
-// TrustGrantBulkReq trusts every path in Paths against one Vault, verifying the
-// password ONCE (Argon2id) and reusing the derived key — so trusting N files in
-// a vault costs one KDF, not N. The CLI groups paths by vault and sends one
-// request per vault (each vault's password prompted once).
+// TrustGrantBulkReq trusts every path in Paths against one Vault, verifying
+// the password (or presence token) ONCE and reusing the derived key — so
+// trusting N files costs one KDF, not N. Exactly one of Password or
+// PresenceToken must be supplied. Password works whether the vault is locked
+// or unlocked; PresenceToken requires the vault to be unlocked.
 type TrustGrantBulkReq struct {
 	Paths    []string `json:"paths"`
 	Vault    string   `json:"vault,omitempty"`
-	Password []byte   `json:"password"`
+	Password []byte   `json:"password,omitempty"`
+	// PresenceToken authorizes bulk trust via a fresh passkey ceremony instead
+	// of the master password (see PasskeyAuthFinishResp.PresenceToken).
+	// One-time, vault-bound; vault must be unlocked for vk-MAC derivation.
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // TrustGrantResult is one path's outcome. Error is set on a per-file failure
-// (e.g. unreadable); the remaining paths still proceed.
+// (e.g. unreadable); the remaining paths still proceed. Actions, Auth, Aliases,
+// EnvWildcard, and ActionsWildcard carry the policy parsed from the .byn at
+// grant time (spec §4.5 footgun guard — show at approval).
 type TrustGrantResult struct {
-	Path    string `json:"path"`
-	SHA256  string `json:"sha256,omitempty"`
-	Changed bool   `json:"changed,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Path            string            `json:"path"`
+	SHA256          string            `json:"sha256,omitempty"`
+	Changed         bool              `json:"changed,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	Actions         []string          `json:"actions,omitempty"`
+	Auth            map[string]string `json:"auth,omitempty"`
+	Aliases         map[string]string `json:"aliases,omitempty"`
+	EnvWildcard     bool              `json:"env_wildcard,omitempty"`
+	ActionsWildcard bool              `json:"actions_wildcard,omitempty"`
 }
 
 // TrustGrantBulkResp reports each path's outcome, in request order.
@@ -652,10 +679,17 @@ type BynWriteReq struct {
 	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
-// BynWriteResp reports the written path and whether trust was granted.
+// BynWriteResp reports the written path and whether trust was granted. When
+// Trusted is set, the policy fields carry what the .byn declared at grant time
+// (spec §4.5 footgun guard — show at approval).
 type BynWriteResp struct {
-	Path    string `json:"path"`
-	Trusted bool   `json:"trusted"`
+	Path            string            `json:"path"`
+	Trusted         bool              `json:"trusted"`
+	Actions         []string          `json:"actions,omitempty"`
+	Auth            map[string]string `json:"auth,omitempty"`
+	Aliases         map[string]string `json:"aliases,omitempty"`
+	EnvWildcard     bool              `json:"env_wildcard,omitempty"`
+	ActionsWildcard bool              `json:"actions_wildcard,omitempty"`
 }
 
 // ListDirReq lists the subdirectories of Path (empty ⇒ the user's home dir) for
@@ -676,6 +710,26 @@ type ListDirResp struct {
 	Path    string     `json:"path"`
 	Parent  string     `json:"parent,omitempty"`
 	Entries []DirEntry `json:"entries"`
+}
+
+// TrustDiffReq asks the daemon to compare the current on-disk content of Path
+// against the snapshot recorded at trust time. No password required — manifests
+// are not secrets, and this is read-only (audit-logged).
+type TrustDiffReq struct {
+	Path string `json:"path"`
+}
+
+// TrustDiffResp returns the diff inputs and a mtime-only flag.
+// OldSnapshot is the full .byn content at grant time; NewContent is the
+// current on-disk content. When MTimeChangedOnly is true the byte content is
+// identical but the file's mtime differs from the recorded mtime (a `touch`
+// or an edit-then-revert). Trusted=false means no record exists.
+type TrustDiffResp struct {
+	Path             string `json:"path"`
+	Trusted          bool   `json:"trusted"`
+	OldSnapshot      []byte `json:"old_snapshot,omitempty"`
+	NewContent       []byte `json:"new_content,omitempty"`
+	MTimeChangedOnly bool   `json:"mtime_changed_only,omitempty"`
 }
 
 // TrustVerifyReq asks the daemon to verify a `.byn` against the hardened trust
@@ -713,13 +767,35 @@ type TrustVerifyResp struct {
 // scope at a different vault fails verification.
 //
 // Password and PresenceToken are only consulted when Path="" (ad-hoc exec)
-// and [security] per_action_auth is on. Trusted-.byn exec (Path!="") is
-// always credential-free — the .byn is the authorization.
+// and [security] per_action_auth is on, OR when Path!="" and the command is
+// not pinned in [exec] actions (NU-2). Trusted-.byn exec with a matched action
+// is credential-free — both the .byn AND the matching pinned command authorize.
+//
+// Alias/Argv semantics (NU-2.1):
+//
+//	Alias == "" (direct form):  Argv holds the full untruncated child argv.
+//	Alias != "" (alias form):   Argv holds only the extra passthrough args;
+//	                            the daemon looks up Alias in the trust record,
+//	                            expands it to its base command, appends Argv,
+//	                            and gates the RESOLVED argv through the normal
+//	                            pattern matrix. Path must be non-empty for
+//	                            alias exec — aliases are defined in a .byn.
 type ExecFetchReq struct {
 	Path    string `json:"path,omitempty"`
 	Scope   Scope  `json:"scope,omitempty"`
-	Command string `json:"command,omitempty"` // child argv label, for audit
-	// Password authorizes ad-hoc exec when [security] per_action_auth is on
+	Command string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
+	// Argv is the exact untruncated child argv for the direct form (Alias==""),
+	// or the extra passthrough args for the alias form (Alias!="").
+	// An old CLI that does not send Argv gets empty-Argv behavior: treated as
+	// unmatched → per-action auth required (fail-closed; acceptable version-skew).
+	Argv []string `json:"argv,omitempty"`
+	// Alias, when non-empty, names a [aliases] entry in the trusted .byn.
+	// Path must also be non-empty (aliases require a trusted .byn).
+	// The daemon expands the alias value + Argv into the resolved argv, then
+	// gates that through the normal [exec] actions pattern matrix.
+	Alias string `json:"alias,omitempty"`
+	// Password authorizes ad-hoc exec when [security] per_action_auth is on,
+	// and trusted-path exec when the command is not pinned in [exec] actions
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
 	Password      []byte `json:"password,omitempty"`
@@ -732,13 +808,26 @@ type ExecFetchValue struct {
 	Value []byte `json:"value"`
 }
 
-// ExecFetchResp returns the injection set. Wildcard=true: the allowlist
-// was "*" (CLI prints the loud warning). NoneDeclared=true: a .byn was
-// present but declared no [exec] env (CLI prints the note).
+// ExecFetchResp returns the injection set. Wildcard=true: the [exec] env
+// allowlist was "*" (CLI prints the loud warning). NoneDeclared=true: a .byn
+// was present but declared no [exec] env (CLI prints the note).
+// ActionsWildcard=true: the [exec] actions list was "*" — ALL commands run
+// re-auth-free (CLI prints a separate loud warning).
+// ResolvedArgv is the daemon-computed argv after alias expansion. Non-empty on
+// success for the alias path; also returned for the direct path (req.Argv
+// echoed back) so the CLI always has a single authoritative contract. Empty
+// for ad-hoc exec (no .byn) — the CLI uses its own argv in that case. The CLI
+// passes this verbatim to LookPath + syscall.Exec.
 type ExecFetchResp struct {
-	Values       []ExecFetchValue `json:"values"`
-	Wildcard     bool             `json:"wildcard,omitempty"`
-	NoneDeclared bool             `json:"none_declared,omitempty"`
+	Values          []ExecFetchValue `json:"values"`
+	Wildcard        bool             `json:"wildcard,omitempty"`
+	NoneDeclared    bool             `json:"none_declared,omitempty"`
+	ActionsWildcard bool             `json:"actions_wildcard,omitempty"`
+	// ResolvedArgv is the canonical argv the daemon authorized. For direct exec
+	// this is req.Argv verbatim; for alias exec this is the expanded form
+	// (alias base + extra args). The CLI executes exactly this, ignoring the
+	// locally-constructed argv — single source of truth.
+	ResolvedArgv []string `json:"resolved_argv,omitempty"`
 }
 
 // ---- Portal passkey (WebAuthn) ------------------------------------------

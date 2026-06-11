@@ -69,6 +69,11 @@ type opCompleteMsg struct {
 	Op   string
 	Err  error
 	Note string
+	// authCtx is the auth-retry context captured at dispatch time.
+	// Carrying it in the message (rather than storing on the model at
+	// dispatch time) prevents a second op dispatched before the first
+	// result lands from overwriting the pending context.
+	authCtx *authReqState
 }
 
 type auditLoadedMsg struct {
@@ -158,38 +163,38 @@ func yankToClipboardCmd(c Client, scope ipc.Scope, name string) tea.Cmd {
 	}
 }
 
-func putValueCmd(c Client, scope ipc.Scope, name string, value []byte) tea.Cmd {
+func putValueCmd(c Client, scope ipc.Scope, name string, value []byte, ctx *authReqState) tea.Cmd {
 	return func() tea.Msg {
 		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value}, &ipc.PutResp{})
-		return opCompleteMsg{Op: "put", Err: err, Note: name}
+		return opCompleteMsg{Op: "put", Err: err, Note: name, authCtx: ctx}
 	}
 }
 
 // addEntryCmd wraps OpPut with CreateOnly=true so the daemon refuses
 // a duplicate name. Used by ADD-ENTRY commit to surface duplicates
 // even when the local pre-check missed (race with another writer).
-func addEntryCmd(c Client, scope ipc.Scope, name string, value []byte) tea.Cmd {
+func addEntryCmd(c Client, scope ipc.Scope, name string, value []byte, ctx *authReqState) tea.Cmd {
 	return func() tea.Msg {
 		err := c.Call(ipc.OpPut,
 			ipc.PutReq{Scope: scope, Name: name, Value: value, CreateOnly: true},
 			&ipc.PutResp{})
-		return opCompleteMsg{Op: "add", Err: err, Note: name}
+		return opCompleteMsg{Op: "add", Err: err, Note: name, authCtx: ctx}
 	}
 }
 
-func deleteEntryCmd(c Client, scope ipc.Scope, name string) tea.Cmd {
+func deleteEntryCmd(c Client, scope ipc.Scope, name string, ctx *authReqState) tea.Cmd {
 	return func() tea.Msg {
 		err := c.Call(ipc.OpDelete, ipc.DeleteReq{Scope: scope, Name: name}, &ipc.DeleteResp{})
-		return opCompleteMsg{Op: "delete", Err: err, Note: name}
+		return opCompleteMsg{Op: "delete", Err: err, Note: name, authCtx: ctx}
 	}
 }
 
-func renameEntryCmd(c Client, scope ipc.Scope, oldName, newName string) tea.Cmd {
+func renameEntryCmd(c Client, scope ipc.Scope, oldName, newName string, ctx *authReqState) tea.Cmd {
 	return func() tea.Msg {
 		err := c.Call(ipc.OpRename,
 			ipc.RenameReq{Scope: scope, OldName: oldName, NewName: newName},
 			&ipc.RenameResp{})
-		return opCompleteMsg{Op: "rename", Err: err, Note: newName}
+		return opCompleteMsg{Op: "rename", Err: err, Note: newName, authCtx: ctx}
 	}
 }
 
@@ -258,4 +263,102 @@ func loadAuditCmd(c Client, vault string, lines int) tea.Cmd {
 // generic refresh loop.
 func tickCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// ---- Auth step-up retry commands ----------------------------------------
+//
+// These are exact copies of the value-op commands above, but with the
+// Password field set. They share the same result message types so the
+// Update handler can fold them identically.
+//
+// Each function zeros pw after c.Call returns.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+
+// authRetryMsg carries the result of retrying an op after the user
+// supplied a password in the "Authorize" overlay.
+type authRetryMsg struct {
+	// kind identifies which op was retried so Update can apply the
+	// right success path (reveal prefill vs. entry reload).
+	kind    authRetryKind
+	name    string // entry name, for entryValueMsg / opCompleteMsg routing
+	getResp ipc.GetResp
+	err     error
+}
+
+// authRetryKind mirrors authPendingOpKind but lives in the data layer.
+type authRetryKind int
+
+const (
+	authRetryGet authRetryKind = iota
+	authRetryPut
+	authRetryDelete
+	authRetryRename
+)
+
+// authRetryGetCmd re-issues OpGet with the supplied password.
+// pw is zeroed after the call returns; a copy is passed to the request so
+// the struct is independent of the zeroing.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+func authRetryGetCmd(c Client, scope ipc.Scope, name string, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		var resp ipc.GetResp
+		pwCopy := append([]byte{}, pw...) //nolint:gocritic // deliberate copy before zeroing pw
+		err := c.Call(ipc.OpGet, ipc.GetReq{Scope: scope, Name: name, Password: pwCopy}, &resp)
+		for i := range pw {
+			pw[i] = 0
+		}
+		return authRetryMsg{kind: authRetryGet, name: name, getResp: resp, err: err}
+	}
+}
+
+// authRetryPutCmd re-issues OpPut with the supplied password.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+func authRetryPutCmd(c Client, scope ipc.Scope, name string, value []byte, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		pwCopy := append([]byte{}, pw...) //nolint:gocritic
+		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, Password: pwCopy}, &ipc.PutResp{})
+		for i := range pw {
+			pw[i] = 0
+		}
+		return authRetryMsg{kind: authRetryPut, name: name, err: err}
+	}
+}
+
+// authRetryAddCmd re-issues OpPut with CreateOnly and the supplied password.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+func authRetryAddCmd(c Client, scope ipc.Scope, name string, value []byte, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		pwCopy := append([]byte{}, pw...) //nolint:gocritic
+		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, CreateOnly: true, Password: pwCopy}, &ipc.PutResp{})
+		for i := range pw {
+			pw[i] = 0
+		}
+		return authRetryMsg{kind: authRetryPut, name: name, err: err}
+	}
+}
+
+// authRetryDeleteCmd re-issues OpDelete with the supplied password.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+func authRetryDeleteCmd(c Client, scope ipc.Scope, name string, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		pwCopy := append([]byte{}, pw...) //nolint:gocritic
+		err := c.Call(ipc.OpDelete, ipc.DeleteReq{Scope: scope, Name: name, Password: pwCopy}, &ipc.DeleteResp{})
+		for i := range pw {
+			pw[i] = 0
+		}
+		return authRetryMsg{kind: authRetryDelete, name: name, err: err}
+	}
+}
+
+// authRetryRenameCmd re-issues OpRename with the supplied password.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+func authRetryRenameCmd(c Client, scope ipc.Scope, oldName, newName string, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		pwCopy := append([]byte{}, pw...) //nolint:gocritic
+		err := c.Call(ipc.OpRename, ipc.RenameReq{Scope: scope, OldName: oldName, NewName: newName, Password: pwCopy}, &ipc.RenameResp{})
+		for i := range pw {
+			pw[i] = 0
+		}
+		return authRetryMsg{kind: authRetryRename, name: newName, err: err}
+	}
 }

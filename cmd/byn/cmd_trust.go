@@ -1,6 +1,7 @@
 // `byn trust` — manage the TOFU trust store for `.byn` files.
 //
 //	byn trust [PATH]            Trust the .byn at PATH (default: CWD/.byn)
+//	byn trust diff [PATH]       Show a unified diff vs the trusted snapshot
 //	byn trust list              List trusted paths
 //	byn untrust [PATH]          Revoke trust for PATH (default: CWD/.byn)
 //
@@ -17,8 +18,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -28,6 +31,8 @@ import (
 func runTrust(args []string, _ cliScope) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "diff":
+			return runTrustDiff(args[1:])
 		case "list", "ls":
 			return runTrustList(args[1:])
 		case "help", "--help", "-h":
@@ -134,6 +139,7 @@ func runTrustAdd(args []string) int {
 					verb = "Re-trusted (content changed)"
 				}
 				hintf("%s %s (sha256=%s).", verb, r.Path, r.SHA256[:12])
+				renderTrustPolicy(r)
 				continue
 			}
 			tag := "trusted"
@@ -141,6 +147,7 @@ func runTrustAdd(args []string) int {
 				tag = "re-trusted (changed)"
 			}
 			fmt.Fprintf(os.Stderr, "  %s %s [%s] %s\n", cyan("+"), r.Path, v, tag)
+			renderTrustPolicy(r)
 		}
 	}
 	if multi {
@@ -293,6 +300,167 @@ func runTrustList(args []string) int {
 	return exitOK
 }
 
+// runTrustDiff asks the daemon to compare the current .byn content against
+// the snapshot recorded at trust time and renders a unified diff.
+//
+// Exit codes:
+//
+//	0 — content and mtime are identical (still trusted, nothing to do)
+//	1 — content differs OR mtime-only changed (re-trust required)
+//	2 — daemon is not running (standard daemon-down code)
+//	3 — daemon returned an error (not trusted, oversize, etc.)
+func runTrustDiff(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "%s usage: byn trust diff <path>\n", boldRed("Error:"))
+		fmt.Fprintf(os.Stderr, "%s byn trust diff ./.byn\n", yellow("Example:"))
+		return exitErr
+	}
+	path := args[0]
+
+	dir, err := defaultDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
+		return exitErr
+	}
+
+	var resp ipc.TrustDiffResp
+	if cerr := newClient(dir).Call(ipc.OpTrustDiff, ipc.TrustDiffReq{Path: path}, &resp); cerr != nil {
+		return handleCallError(cerr)
+	}
+
+	// mtime-only: content identical but file was touched.
+	if resp.MTimeChangedOnly {
+		fmt.Fprintf(os.Stderr, "%s content identical; modification time changed (touch?) — re-trust to clear:\n",
+			yellow("Hint:"))
+		fmt.Fprintf(os.Stderr, "%s byn trust %s\n", yellow("Run:"), resp.Path)
+		return exitErr // exit 1 — needs re-trust
+	}
+
+	// Truly identical (content + mtime).
+	if string(resp.OldSnapshot) == string(resp.NewContent) {
+		hintf("no changes — still trusted.")
+		return exitOK
+	}
+
+	// Render unified diff.
+	diff := difflib.UnifiedDiff{
+		A:        difflib.SplitLines(string(resp.OldSnapshot)),
+		B:        difflib.SplitLines(string(resp.NewContent)),
+		FromFile: "trusted",
+		ToFile:   "current",
+		Context:  3,
+	}
+	text, derr := difflib.GetUnifiedDiffString(diff)
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "%s generating diff: %v\n", boldRed("Error:"), derr)
+		return exitErr
+	}
+	fmt.Print(text)
+	fmt.Fprintf(os.Stderr, "%s re-trust to approve the new content:\n", yellow("Hint:"))
+	fmt.Fprintf(os.Stderr, "%s byn trust %s\n", yellow("Run:"), resp.Path)
+	return exitErr // exit 1 — content changed, re-trust needed
+}
+
+// renderTrustPolicy prints the policy a .byn grants, per spec §4.5 footgun
+// guard: the user sees what they just approved before they walk away. This
+// is printed after the "Trusted / Re-trusted" line.
+//
+// Three cases for actions:
+//  1. ActionsWildcard: every exec runs re-auth-free — LOUD warning.
+//  2. len(Actions) > 0: these specific commands run re-auth-free; per-action
+//     warnings are shown for {{args}} patterns and shell-interpreter patterns.
+//  3. neither: no free exec — every exec on this scope requires authorization.
+//
+// EnvWildcard is printed as a separate yellow line (footgun: the whole scope
+// is injected on exec, not just named vars).
+//
+// Auth policy overrides are printed when non-empty; "get=none" (and
+// "delete=none", "exec=none") are highlighted in yellow because they disable
+// a gate.
+//
+// Aliases are printed as a compact list when present, with LOUD warnings for:
+//   - any action that contains {{args}} (permits arbitrary extra arguments)
+//   - any action that is a shell-interpreter-with-placeholder (wildcard-equivalent)
+func renderTrustPolicy(r ipc.TrustGrantResult) {
+	// When [auth] exec="none" is set, ANY command runs re-auth-free on this
+	// scope. Print that fact loudly and suppress the "no [exec] actions" line
+	// (which would be FALSE — "none" is not "requires auth for every command").
+	execNone := r.Auth["exec"] == "none"
+
+	switch {
+	case r.ActionsWildcard:
+		fmt.Fprintf(os.Stderr, "  %s actions: %s — ALL commands run re-auth-free\n",
+			yellow("policy:"), boldYellow(`"*"`))
+	case len(r.Actions) > 0:
+		fmt.Fprintf(os.Stderr, "  %s actions: %s\n",
+			dim("policy:"), strings.Join(r.Actions, ", "))
+		// Per-action LOUD warnings for high-risk patterns.
+		for _, action := range r.Actions {
+			if action == "*" {
+				continue
+			}
+			p, err := bynfile.ParseActionPattern(action)
+			if err != nil {
+				continue
+			}
+			if p.HasArgsTail() {
+				fmt.Fprintf(os.Stderr, "  %s action %q permits ARBITRARY extra arguments\n",
+					boldYellow("Warning:"), action)
+			}
+			if bynfile.ShellInterpreterWithPlaceholder(p) {
+				fmt.Fprintf(os.Stderr, "  %s action %q is wildcard-equivalent — it pins a shell interpreter with a free argument\n",
+					boldYellow("Warning:"), action)
+			}
+		}
+	case execNone:
+		// auth exec=none: every command runs re-auth-free — wildcard-equivalent.
+		fmt.Fprintf(os.Stderr, "  %s %s — ANY command runs re-auth-free on this scope\n",
+			yellow("policy:"), boldYellow(`auth policy exec="none"`))
+	default:
+		// No pinned actions and no exec=none: every exec requires authorization.
+		fmt.Fprintf(os.Stderr, "  %s no [exec] actions — every byn exec on this scope will require authorization\n",
+			dim("policy:"))
+	}
+	if r.EnvWildcard {
+		fmt.Fprintf(os.Stderr, "  %s env: %s — ALL scoped vars are injected on exec\n",
+			yellow("policy:"), boldYellow(`"*"`))
+	}
+	if len(r.Auth) > 0 {
+		keys := make([]string, 0, len(r.Auth))
+		for k := range r.Auth {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			v := r.Auth[k]
+			entry := k + "=" + v
+			if v == "none" {
+				entry = yellow(entry) // "none" disables a gate — highlight it
+			}
+			parts = append(parts, entry)
+		}
+		// When exec=none is already shown prominently in the actions line, we
+		// still print the full auth table so the user sees ALL auth overrides.
+		fmt.Fprintf(os.Stderr, "  %s auth policy overrides: %s\n",
+			dim("policy:"), strings.Join(parts, ", "))
+	}
+	if len(r.Aliases) > 0 {
+		// Print aliases in sorted order: "aliases: test → npm test, scrape → npm run scrape".
+		keys := make([]string, 0, len(r.Aliases))
+		for k := range r.Aliases {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+" → "+r.Aliases[k])
+		}
+		fmt.Fprintf(os.Stderr, "  %s aliases: %s\n",
+			dim("policy:"), strings.Join(parts, ", "))
+	}
+}
+
 // bynTargetVault returns the vault named in a .byn's [scope] (empty when
 // unspecified or unparseable — the daemon then gates on the default vault).
 // The target vault's master password is what authorizes trusting the file.
@@ -350,10 +518,14 @@ Usage:
   byn trust --recursive [DIR]   Walk directories (default: .) for every .byn
   byn trust [...] --password-stdin
                                 Read the master password from stdin (one vault)
+  byn trust diff <PATH>         Show a unified diff of .byn vs the trusted
+                                snapshot (exit 0 = identical; 1 = changed)
   byn trust list [--json]       List currently trusted paths
   byn untrust [PATH...]         Revoke trust (default: ./.byn); also takes
                                 --paths "a,b,c" and --recursive
 
 Bulk trust groups files by their target vault and asks each vault's password
-once (so a monorepo's .byn files across vaults need only one prompt per vault).`)
+once (so a monorepo's .byn files across vaults need only one prompt per vault).
+
+Note: .byn files exceeding 64KB are refused at grant and exec.`)
 }

@@ -152,6 +152,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleTrustGrantBulk(ctx, env)
 	case ipc.OpTrustVerify:
 		return d.handleTrustVerify(ctx, env)
+	case ipc.OpTrustDiff:
+		return d.handleTrustDiff(ctx, env)
 	case ipc.OpBynWrite:
 		return d.handleBynWrite(ctx, env)
 	case ipc.OpFSListDir:
@@ -384,17 +386,17 @@ func (d *Daemon) handleVaultDelete(ctx context.Context, env *ipc.Envelope) *ipc.
 	if errEnv != nil {
 		return errEnv
 	}
-	if d.perActionAuth() {
-		if le := d.authorizeAction(ctx, env.ID, name, st, req.Password, req.PresenceToken); le != nil {
-			d.auditEmit(ctx, name, audit.Event{
-				Op:        "vault.delete",
-				Outcome:   audit.OutcomeDenied,
-				ErrorCode: string(le.Err.Code),
-			})
-			return le
-		}
-	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, name, st, req.Password); le != nil {
+	if le := d.authorizeAction(ctx, env.ID, name, vault.Scope{}, st, "delete", req.Password, req.PresenceToken); le != nil {
+		d.auditEmit(ctx, name, audit.Event{
+			Op:        "vault.delete",
+			Outcome:   audit.OutcomeDenied,
+			ErrorCode: string(le.Err.Code),
+		})
 		return le
+	} else if !d.perActionAuth() {
+		if le2 := d.authorizeMutationWhileLocked(ctx, env.ID, name, st, req.Password); le2 != nil {
+			return le2
+		}
 	}
 	// Record the deletion BEFORE teardown: the audit log lives outside the
 	// vault directory, so this leaves a forensic trail that survives the
@@ -486,17 +488,17 @@ func (d *Daemon) handleVaultRename(ctx context.Context, env *ipc.Envelope) *ipc.
 	if errEnv != nil {
 		return errEnv
 	}
-	if d.perActionAuth() {
-		if le := d.authorizeAction(ctx, env.ID, oldName, st, req.Password, req.PresenceToken); le != nil {
-			d.auditEmit(ctx, oldName, audit.Event{
-				Op:        "vault.rename",
-				Outcome:   audit.OutcomeDenied,
-				ErrorCode: string(le.Err.Code),
-			})
-			return le
-		}
-	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, oldName, st, req.Password); le != nil {
+	if le := d.authorizeAction(ctx, env.ID, oldName, vault.Scope{}, st, "update", req.Password, req.PresenceToken); le != nil {
+		d.auditEmit(ctx, oldName, audit.Event{
+			Op:        "vault.rename",
+			Outcome:   audit.OutcomeDenied,
+			ErrorCode: string(le.Err.Code),
+		})
 		return le
+	} else if !d.perActionAuth() {
+		if le2 := d.authorizeMutationWhileLocked(ctx, env.ID, oldName, st, req.Password); le2 != nil {
+			return le2
+		}
 	}
 	// Record the rename in the OLD vault's audit log before teardown; the
 	// audit dir is moved alongside the vault below, so the event follows.
@@ -562,46 +564,62 @@ func (d *Daemon) handleTrustRemove(env *ipc.Envelope) *ipc.Envelope {
 }
 
 // handleTrustGrant records TOFU trust for a `.byn`, gated by the master
-// password of the target vault. Unlike a delete, the password is required even
-// when the vault is already unlocked: granting trust is a proof-of-presence
-// action, so an ambient unlocked session is never sufficient consent. The
-// daemon reads + hashes the file itself (authoritative), so a caller cannot
-// record a fingerprint for content it never actually presented.
+// password OR a fresh passkey presence token (parity with BynWrite). Granting
+// trust is a proof-of-presence action — an ambient unlocked session is not
+// consent. Routes through authorizeTrustGrant (the single trust-authorization
+// path shared with handleTrustGrantBulk and handleBynWrite).
 func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
 	var req ipc.TrustGrantReq
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
 		return badRequest(env.ID, err)
 	}
+	defer zeroBytes(req.Password)
 	if req.Path == "" {
 		return ipc.NewError(env.ID, ipc.CodeBadRequest, "path required", "")
-	}
-	if len(req.Password) == 0 {
-		return ipc.NewError(env.ID, ipc.CodeBadRequest,
-			"granting trust requires the master password",
-			"run `byn trust` from a terminal so byn can prompt for it")
 	}
 	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
 	st, errEnv := d.storeForVault(env.ID, name)
 	if errEnv != nil {
 		return errEnv
 	}
-	// Always verify — even an unlocked vault must re-prove presence here.
-	if le := d.authorizeWithPassword(ctx, env.ID, name, st, req.Password); le != nil {
+	// Authorize via the provider registry; derive the vk-MAC key in one step.
+	vkKey, le := d.authorizeTrustGrant(ctx, env.ID, name, st, req.Password, req.PresenceToken)
+	if le != nil {
 		return le
 	}
-	body, rerr := os.ReadFile(req.Path) // #nosec G304 -- user-named; daemon runs as the same user
+	defer zeroBytes(vkKey)
+	body, _, rerr := readBynFile(req.Path)
 	if rerr != nil {
+		d.auditEmit(ctx, name, audit.Event{
+			Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeDenied,
+			ErrorCode: string(ipc.CodeBadRequest), BynPath: trust.Canonicalize(req.Path),
+		})
 		return ipc.NewError(env.ID, ipc.CodeBadRequest,
 			fmt.Sprintf("read %s: %v", req.Path, rerr), "check the path and retry")
 	}
-	// Mint both MACs (vk from the just-verified password so it works on a
-	// locked vault, fp from the machine key) and record {canon path, hash}.
-	canon, hash, changed, gerr := d.putTrustRecord(st, name, req.Path, body, req.Password)
+	// Mint both MACs (vk from the derived key, fp from the machine key) and
+	// record the full v2 record. Parse/ValidateAuth failure → CodeBadRequest.
+	canon, hash, changed, policy, gerr := d.putTrustRecordWithKey(name, req.Path, body, vkKey)
 	if gerr != nil {
-		return internalErr(env.ID, gerr)
+		d.auditEmit(ctx, name, audit.Event{
+			Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeDenied,
+			ErrorCode: string(ipc.CodeBadRequest), BynPath: trust.Canonicalize(req.Path),
+		})
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			fmt.Sprintf("trust refused: %v", gerr),
+			"fix the .byn before trusting it")
 	}
 	d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK})
-	resp, err := ipc.NewResponse(env.ID, ipc.TrustGrantResp{Path: canon, SHA256: hash, Changed: changed})
+	resp, err := ipc.NewResponse(env.ID, ipc.TrustGrantResp{
+		Path:            canon,
+		SHA256:          hash,
+		Changed:         changed,
+		Actions:         policy.Actions,
+		Auth:            policy.Auth,
+		Aliases:         policy.Aliases,
+		EnvWildcard:     policy.EnvWildcard,
+		ActionsWildcard: policy.ActionsWildcard,
+	})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
@@ -609,9 +627,10 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 }
 
 // handleTrustGrantBulk trusts many .byn paths against ONE vault, verifying the
-// password (and deriving the vk-MAC key) ONCE and reusing it for every path —
-// so trusting N files costs one KDF, not N. A per-file read error is reported
-// in that path's result without failing the rest of the batch.
+// password (or presence token) ONCE and reusing the derived vk-MAC key for
+// every path — so trusting N files costs one KDF, not N. Routes through
+// authorizeTrustGrant (the single trust-authorization path). A per-file read
+// error is reported in that path's result without failing the rest of the batch.
 func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
 	var req ipc.TrustGrantBulkReq
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
@@ -621,38 +640,51 @@ func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *i
 	if len(req.Paths) == 0 {
 		return ipc.NewError(env.ID, ipc.CodeBadRequest, "no paths to trust", "")
 	}
-	if len(req.Password) == 0 {
-		return ipc.NewError(env.ID, ipc.CodeBadRequest,
-			"granting trust requires the master password", "")
-	}
 	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
 	st, errEnv := d.storeForVault(env.ID, name)
 	if errEnv != nil {
 		return errEnv
 	}
-	if le := d.authorizeWithPassword(ctx, env.ID, name, st, req.Password); le != nil {
+	// ONE verification for the whole batch — authorize and derive the vk-MAC
+	// key in a single step via the shared authorizeTrustGrant helper.
+	vkKey, le := d.authorizeTrustGrant(ctx, env.ID, name, st, req.Password, req.PresenceToken)
+	if le != nil {
 		return le
-	}
-	vkKey, derr := st.DeriveSubkeyWithPassword(req.Password, trust.VKMACKeyInfo)
-	if derr != nil {
-		return internalErr(env.ID, derr)
 	}
 	defer zeroBytes(vkKey)
 
 	results := make([]ipc.TrustGrantResult, 0, len(req.Paths))
 	for _, p := range req.Paths {
-		body, rerr := os.ReadFile(p) // #nosec G304 -- user-named; daemon runs as the same user
+		body, _, rerr := readBynFile(p)
 		if rerr != nil {
+			d.auditEmit(ctx, name, audit.Event{
+				Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeDenied,
+				ErrorCode: string(ipc.CodeBadRequest), BynPath: trust.Canonicalize(p),
+			})
 			results = append(results, ipc.TrustGrantResult{Path: p, Error: rerr.Error()})
 			continue
 		}
-		canon, hash, changed, perr := d.putTrustRecordWithKey(name, p, body, vkKey)
+		canon, hash, changed, policy, perr := d.putTrustRecordWithKey(name, p, body, vkKey)
 		if perr != nil {
+			// Parse/validate failure → per-file error, others continue.
+			d.auditEmit(ctx, name, audit.Event{
+				Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeDenied,
+				ErrorCode: string(ipc.CodeBadRequest), BynPath: trust.Canonicalize(p),
+			})
 			results = append(results, ipc.TrustGrantResult{Path: p, Error: perr.Error()})
 			continue
 		}
 		d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK, BynPath: canon})
-		results = append(results, ipc.TrustGrantResult{Path: canon, SHA256: hash, Changed: changed})
+		results = append(results, ipc.TrustGrantResult{
+			Path:            canon,
+			SHA256:          hash,
+			Changed:         changed,
+			Actions:         policy.Actions,
+			Auth:            policy.Auth,
+			Aliases:         policy.Aliases,
+			EnvWildcard:     policy.EnvWildcard,
+			ActionsWildcard: policy.ActionsWildcard,
+		})
 	}
 	out, err := ipc.NewResponse(env.ID, ipc.TrustGrantBulkResp{Results: results})
 	if err != nil {
@@ -688,9 +720,9 @@ func (d *Daemon) handleTrustVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 			Op: "exec", Outcome: outcome, BynPath: path, Command: req.Command,
 		})
 	}
-	body, rerr := os.ReadFile(req.Path) // #nosec G304 -- user-named; daemon runs as the same user
+	body, fi, rerr := readBynFile(req.Path)
 	if rerr != nil {
-		// File gone or unreadable: nothing to trust.
+		// File gone, unreadable, or oversize: nothing to trust.
 		auditExec(trust.Canonicalize(req.Path), string(trust.VerifyUntrusted))
 		resp, err := ipc.NewResponse(env.ID, ipc.TrustVerifyResp{
 			Path: req.Path, Status: string(trust.VerifyUntrusted),
@@ -699,6 +731,12 @@ func (d *Daemon) handleTrustVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 			return internalErr(env.ID, err)
 		}
 		return resp
+	}
+	// Use the mtime from the Stat performed inside readBynFile. A nil fi is
+	// safe: zero mtime falls back to v1 records ignoring it.
+	var currentMTime int64
+	if fi != nil {
+		currentMTime = fi.ModTime().UnixNano()
 	}
 	canon := trust.Canonicalize(req.Path)
 	hash := trust.Hash(body)
@@ -713,7 +751,7 @@ func (d *Daemon) handleTrustVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 		}
 	}
 
-	status, vkChecked, verr := trust.Verify(d.cfg.Dir, canon, hash, d.fpMACKey, vkKey)
+	status, vkChecked, verr := trust.Verify(d.cfg.Dir, canon, hash, currentMTime, d.fpMACKey, vkKey)
 	if verr != nil {
 		return internalErr(env.ID, verr)
 	}
@@ -803,17 +841,17 @@ func (d *Daemon) handleProjectDelete(ctx context.Context, env *ipc.Envelope) *ip
 	if errEnv != nil {
 		return errEnv
 	}
-	if d.perActionAuth() {
-		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
-			d.auditEmit(ctx, vaultName, audit.Event{
-				Op:        string(ipc.OpProjectDelete),
-				Outcome:   audit.OutcomeDenied,
-				ErrorCode: string(le.Err.Code),
-			})
-			return le
-		}
-	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
+	if le := d.authorizeAction(ctx, env.ID, vaultName, vault.Scope{Project: req.Name}, st, "delete", req.Password, req.PresenceToken); le != nil {
+		d.auditEmit(ctx, vaultName, audit.Event{
+			Op:        string(ipc.OpProjectDelete),
+			Outcome:   audit.OutcomeDenied,
+			ErrorCode: string(le.Err.Code),
+		})
 		return le
+	} else if !d.perActionAuth() {
+		if le2 := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le2 != nil {
+			return le2
+		}
 	}
 	if err := st.DeleteProject(ctx, req.Name); err != nil {
 		return mapVaultErr(env.ID, err)
@@ -920,19 +958,19 @@ func (d *Daemon) handleEnvDelete(ctx context.Context, env *ipc.Envelope) *ipc.En
 	if errEnv != nil {
 		return errEnv
 	}
-	if d.perActionAuth() {
-		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
-			d.auditEmit(ctx, vaultName, audit.Event{
-				Op:        string(ipc.OpEnvDelete),
-				Outcome:   audit.OutcomeDenied,
-				ErrorCode: string(le.Err.Code),
-			})
-			return le
-		}
-	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
-		return le
-	}
 	project := defaultIfEmpty(req.Project, vault.DefaultProjectName)
+	if le := d.authorizeAction(ctx, env.ID, vaultName, vault.Scope{Project: project, Env: req.Name}, st, "delete", req.Password, req.PresenceToken); le != nil {
+		d.auditEmit(ctx, vaultName, audit.Event{
+			Op:        string(ipc.OpEnvDelete),
+			Outcome:   audit.OutcomeDenied,
+			ErrorCode: string(le.Err.Code),
+		})
+		return le
+	} else if !d.perActionAuth() {
+		if le2 := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le2 != nil {
+			return le2
+		}
+	}
 	if err := st.DeleteEnv(ctx, project, req.Name); err != nil {
 		return mapVaultErr(env.ID, err)
 	}
@@ -982,46 +1020,37 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		return errEnv
 	}
 
+	// Insert stays FREE (additive, leaks nothing — the autonomy matrix);
+	// only an OVERWRITE of an existing entry is an "update" needing auth.
+	// Try create-only first: success = a free insert in one call.
+	// CreateOnly=true checks exact scope (project_id + env_id + name), so
+	// a name that exists only in the default env does NOT trigger ErrExists
+	// for a non-default env scope — inserting an override stays free.
+	//
+	// This unconditional flow means the [auth] update="always" policy is
+	// enforced even when the per_action_auth flag is OFF — authorizeAction
+	// consults the policy first and returns nil when flag is off and no policy
+	// is present, preserving today's flag-off default behaviour exactly.
 	var resp *ipc.Envelope
-	if d.perActionAuth() {
-		// Insert stays FREE (additive, leaks nothing — the autonomy matrix);
-		// only an OVERWRITE of an existing entry is an "update" needing auth.
-		// Try create-only first: success = a free insert in one call.
-		// CreateOnly=true checks exact scope (project_id + env_id + name), so
-		// a name that exists only in the default env does NOT trigger ErrExists
-		// for a non-default env scope — inserting an override stays free.
-		err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: true})
-		if errors.Is(err, vault.ErrExists) && !req.CreateOnly {
-			// Row exists in this scope — this is an overwrite, needs auth.
-			vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
-			if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
-				d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
-				return le
-			}
-			err = st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{})
+	err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: true})
+	if errors.Is(err, vault.ErrExists) && !req.CreateOnly {
+		// Row exists in this scope — this is an overwrite, needs auth check.
+		vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+		if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
+			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
+			return le
 		}
-		if err != nil {
-			resp = mapVaultErr(env.ID, err)
-		} else {
-			d.touchVault(req.Scope.Vault)
-			out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
-			if oerr != nil {
-				resp = internalErr(env.ID, oerr)
-			} else {
-				resp = out
-			}
-		}
+		err = st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{})
+	}
+	if err != nil {
+		resp = mapVaultErr(env.ID, err)
 	} else {
-		if err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: req.CreateOnly}); err != nil {
-			resp = mapVaultErr(env.ID, err)
+		d.touchVault(req.Scope.Vault)
+		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
+		if oerr != nil {
+			resp = internalErr(env.ID, oerr)
 		} else {
-			d.touchVault(req.Scope.Vault)
-			out, err := ipc.NewResponse(env.ID, ipc.PutResp{})
-			if err != nil {
-				resp = internalErr(env.ID, err)
-			} else {
-				resp = out
-			}
+			resp = out
 		}
 	}
 	d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", resp)
@@ -1039,7 +1068,7 @@ func (d *Daemon) handleGet(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", errEnv)
 		return errEnv
 	}
-	if le := d.authorizeAction(ctx, env.ID, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), st, req.Password, req.PresenceToken); le != nil {
+	if le := d.authorizeAction(ctx, env.ID, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), scope, st, "get", req.Password, req.PresenceToken); le != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", le)
 		return le
 	}
@@ -1107,17 +1136,18 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		return errEnv
 	}
 	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
-	if d.perActionAuth() {
-		// Flag on: authorizeAction covers both locked and unlocked cases —
-		// a fresh password (which also verifies without unlocking) or a
-		// presence token is required even while the vault is already unlocked.
-		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
-			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le)
-			return le
-		}
-	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
+	// authorizeAction handles [auth] policy from trusted .byn files AND the
+	// global per_action_auth flag. When the flag is off and policy is absent or
+	// "none", authorizeAction returns nil and we fall through to the locked-vault
+	// check (authorizeMutationWhileLocked).
+	if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "delete", req.Password, req.PresenceToken); le != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le)
 		return le
+	} else if !d.perActionAuth() {
+		if le2 := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le2 != nil {
+			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le2)
+			return le2
+		}
 	}
 	var resp *ipc.Envelope
 	if err := st.DeleteEnvVar(ctx, scope, req.Name); err != nil {
@@ -1149,16 +1179,14 @@ func (d *Daemon) handleEnvClear(ctx context.Context, env *ipc.Envelope) *ipc.Env
 		return errEnv
 	}
 	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
-	if d.perActionAuth() {
-		// Flag on: authorizeAction covers both locked and unlocked cases —
-		// a fresh password or presence token is required even while unlocked.
-		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
-			d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", le)
-			return le
-		}
-	} else if le := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le != nil {
+	if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "delete", req.Password, req.PresenceToken); le != nil {
 		d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", le)
 		return le
+	} else if !d.perActionAuth() {
+		if le2 := d.authorizeMutationWhileLocked(ctx, env.ID, vaultName, st, req.Password); le2 != nil {
+			d.auditPlane(ctx, req.Scope, "env_var", "*", "clear", le2)
+			return le2
+		}
 	}
 	var resp *ipc.Envelope
 	if n, err := st.ClearEnvVars(ctx, scope); err != nil {
@@ -1193,9 +1221,9 @@ func (d *Daemon) handleRename(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		d.auditPlane(ctx, req.Scope, "env_var", req.OldName, "rename", le)
 		return le
 	}
-	if d.perActionAuth() {
+	{
 		vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
-		if le := d.authorizeAction(ctx, env.ID, vaultName, st, req.Password, req.PresenceToken); le != nil {
+		if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
 			d.auditPlane(ctx, req.Scope, "env_var", req.OldName, "rename", le)
 			return le
 		}
@@ -1299,53 +1327,170 @@ func (d *Daemon) authorizeMutationWhileLocked(ctx context.Context, id, vaultName
 	return nil
 }
 
-// authorizeWithPassword verifies the master password against st's wrapped key
-// WITHOUT unlocking the vault, regardless of the current lock state. Unlike
-// authorizeMutationWhileLocked (which short-circuits when the vault is already
-// unlocked), this ALWAYS requires a correct password — used for
-// proof-of-presence actions like granting trust, where an ambient unlocked
-// session is not consent. Rate-limited exactly like unlock. The caller
-// guarantees password is non-empty.
-func (d *Daemon) authorizeWithPassword(ctx context.Context, id, vaultName string, st *vault.Store, password []byte) *ipc.Envelope {
-	if le := d.rateLimitCheck(id); le != nil {
-		return le
+// authorizeWithPassword verifies the master password against the named vault's
+// wrapped key WITHOUT unlocking the vault, regardless of the current lock
+// state. Unlike authorizeMutationWhileLocked (which short-circuits when the
+// vault is already unlocked), this ALWAYS requires a correct password — used
+// for proof-of-presence actions like granting trust, where an ambient unlocked
+// session is not consent.
+//
+// This is a thin wrapper around the "password" auth.Provider in the registry.
+// The provider carries the EXACT same rate-limit + audit logic that was
+// previously inlined here, preserving zero behavior change.
+//
+// EE registers providers here (see project rules: pluggability is mandatory);
+// exported in NU-4.
+func (d *Daemon) authorizeWithPassword(ctx context.Context, id, vaultName string, _ *vault.Store, password []byte) *ipc.Envelope {
+	p, ok := d.authProviders.Lookup("password")
+	if !ok {
+		// Should never happen — "password" is registered in New().
+		return ipc.NewError(id, ipc.CodeInternal, "password provider not registered", "")
 	}
-	if err := st.VerifyPassword(password); err != nil {
-		_ = d.limiter.RecordFailure()
-		d.auditEmit(ctx, vaultName, audit.Event{
-			Op:        "vault.authorize",
-			Outcome:   audit.OutcomeDenied,
-			ErrorCode: string(ipc.CodeWrongPassword),
-		})
+	_, err := p.Verify(ctx, auth.VerifyRequest{
+		Vault:    vaultName,
+		Action:   "authorize",
+		Password: password,
+	})
+	return mapProviderErr(id, err)
+}
+
+// mapProviderErr converts an auth.Provider error into an IPC error envelope
+// with the same codes and messages as the pre-registry inline logic.
+// nil → nil (authorized). *auth.RetryAfterError is matched directly via
+// errors.As to render the "retry after Xs" hint.
+//
+// Cleanup (a): vault-open failures (ErrNotInit, ErrFingerprintMismatch, etc.)
+// wrapped as "auth: open vault: %w" by passwordProvider are unwrapped here so
+// they receive their proper codes instead of being misreported as CodeInternal.
+//
+// Cleanup (b): ErrDenied wording is provider-neutral ("authorization denied")
+// rather than passkey-specific. The passkey token path uses its own message
+// (CodeBadRequest "passkey authorization expired…") at the call site in
+// authorizeTrustGrant/authorizeAction, which is already the correct text for
+// that slot. This path is reached when ErrDenied escapes the password
+// provider (e.g. an EE "deny" decision), so neutral wording fits.
+func mapProviderErr(id string, err error) *ipc.Envelope {
+	if err == nil {
+		return nil
+	}
+	var rae *auth.RetryAfterError
+	if errors.As(err, &rae) {
+		// Rate-limited: reproduce the exact rateLimitCheck envelope.
+		return ipc.NewError(id, ipc.CodeRateLimited, rae.Error(),
+			fmt.Sprintf("retry after %s", rae.RetryAfter.Round(time.Second)))
+	}
+	if errors.Is(err, auth.ErrWrongCredential) {
 		return ipc.NewError(id, ipc.CodeWrongPassword,
 			"could not authorize: wrong password", "verify the password and retry")
 	}
-	_ = d.limiter.RecordSuccess()
-	return nil
+	if errors.Is(err, auth.ErrDenied) {
+		// Neutral wording: ErrDenied from the password slot means an EE
+		// provider explicitly refused — not a passkey expiry.
+		return ipc.NewError(id, ipc.CodeAuthRequired,
+			"authorization denied",
+			"verify your credential and retry")
+	}
+	// Vault-open errors wrapped by passwordProvider as "auth: open vault: %w".
+	// mapVaultErr lacks ErrNotInit/ErrFingerprintMismatch cases (they're only
+	// in storeForVault), so map them inline with the same wording and hints.
+	if errors.Is(err, vault.ErrNotInit) {
+		return ipc.NewError(id, ipc.CodeNotInit,
+			"vault is not initialized", "`byn init`")
+	}
+	if errors.Is(err, vault.ErrFingerprintMismatch) {
+		return ipc.NewError(id, ipc.CodeFingerprint,
+			vault.ErrFingerprintMismatch.Error(),
+			"investigate the wrapped key file before retrying")
+	}
+	return ipc.NewError(id, ipc.CodeInternal, err.Error(), "")
 }
 
-// authorizeAction gates a value-touching op (get / overwrite-put / delete)
-// when [security] per_action_auth is on: a fresh master password or a
-// one-time presence token is required EVEN while the vault is unlocked (NU-1
-// posture; NU-3 sessions restore ergonomics). No-op when the flag is off.
-// Trusted-.byn exec never calls this — the .byn is the authorization (spec
-// §4.4).
-func (d *Daemon) authorizeAction(ctx context.Context, id, vaultName string, st *vault.Store, password, presenceToken []byte) *ipc.Envelope {
+// authorizeAction gates a value-touching op (get / overwrite-put / delete /
+// rename / structural deletes) according to the [auth] policy from a matched
+// trusted .byn record AND the global [security] per_action_auth flag.
+//
+// action is the policy key ("get", "update", "delete"); scope is the
+// (project, env) of the operation — used to match the .byn [scope] against
+// the trust store. vaultName identifies whose VKMAC key to use.
+//
+// Policy lookup (policyFor) is attempted only when the vault is unlocked
+// (the VKMAC key requires the vault key); a locked vault falls back to flag
+// semantics. No caching — see policy.go for rationale.
+//
+// Effective decision matrix (policy[action] from the best-matching record):
+//
+//   - "always" → call authorizeActionAlways unconditionally (flag ignored;
+//     tightens: fresh auth even with flag off).
+//   - "none"   → return nil (skip gate entirely; relaxes: free even with flag
+//     on, but ONLY for the matched scope).
+//   - absent or ok=false → flag decides (existing behavior: gate iff flag on).
+//
+// Trusted-.byn exec never calls this — exec uses its own action contract.
+//
+// EE registers providers here (see project rules: pluggability is mandatory);
+// exported in NU-4.
+func (d *Daemon) authorizeAction(ctx context.Context, id, vaultName string, scope vault.Scope, st *vault.Store, action string, password, presenceToken []byte) *ipc.Envelope {
+	// Consult the [auth] policy from any matching, vk-verified trust record.
+	if policy, ok := d.policyFor(vaultName, scope); ok {
+		switch policy[action] {
+		case "always":
+			// Tighten: unconditional auth regardless of the flag.
+			return d.authorizeActionAlways(ctx, id, vaultName, st,
+				"this action requires authorization ([auth] policy = always)",
+				"supply the master password to authorize this action",
+				password, presenceToken)
+		case "none":
+			// Relax: skip the gate for this exact scope.
+			return nil
+		}
+		// Other values (unknown or absent): fall through to flag semantics.
+	}
+
 	if !d.perActionAuth() {
 		return nil
 	}
+	return d.authorizeActionAlways(ctx, id, vaultName, st,
+		"this action requires authorization ([security] per_action_auth)",
+		"supply the master password to authorize this action",
+		password, presenceToken)
+}
+
+// authorizeActionAlways verifies credentials UNCONDITIONALLY — the global
+// [security] per_action_auth flag is NOT consulted. This is the gate used for
+// the [exec] actions contract on trusted-.byn exec: the .byn carries its own
+// auth policy that is independent of the global flag. An admin who turns
+// per_action_auth on or off must not silently change the effective policy of
+// already-granted .byn files.
+//
+// authRequiredMsg and recoverHint are returned in CodeAuthRequired when no
+// credentials are supplied; callers pass context-specific text.
+//
+// Token present → routes to "passkey" provider.
+// Password present → routes to "password" provider.
+// Neither → CodeAuthRequired with the caller-supplied message.
+func (d *Daemon) authorizeActionAlways(ctx context.Context, id, vaultName string, st *vault.Store, authRequiredMsg, recoverHint string, password, presenceToken []byte) *ipc.Envelope {
 	if len(presenceToken) > 0 {
-		if d.presenceTokens.consume(presenceToken, vaultName, time.Now()) {
-			return nil
+		// Route through the passkey provider; it burns the token and checks
+		// vault binding — same semantics as the former presenceTokens.consume
+		// call, wrapped behind the interface.
+		p, ok := d.authProviders.Lookup("passkey")
+		if !ok {
+			return ipc.NewError(id, ipc.CodeInternal, "passkey provider not registered", "")
 		}
-		return ipc.NewError(id, ipc.CodeAuthRequired,
-			"passkey authorization expired or invalid",
-			"re-authenticate with your passkey, or use your password")
+		_, err := p.Verify(ctx, auth.VerifyRequest{
+			Vault:         vaultName,
+			Action:        "authorize",
+			PresenceToken: presenceToken,
+		})
+		if err != nil {
+			return ipc.NewError(id, ipc.CodeAuthRequired,
+				"passkey authorization expired or invalid",
+				"re-authenticate with your passkey, or use your password")
+		}
+		return nil
 	}
 	if len(password) == 0 {
-		return ipc.NewError(id, ipc.CodeAuthRequired,
-			"this action requires authorization ([security] per_action_auth)",
-			"supply the master password to authorize this action")
+		return ipc.NewError(id, ipc.CodeAuthRequired, authRequiredMsg, recoverHint)
 	}
 	return d.authorizeWithPassword(ctx, id, vaultName, st, password)
 }

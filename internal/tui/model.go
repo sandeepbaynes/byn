@@ -43,6 +43,7 @@ const (
 	ModeHelp
 	ModeRename
 	ModeScopeRename
+	ModeAuthRequired
 )
 
 func (m Mode) String() string {
@@ -71,6 +72,8 @@ func (m Mode) String() string {
 		return "RENAME"
 	case ModeScopeRename:
 		return "RENAME"
+	case ModeAuthRequired:
+		return "AUTHORIZE"
 	}
 	return "?"
 }
@@ -311,6 +314,7 @@ type Model struct {
 	confirm     *confirmState
 	picker      *scopePickerState
 	scopeRename *scopeRenameState
+	authReq     *authReqState
 
 	// Pending key sequence (for 'dd', 'ga', 'gd', etc.)
 	pendingKey string
@@ -557,6 +561,39 @@ func (m Model) vaultLockedByName(name string) bool {
 		}
 	}
 	return false
+}
+
+// authReqState backs ModeAuthRequired: the "Authorize" password overlay shown
+// whenever the daemon rejects a value op with CodeAuthRequired. It holds the
+// pending op parameters so the retry can re-issue the exact same call with
+// the supplied password.
+type authReqState struct {
+	// Cause is the daemon's human-readable explanation (the ErrResponse.Message).
+	// Rendered as the subtitle so the user knows which policy triggered this.
+	Cause string
+
+	// buf / cur hold the masked password the user is typing.
+	buf []rune
+	cur int
+
+	// Retry error (wrong password, etc.) — shown inside the overlay.
+	retryErr string
+
+	// Pending op parameters — enough to re-issue each op with a Password.
+	// kind matches authRetryKind constants from data.go.
+	kind authRetryKind
+
+	// priorMode is the mode the TUI was in when the op was first dispatched.
+	// Used to resume the correct destination on retry success (e.g. reveal vs
+	// insert prefill).
+	priorMode Mode
+
+	// Fields used depending on kind:
+	scope      ipc.Scope
+	name       string // entry name (get/put/delete/rename)
+	value      []byte // put payload (put op)
+	newName    string // rename new name (rename op)
+	createOnly bool   // true when the original add used CreateOnly
 }
 
 // scopeRenameState backs ModeScopeRename: an inline rename of a rail node

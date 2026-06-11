@@ -85,7 +85,13 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		}
 		_ = ipc.DecodeBody(ipc.BodyReq, env, &pw)
 		f.lastPassword = pw.Password
-		return mk(ipc.BynWriteResp{Path: "/proj/.byn", Trusted: len(pw.Password) > 0})
+		trusted := len(pw.Password) > 0
+		resp := ipc.BynWriteResp{Path: "/proj/.byn", Trusted: trusted}
+		if trusted {
+			resp.Actions = []string{"make test"}
+			resp.Auth = map[string]string{"get": "none"}
+		}
+		return mk(resp)
 	case ipc.OpFSListDir:
 		return mk(ipc.ListDirResp{Path: "/home/u", Parent: "/home", Entries: []ipc.DirEntry{{Name: "proj"}}})
 	case ipc.OpAuditTail:
@@ -381,14 +387,23 @@ func TestBynWrite_ReachAndForwardsPassword(t *testing.T) {
 		t.Errorf("forwarded password = %q, want byn-pw", f.lastPassword)
 	}
 	var got struct {
-		Path    string `json:"path"`
-		Trusted bool   `json:"trusted"`
+		Path    string            `json:"path"`
+		Trusted bool              `json:"trusted"`
+		Actions []string          `json:"actions"`
+		Auth    map[string]string `json:"auth"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Path != "/proj/.byn" || !got.Trusted {
 		t.Errorf("resp = %+v, want path=/proj/.byn trusted=true", got)
+	}
+	// Policy fields must be passed through when trusted.
+	if len(got.Actions) != 1 || got.Actions[0] != "make test" {
+		t.Errorf("Actions = %v, want [make test]", got.Actions)
+	}
+	if got.Auth["get"] != "none" {
+		t.Errorf("Auth = %v, want {get:none}", got.Auth)
 	}
 }
 

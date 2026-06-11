@@ -124,6 +124,13 @@ type Daemon struct {
 
 	limiter *auth.RateLimiter
 
+	// authProviders is the pluggable auth-provider registry. Two built-in
+	// providers are registered in New(): "password" and "passkey". The EE
+	// superset binary registers additional providers at startup.
+	// EE registers providers here (see project rules: pluggability is mandatory);
+	// exported in NU-4.
+	authProviders *auth.Registry
+
 	// fpMACKey keys the trust store's machine-fingerprint MAC, derived once
 	// from machineid at New. nil when the machine id is unavailable (the
 	// fp-MAC layer degrades; the vault-key MAC still protects records).
@@ -186,6 +193,15 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.Clock != nil {
 		d.limiter.SetClock(cfg.Clock)
 	}
+
+	// Build the pluggable auth-provider registry with the two built-in
+	// providers. The EE superset binary registers additional providers after
+	// calling New() and before Start().
+	// EE registers providers here (see project rules: pluggability is mandatory);
+	// exported in NU-4.
+	d.authProviders = auth.NewRegistry()
+	d.authProviders.Register(&passwordProvider{d: d})
+	d.authProviders.Register(&passkeyProvider{d: d})
 	// Trust-store machine-fingerprint MAC key, derived once. A failure here
 	// degrades only the fp-MAC layer (the vault-key MAC still protects records).
 	if id, err := machineid.ID(); err == nil {
