@@ -399,6 +399,75 @@ async function bootExtractToken() {
   } catch (_) { /* network error — leave localStorage unchanged */ }
 }
 
+// ---- theme management ---------------------------------------------------
+//
+// Three-state: "dark" | "light" | "system".
+// Persisted in localStorage("byn.theme"). Defaults to "system".
+// "system" tracks matchMedia("(prefers-color-scheme: light)") live.
+// The <html data-theme> attribute drives all CSS variable overrides.
+//
+// A tiny inline script in <head> applies the initial theme before first paint
+// (see index.html) to prevent FOUC. This module wires up the three-button
+// switcher in the topbar and keeps the system listener in sync.
+
+let _themeMediaQuery = null;
+const THEME_KEY = "byn.theme";
+
+function _applyTheme(pref) {
+  // pref = "dark" | "light" | "system"
+  const html = document.documentElement;
+  if (pref === "light" || pref === "dark") {
+    html.setAttribute("data-theme", pref);
+  } else {
+    // system: follow matchMedia
+    const m = window.matchMedia("(prefers-color-scheme: light)");
+    html.setAttribute("data-theme", m.matches ? "light" : "dark");
+  }
+}
+
+function _syncThemeBtns(pref) {
+  const ids = ["theme-dark", "theme-light", "theme-system"];
+  const prefs = ["dark", "light", "system"];
+  ids.forEach((id, i) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle("active", prefs[i] === pref);
+  });
+}
+
+function setTheme(pref) {
+  localStorage.setItem(THEME_KEY, pref);
+  _applyTheme(pref);
+  _syncThemeBtns(pref);
+  // Start or stop the system media-query listener as needed.
+  if (pref === "system") {
+    if (!_themeMediaQuery) {
+      _themeMediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+      _themeMediaQuery.addEventListener("change", _onSystemThemeChange);
+    }
+  } else {
+    if (_themeMediaQuery) {
+      _themeMediaQuery.removeEventListener("change", _onSystemThemeChange);
+      _themeMediaQuery = null;
+    }
+  }
+}
+
+function _onSystemThemeChange(e) {
+  // Only fires when pref is "system" (listener is removed otherwise).
+  document.documentElement.setAttribute("data-theme", e.matches ? "light" : "dark");
+}
+
+function initTheme() {
+  const pref = localStorage.getItem(THEME_KEY) || "system";
+  _applyTheme(pref);
+  _syncThemeBtns(pref);
+  // Wire system listener if needed.
+  if (pref === "system") {
+    _themeMediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+    _themeMediaQuery.addEventListener("change", _onSystemThemeChange);
+  }
+}
+
 // showUnauthorizedNotice renders a full-screen message when the portal token
 // is missing or wrong — i.e., when the browser is not an authorized session.
 function showUnauthorizedNotice() {
@@ -409,7 +478,7 @@ function showUnauthorizedNotice() {
   notice.style.cssText = [
     "position:fixed", "inset:0", "display:flex", "flex-direction:column",
     "align-items:center", "justify-content:center",
-    "background:var(--bg,#0d0d0d)", "color:var(--fg,#e8e8e8)",
+    "background:var(--unauth-bg)", "color:var(--unauth-fg)",
     "font-family:monospace", "z-index:9999", "padding:2rem", "text-align:center",
   ].join(";");
   const h = document.createElement("h2");
@@ -421,7 +490,7 @@ function showUnauthorizedNotice() {
     "The authorization token is stored in localStorage and is valid for this browser profile.";
   const cmd = document.createElement("pre");
   cmd.style.cssText = "margin:1.5rem 0 0;padding:.75rem 1.25rem;border-radius:6px;" +
-    "background:rgba(255,255,255,.06);font-size:1rem";
+    "background:var(--unauth-pre-bg);font-size:1rem";
   cmd.textContent = "byn web";
   notice.appendChild(h);
   notice.appendChild(p);
@@ -4324,6 +4393,14 @@ function paletteActivate(item) {
 // ---- boot ---------------------------------------------------------------
 
 function wire() {
+  // Theme switcher buttons.
+  const themeDark   = document.getElementById("theme-dark");
+  const themeLight  = document.getElementById("theme-light");
+  const themeSystem = document.getElementById("theme-system");
+  if (themeDark)   themeDark.addEventListener("click",   () => setTheme("dark"));
+  if (themeLight)  themeLight.addEventListener("click",  () => setTheme("light"));
+  if (themeSystem) themeSystem.addEventListener("click", () => setTheme("system"));
+
   $("#new-vault-btn").addEventListener("click", createVault);
   $("#add-btn").addEventListener("click", addNewRow);
   // Double-click anywhere in the empty area of the entries view opens a new
@@ -4396,6 +4473,8 @@ function wire() {
 }
 
 async function boot() {
+  // Apply the stored theme preference and wire system media-query listener.
+  initTheme();
   // Exchange the one-time bootstrap token from ?auth= for the persistent
   // portal token. Must complete before any authenticated API call.
   await bootExtractToken();

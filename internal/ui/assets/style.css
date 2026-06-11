@@ -15,9 +15,64 @@
 
   --signal:     #34d8a0;  /* emerald — brand / primary / "new" */
   --signal-dim: #1f8f6b;
+  --signal-faint: rgba(52,216,160,.14);
+  --signal-glow:  rgba(52,216,160,.7);
+  --signal-ring:  rgba(52,216,160,.14);
+  --signal-ring-sm: rgba(52,216,160,.16);
+  --signal-bg:    rgba(52,216,160,.08);
+  --signal-border: rgba(52,216,160,.25);
+  --signal-hover: #46e6b0;
+
   --amber:      #f0b541;  /* overrides */
+  --amber-dim:  rgba(240,181,65,.4);
+  --amber-faint: rgba(240,181,65,.14);
+  --amber-bg:   rgba(240,181,65,.07);
+  --amber-border: rgba(240,181,65,.35);
+  --amber-ring: rgba(240,181,65,.5);
+  --amber-chip: rgba(240,181,65,.15);
+  --amber-chip-border: rgba(240,181,65,.3);
+
   --slate:      #6b87a8;  /* inherited */
   --danger:     #f2567a;
+  --danger-faint: rgba(242,86,122,.14);
+  --danger-bg:  rgba(242,86,122,.10);
+  --danger-border: rgba(242,86,122,.30);
+  --danger-ring: rgba(242,86,122,.35);
+  --danger-text: #ffd9e2;
+  --danger-hover: #ff6f8e;
+
+  --warn-amber: #f2a53c;
+  --warn-bg:    rgba(242,165,60,.08);
+  --warn-border: rgba(242,165,60,.25);
+
+  --overlay-bg: rgba(6,7,10,.66);
+  --overlay-bg-heavy: rgba(6,7,10,.7);
+  --overlay-bg-light: rgba(6,7,10,.5);
+  --global-bg-a: rgba(52,216,160,.06);
+  --global-bg-b: rgba(107,135,168,.05);
+
+  --env-accent: #6ea8ff;
+  --env-accent-bg: rgba(107,135,168,.18);
+  --env-accent-text: #9db8d6;
+
+  --btn-primary-fg: #04150f;  /* text on green primary button */
+  --btn-danger-fg: #200309;   /* text on danger button */
+  --studio-warn-text: #ffd3dc;
+  --locked-hover: #ffce6b;
+
+  --unauth-bg: #0d0d0d;
+  --unauth-fg: #e8e8e8;
+  --unauth-pre-bg: rgba(255,255,255,.06);
+
+  --lvl-vault-bg:   rgba(52,216,160,.16);
+  --lvl-project-bg: rgba(240,181,65,.16);
+  --lvl-env-bg:     rgba(107,135,168,.18);
+
+  --dir-match-bg: rgba(240,181,65,.28);
+
+  --bdg-empty-color: rgba(240,181,65,.55);
+
+  color-scheme: dark;
 
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -26,6 +81,83 @@
   --r-sm: 7px;
   --shadow: 0 18px 50px -20px rgba(0,0,0,.7);
   --ease: cubic-bezier(.22,.61,.36,1);
+}
+
+/* ---- Light theme overrides ---- */
+[data-theme="light"] {
+  --ink:        #f5f4f0;
+  --ink-2:      #ede9e3;
+  --surface:    #faf9f7;
+  --surface-2:  #f0ede8;
+  --raised:     #e8e4de;
+  --border:     #d4cfc8;
+  --border-2:   #bfb9b1;
+
+  --text:       #1a1b1e;
+  --text-dim:   #4a4f5c;
+  --text-faint: #8a8f9e;
+
+  --signal:     #1a7a52;  /* darkened emerald for WCAG-AA on light */
+  --signal-dim: #136040;
+  --signal-faint: rgba(26,122,82,.14);
+  --signal-glow:  rgba(26,122,82,.35);
+  --signal-ring:  rgba(26,122,82,.18);
+  --signal-ring-sm: rgba(26,122,82,.18);
+  --signal-bg:    rgba(26,122,82,.08);
+  --signal-border: rgba(26,122,82,.28);
+  --signal-hover: #156845;
+
+  --amber:      #8f6200;  /* darkened amber for light bg */
+  --amber-dim:  rgba(143,98,0,.4);
+  --amber-faint: rgba(143,98,0,.14);
+  --amber-bg:   rgba(143,98,0,.06);
+  --amber-border: rgba(143,98,0,.3);
+  --amber-ring: rgba(143,98,0,.4);
+  --amber-chip: rgba(143,98,0,.12);
+  --amber-chip-border: rgba(143,98,0,.25);
+
+  --danger:     #b8204a;  /* darkened danger for light bg */
+  --danger-faint: rgba(184,32,74,.14);
+  --danger-bg:  rgba(184,32,74,.07);
+  --danger-border: rgba(184,32,74,.25);
+  --danger-ring: rgba(184,32,74,.3);
+  --danger-text: #600020;
+  --danger-hover: #991a3d;
+
+  --warn-amber: #7a5000;
+  --warn-bg:    rgba(122,80,0,.07);
+  --warn-border: rgba(122,80,0,.25);
+
+  --overlay-bg: rgba(30,28,26,.55);
+  --overlay-bg-heavy: rgba(30,28,26,.65);
+  --overlay-bg-light: rgba(30,28,26,.4);
+  --global-bg-a: rgba(26,122,82,.05);
+  --global-bg-b: rgba(107,135,168,.04);
+
+  --env-accent: #2c5faf;
+  --env-accent-bg: rgba(44,95,175,.14);
+  --env-accent-text: #2c5faf;
+
+  --btn-primary-fg: #ffffff;
+  --btn-danger-fg: #ffffff;
+  --studio-warn-text: #600020;
+  --locked-hover: #7a5000;
+
+  --unauth-bg: #f5f4f0;
+  --unauth-fg: #1a1b1e;
+  --unauth-pre-bg: rgba(0,0,0,.06);
+
+  --lvl-vault-bg:   rgba(26,122,82,.14);
+  --lvl-project-bg: rgba(143,98,0,.12);
+  --lvl-env-bg:     rgba(44,95,175,.12);
+
+  --dir-match-bg: rgba(143,98,0,.2);
+
+  --bdg-empty-color: rgba(143,98,0,.55);
+
+  --shadow: 0 18px 50px -20px rgba(0,0,0,.15);
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,8 +179,8 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   background-image:
-    radial-gradient(900px 500px at 12% -8%, rgba(52,216,160,.06), transparent 60%),
-    radial-gradient(800px 500px at 100% 110%, rgba(107,135,168,.05), transparent 55%);
+    radial-gradient(900px 500px at 12% -8%, var(--global-bg-a), transparent 60%),
+    radial-gradient(800px 500px at 100% 110%, var(--global-bg-b), transparent 55%);
 }
 
 /* Fine grain overlay for atmosphere. */
@@ -100,7 +232,7 @@ body {
 }
 .input:focus {
   border-color: var(--signal-dim);
-  box-shadow: 0 0 0 3px rgba(52,216,160,.14);
+  box-shadow: 0 0 0 3px var(--signal-ring);
 }
 .input.mono { font-family: var(--mono); }
 
@@ -167,14 +299,14 @@ select.input { appearance: none; cursor: pointer; }
 .btn:active { transform: translateY(1px); }
 .btn.sm { padding: 6px 11px; font-size: 12.5px; }
 .btn-primary {
-  width: 100%; background: var(--signal); color: #04150f; font-weight: 600;
-  box-shadow: 0 8px 24px -12px rgba(52,216,160,.7);
+  width: 100%; background: var(--signal); color: var(--btn-primary-fg); font-weight: 600;
+  box-shadow: 0 8px 24px -12px var(--signal-glow);
 }
 .btn-primary.sm { width: auto; }
-.btn-primary:hover { background: #46e6b0; }
+.btn-primary:hover { background: var(--signal-hover); }
 .btn-ghost { background: transparent; border-color: var(--border-2); color: var(--text-dim); }
 .btn-ghost:hover { color: var(--text); border-color: var(--text-faint); }
-.plus { color: #04150f; font-weight: 700; }
+.plus { color: var(--btn-primary-fg); font-weight: 700; }
 
 .icon-btn {
   background: transparent; border: 1px solid var(--border); color: var(--text-dim);
@@ -237,7 +369,7 @@ select.input { appearance: none; cursor: pointer; }
 .crumbs .cur { color: var(--text); }
 .crumbs .locked-chip {
   margin-left: 6px; font-size: 10.5px; color: var(--amber);
-  border: 1px solid rgba(240,181,65,.4); border-radius: 5px; padding: 1px 6px;
+  border: 1px solid var(--amber-faint); border-radius: 5px; padding: 1px 6px;
 }
 .head-actions { display: flex; align-items: center; gap: 10px; }
 .filter {
@@ -245,7 +377,7 @@ select.input { appearance: none; cursor: pointer; }
   border-radius: var(--r-sm); padding: 6px 11px; font-family: var(--mono);
   font-size: 12.5px; width: 160px; outline: none; transition: border-color .15s, box-shadow .15s;
 }
-.filter:focus { border-color: var(--signal-dim); box-shadow: 0 0 0 3px rgba(52,216,160,.12); }
+.filter:focus { border-color: var(--signal-dim); box-shadow: 0 0 0 3px var(--signal-ring); }
 
 .legend { padding: 9px 22px; color: var(--text-faint); font-size: 11px; border-bottom: 1px solid var(--border); display: flex; gap: 16px; align-items: center; }
 
@@ -297,7 +429,7 @@ select.input { appearance: none; cursor: pointer; }
 /* ---- modal ---- */
 .modal {
   position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
-  background: rgba(6,7,10,.66); backdrop-filter: blur(3px);
+  background: var(--overlay-bg); backdrop-filter: blur(3px);
   animation: fade .15s ease;
 }
 .modal-card {
@@ -325,7 +457,7 @@ select.input { appearance: none; cursor: pointer; }
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to   { opacity: 1; transform: translateX(-50%); }
 }
-.toast.err { border-color: var(--danger); color: #ffd9e2; }
+.toast.err { border-color: var(--danger); color: var(--danger-text); }
 .toast.ok::before { content: "✓ "; color: var(--signal); }
 
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -346,9 +478,9 @@ select.input { appearance: none; cursor: pointer; }
   border-radius: 4px; font-size: 9.5px; font-weight: 700; text-transform: uppercase;
   flex: 0 0 auto;
 }
-.lvl-vault   { background: rgba(52,216,160,.16); color: var(--signal); }
-.lvl-project { background: rgba(240,181,65,.16); color: var(--amber); }
-.lvl-env     { background: rgba(107,135,168,.18); color: #9db8d6; }
+.lvl-vault   { background: var(--lvl-vault-bg); color: var(--signal); }
+.lvl-project { background: var(--lvl-project-bg); color: var(--amber); }
+.lvl-env     { background: var(--lvl-env-bg); color: var(--env-accent); }
 .tag-default {
   font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-faint); border: 1px solid var(--border-2);
@@ -416,7 +548,7 @@ select.input { appearance: none; cursor: pointer; }
   border: 1px solid var(--border-2); border-radius: 6px; padding: 5px 9px;
   font-family: var(--mono); font-size: 13px; outline: none;
 }
-.inline-input:focus { border-color: var(--signal-dim); box-shadow: 0 0 0 2px rgba(52,216,160,.16); }
+.inline-input:focus { border-color: var(--signal-dim); box-shadow: 0 0 0 2px var(--signal-ring-sm); }
 
 .acts { display: flex; gap: 4px; justify-content: flex-end; opacity: 0; transition: opacity .12s; }
 .trow:hover .acts, .trow:focus-within .acts, .trow.editing .acts { opacity: 1; }
@@ -435,8 +567,8 @@ select.input { appearance: none; cursor: pointer; }
 
 /* ---- audit + trust views ---- */
 .verify-chip { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; text-transform: none; letter-spacing: 0; }
-.verify-chip.ok  { background: rgba(52,216,160,.14); color: var(--signal); }
-.verify-chip.bad { background: rgba(255,90,90,.16); color: var(--danger); }
+.verify-chip.ok  { background: var(--signal-faint); color: var(--signal); }
+.verify-chip.bad { background: var(--danger-faint); color: var(--danger); }
 .audit-tbl { display: flex; flex-direction: column; font-size: 12px; }
 .audit-row { display: grid; grid-template-columns: 150px 1fr 130px 120px 1.2fr; gap: 10px; padding: 5px 6px; border-bottom: 1px solid var(--border); }
 .audit-row.audit-head { color: var(--text-faint); font-size: 10px; letter-spacing: .1em; border-bottom-color: var(--border-2); }
@@ -472,7 +604,7 @@ select.input { appearance: none; cursor: pointer; }
 .act-ico:hover { color: var(--text); background: var(--raised); }
 .act-ico.reveal:hover { color: var(--signal); }
 .act-ico.edit:hover { color: var(--amber); }
-.act-ico.danger:hover { color: var(--danger); border-color: rgba(242,86,122,.35); }
+.act-ico.danger:hover { color: var(--danger); border-color: var(--danger-ring); }
 .act.save { color: var(--signal); }
 
 /* multi-line value editing */
@@ -517,7 +649,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .help-ver:empty { display: none; }
 
 /* "+ new …" browse rows */
-.lvl-add { background: rgba(52,216,160,.16); color: var(--signal); }
+.lvl-add { background: var(--lvl-vault-bg); color: var(--signal); }
 .browse-item.add { background: none; border-style: dashed; }
 .browse-item.add:hover { background: var(--surface); }
 
@@ -526,14 +658,14 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   /* Above the passkey panel (.pk-modal, z-index 1000) so the masked
      password dialog is usable when revoking from that panel. */
   position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center;
-  background: rgba(6,7,10,.66); backdrop-filter: blur(3px); animation: fade .15s ease;
+  background: var(--overlay-bg); backdrop-filter: blur(3px); animation: fade .15s ease;
 }
 
 /* ---- spotlight palette ---- */
 .palette {
   position: fixed; inset: 0; z-index: 240; display: flex; justify-content: center;
   align-items: flex-start; padding-top: 14vh;
-  background: rgba(6,7,10,.5); backdrop-filter: blur(2px); animation: fade .12s ease;
+  background: var(--overlay-bg-light); backdrop-filter: blur(2px); animation: fade .12s ease;
 }
 .palette-box {
   width: min(560px, 92vw);
@@ -555,11 +687,11 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .palette-item.sel { background: var(--surface-2); }
 .pi-kind {
   flex: 0 0 auto; font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em;
-  padding: 2px 6px; border-radius: 4px; color: var(--ink);
+  padding: 2px 6px; border-radius: 4px; color: var(--btn-primary-fg);
 }
 .pi-kind.vault   { background: var(--signal); }
 .pi-kind.project { background: var(--amber); }
-.pi-kind.env     { background: #6ea8ff; }
+.pi-kind.env     { background: var(--env-accent); }
 .pi-label { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pi-lock { flex: 0 0 auto; font-size: 11px; opacity: .8; }
 .palette-empty { padding: 16px; text-align: center; color: var(--text-faint); font-size: 13px; }
@@ -574,8 +706,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .dialog .field { margin-bottom: 0; margin-top: 4px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .dialog-actions .btn { width: auto; }
-.btn-danger { background: var(--danger); color: #200309; font-weight: 600; box-shadow: 0 8px 24px -12px rgba(242,86,122,.6); }
-.btn-danger:hover { background: #ff6f8e; }
+.btn-danger { background: var(--danger); color: var(--btn-danger-fg); font-weight: 600; box-shadow: 0 8px 24px -12px var(--danger-faint); }
+.btn-danger:hover { background: var(--danger-hover); }
 .dialog-fields { display: flex; flex-direction: column; }
 .dialog-fields .field:last-child { margin-bottom: 0; }
 .dialog .field { margin-bottom: 14px; }
@@ -586,7 +718,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .node-act { background: none; border: none; cursor: pointer; padding: 0 7px; display: grid; place-items: center; transition: opacity .12s, color .12s; }
 .node-act .ico { width: 13px; height: 13px; }
 .node-act.locked   { color: var(--amber); opacity: 1; }          /* closed padlock — needs unlock */
-.node-act.locked:hover { color: #ffce6b; }
+.node-act.locked:hover { color: var(--locked-hover); }
 .node-act.unlocked { color: var(--text-faint); opacity: .5; }    /* open padlock — unlocked */
 .node-act.unlocked:hover { color: var(--signal); opacity: 1; }
 .node-act.del { color: var(--text-faint); opacity: 0; }
@@ -601,7 +733,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .locked-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 9px 14px; margin: 2px 0 10px; border-radius: var(--r);
-  border: 1px solid rgba(240,181,65,.35); background: rgba(240,181,65,.07);
+  border: 1px solid var(--amber-border); background: var(--amber-bg);
   color: var(--amber); font-size: 12.5px;
 }
 .locked-banner .btn { width: auto; }
@@ -631,11 +763,11 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .studio-trust-chip {
   font-size: 10.5px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
 }
-.trust-trusted   { background: rgba(52,216,160,.14); color: var(--signal); }
-.trust-changed   { background: rgba(240,181,65,.14);  color: var(--amber); }
-.trust-tampered  { background: rgba(242,86,122,.18);  color: var(--danger); }
-.trust-stale     { background: rgba(240,181,65,.14);  color: var(--amber); }
-.trust-untrusted { background: rgba(255,255,255,.06); color: var(--text-faint); }
+.trust-trusted   { background: var(--signal-faint); color: var(--signal); }
+.trust-changed   { background: var(--amber-faint);  color: var(--amber); }
+.trust-tampered  { background: var(--danger-faint);  color: var(--danger); }
+.trust-stale     { background: var(--amber-faint);  color: var(--amber); }
+.trust-untrusted { background: var(--raised); color: var(--text-faint); }
 
 /* Directory row */
 .studio-dir-row {
@@ -700,8 +832,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 /* Inline warning boxes */
 .studio-warn {
   padding: 8px 12px; border-radius: var(--r-sm); margin-top: 6px;
-  background: rgba(242,86,122,.10); border: 1px solid rgba(242,86,122,.30);
-  color: #ffd3dc; font-size: 12px; line-height: 1.5;
+  background: var(--danger-bg); border: 1px solid var(--danger-border);
+  color: var(--studio-warn-text); font-size: 12px; line-height: 1.5;
 }
 
 /* Studio check row (env "*" toggle) */
@@ -712,15 +844,16 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .studio-check-row input { accent-color: var(--signal); }
 
 /* Auth select: "none" value gets an amber tint */
-.auth-none-warn { border-color: rgba(240,181,65,.5) !important; color: var(--amber); }
+.auth-none-warn { border-color: var(--amber-ring) !important; color: var(--amber); }
 
 /* Auth selects: explicit appearance:none + chevron so they look like
    dropdowns, not text inputs. A custom SVG chevron is injected as a
-   background image so the arrow colour matches the theme. */
+   background image so the arrow colour matches the theme.
+   NOTE: The chevron color is managed via the byn-select-chevron span element
+   (see .byn-select-chevron rule below) — no inline SVG background-image needed. */
 .studio-auth-select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239aa1b1'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
@@ -763,8 +896,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   font-size: 9.5px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; flex: 0 0 auto;
   text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
 }
-.chip-err  { background: rgba(242,86,122,.2); color: var(--danger); }
-.chip-warn { background: rgba(240,181,65,.18); color: var(--amber); }
+.chip-err  { background: var(--danger-bg); color: var(--danger); }
+.chip-warn { background: var(--amber-faint); color: var(--amber); }
 .valid-msg { color: var(--text-dim); font-size: 12px; }
 
 /* Placeholder hint table */
@@ -790,8 +923,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   display: inline-block; padding: 2px 10px; border-radius: 999px;
   font-size: 10.5px; font-weight: 700; letter-spacing: .06em; margin-bottom: 6px;
 }
-.sim-badge.free { background: rgba(52,216,160,.16); color: var(--signal); }
-.sim-badge.auth { background: rgba(240,181,65,.16); color: var(--amber); }
+.sim-badge.free { background: var(--signal-ring-sm); color: var(--signal); }
+.sim-badge.auth { background: var(--amber-faint); color: var(--amber); }
 .sim-matched { color: var(--text-dim); font-size: 12px; margin-bottom: 5px; }
 .sim-argv    {
   font-family: var(--mono); font-size: 12px; color: var(--text);
@@ -803,7 +936,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 /* Trusted-file picker overlay (used by "open .byn…") */
 .studio-picker-ovl {
   position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center;
-  background: rgba(6,7,10,.7); backdrop-filter: blur(3px); animation: fade .15s ease;
+  background: var(--overlay-bg-heavy); backdrop-filter: blur(3px); animation: fade .15s ease;
 }
 .studio-picker-card {
   width: min(500px, 92vw);
@@ -877,8 +1010,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   border-radius: var(--r-sm); padding: 12px 14px; margin-bottom: 12px;
   font-size: 13px;
 }
-.cfg-notes-ok    { background: rgba(52,216,160,.08); border: 1px solid rgba(52,216,160,.25); }
-.cfg-notes-error { background: rgba(242,86,122,.08); border: 1px solid rgba(242,86,122,.25); }
+.cfg-notes-ok    { background: var(--signal-bg); border: 1px solid var(--signal-border); }
+.cfg-notes-error { background: var(--danger-bg); border: 1px solid var(--danger-border); }
 .cfg-notes-title {
   font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
   margin-bottom: 8px;
@@ -898,8 +1031,8 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .cfg-mode-toggle { font-size: 12px; }
 
 .cfg-parse-warn {
-  font-size: 12.5px; color: var(--warn, #f2a53c);
-  background: rgba(242,165,60,.08); border: 1px solid rgba(242,165,60,.25);
+  font-size: 12.5px; color: var(--warn-amber);
+  background: var(--warn-bg); border: 1px solid var(--warn-border);
   border-radius: var(--r-sm); padding: 8px 12px; margin-bottom: 12px;
 }
 
@@ -972,13 +1105,13 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   transform: translateX(14px); background: var(--signal);
 }
 .sw-track input:focus-visible + .sw-thumb {
-  box-shadow: 0 0 0 2px rgba(52,216,160,.3);
+  box-shadow: 0 0 0 2px var(--signal-ring);
 }
 /* Class-based toggle (no hidden input — JS toggles .on on .sw-track) */
 .sw-track.on > .sw-thumb { background: var(--signal-dim); }
 .sw-track.on > .sw-thumb::after { transform: translateX(14px); background: var(--signal); }
 /* Indeterminate state for select-all */
-.sw-track.indeterminate > .sw-thumb { background: var(--amber-dim, rgba(240,181,65,.4)); }
+.sw-track.indeterminate > .sw-thumb { background: var(--amber-dim); }
 .sw-track.indeterminate > .sw-thumb::after { transform: translateX(7px); }
 
 /* Vault-var row (switch row) */
@@ -1002,11 +1135,11 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 }
 
 /* Stale-scope subgroup: keys present in envVarSwitches but not in current vault */
-.studio-subgroup-stale { color: var(--amber-dim, rgba(240,181,65,.7)); }
+.studio-subgroup-stale { color: var(--amber-dim); }
 .studio-stale-chip {
   font-size: 10px; padding: 1px 5px; border-radius: 10px; margin-left: 4px;
-  background: var(--amber-dim, rgba(240,181,65,.15));
-  color: var(--amber, #f0b541); border: 1px solid var(--amber-dim, rgba(240,181,65,.3));
+  background: var(--amber-chip);
+  color: var(--amber); border: 1px solid var(--amber-chip-border);
   white-space: nowrap; vertical-align: middle;
 }
 
@@ -1053,7 +1186,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 }
 
 /* Combobox match highlight — amber/yellow to match the theme warning palette */
-.dir-match { background: rgba(240,181,65,.28); color: var(--amber); border-radius: 2px; }
+.dir-match { background: var(--dir-match-bg); color: var(--amber); border-radius: 2px; }
 
 /* Scope combobox (vault/project/env fields with typeahead) */
 .studio-scope-combo { position: relative; }
@@ -1072,7 +1205,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 }
 .byn-select-btn:focus, .byn-select.open .byn-select-btn {
   border-color: var(--signal-dim);
-  box-shadow: 0 0 0 3px rgba(52,216,160,.14);
+  box-shadow: 0 0 0 3px var(--signal-ring);
   outline: none;
 }
 .byn-select-btn .byn-select-chevron {
@@ -1083,7 +1216,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   transform: rotate(180deg);
 }
 .byn-select-btn.auth-none-warn {
-  border-color: rgba(240,181,65,.5); color: var(--amber);
+  border-color: var(--amber-ring); color: var(--amber);
 }
 .byn-select-panel {
   position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 300;
@@ -1119,7 +1252,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 /* Parse-error notice (raw-mode fallback) */
 .studio-parse-notice {
   padding: 6px 10px; border-radius: var(--r-sm); margin-bottom: 8px;
-  background: rgba(240,181,65,.10); border: 1px solid rgba(240,181,65,.30);
+  background: var(--amber-bg); border: 1px solid var(--amber-border);
   color: var(--amber); font-size: 12px;
 }
 
@@ -1133,7 +1266,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 /* Empty-value indicator (○) — hollow/dim, amber-tinted to distinguish from
    the slate-coloured inheritance badge. */
 .bdg-empty {
-  color: rgba(240,181,65,.55); font-size: 11px; line-height: 1;
+  color: var(--bdg-empty-color); font-size: 11px; line-height: 1;
   opacity: .8;
 }
 
@@ -1178,4 +1311,22 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 /* Daemon error message — dim and smaller to subordinate to the path. */
 .studio-deeplink-err-msg {
   font-size: 12.5px; color: var(--text-faint); line-height: 1.5;
+}
+
+/* ---- Theme switcher (dark / light / system) ---- */
+.theme-switcher {
+  display: inline-flex; align-items: center; gap: 1px;
+  background: var(--ink); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm); padding: 2px; flex: 0 0 auto;
+}
+.theme-btn {
+  background: none; border: none; border-radius: 5px;
+  padding: 3px 8px; font-family: var(--mono); font-size: 11px;
+  color: var(--text-faint); cursor: pointer;
+  transition: background .12s, color .12s;
+  line-height: 1.4; white-space: nowrap;
+}
+.theme-btn:hover { color: var(--text); }
+.theme-btn.active {
+  background: var(--surface-2); color: var(--text);
 }
