@@ -78,9 +78,21 @@ const (
 	OpTrustVerify    Op = "trust.verify"     // MAC-hardened TOFU check (fp + vk layers)
 	OpTrustDiff      Op = "trust.diff"       // diff current file vs the trusted snapshot
 	OpBynWrite       Op = "byn.write"        // portal writes a .byn scope file (+ optional trust)
+	OpBynValidate    Op = "byn.validate"     // validate .byn content without trusting it
+	OpBynSimulate    Op = "byn.simulate"     // simulate exec verdict for a command against .byn content
+	OpBynRead        Op = "byn.read"         // read a .byn file with its current trust status
+	OpConfigGet      Op = "config.get"       // read raw config file bytes
+	OpConfigSet      Op = "config.set"       // write + reload config (credential-gated)
+	OpConfigValidate Op = "config.validate"  // validate config content without writing
 	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
 	OpExecFetch Op = "exec.fetch"
+
+	// Daemon lifecycle (portal-facing). Reload applies a live config reload and
+	// returns what changed; Restart performs a graceful shutdown so the OS
+	// auto-start (launchd/systemd) or the user can relaunch it.
+	OpDaemonReload  Op = "daemon.reload"
+	OpDaemonRestart Op = "daemon.restart"
 
 	// Portal passkey (WebAuthn) ceremonies, per-vault. begin returns options
 	// for navigator.credentials.{create,get}; finish verifies the browser's
@@ -91,6 +103,14 @@ const (
 	OpPasskeyAuthFinish     Op = "passkey.auth.finish" //nolint:gosec // G101: op name, not a credential
 	OpPasskeyList           Op = "passkey.list"
 	OpPasskeyRemove         Op = "passkey.remove"
+
+	// OpWebBootstrap mints a single-use, short-lived (60s) bootstrap token
+	// for the portal. Only the socket owner can call this op (UID-gated by
+	// the Unix socket). The CLI (`byn web`) calls it and opens
+	// ?auth=<bootstrap-token>; the SPA exchanges it at POST
+	// /api/session/bootstrap for the persistent portal token and stores that
+	// in localStorage. The bootstrap token never reappears after the exchange.
+	OpWebBootstrap Op = "web.bootstrap" //nolint:gosec // G101: op name, not a credential
 )
 
 // AllOps is the canonical op list. Used by the daemon dispatcher to
@@ -103,11 +123,14 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpDoctor,
-	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpFSListDir,
+	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
+	OpConfigGet, OpConfigSet, OpConfigValidate,
 	OpExecFetch,
+	OpDaemonReload, OpDaemonRestart,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
+	OpWebBootstrap,
 }
 
 // Envelope is the top-level wire frame. Exactly one of Req/Resp/Err
@@ -471,6 +494,17 @@ type SecretMeta struct {
 	Source    string    `json:"source"` // "scope" or "default"
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Empty is non-nil and true when the vault is unlocked and the stored
+	// value is the empty byte sequence. It is omitted (nil) when the vault
+	// is locked or the emptiness could not be determined without decryption.
+	// Emptiness is derived from ciphertext length (XChaCha20-Poly1305 AEAD
+	// overhead is deterministic: 1 + 24 + 16 = 41 bytes for empty plaintext),
+	// so no decryption or audit "get" event fires.
+	// Note: the List response (and therefore this field) is always gated by
+	// the portal token; when [security] per_action_auth is on, the daemon
+	// additionally gates individual Get/Update/Delete actions but the listing
+	// of names + empty-indicator is not separately auth-gated.
+	Empty *bool `json:"empty,omitempty"`
 }
 
 // DeleteReq removes an env-var entry. No inheritance — the row must
@@ -667,12 +701,19 @@ type TrustGrantBulkResp struct {
 // BynWriteReq writes a .byn scope file into Dir (as Dir/.byn). EnvVars becomes
 // the [exec] env allowlist. When Trust is set, the just-written file is trusted
 // in the same step (Password authorizes the grant, as with trust.grant).
+// When Content is non-empty it is written verbatim instead of being generated
+// from Scope/EnvVars; the daemon validates Content (errors refuse, warnings
+// are allowed). The trust flow is unchanged.
 type BynWriteReq struct {
-	Dir      string   `json:"dir"`
-	Scope    Scope    `json:"scope,omitempty"`
-	EnvVars  []string `json:"env_vars,omitempty"`
-	Trust    bool     `json:"trust,omitempty"`
-	Password []byte   `json:"password,omitempty"`
+	Dir     string   `json:"dir"`
+	Scope   Scope    `json:"scope,omitempty"`
+	EnvVars []string `json:"env_vars,omitempty"`
+	// Content, when non-empty, is written verbatim as the .byn file (validated
+	// first; validation errors refuse the write). Takes precedence over
+	// Scope+EnvVars generation.
+	Content  []byte `json:"content,omitempty"`
+	Trust    bool   `json:"trust,omitempty"`
+	Password []byte `json:"password,omitempty"`
 	// PresenceToken authorizes trust via a fresh passkey ceremony instead of the
 	// master password (see PasskeyAuthFinishResp.PresenceToken). One of Password
 	// or PresenceToken is required when Trust is set.
@@ -692,16 +733,19 @@ type BynWriteResp struct {
 	ActionsWildcard bool              `json:"actions_wildcard,omitempty"`
 }
 
-// ListDirReq lists the subdirectories of Path (empty ⇒ the user's home dir) for
-// the portal directory picker. The daemon runs as the user, so it exposes only
-// what the user can already read.
+// ListDirReq lists the contents of Path (empty ⇒ the user's home dir) for
+// the portal directory/file picker. The daemon runs as the user, so it exposes
+// only what the user can already read. When IncludeFiles is true, regular files
+// are included in the results alongside directories (IsDir distinguishes them).
 type ListDirReq struct {
-	Path string `json:"path"`
+	Path         string `json:"path"`
+	IncludeFiles bool   `json:"include_files,omitempty"`
 }
 
-// DirEntry is one subdirectory.
+// DirEntry is one entry in a directory listing.
 type DirEntry struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
 }
 
 // ListDirResp returns the resolved absolute Path, its Parent ("" at the
@@ -830,6 +874,181 @@ type ExecFetchResp struct {
 	ResolvedArgv []string `json:"resolved_argv,omitempty"`
 }
 
+// ---- byn.validate ----------------------------------------------------------
+
+// BynIssue is one validation issue (error or warning) returned by byn.validate.
+type BynIssue struct {
+	// Section is the logical section the issue belongs to: "toml", "auth",
+	// "exec", "aliases", or "size".
+	Section string `json:"section"`
+	Message string `json:"message"`
+}
+
+// BynValidateReq asks the daemon to validate .byn content without trusting it.
+// No auth required — content is client-supplied and contains no secrets.
+type BynValidateReq struct {
+	Content []byte `json:"content"`
+}
+
+// BynValidateResp returns the validation issues. Errors must be fixed before
+// the .byn can be trusted; warnings are advisory.
+// Parsed is populated when there are ZERO errors (reuses the BynParsed builder
+// from byn.read) so the portal can carry the current parsed state into the
+// form/builder without a separate round-trip.
+type BynValidateResp struct {
+	Errors   []BynIssue `json:"errors,omitempty"`
+	Warnings []BynIssue `json:"warnings,omitempty"`
+	// Parsed is populated when Errors is empty (zero errors). Nil when any error
+	// is present or the content fails to parse.
+	Parsed *BynParsed `json:"parsed,omitempty"`
+}
+
+// ---- byn.simulate ----------------------------------------------------------
+
+// BynSimulateReq asks the daemon to simulate the exec gate verdict for a given
+// command line against supplied .byn content. The content is validated first;
+// invalid content returns CodeBadRequest. No trust record or live file is used —
+// the verdict is derived from the supplied content alone (same matrix as
+// exec.fetch, extracted into a shared helper).
+type BynSimulateReq struct {
+	Content     []byte `json:"content"`
+	CommandLine string `json:"command_line"`
+}
+
+// BynSimulateResp reports the simulated verdict.
+type BynSimulateResp struct {
+	// ResolvedArgv is the argv after alias expansion (or the raw tokenization
+	// when no alias matched).
+	ResolvedArgv []string `json:"resolved_argv,omitempty"`
+	// MatchedKind is "action", "wildcard", or "none". Alias involvement is
+	// signaled by a non-empty MatchedAlias field.
+	MatchedKind string `json:"matched_kind"`
+	// MatchedAction is the pattern string that matched (MatchedKind=="action").
+	MatchedAction string `json:"matched_action,omitempty"`
+	// MatchedAlias is the alias name that expanded before matching an action
+	// pattern (non-empty when argv[0] matched an alias).
+	MatchedAlias string `json:"matched_alias,omitempty"`
+	// Verdict is "free" or "auth".
+	Verdict string `json:"verdict"`
+	// Reason explains the verdict.
+	Reason string `json:"reason"`
+}
+
+// ---- byn.read --------------------------------------------------------------
+
+// BynReadReq asks the daemon to read a .byn file and return its content with
+// the current trust status. The readBynFile size cap is enforced.
+type BynReadReq struct {
+	Path string `json:"path"`
+}
+
+// BynParsed carries the structured fields extracted from a successfully-parsed
+// .byn, for the portal's builder pre-population. Populated by byn.read when
+// the content parses without error; nil (omitted) on parse failure.
+type BynParsed struct {
+	// Scope mirrors [scope].
+	Scope struct {
+		Vault   string `json:"vault,omitempty"`
+		Project string `json:"project,omitempty"`
+		Env     string `json:"env,omitempty"`
+	} `json:"scope"`
+	// Env is [exec].env as a list (never nil; wildcard represented as ["*"]).
+	Env []string `json:"env,omitempty"`
+	// EnvWildcard is true when [exec].env contains "*".
+	EnvWildcard bool `json:"env_wildcard,omitempty"`
+	// Actions is [exec].actions as a list.
+	Actions []string `json:"actions,omitempty"`
+	// ActionsWildcard is true when [exec].actions contains "*".
+	ActionsWildcard bool `json:"actions_wildcard,omitempty"`
+	// Aliases is the [aliases] table.
+	Aliases map[string]string `json:"aliases,omitempty"`
+	// Auth is the [auth] table.
+	Auth map[string]string `json:"auth,omitempty"`
+}
+
+// BynReadResp returns the read result.
+type BynReadResp struct {
+	// Path is the canonicalized absolute path.
+	Path string `json:"path"`
+	// Content is the raw file bytes.
+	Content []byte `json:"content"`
+	// TrustStatus mirrors TrustVerifyResp.Status: "trusted", "changed",
+	// "untrusted", "stale", or "tampered".
+	TrustStatus string `json:"trust_status"`
+	// Parsed holds the structured parse of Content when it parses without
+	// error. Nil when Content is empty or unparseable; ParseError holds the
+	// error in that case so the UI can fall back to raw mode with a notice.
+	Parsed *BynParsed `json:"parsed,omitempty"`
+	// ParseError holds the first parse error when Parsed is nil and Content
+	// is non-empty.
+	ParseError string `json:"parse_error,omitempty"`
+}
+
+// ---- config.get / config.set -----------------------------------------------
+
+// ConfigGetReq has no fields — returns the global config.
+type ConfigGetReq struct{}
+
+// ConfigParsed carries the structured values extracted from a successfully-parsed
+// config file, for the portal's visual settings editor pre-population. Populated
+// by config.get; nil (omitted) on parse failure, in which case ParseError is set.
+type ConfigParsed struct {
+	// UIEnabled mirrors [ui] enabled.
+	UIEnabled bool `json:"ui_enabled"`
+	// UIPort mirrors [ui] port.
+	UIPort int `json:"ui_port"`
+	// IdleTimeout mirrors [daemon] idle_timeout as a Go duration string ("15m0s").
+	IdleTimeout string `json:"idle_timeout"`
+	// PerActionAuth mirrors [security] per_action_auth.
+	PerActionAuth bool `json:"per_action_auth"`
+}
+
+// ConfigGetResp returns the raw config file bytes and the path.
+type ConfigGetResp struct {
+	// Path is the config file path (even when absent — the portal shows defaults).
+	Path string `json:"path"`
+	// Content is the raw file bytes; empty when the file is absent (defaults apply).
+	Content []byte `json:"content,omitempty"`
+	// Parsed holds the structured values from the config when it parses without
+	// error. Absent file → parsed from Default(). Nil on parse error; ParseError
+	// explains why so the portal can fall back to raw mode with a notice.
+	Parsed *ConfigParsed `json:"parsed,omitempty"`
+	// ParseError is set when Content is non-empty but failed to parse.
+	ParseError string `json:"parse_error,omitempty"`
+}
+
+// ConfigSetReq writes new config content and triggers a live reload.
+// Credential-gated (master password or presence token) because config can
+// enable/disable the portal port and per-action auth — daemon-global impact.
+type ConfigSetReq struct {
+	Content       []byte `json:"content"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
+}
+
+// ConfigSetResp reports what changed after the reload.
+type ConfigSetResp struct {
+	// ChangeNotes is the human-readable list of what changed (empty when nothing did).
+	ChangeNotes []string `json:"change_notes,omitempty"`
+}
+
+// ConfigValidateReq asks the daemon to validate config content without writing it.
+// No auth required — content is client-supplied and contains no secrets.
+type ConfigValidateReq struct {
+	Content []byte `json:"content"`
+}
+
+// ConfigValidateResp returns the validation result. On error, Errors contains
+// one issue and Parsed is nil; on success Errors is empty and Parsed is populated
+// so the portal can carry the validated values into the form without a re-fetch.
+type ConfigValidateResp struct {
+	// Errors contains at most one issue (the first parse/validate error).
+	Errors []BynIssue `json:"errors,omitempty"`
+	// Parsed is populated when Errors is empty (zero errors) — the structured
+	// values extracted from the content, ready for the portal visual form.
+	Parsed *ConfigParsed `json:"parsed,omitempty"`
+}
+
 // ---- Portal passkey (WebAuthn) ------------------------------------------
 
 // PasskeyRegisterBeginReq starts enrollment of a new passkey for Vault. The
@@ -930,6 +1149,44 @@ type PasskeyRemoveReq struct {
 // PasskeyRemoveResp reports whether a credential was removed.
 type PasskeyRemoveResp struct {
 	Removed bool `json:"removed"`
+}
+
+// ---- Daemon lifecycle (portal) -----------------------------------------
+
+// DaemonReloadReq has no fields — reloads the live config from disk.
+type DaemonReloadReq struct{}
+
+// DaemonReloadResp returns the human-readable change notes from the reload.
+// An empty slice means the config was read but nothing changed.
+type DaemonReloadResp struct {
+	ChangeNotes []string `json:"change_notes,omitempty"`
+}
+
+// DaemonRestartReq has no fields — triggers a graceful shutdown of the daemon.
+// The portal receives this acknowledgement before the daemon stops; it should
+// then poll /api/status until the daemon comes back (via auto-start or manual
+// restart with `byn start`).
+type DaemonRestartReq struct{}
+
+// DaemonRestartResp carries a human-readable message. The daemon sends this
+// response and then shuts down asynchronously (~200ms later).
+type DaemonRestartResp struct {
+	// Message explains what happened, e.g. "daemon stopping — restart with `byn start`".
+	Message string `json:"message"`
+}
+
+// ---- Web bootstrap (one-time portal auth token) -----------------------
+
+// WebBootstrapReq has no fields — the daemon mints a token for the caller.
+// Only the Unix-socket owner can issue this request (UID-gated).
+type WebBootstrapReq struct{} //nolint:gosec // G101: req type for minting, not a credential
+
+// WebBootstrapResp carries the one-time bootstrap token the CLI passes to
+// the browser as ?auth=<token>. The SPA exchanges it at
+// POST /api/session/bootstrap for the persistent portal token. The bootstrap
+// token is single-use and expires after 60 seconds.
+type WebBootstrapResp struct {
+	Token string `json:"token"` //nolint:gosec // G101: short-lived bootstrap token
 }
 
 // ---- Diagnostics -------------------------------------------------------

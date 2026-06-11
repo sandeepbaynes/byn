@@ -86,6 +86,87 @@ func TestExecFetchRespActionsWildcardOmitEmpty(t *testing.T) {
 	})
 }
 
+// TestBynStudioOpsRegistered verifies that all new studio ops are in AllOps.
+func TestBynStudioOpsRegistered(t *testing.T) {
+	for _, op := range []Op{OpBynValidate, OpBynSimulate, OpBynRead, OpConfigGet, OpConfigSet} {
+		found := false
+		for _, a := range AllOps {
+			if a == op {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("op %q not found in AllOps", op)
+		}
+	}
+}
+
+// TestBynStudioWireStringsPinned pins the literal op strings so a rename can't
+// slip through without a test failure.
+func TestBynStudioWireStringsPinned(t *testing.T) {
+	assert.Equal(t, Op("byn.validate"), OpBynValidate)
+	assert.Equal(t, Op("byn.simulate"), OpBynSimulate)
+	assert.Equal(t, Op("byn.read"), OpBynRead)
+	assert.Equal(t, Op("config.get"), OpConfigGet)
+	assert.Equal(t, Op("config.set"), OpConfigSet)
+}
+
+// TestBynValidateRoundTrip verifies BynValidateReq/Resp round-trip.
+func TestBynValidateRoundTrip(t *testing.T) {
+	req := BynValidateReq{Content: []byte("[scope]\n")}
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	var got BynValidateReq
+	require.NoError(t, json.Unmarshal(b, &got))
+	assert.Equal(t, req, got)
+}
+
+// TestBynValidateRespOmitEmpty verifies that empty Errors/Warnings are omitted.
+func TestBynValidateRespOmitEmpty(t *testing.T) {
+	resp := BynValidateResp{}
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "errors")
+	assert.NotContains(t, string(b), "warnings")
+}
+
+// TestBynSimulateRoundTrip verifies BynSimulateReq/Resp round-trip.
+func TestBynSimulateRoundTrip(t *testing.T) {
+	req := BynSimulateReq{Content: []byte("[exec]\n"), CommandLine: "aws s3 ls"}
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	var got BynSimulateReq
+	require.NoError(t, json.Unmarshal(b, &got))
+	assert.Equal(t, req, got)
+}
+
+// TestBynReadRoundTrip verifies BynReadReq/Resp round-trip.
+func TestBynReadRoundTrip(t *testing.T) {
+	req := BynReadReq{Path: "/tmp/.byn"}
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	var got BynReadReq
+	require.NoError(t, json.Unmarshal(b, &got))
+	assert.Equal(t, req, got)
+}
+
+// TestConfigGetRespContentOmitEmpty verifies Content is omitted when empty.
+func TestConfigGetRespContentOmitEmpty(t *testing.T) {
+	resp := ConfigGetResp{Path: "/tmp/config"}
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "content", "content must be absent when empty (omitempty)")
+}
+
+// TestBynWriteReqContentOmitEmpty verifies that Content is omitted when not set.
+func TestBynWriteReqContentOmitEmpty(t *testing.T) {
+	req := BynWriteReq{Dir: "/tmp"}
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "content", "Content must be absent when nil (omitempty)")
+}
+
 func TestAuthFieldsOmittedWhenEmpty(t *testing.T) {
 	// Version-skew contract: a request without per-action auth must
 	// marshal to the same wire bytes as before the fields existed.

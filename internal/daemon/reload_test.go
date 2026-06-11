@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/config"
+	"github.com/sandeepbaynes/byn/internal/ui"
 )
 
 // writeConfig writes a ~/.byn/config body into the daemon's data dir.
@@ -137,6 +139,35 @@ func TestReload_NoChanges(t *testing.T) {
 	}
 	if len(changes) != 0 {
 		t.Fatalf("expected no changes, got %v", changes)
+	}
+}
+
+// TestStartUILocked_TokenFailClosedPortalDisabled verifies the fail-closed
+// contract: when the portal.token file cannot be created (because its path is
+// occupied by a directory — simulating an unwritable data dir), startUILocked
+// must return an error and leave uiSrv nil rather than starting an ungated
+// portal.
+func TestStartUILocked_TokenFailClosedPortalDisabled(t *testing.T) {
+	dir := shortTempDir(t)
+
+	// Block the token file path with a directory so LoadOrCreateToken fails.
+	tokenPath := filepath.Join(dir, ui.TokenFilename)
+	if err := os.MkdirAll(tokenPath, 0o700); err != nil {
+		t.Fatalf("mkdir token collision: %v", err)
+	}
+
+	d := startBareDaemon(t, Config{Dir: dir})
+
+	// Attempt to start the portal with the collided token path.
+	d.uiMu.Lock()
+	err := d.startUILocked(freePort(t))
+	d.uiMu.Unlock()
+
+	if err == nil {
+		t.Fatal("startUILocked: expected error when token unavailable (fail-closed), got nil")
+	}
+	if d.uiSrv != nil {
+		t.Fatal("startUILocked: portal started despite token failure (fail-open!)")
 	}
 }
 

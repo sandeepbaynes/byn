@@ -62,6 +62,13 @@ migrate = "python manage.py migrate"
   schemas don't silently turn into "default".
 - An **empty** `.byn` file is a stop marker; see below.
 
+> **Assisted authoring:** the portal `.byn studio` (open via `byn web`, then
+> click the **.byn** button) is the recommended way to create and edit `.byn`
+> files. It provides a structured builder form, an inline TOML validator, a
+> command tester (simulate the exec gate before committing to trust), and
+> one-click save+trust — all without hand-writing TOML. See
+> [portal.md](portal.md) for the studio reference.
+
 ---
 
 ## Actions pattern placeholders

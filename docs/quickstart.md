@@ -69,7 +69,11 @@ byn web                     # opens the local admin portal in your browser
 
 Store, reveal, rename, import/export, and browse the tamper-evident audit log
 visually. From the portal you can also **enroll a passkey / Touch ID** for
-password-free unlock, and use the **`.byn`** button to pin a project to a scope.
+password-free unlock, and use the **`.byn`** button to open the `.byn studio` —
+an assisted authoring environment for project scope files: structured builder
+form, inline TOML validator, command-tester (simulate the exec gate before
+trusting), and one-click save+trust. See [portal.md](portal.md) for the full
+panel reference.
 
 ## Next steps
 

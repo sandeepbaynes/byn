@@ -118,6 +118,13 @@ type Daemon struct {
 	// letting a trust grant accept the passkey instead of the master password.
 	presenceTokens *presenceTokens
 
+	// bootstrapTokens are one-time, 60s-TTL tokens minted by web.bootstrap
+	// (UID-gated Unix socket) and consumed at POST /api/session/bootstrap.
+	// They allow the CLI to hand off an authorized session to the browser
+	// without embedding the long-lived portal token in argv or URLs where
+	// it would be visible to `ps`.
+	bootstrapTokens *bootstrapTokens
+
 	// reloadMu serializes Reload so two concurrent SIGHUPs can't interleave
 	// portal restarts.
 	reloadMu sync.Mutex
@@ -177,15 +184,16 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		cfg:            cfg,
-		socketPath:     filepath.Join(cfg.Dir, SocketFilename),
-		pidPath:        filepath.Join(cfg.Dir, PIDFilename),
-		limiterPath:    filepath.Join(cfg.Dir, auth.RateLimiterFile),
-		ownerUID:       cfg.OwnerUID,
-		closeCh:        make(chan struct{}),
-		vaults:         make(map[string]*vaultEntry),
-		pkChallenges:   newPasskeyChallenges(),
-		presenceTokens: newPresenceTokens(),
+		cfg:             cfg,
+		socketPath:      filepath.Join(cfg.Dir, SocketFilename),
+		pidPath:         filepath.Join(cfg.Dir, PIDFilename),
+		limiterPath:     filepath.Join(cfg.Dir, auth.RateLimiterFile),
+		ownerUID:        cfg.OwnerUID,
+		closeCh:         make(chan struct{}),
+		vaults:          make(map[string]*vaultEntry),
+		pkChallenges:    newPasskeyChallenges(),
+		presenceTokens:  newPresenceTokens(),
+		bootstrapTokens: newBootstrapTokens(),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
 	d.perActionFlag.Store(cfg.PerActionAuth)
@@ -286,13 +294,31 @@ func (d *Daemon) UIPort() int {
 // given port (<=0 ⇒ ui default). The caller MUST hold uiMu. The Serve
 // goroutine is registered with the waitgroup so Shutdown drains it. A bind
 // error is returned and leaves uiSrv nil.
+//
+// The portal owner-token is loaded (or created) from $BYN_DIR/portal.token
+// (mode 0600). A token-load failure is fatal for the portal: the portal is
+// disabled (same path as a bind failure) and a warning is printed to stderr.
+// The daemon keeps serving the socket. The token is persisted across daemon
+// restarts so browser localStorage remains valid.
 func (d *Daemon) startUILocked(port int) error {
 	select {
 	case <-d.closeCh:
 		return errors.New("daemon: shutting down")
 	default:
 	}
-	srv := ui.New(d, ui.Config{Port: port})
+	tokenPath := filepath.Join(d.cfg.Dir, ui.TokenFilename)
+	tok, err := ui.LoadOrCreateToken(tokenPath)
+	if err != nil {
+		// Fail-closed: a missing or unreadable token would leave all API
+		// routes ungated. Disable the portal entirely instead.
+		return fmt.Errorf("portal disabled: portal token unavailable: %w", err)
+	}
+	// Fail-closed: an empty token would disable the owner-token gate for
+	// all /api/* routes, granting any local process unrestricted access.
+	if tok == "" {
+		return fmt.Errorf("portal disabled: portal token is empty (fail-closed)")
+	}
+	srv := ui.New(d, ui.Config{Port: port, Token: tok, Bootstrap: d})
 	if err := srv.Listen(); err != nil {
 		return err
 	}
@@ -307,6 +333,21 @@ func (d *Daemon) startUILocked(port int) error {
 
 // SocketPath returns the absolute path to the bound Unix socket.
 func (d *Daemon) SocketPath() string { return d.socketPath }
+
+// ConsumeBootstrap implements ui.BootstrapConsumer. It consumes the one-time
+// bootstrap token t and returns the persistent portal token if t was valid and
+// unexpired. Returns "" when t is invalid, expired, or already consumed.
+func (d *Daemon) ConsumeBootstrap(t string) string {
+	if !d.bootstrapTokens.consume(t, time.Now()) {
+		return ""
+	}
+	d.uiMu.Lock()
+	defer d.uiMu.Unlock()
+	if d.uiSrv == nil {
+		return ""
+	}
+	return d.uiSrv.Token()
+}
 
 // Shutdown drains in-flight connections and releases socket + pidfile.
 // All open vaults are closed (which zeros their in-memory keys).

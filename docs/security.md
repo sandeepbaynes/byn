@@ -292,6 +292,46 @@ immediately — before reading the request.
 **Why:** stops another local user from connecting if file modes were
 accidentally loosened (e.g., a chmod typo).
 
+### Portal loopback + owner-token gate
+
+The embedded browser portal (`byn web`) binds `127.0.0.1:<port>`. Loopback
+prevents network access but does **not** prevent other local user accounts from
+reaching the port over TCP — loopback has no kernel UID gate.
+
+byn closes this gap with an **owner-token gate** using a two-token design that
+keeps the long-lived token out of `ps` output and URLs:
+
+**Persistent portal token** (`$BYN_DIR/portal.token`):
+- A 32-byte random hex file created at mode 0600 on daemon start (persisted
+  across restarts). Only the owner UID can read it.
+- Every `/api/*` request must carry `X-Byn-Portal-Token: <token>` (constant-
+  time compare). Missing or wrong → 401 `portal_token_required`.
+- This token never appears in argv or browser URLs.
+
+**One-time bootstrap token** (in-memory, 60 s TTL):
+- `byn web` calls the UID-gated Unix socket (`web.bootstrap` op) to mint a
+  single-use bootstrap token and opens `?auth=<bootstrap-token>`.
+- The SPA calls `POST /api/session/bootstrap` with the bootstrap token, receives
+  the persistent portal token, stores it in `localStorage`, and strips `?auth=`
+  via `replaceState`. A `ps`-captured bootstrap token is single-use and expires
+  in 60 s.
+- `POST /api/session/bootstrap` is ungated by the owner-token (the caller does
+  not have it yet) but is `sameOrigin`-gated to prevent cross-site replay.
+
+Static assets and the SPA shell (`/`, `/static/`) are ungated — the HTML is
+harmless without a valid token.
+
+A **CSRF defense** (`sameOrigin` Origin check) is applied on top of the token
+gate to all mutating routes. Both layers are necessary and complementary:
+
+| Layer | Attacker stopped |
+|---|---|
+| `requireToken` | Other-UID process that can reach loopback TCP |
+| `sameOrigin` | Browser-based CSRF from a different origin |
+
+The daemon's own code **does not call the HTTP API** — it uses in-process
+`Dispatch` directly, so the token gate never blocks daemon-internal calls.
+
 ### One envelope per connection
 
 CLI dials, sends one envelope, reads one, closes. No multiplexing →

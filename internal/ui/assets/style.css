@@ -611,3 +611,571 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   .app { grid-template-columns: 1fr; }
   .rail { display: none; }
 }
+
+/* =====================  .byn Studio  ===================== */
+
+/* Trust row: actions column now holds edit+revoke side by side */
+.trust-row { grid-template-columns: 110px 1fr auto; }
+.trust-row-acts { display: flex; gap: 6px; align-items: center; }
+
+/* Top bar */
+.studio-topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 4px 14px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
+}
+.studio-topbar-left  { display: flex; align-items: center; gap: 10px; }
+.studio-topbar-right { display: flex; align-items: center; gap: 8px; }
+.studio-title { font-size: 15px; font-weight: 600; color: var(--text); }
+
+/* Trust status chip */
+.studio-trust-chip {
+  font-size: 10.5px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
+}
+.trust-trusted   { background: rgba(52,216,160,.14); color: var(--signal); }
+.trust-changed   { background: rgba(240,181,65,.14);  color: var(--amber); }
+.trust-tampered  { background: rgba(242,86,122,.18);  color: var(--danger); }
+.trust-stale     { background: rgba(240,181,65,.14);  color: var(--amber); }
+.trust-untrusted { background: rgba(255,255,255,.06); color: var(--text-faint); }
+
+/* Directory row */
+.studio-dir-row {
+  display: flex; flex-direction: column; gap: 4px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
+}
+
+/* Two-column layout */
+.studio-cols {
+  display: grid; grid-template-columns: 1fr 340px; gap: 18px; align-items: start;
+  min-height: 0;
+}
+.studio-editor-col { display: flex; flex-direction: column; gap: 12px; }
+.studio-side-col   { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; }
+
+/* Builder panel — flex column matching the right-column gap */
+.studio-builder { display: flex; flex-direction: column; gap: 14px; }
+
+/* Cards (form sections) */
+.studio-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 14px 16px;
+}
+.studio-card-head {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--text-faint); margin-bottom: 10px; font-weight: 600;
+}
+.studio-card-desc { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+
+/* 3-col grid for scope fields */
+.studio-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+}
+.studio-field { display: flex; flex-direction: column; gap: 4px; }
+
+/* Rows inside cards (env-vars, actions, aliases) — unified 6px gap on all row lists */
+.studio-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.studio-row {
+  display: flex; align-items: center; gap: 8px;
+}
+/* Nested custom-var list: same gap as .studio-list so "not in vault" rows
+   match switch rows and action/alias rows visually. */
+.studio-custom-list { display: flex; flex-direction: column; gap: 6px; }
+.studio-row-input { flex: 1; }
+.studio-row-del   { flex: 0 0 auto; }
+.studio-add-row   { width: auto; align-self: flex-start; }
+
+/* Alias rows */
+.studio-alias-name { width: 120px; flex: 0 0 120px; }
+.studio-alias-cmd  { flex: 1; }
+.alias-arrow       { color: var(--text-faint); font-size: 13px; flex: 0 0 auto; }
+
+/* Action row per-row status dot */
+.action-status {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+  background: var(--border-2);
+}
+.action-status.ok      { background: var(--signal); }
+.action-status.caution { background: var(--amber); }
+.action-status.warn    { background: var(--danger); }
+
+/* Inline warning boxes */
+.studio-warn {
+  padding: 8px 12px; border-radius: var(--r-sm); margin-top: 6px;
+  background: rgba(242,86,122,.10); border: 1px solid rgba(242,86,122,.30);
+  color: #ffd3dc; font-size: 12px; line-height: 1.5;
+}
+
+/* Studio check row (env "*" toggle) */
+.studio-check-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-dim); cursor: pointer; margin-bottom: 6px;
+}
+.studio-check-row input { accent-color: var(--signal); }
+
+/* Auth select: "none" value gets an amber tint */
+.auth-none-warn { border-color: rgba(240,181,65,.5) !important; color: var(--amber); }
+
+/* Auth selects: explicit appearance:none + chevron so they look like
+   dropdowns, not text inputs. A custom SVG chevron is injected as a
+   background image so the arrow colour matches the theme. */
+.studio-auth-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239aa1b1'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+  cursor: pointer;
+}
+
+/* Auth overrides: one column, label + select per row */
+.studio-auth-col { display: flex; flex-direction: column; gap: 8px; }
+.studio-auth-row { display: flex; align-items: center; gap: 10px; }
+.studio-auth-row .field-label { flex: 0 0 60px; margin: 0; font-size: 12.5px; }
+.studio-auth-row .studio-auth-select { flex: 1; }
+.studio-auth-row .byn-select { flex: 1; }
+
+/* Raw TOML textarea */
+.studio-raw-ta { width: 100%; min-height: 340px; font-size: 12.5px; }
+
+/* Side-column sections */
+.studio-section {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 12px 14px;
+}
+.studio-section-head {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--text-faint); margin-bottom: 10px; font-weight: 600;
+}
+.studio-section-head.collapsible {
+  background: none; border: none; cursor: pointer; width: 100%; text-align: left;
+  font-family: var(--mono); padding: 0;
+}
+.studio-section-head.collapsible:hover { color: var(--text); }
+
+/* Validation panel */
+.studio-valid { font-size: 12.5px; min-height: 26px; }
+.studio-valid.checking { color: var(--text-faint); }
+.studio-valid.ok       { color: var(--signal); }
+.studio-valid.has-errors .valid-ok, .studio-valid.has-warnings .valid-ok { display: none; }
+.valid-ok { color: var(--signal); }
+.valid-row { display: flex; align-items: baseline; gap: 7px; margin-bottom: 5px; line-height: 1.4; }
+.valid-chip {
+  font-size: 9.5px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; flex: 0 0 auto;
+  text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+}
+.chip-err  { background: rgba(242,86,122,.2); color: var(--danger); }
+.chip-warn { background: rgba(240,181,65,.18); color: var(--amber); }
+.valid-msg { color: var(--text-dim); font-size: 12px; }
+
+/* Placeholder hint table */
+.studio-hint-body { margin-top: 8px; }
+.studio-hint-tbl  { display: flex; flex-direction: column; gap: 4px; }
+.hint-row {
+  display: grid; grid-template-columns: 100px 1fr; gap: 6px;
+  font-size: 11.5px; padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.hint-row:last-child { border-bottom: none; }
+.hint-ph   { color: var(--signal); font-family: var(--mono); white-space: nowrap; }
+.hint-desc { color: var(--text-dim); }
+.hint-ex   { display: none; } /* hidden by default; keeps DOM for copy-paste */
+
+/* Command tester */
+.sim-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.sim-row .input { flex: 1; }
+.sim-result { font-size: 12.5px; min-height: 20px; }
+.sim-result.running { color: var(--text-faint); }
+.sim-result.error   { color: var(--danger); }
+.sim-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; margin-bottom: 6px;
+}
+.sim-badge.free { background: rgba(52,216,160,.16); color: var(--signal); }
+.sim-badge.auth { background: rgba(240,181,65,.16); color: var(--amber); }
+.sim-matched { color: var(--text-dim); font-size: 12px; margin-bottom: 5px; }
+.sim-argv    {
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  background: var(--ink); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm); padding: 6px 10px;
+  word-break: break-all;
+}
+
+/* Trusted-file picker overlay (used by "open .byn…") */
+.studio-picker-ovl {
+  position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center;
+  background: rgba(6,7,10,.7); backdrop-filter: blur(3px); animation: fade .15s ease;
+}
+.studio-picker-card {
+  width: min(500px, 92vw);
+  background: linear-gradient(180deg, var(--surface), var(--ink-2));
+  border: 1px solid var(--border-2); border-radius: 14px; padding: 20px;
+  box-shadow: var(--shadow); animation: rise .2s var(--ease) both;
+}
+.studio-picker-title {
+  font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 12px;
+}
+.studio-picker-list {
+  display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto;
+  margin-bottom: 14px;
+}
+.studio-picker-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 9px 12px;
+  cursor: pointer; font-family: var(--mono); font-size: 12.5px;
+  color: var(--text); text-align: left; transition: background .12s, border-color .12s;
+}
+.studio-picker-item:hover { background: var(--raised); border-color: var(--border-2); }
+.sp-hash { color: var(--text-faint); flex: 0 0 70px; font-size: 11.5px; }
+.sp-path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-picker-foot { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ---- settings panel (global config editor) ---- */
+.cfg-path-row {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 12px;
+}
+.cfg-path-label {
+  font-size: 11.5px; color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: .05em; flex: 0 0 auto;
+}
+.cfg-path {
+  font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.cfg-ref {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 14px; margin-bottom: 14px;
+}
+.cfg-ref-title {
+  font-size: 11.5px; font-weight: 600; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px;
+}
+.cfg-ref-row {
+  display: flex; align-items: baseline; gap: 12px; margin-bottom: 5px;
+  font-size: 12px;
+}
+.cfg-ref-row:last-child { margin-bottom: 0; }
+.cfg-ref-key { color: var(--text-dim); flex: 0 0 220px; }
+.cfg-ref-val { color: var(--text-faint); }
+
+.cfg-editor {
+  display: block; width: 100%; box-sizing: border-box;
+  min-height: 240px; resize: vertical;
+  font-family: var(--mono); font-size: 13px;
+  background: var(--ink); color: var(--text);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+  padding: 12px 14px; margin-bottom: 10px;
+  tab-size: 2;
+}
+.cfg-editor:focus { outline: none; border-color: var(--signal-dim); }
+
+.cfg-save { margin-bottom: 14px; }
+
+.cfg-notes {
+  border-radius: var(--r-sm); padding: 12px 14px; margin-bottom: 12px;
+  font-size: 13px;
+}
+.cfg-notes-ok    { background: rgba(52,216,160,.08); border: 1px solid rgba(52,216,160,.25); }
+.cfg-notes-error { background: rgba(242,86,122,.08); border: 1px solid rgba(242,86,122,.25); }
+.cfg-notes-title {
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  margin-bottom: 8px;
+}
+.cfg-notes-ok    .cfg-notes-title { color: var(--signal); }
+.cfg-notes-error .cfg-notes-title { color: var(--danger); }
+.cfg-notes-list {
+  margin: 0; padding-left: 18px; list-style: disc;
+}
+.cfg-notes-ok    .cfg-notes-list { color: var(--text-dim); }
+.cfg-notes-error .cfg-notes-list { color: var(--danger); }
+
+/* ---- settings visual form ---- */
+.cfg-mode-bar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+}
+.cfg-mode-toggle { font-size: 12px; }
+
+.cfg-parse-warn {
+  font-size: 12.5px; color: var(--warn, #f2a53c);
+  background: rgba(242,165,60,.08); border: 1px solid rgba(242,165,60,.25);
+  border-radius: var(--r-sm); padding: 8px 12px; margin-bottom: 12px;
+}
+
+.cfg-form { margin-bottom: 12px; }
+.cfg-raw-panel { margin-bottom: 0; }
+
+.cfg-form-card {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 12px 14px; margin-bottom: 10px;
+}
+.cfg-form-card-head {
+  font-size: 11px; font-weight: 600; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px;
+}
+.cfg-form-row {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px; font-size: 13px; color: var(--text);
+}
+.cfg-form-row:last-child { margin-bottom: 0; }
+.cfg-form-row input[type="checkbox"] { flex: 0 0 auto; }
+.cfg-field-label {
+  display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto; color: var(--text-dim); font-size: 13px;
+}
+.cfg-field-hint {
+  font-size: 11.5px; color: var(--text-faint);
+}
+.cfg-port-input {
+  width: 120px; flex: 0 0 120px; text-align: right;
+}
+/* Idle timeout two-field layout (minutes + seconds) */
+.cfg-idle-pair {
+  display: flex; align-items: center; gap: 6px;
+}
+.cfg-idle-num {
+  width: 72px; flex: 0 0 72px; text-align: right;
+}
+.cfg-idle-unit {
+  font-size: 12px; color: var(--text-faint);
+}
+/* Daemon control card button row — consistent 8px gap */
+.cfg-daemon-btns {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+/* ---- Studio UX round: env-var toggle switches, combobox, reset btn ---- */
+
+/* Toggle switch (vault var include/exclude) */
+.sw-track {
+  display: inline-flex; align-items: center; cursor: pointer;
+  gap: 0; user-select: none; flex: 0 0 auto;
+}
+.sw-track input[type="checkbox"] {
+  width: 0; height: 0; opacity: 0; position: absolute;
+}
+.sw-thumb {
+  width: 32px; height: 18px; border-radius: 9px;
+  background: var(--border-2); position: relative;
+  transition: background .15s; flex: 0 0 32px;
+}
+.sw-thumb::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-faint); transition: transform .15s, background .15s;
+}
+.sw-track input:checked + .sw-thumb { background: var(--signal-dim); }
+.sw-track input:checked + .sw-thumb::after {
+  transform: translateX(14px); background: var(--signal);
+}
+.sw-track input:focus-visible + .sw-thumb {
+  box-shadow: 0 0 0 2px rgba(52,216,160,.3);
+}
+/* Class-based toggle (no hidden input — JS toggles .on on .sw-track) */
+.sw-track.on > .sw-thumb { background: var(--signal-dim); }
+.sw-track.on > .sw-thumb::after { transform: translateX(14px); background: var(--signal); }
+/* Indeterminate state for select-all */
+.sw-track.indeterminate > .sw-thumb { background: var(--amber-dim, rgba(240,181,65,.4)); }
+.sw-track.indeterminate > .sw-thumb::after { transform: translateX(7px); }
+
+/* Vault-var row (switch row) */
+.studio-var-sw-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.studio-var-sw-name {
+  flex: 1; font-family: var(--mono); font-size: 13px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* "Not in vault" subgroup chip / label */
+.studio-subgroup-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--text-faint); display: flex; align-items: center; gap: 6px;
+  padding: 4px 0 2px;
+}
+.studio-subgroup-label::before,
+.studio-subgroup-label::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+
+/* Stale-scope subgroup: keys present in envVarSwitches but not in current vault */
+.studio-subgroup-stale { color: var(--amber-dim, rgba(240,181,65,.7)); }
+.studio-stale-chip {
+  font-size: 10px; padding: 1px 5px; border-radius: 10px; margin-left: 4px;
+  background: var(--amber-dim, rgba(240,181,65,.15));
+  color: var(--amber, #f0b541); border: 1px solid var(--amber-dim, rgba(240,181,65,.3));
+  white-space: nowrap; vertical-align: middle;
+}
+
+/* Vault-unavailable notice */
+.studio-vault-notice {
+  font-size: 12px; color: var(--text-faint); font-style: italic; padding: 4px 0;
+}
+
+/* Select-all row */
+.studio-selall-row {
+  display: flex; align-items: center; gap: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border); margin-bottom: 6px;
+  font-size: 12px; color: var(--text-dim);
+}
+
+/* Reset button (top-right of builder) */
+.studio-reset-btn {
+  margin-left: auto; font-size: 11.5px;
+}
+
+/* Editable combobox dir input */
+.studio-dir-combo { position: relative; flex: 1; }
+.studio-dir-combo .input { width: 100%; }
+.studio-dir-dropdown {
+  position: absolute; top: calc(100% + 3px); left: 0; right: 0;
+  background: linear-gradient(180deg, var(--surface), var(--ink-2));
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+  box-shadow: var(--shadow); z-index: 200; max-height: 260px; overflow-y: auto;
+  animation: rise .12s var(--ease) both;
+}
+.studio-dir-opt {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border);
+  transition: background .1s;
+}
+.studio-dir-opt:last-child { border-bottom: none; }
+.studio-dir-opt:hover, .studio-dir-opt.sel { background: var(--surface-2); }
+.studio-dir-opt-dir {
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.studio-dir-opt-hash {
+  font-size: 10.5px; color: var(--text-faint);
+}
+
+/* Combobox match highlight — amber/yellow to match the theme warning palette */
+.dir-match { background: rgba(240,181,65,.28); color: var(--amber); border-radius: 2px; }
+
+/* Scope combobox (vault/project/env fields with typeahead) */
+.studio-scope-combo { position: relative; }
+.studio-scope-combo .input { width: 100%; }
+
+/* ---- Custom styled dropdown (replaces native <select>) ---- */
+.byn-select {
+  position: relative; display: inline-block;
+}
+.byn-select-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 7px 11px; background: var(--ink);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+  color: var(--text); font-family: var(--mono); font-size: 13.5px;
+  cursor: pointer; user-select: none; transition: border-color .15s, box-shadow .15s;
+}
+.byn-select-btn:focus, .byn-select.open .byn-select-btn {
+  border-color: var(--signal-dim);
+  box-shadow: 0 0 0 3px rgba(52,216,160,.14);
+  outline: none;
+}
+.byn-select-btn .byn-select-chevron {
+  flex: 0 0 auto; opacity: .55; transition: transform .15s;
+  font-size: 10px;
+}
+.byn-select.open .byn-select-btn .byn-select-chevron {
+  transform: rotate(180deg);
+}
+.byn-select-btn.auth-none-warn {
+  border-color: rgba(240,181,65,.5); color: var(--amber);
+}
+.byn-select-panel {
+  position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 300;
+  background: linear-gradient(180deg, var(--surface), var(--ink-2));
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+  box-shadow: var(--shadow); overflow: hidden;
+  animation: rise .1s var(--ease) both;
+}
+.byn-select-opt {
+  display: block; width: 100%; padding: 8px 11px;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); font-family: var(--mono); font-size: 13px;
+  text-align: left; cursor: pointer; transition: background .1s;
+}
+.byn-select-opt:last-child { border-bottom: none; }
+.byn-select-opt:hover, .byn-select-opt.sel {
+  background: var(--surface-2); color: var(--text);
+}
+.byn-select-opt[aria-selected="true"] {
+  color: var(--signal);
+}
+
+/* Security card hint */
+.cfg-sec-hint {
+  font-size: 11.5px; color: var(--text-faint); margin-top: 6px;
+  line-height: 1.55;
+}
+.cfg-sec-hint a {
+  color: var(--signal); text-decoration: none;
+}
+.cfg-sec-hint a:hover { text-decoration: underline; }
+
+/* Parse-error notice (raw-mode fallback) */
+.studio-parse-notice {
+  padding: 6px 10px; border-radius: var(--r-sm); margin-bottom: 8px;
+  background: rgba(240,181,65,.10); border: 1px solid rgba(240,181,65,.30);
+  color: var(--amber); font-size: 12px;
+}
+
+/* ---- Badge wrap (entries table: state glyph + optional empty indicator) ---- */
+/* Two glyphs may appear side-by-side; widen the column slightly and shrink
+   internal gap so both fit without overflow. */
+.bdg-wrap {
+  display: inline-flex; align-items: center; gap: 2px;
+  min-width: 28px; /* wide enough for two narrow glyphs */
+}
+/* Empty-value indicator (○) — hollow/dim, amber-tinted to distinguish from
+   the slate-coloured inheritance badge. */
+.bdg-empty {
+  color: rgba(240,181,65,.55); font-size: 11px; line-height: 1;
+  opacity: .8;
+}
+
+/* ---- Dirpicker: file rows visually distinct from directories ---- */
+/* File rows are dimmer than directory rows so the folder/navigate affordance
+   remains visually dominant. */
+.dirpicker-item.file {
+  color: var(--text-dim);
+}
+.dirpicker-item.file .di-ico { opacity: .5; }
+
+/* ---- Import flow: browse button inline with label ---- */
+.import-browse-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 6px;
+}
+
+/* ---- Studio: custom-var row inline error (+ add-to-vault failure) ---- */
+.studio-row-inline-err {
+  font-size: 11.5px; color: var(--danger); margin-left: 6px;
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---- Studio deep-link error view ---- */
+/* Card container — matches the raised-surface style of other studio cards. */
+.studio-deeplink-err {
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--r); padding: 24px 28px; max-width: 560px; margin: 32px auto 0;
+  display: flex; flex-direction: column; gap: 12px;
+  animation: rise .25s var(--ease) both;
+}
+.studio-deeplink-err-head {
+  font-size: 15px; font-weight: 600; color: var(--text);
+}
+/* Monospace path block — visually distinct from prose. */
+.studio-deeplink-err-path {
+  font-family: var(--mono); font-size: 12.5px; color: var(--text-dim);
+  background: var(--ink); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm); padding: 8px 12px;
+  word-break: break-all;
+}
+/* Daemon error message — dim and smaller to subordinate to the path. */
+.studio-deeplink-err-msg {
+  font-size: 12.5px; color: var(--text-faint); line-height: 1.5;
+}

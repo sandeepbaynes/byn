@@ -254,7 +254,41 @@ func (d *Daemon) handleBynWrite(ctx context.Context, env *ipc.Envelope) *ipc.Env
 		return ipc.NewError(env.ID, ipc.CodeBadRequest,
 			fmt.Sprintf("%s is not a directory", req.Dir), "provide a directory, not a file")
 	}
-	name := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	// Determine content first: verbatim (Content field) or generated from
+	// Scope+EnvVars. The vault name for trust targeting is derived AFTER this
+	// step so that when Content is provided the parsed [scope].vault is used
+	// as the authority (not the client-supplied Scope.Vault field, which the
+	// studio omits for raw-mode writes).
+	var content string
+	if len(req.Content) > 0 {
+		// Validate verbatim content before anything else; errors refuse the write.
+		errs, _ := bynValidateContent(req.Content)
+		if len(errs) > 0 {
+			return ipc.NewError(env.ID, ipc.CodeBadRequest,
+				fmt.Sprintf("invalid .byn content: [%s] %s", errs[0].Section, errs[0].Message),
+				"fix the .byn content and retry")
+		}
+		content = string(req.Content)
+	} else {
+		content = bynFileContent(req.Scope, req.EnvVars)
+	}
+
+	// Derive the vault name for trust targeting:
+	//   - Content path: parse the written content and use the [scope].vault
+	//     field (defaultIfEmpty) — this is the correct authority; the client
+	//     does not need to send a scope field in raw/verbatim mode.
+	//   - Generated path: use req.Scope.Vault (set by the builder form).
+	var name string
+	if len(req.Content) > 0 {
+		if parsed, perr := bynfile.Parse([]byte(content)); perr == nil && parsed.Scope.Vault != "" {
+			name = parsed.Scope.Vault
+		} else {
+			name = vault.DefaultVaultName
+		}
+	} else {
+		name = defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	}
+
 	st, errEnv := d.storeForVault(env.ID, name)
 	if errEnv != nil {
 		return errEnv
@@ -272,7 +306,7 @@ func (d *Daemon) handleBynWrite(ctx context.Context, env *ipc.Envelope) *ipc.Env
 		vkKey = k
 		defer zeroBytes(vkKey)
 	}
-	content := bynFileContent(req.Scope, req.EnvVars)
+
 	path := filepath.Join(req.Dir, ".byn")
 	if werr := os.WriteFile(path, []byte(content), 0o600); werr != nil { // #nosec G304 -- user-named dir; daemon runs as the same user
 		return ipc.NewError(env.ID, ipc.CodeInternal,

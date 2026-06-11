@@ -866,6 +866,15 @@ DESCRIPTION
        portal binds loopback only (127.0.0.1), never the network; its
        CSRF defense is an Origin check.
 
+       The portal includes a .byn STUDIO (top-left ".byn" button): a
+       structured builder form, inline TOML validator, command tester
+       (simulates the exec gate before trust is granted), and one-click
+       save+trust. Open an existing trusted file via "open .byn..." or
+       browse to any directory containing a .byn file. The Settings
+       panel (top-right gear icon) exposes the global config file as a
+       TOML editor -- editing config always requires the master password
+       or a passkey token regardless of per_action_auth.
+
        Disable the portal entirely with [ui] enabled = false in
        ~/.byn/config (then restart the daemon).
 
@@ -880,7 +889,7 @@ EXIT STATUS
        2    Daemon unreachable.
 
 SEE ALSO
-       byn(1), byn-daemon(1)
+       byn(1), byn-daemon(1), byn-trust(1)
 `,
 
 	"version": `NAME

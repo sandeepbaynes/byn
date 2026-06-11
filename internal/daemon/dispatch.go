@@ -156,6 +156,18 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleTrustDiff(ctx, env)
 	case ipc.OpBynWrite:
 		return d.handleBynWrite(ctx, env)
+	case ipc.OpBynValidate:
+		return d.handleBynValidate(ctx, env)
+	case ipc.OpBynSimulate:
+		return d.handleBynSimulate(ctx, env)
+	case ipc.OpBynRead:
+		return d.handleBynRead(ctx, env)
+	case ipc.OpConfigGet:
+		return d.handleConfigGet(ctx, env)
+	case ipc.OpConfigSet:
+		return d.handleConfigSet(ctx, env)
+	case ipc.OpConfigValidate:
+		return d.handleConfigValidate(ctx, env)
 	case ipc.OpFSListDir:
 		return d.handleListDir(env)
 	case ipc.OpPasskeyRegisterBegin:
@@ -170,6 +182,14 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handlePasskeyList(ctx, env)
 	case ipc.OpPasskeyRemove:
 		return d.handlePasskeyRemove(ctx, env)
+
+	case ipc.OpDaemonReload:
+		return d.handleDaemonReload(env)
+	case ipc.OpDaemonRestart:
+		return d.handleDaemonRestart(env)
+
+	case ipc.OpWebBootstrap:
+		return d.handleWebBootstrap(env)
 
 	default:
 		return ipc.NewError(env.ID, ipc.CodeUnknownOp,
@@ -1108,14 +1128,23 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 	if err != nil {
 		return mapVaultErr(env.ID, err)
 	}
+	// Populate Empty only when the vault is unlocked. Emptiness is derived
+	// from ciphertext length (no decryption, no audit "get" events fire).
+	// When locked the field is omitted (nil) — the UI treats nil as "unknown".
+	unlocked := !st.IsLocked()
 	out := make([]ipc.SecretMeta, 0, len(infos))
 	for _, m := range infos {
-		out = append(out, ipc.SecretMeta{
+		meta := ipc.SecretMeta{
 			Name:      m.Name,
 			Source:    m.Source.String(),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
-		})
+		}
+		if unlocked {
+			empty := m.IsEmpty
+			meta.Empty = &empty
+		}
+		out = append(out, meta)
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.ListResp{Secrets: out})
 	if err != nil {
@@ -1242,6 +1271,69 @@ func (d *Daemon) handleRename(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 	}
 	// Audit records the old name; the rename succeeded if outcome=ok.
 	d.auditPlane(ctx, req.Scope, "env_var", req.OldName+"→"+req.NewName, "rename", resp)
+	return resp
+}
+
+// ---- Daemon lifecycle (portal) -----------------------------------------
+
+// handleDaemonReload applies a live config reload and returns the change notes.
+// This is the IPC equivalent of sending SIGHUP: no credentials required (parity
+// with `byn daemon reload`, which is also ungated).
+func (d *Daemon) handleDaemonReload(env *ipc.Envelope) *ipc.Envelope {
+	changes, err := d.Reload()
+	if err != nil {
+		return ipc.NewError(env.ID, ipc.CodeInternal,
+			fmt.Sprintf("reload failed: %v", err),
+			fmt.Sprintf("check the config file at %s for errors", d.cfg.Dir))
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.DaemonReloadResp{ChangeNotes: changes})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// handleDaemonRestart acknowledges the request and then triggers a graceful
+// shutdown asynchronously (~200ms later), giving the HTTP response time to
+// reach the browser before the socket is torn down.
+//
+// Self-respawn is intentionally NOT implemented here: socket handover and
+// PID-file coordination across two overlapping daemon processes is hairy and
+// risks leaving a zombie if anything goes wrong. Instead the daemon performs a
+// clean shutdown and relies on OS auto-start (launchd/systemd) or the user
+// running `byn start` to bring it back — the same flow `byn daemon stop` uses.
+// The portal is told this in the response message so the user is never surprised.
+func (d *Daemon) handleDaemonRestart(env *ipc.Envelope) *ipc.Envelope {
+	resp, err := ipc.NewResponse(env.ID, ipc.DaemonRestartResp{
+		Message: "daemon stopping — use `byn start` to restart (auto-start relaunches it automatically if installed)",
+	})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	// Kick off the shutdown in a goroutine so this response reaches the browser
+	// before the socket closes. 200ms is enough for a loopback write.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		d.Shutdown(5 * time.Second)
+	}()
+	return resp
+}
+
+// handleWebBootstrap mints a one-time, 60s-TTL bootstrap token for the portal.
+// Only the Unix-socket owner can call this (the socket is mode 0600 + UID-gated
+// by peerCred in handleConn). The CLI (`byn web`) calls this op, opens
+// ?auth=<token>, and the SPA exchanges it via POST /api/session/bootstrap for
+// the persistent portal token — so the long-lived token never appears in ps
+// output or URLs.
+func (d *Daemon) handleWebBootstrap(env *ipc.Envelope) *ipc.Envelope {
+	token, err := d.bootstrapTokens.mint(time.Now())
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.WebBootstrapResp{Token: token})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
 	return resp
 }
 

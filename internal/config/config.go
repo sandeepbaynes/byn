@@ -97,6 +97,21 @@ func Path(dir string) string {
 	return filepath.Join(dir, Filename)
 }
 
+// Parse decodes and validates a config from raw bytes (no disk access).
+// It is used by config.set to validate the new content before writing it to
+// disk. Returns the parsed Config or a validation error.
+func Parse(content []byte) (Config, error) {
+	cfg := Default()
+	dec := toml.NewDecoder(strings.NewReader(string(content))).DisallowUnknownFields()
+	if derr := dec.Decode(&cfg); derr != nil {
+		return Config{}, derr
+	}
+	if verr := cfg.validate(); verr != nil {
+		return Config{}, verr
+	}
+	return cfg, nil
+}
+
 // Load reads and validates the config at path. A missing file is not an
 // error — it yields Default(). Present keys override the matching
 // defaults; omitted keys keep them. Unknown keys and out-of-range values

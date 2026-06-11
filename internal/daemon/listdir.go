@@ -41,19 +41,29 @@ func (d *Daemon) handleListDir(env *ipc.Envelope) *ipc.Envelope {
 		return ipc.NewError(env.ID, ipc.CodeBadRequest,
 			fmt.Sprintf("read %s: %v", path, rerr), "check directory permissions")
 	}
+	// Build results. When IncludeFiles is false, only directories are returned
+	// (preserving the original directory-picker contract). When IncludeFiles is
+	// true, regular files are included as well; IsDir distinguishes them.
+	// Directories sort before files; within each group, entries sort by name.
 	dirs := make([]ipc.DirEntry, 0, len(ents))
+	files := make([]ipc.DirEntry, 0)
 	for _, e := range ents {
 		if e.IsDir() {
-			dirs = append(dirs, ipc.DirEntry{Name: e.Name()})
+			dirs = append(dirs, ipc.DirEntry{Name: e.Name(), IsDir: true})
+		} else if req.IncludeFiles && e.Type().IsRegular() {
+			files = append(files, ipc.DirEntry{Name: e.Name(), IsDir: false})
 		}
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	dirs = append(dirs, files...)
+	entries := dirs
 
 	parent := filepath.Dir(path)
 	if parent == path {
 		parent = "" // at the filesystem root
 	}
-	resp, err := ipc.NewResponse(env.ID, ipc.ListDirResp{Path: path, Parent: parent, Entries: dirs})
+	resp, err := ipc.NewResponse(env.ID, ipc.ListDirResp{Path: path, Parent: parent, Entries: entries})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}

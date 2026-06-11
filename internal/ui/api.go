@@ -1,11 +1,18 @@
 package ui
 
 import (
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
+
+// maxImportFileSize is the upper bound on file content read by the import
+// browse endpoint. Generous but bounded to prevent runaway reads.
+const maxImportFileSize = 4 << 20 // 4 MiB
 
 // GET /api/audit?vault=&n= — recent audit events for a vault. Audit metadata
 // is not secret, so this works regardless of lock state (mirrors `byn audit`).
@@ -467,11 +474,15 @@ func (s *Server) handleVaultRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// POST /api/byn/write {dir, scope, env_vars[], trust, password?} — writes a
-// .byn scope file into dir and, when trust is set, trusts it (password-gated).
+// POST /api/byn/write {dir, content?, scope?, env_vars[], trust, password?} —
+// writes a .byn scope file into dir and, when trust is set, trusts it
+// (password-gated). When content is provided it is written verbatim and the
+// daemon derives the target vault from the parsed [scope].vault; scope/env_vars
+// are ignored in that case.
 func (s *Server) handleBynWrite(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Dir           string    `json:"dir"`
+		Content       string    `json:"content"`
 		Scope         scopeBody `json:"scope"`
 		EnvVars       []string  `json:"env_vars"`
 		Trust         bool      `json:"trust"`
@@ -483,6 +494,9 @@ func (s *Server) handleBynWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := ipc.BynWriteReq{Dir: b.Dir, Scope: b.Scope.toIPC(), EnvVars: b.EnvVars, Trust: b.Trust, PresenceToken: b.PresenceToken}
+	if b.Content != "" {
+		req.Content = []byte(b.Content)
+	}
 	if b.Password != "" {
 		req.Password = []byte(b.Password)
 	}
@@ -495,10 +509,266 @@ func (s *Server) handleBynWrite(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/fs/listdir?path=... lists subdirectories for the directory picker.
 func (s *Server) handleFSListDir(w http.ResponseWriter, r *http.Request) {
-	req := ipc.ListDirReq{Path: r.URL.Query().Get("path")}
+	q := r.URL.Query()
+	req := ipc.ListDirReq{
+		Path:         q.Get("path"),
+		IncludeFiles: q.Get("include_files") == "1" || q.Get("include_files") == "true",
+	}
 	var resp ipc.ListDirResp
 	if !s.run(w, r, ipc.OpFSListDir, req, &resp) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// GET /api/fs/readfile?path=... reads a plain-text file for the import flow.
+// The portal server runs as the daemon user, so it can access any file the user
+// owns. Capped at maxImportFileSize bytes. sameOrigin + requireToken gated.
+// Returns {content: "<text>"}. Does NOT accept directory paths.
+func (s *Server) handleFSReadFile(w http.ResponseWriter, r *http.Request) {
+	path := filepath.Clean(r.URL.Query().Get("path"))
+	if path == "" || path == "." {
+		writeErr(w, http.StatusBadRequest, "path required")
+		return
+	}
+	info, err := os.Stat(path) // #nosec G304 -- user-named; portal runs as the user
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "path is a directory")
+		return
+	}
+	f, err := os.Open(path) // #nosec G304 -- user-named; portal runs as the user
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer func() { _ = f.Close() }()
+	lr := io.LimitReader(f, maxImportFileSize+1)
+	data, err := io.ReadAll(lr)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if int64(len(data)) > maxImportFileSize {
+		writeErr(w, http.StatusRequestEntityTooLarge, "file too large (max 4 MiB)")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"content": string(data)})
+}
+
+// POST /api/byn/validate {content} — validate .byn content without trusting.
+// Returns {errors[{section,message}], warnings[...]}. No auth required.
+func (s *Server) handleBynValidate(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.BynValidateReq{Content: []byte(b.Content)}
+	var resp ipc.BynValidateResp
+	if !s.run(w, r, ipc.OpBynValidate, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// POST /api/byn/simulate {content, command_line} — simulate exec verdict.
+// Returns {resolved_argv, matched_kind, matched_action, matched_alias,
+// verdict, reason}. No auth required.
+func (s *Server) handleBynSimulate(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Content     string `json:"content"`
+		CommandLine string `json:"command_line"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.BynSimulateReq{Content: []byte(b.Content), CommandLine: b.CommandLine}
+	var resp ipc.BynSimulateResp
+	if !s.run(w, r, ipc.OpBynSimulate, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleConfigRoute dispatches /api/config: GET reads, POST writes.
+// POST is wrapped in sameOrigin so cross-origin pages cannot mutate daemon
+// config. GET is open — config contains no secrets (mirrors GET /api/trust).
+func (s *Server) handleConfigRoute(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleConfigGet(w, r)
+	case http.MethodPost:
+		// sameOrigin inline — POST changes daemon settings, so cross-site
+		// requests must be rejected.
+		if o := r.Header.Get("Origin"); o != "" && !s.originAllowed(o) {
+			writeErr(w, http.StatusForbidden, "cross-origin request refused")
+			return
+		}
+		s.handleConfigSet(w, r)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// GET /api/config — return the raw global config TOML and its path.
+// Config content holds no secrets (it stores settings like port and timeouts),
+// so GET is acceptable — same logic as GET /api/trust. There is no client-
+// controlled path, so there is no traversal surface.
+func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
+	var resp ipc.ConfigGetResp
+	if !s.run(w, r, ipc.OpConfigGet, ipc.ConfigGetReq{}, &resp) {
+		return
+	}
+	out := map[string]any{
+		"path":    resp.Path,
+		"content": string(resp.Content),
+	}
+	// Parsed is forwarded as-is (nil → omitted from JSON); parse_error is
+	// forwarded so the portal visual editor can fall back to raw mode with a notice.
+	if resp.Parsed != nil {
+		out["parsed"] = resp.Parsed
+	}
+	if resp.ParseError != "" {
+		out["parse_error"] = resp.ParseError
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// POST /api/config {content, password?, presence_token?} — validate + atomic-
+// write + reload the global config. Credential-gated unconditionally (the
+// daemon always requires a password or passkey presence token because config
+// controls the daemon's own security settings).
+func (s *Server) handleConfigSet(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Content       string `json:"content"`
+		Password      string `json:"password"`
+		PresenceToken []byte `json:"presence_token"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.ConfigSetReq{
+		Content:       []byte(b.Content),
+		PresenceToken: b.PresenceToken,
+	}
+	if b.Password != "" {
+		req.Password = []byte(b.Password)
+	}
+	var resp ipc.ConfigSetResp
+	if !s.run(w, r, ipc.OpConfigSet, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// POST /api/config/validate {content} — validate config content without writing.
+// Returns {errors?, parsed?}. No auth required; no disk access.
+func (s *Server) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.ConfigValidateReq{Content: []byte(b.Content)}
+	var resp ipc.ConfigValidateResp
+	if !s.run(w, r, ipc.OpConfigValidate, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// POST /api/byn/read {path} — read a .byn file with trust status.
+// Returns {path, content (string), trust_status}.
+// POST (not GET) with sameOrigin (see routes) so cross-origin pages cannot
+// drive this even on browsers that omit Origin for plain GETs. The daemon
+// additionally enforces that the path basename is exactly ".byn".
+func (s *Server) handleBynRead(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.BynReadReq{Path: b.Path}
+	var resp ipc.BynReadResp
+	if !s.run(w, r, ipc.OpBynRead, req, &resp) {
+		return
+	}
+	// Encode content as string so JS can use it directly.
+	// Parsed is forwarded as-is (nil → omitted from JSON); parse_error
+	// is forwarded so the portal can fall back to raw mode with a notice.
+	out := map[string]any{
+		"path":         resp.Path,
+		"content":      string(resp.Content),
+		"trust_status": resp.TrustStatus,
+	}
+	if resp.Parsed != nil {
+		out["parsed"] = resp.Parsed
+	}
+	if resp.ParseError != "" {
+		out["parse_error"] = resp.ParseError
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// POST /api/daemon/reload {} — live config reload (no credentials). Returns
+// the change_notes so the portal can display what took effect.
+func (s *Server) handleDaemonReload(w http.ResponseWriter, r *http.Request) {
+	var resp ipc.DaemonReloadResp
+	if !s.run(w, r, ipc.OpDaemonReload, ipc.DaemonReloadReq{}, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// POST /api/daemon/restart {} — graceful shutdown. The daemon acknowledges,
+// then stops ~200ms later. The browser should poll /api/status until the
+// daemon returns (via auto-start or `byn start`).
+func (s *Server) handleDaemonRestart(w http.ResponseWriter, r *http.Request) {
+	var resp ipc.DaemonRestartResp
+	if !s.run(w, r, ipc.OpDaemonRestart, ipc.DaemonRestartReq{}, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// POST /api/session/bootstrap {token} — one-time bootstrap token exchange.
+//
+// This endpoint is UNGATED (no X-Byn-Portal-Token required) because the caller
+// does not yet have the persistent portal token; the bootstrap token IS the
+// credential. It is CSRF-gated via sameOrigin (see routes): a browser always
+// sends Origin on a cross-site POST, so a malicious page cannot replay a
+// ps-captured bootstrap token — the short 60s TTL is a secondary defence.
+//
+// On success the response carries the persistent portal token, which the SPA
+// stores in localStorage and uses for all subsequent /api/* calls.
+func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Token string `json:"token"` //nolint:gosec // G101: incoming bootstrap token, not a credential we store
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if s.bootstrap == nil {
+		writeErr(w, http.StatusServiceUnavailable, "bootstrap not available")
+		return
+	}
+	portalToken := s.bootstrap.ConsumeBootstrap(b.Token)
+	if portalToken == "" {
+		writeErr(w, http.StatusUnauthorized, "invalid or expired bootstrap token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"portal_token": portalToken})
 }

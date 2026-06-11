@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/ui"
 )
 
 // freePort returns a currently-free localhost TCP port so the portal e2e
@@ -62,20 +64,39 @@ func TestUI_EndToEnd(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
+	// Read the portal owner-token that the daemon wrote on start. Every HTTP
+	// request to /api/* must carry this token.
+	tokenPath := filepath.Join(dir, ui.TokenFilename)
+	portalToken, err := ui.LoadOrCreateToken(tokenPath)
+	if err != nil {
+		t.Fatalf("read portal token: %v", err)
+	}
+
 	hc := &http.Client{Timeout: 5 * time.Second}
+	// withToken builds a request with the owner-token header pre-set.
+	withToken := func(method, path string, body []byte) *http.Request {
+		var bodyReader *bytes.Reader
+		if len(body) > 0 {
+			bodyReader = bytes.NewReader(body)
+		} else {
+			bodyReader = bytes.NewReader(nil)
+		}
+		req, _ := http.NewRequest(method, base+path, bodyReader)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Byn-Portal-Token", portalToken)
+		return req
+	}
 	post := func(path string, body any) *http.Response {
 		b, _ := json.Marshal(body)
-		req, _ := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := hc.Do(req)
+		resp, err := hc.Do(withToken(http.MethodPost, path, b))
 		if err != nil {
 			t.Fatalf("POST %s: %v", path, err)
 		}
 		return resp
 	}
 
-	// List entries — no login; the seeded API_KEY must be visible.
-	lr, err := hc.Get(base + "/api/entries?vault=default&project=default&env=default")
+	// List entries — the seeded API_KEY must be visible (token gate must pass).
+	lr, err := hc.Do(withToken(http.MethodGet, "/api/entries?vault=default&project=default&env=default", nil))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

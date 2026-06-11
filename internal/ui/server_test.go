@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,12 +16,14 @@ import (
 
 // fakeDisp is a canned Dispatcher for handler tests.
 type fakeDisp struct {
-	wrongPassword bool
-	revealValue   string
-	dupOnCreate   bool   // OpPut with CreateOnly → already_exists
-	lastPassword  []byte // password decoded from the last delete-family op
-	lastOldPw     []byte // old_password from the last passwd op
-	lastNewPw     []byte // new_password from the last passwd op
+	wrongPassword     bool
+	revealValue       string
+	dupOnCreate       bool   // OpPut with CreateOnly → already_exists
+	lastPassword      []byte // password decoded from the last delete-family op
+	lastOldPw         []byte // old_password from the last passwd op
+	lastNewPw         []byte // new_password from the last passwd op
+	lastBynContent    []byte // content bytes from the last OpBynWrite request
+	lastConfigContent []byte // content bytes from the last OpConfigSet request
 }
 
 func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope {
@@ -80,12 +84,11 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 	case ipc.OpRename, ipc.OpProjectCreate, ipc.OpEnvCreate:
 		return mk(struct{}{})
 	case ipc.OpBynWrite:
-		var pw struct {
-			Password []byte `json:"password"`
-		}
-		_ = ipc.DecodeBody(ipc.BodyReq, env, &pw)
-		f.lastPassword = pw.Password
-		trusted := len(pw.Password) > 0
+		var req ipc.BynWriteReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		f.lastPassword = req.Password
+		f.lastBynContent = req.Content
+		trusted := len(req.Password) > 0
 		resp := ipc.BynWriteResp{Path: "/proj/.byn", Trusted: trusted}
 		if trusted {
 			resp.Actions = []string{"make test"}
@@ -94,6 +97,74 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return mk(resp)
 	case ipc.OpFSListDir:
 		return mk(ipc.ListDirResp{Path: "/home/u", Parent: "/home", Entries: []ipc.DirEntry{{Name: "proj"}}})
+	case ipc.OpBynValidate:
+		var req ipc.BynValidateReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		// Return an error issue when content contains "BADKEY" (test sentinel).
+		if bytes.Contains(req.Content, []byte("BADKEY")) {
+			return mk(ipc.BynValidateResp{Errors: []ipc.BynIssue{{Section: "toml", Message: "unknown key: BADKEY"}}})
+		}
+		return mk(ipc.BynValidateResp{})
+	case ipc.OpBynSimulate:
+		var req ipc.BynSimulateReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		return mk(ipc.BynSimulateResp{
+			ResolvedArgv:  strings.Fields(req.CommandLine),
+			MatchedKind:   "action",
+			MatchedAction: "make test",
+			Verdict:       "free",
+			Reason:        "matched action",
+		})
+	case ipc.OpBynRead:
+		var req ipc.BynReadReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		parsed := &ipc.BynParsed{}
+		parsed.Scope.Vault = "default"
+		parsed.Env = []string{"API_KEY"}
+		parsed.Actions = []string{"make test"}
+		return mk(ipc.BynReadResp{
+			Path:        req.Path,
+			Content:     []byte("[scope]\nvault=\"default\"\n"),
+			TrustStatus: "trusted",
+			Parsed:      parsed,
+		})
+	case ipc.OpConfigGet:
+		return mk(ipc.ConfigGetResp{
+			Path:    "/home/u/.byn/config",
+			Content: []byte("[ui]\nport = 2967\n"),
+			Parsed: &ipc.ConfigParsed{
+				UIEnabled:     true,
+				UIPort:        2967,
+				IdleTimeout:   "15m0s",
+				PerActionAuth: false,
+			},
+		})
+	case ipc.OpConfigSet:
+		var req ipc.ConfigSetReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		f.lastConfigContent = req.Content
+		if f.wrongPassword && len(req.Password) > 0 {
+			return ipc.NewError(env.ID, ipc.CodeWrongPassword, "wrong password", "verify password")
+		}
+		if len(req.Password) == 0 && len(req.PresenceToken) == 0 {
+			return ipc.NewError(env.ID, ipc.CodeAuthRequired, "config change requires authorization", "supply password")
+		}
+		return mk(ipc.ConfigSetResp{ChangeNotes: []string{"[ui] port unchanged", "[daemon] idle_timeout applied"}})
+	case ipc.OpConfigValidate:
+		var req ipc.ConfigValidateReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		// Return an error issue when content contains "BADTOML" (test sentinel).
+		if bytes.Contains(req.Content, []byte("BADTOML")) {
+			return mk(ipc.ConfigValidateResp{Errors: []ipc.BynIssue{{Section: "toml", Message: "unexpected toml error"}}})
+		}
+		return mk(ipc.ConfigValidateResp{
+			Parsed: &ipc.ConfigParsed{
+				UIEnabled:     true,
+				UIPort:        2967,
+				IdleTimeout:   "15m0s",
+				PerActionAuth: false,
+			},
+		})
 	case ipc.OpAuditTail:
 		return mk(ipc.AuditTailResp{Events: []ipc.AuditEvent{
 			{Op: "get", Outcome: "ok", EntryName: "API_KEY", CallerComm: "byn", CallerSurface: "socket", TS: 1},
@@ -119,6 +190,10 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return mk(ipc.PasskeyListResp{Passkeys: []ipc.PasskeyInfo{{CredentialID: []byte{1, 2}, Label: "Touch ID", CreatedAt: 1}}})
 	case ipc.OpPasskeyRemove:
 		return mk(ipc.PasskeyRemoveResp{Removed: true})
+	case ipc.OpDaemonReload:
+		return mk(ipc.DaemonReloadResp{ChangeNotes: []string{"idle_timeout disabled → 5m0s"}})
+	case ipc.OpDaemonRestart:
+		return mk(ipc.DaemonRestartResp{Message: "daemon stopping — use `byn start` to restart"})
 	default:
 		return ipc.NewError(env.ID, ipc.CodeUnknownOp, "unknown op", "")
 	}
@@ -477,12 +552,44 @@ func TestIndex_Served(t *testing.T) {
 	}
 }
 
-func TestUnknownPath_404(t *testing.T) {
+// TestSPAFallback_AppRoute: non-api GET paths serve index.html (history-API
+// fallback) so deep-linked routes reload correctly.
+func TestSPAFallback_AppRoute(t *testing.T) {
+	for _, path := range []string{"/settings", "/trust", "/audit", "/studio", "/entries/v/p/e", "/nope"} {
+		ts, c := newTestServer(t, &fakeDisp{})
+		resp := getURL(t, c, ts.URL+path)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200 (SPA fallback)", path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("GET %s content-type = %q, want text/html", path, ct)
+		}
+	}
+}
+
+// TestSPAFallback_APIStill404: /api/* paths that don't match a registered
+// route must still return 404, not a silently-served HTML page.
+func TestSPAFallback_APIStill404(t *testing.T) {
 	ts, c := newTestServer(t, &fakeDisp{})
-	resp := getURL(t, c, ts.URL+"/nope")
+	resp := getURL(t, c, ts.URL+"/api/nope")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("unknown path = %d, want 404", resp.StatusCode)
+		t.Fatalf("GET /api/nope = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestSPAFallback_StaticAsset: /static/app.js is served as JavaScript, not
+// overridden by the SPA fallback.
+func TestSPAFallback_StaticAsset(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/static/app.js")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /static/app.js = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Errorf("GET /static/app.js content-type = %q, want javascript", ct)
 	}
 }
 
@@ -781,5 +888,530 @@ func TestVaultRename_ForwardsPresenceToken(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("vault rename with presence_token = %d, want 200", resp.StatusCode)
+	}
+}
+
+// ---- .byn studio route tests -----------------------------------------------
+
+// TestBynValidate_OK: valid content returns 200 with no errors.
+func TestBynValidate_OK(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := post(t, c, ts.URL+"/api/byn/validate", "http://localhost:2967",
+		map[string]string{"content": "[scope]\nvault=\"default\"\n"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("byn/validate ok = %d, want 200", resp.StatusCode)
+	}
+	var out ipc.BynValidateResp
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Errors) != 0 {
+		t.Errorf("unexpected errors: %v", out.Errors)
+	}
+}
+
+// TestBynValidate_BadContent: content with BADKEY sentinel returns errors.
+func TestBynValidate_BadContent(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := post(t, c, ts.URL+"/api/byn/validate", "http://localhost:2967",
+		map[string]string{"content": "[scope]\nBADKEY=\"x\"\n"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("byn/validate bad content = %d, want 200 with errors in body", resp.StatusCode)
+	}
+	var out ipc.BynValidateResp
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Errors) == 0 {
+		t.Error("expected errors for bad content, got none")
+	}
+	if out.Errors[0].Section != "toml" {
+		t.Errorf("section = %q, want toml", out.Errors[0].Section)
+	}
+}
+
+// TestBynValidate_CSRF: cross-origin POST must be rejected.
+func TestBynValidate_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := post(t, c, ts.URL+"/api/byn/validate", "http://evil.example",
+		map[string]string{"content": "[scope]\n"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin byn/validate = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestBynSimulate_ReturnsVerdict: simulate returns a verdict from the daemon.
+func TestBynSimulate_ReturnsVerdict(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := post(t, c, ts.URL+"/api/byn/simulate", "http://localhost:2967",
+		map[string]string{"content": "[exec]\nactions=[\"make test\"]\n", "command_line": "make test"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("byn/simulate = %d, want 200", resp.StatusCode)
+	}
+	var out ipc.BynSimulateResp
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != "free" {
+		t.Errorf("verdict = %q, want free", out.Verdict)
+	}
+	if out.MatchedKind != "action" {
+		t.Errorf("matched_kind = %q, want action", out.MatchedKind)
+	}
+}
+
+// TestBynSimulate_CSRF: cross-origin POST must be rejected.
+func TestBynSimulate_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := post(t, c, ts.URL+"/api/byn/simulate", "http://evil.example",
+		map[string]string{"content": "[exec]\n", "command_line": "make"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin byn/simulate = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestBynRead_ReturnsContentAndStatus: POST byn/read returns the file content
+// and trust status.
+func TestBynRead_ReturnsContentAndStatus(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/byn/read", "http://localhost:2967",
+		map[string]string{"path": "/proj/.byn"})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("byn/read = %d, want 200", r.StatusCode)
+	}
+	var out struct {
+		Path        string `json:"path"`
+		Content     string `json:"content"`
+		TrustStatus string `json:"trust_status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Path != "/proj/.byn" {
+		t.Errorf("path = %q, want /proj/.byn", out.Path)
+	}
+	if out.TrustStatus != "trusted" {
+		t.Errorf("trust_status = %q, want trusted", out.TrustStatus)
+	}
+	if out.Content == "" {
+		t.Error("content must not be empty")
+	}
+}
+
+// TestBynRead_CSRF: cross-origin POST to byn/read must be rejected by sameOrigin.
+func TestBynRead_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/byn/read", "http://evil.example",
+		map[string]string{"path": "/proj/.byn"})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin POST byn/read = %d, want 403", r.StatusCode)
+	}
+}
+
+// TestBynRead_MethodNotAllowed: GET to byn/read must return 405 (route is POST-only).
+func TestBynRead_MethodNotAllowed(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/byn/read?path=/proj/.byn")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET byn/read = %d, want 405", resp.StatusCode)
+	}
+}
+
+// TestBynWrite_ContentFieldForwarded: the portal handler forwards the content
+// field from the JSON body to the IPC BynWriteReq.Content bytes.
+func TestBynWrite_ContentFieldForwarded(t *testing.T) {
+	f := &fakeDisp{}
+	ts, c := newTestServer(t, f)
+	const wantContent = "[scope]\nvault=\"acme\"\n"
+	resp := post(t, c, ts.URL+"/api/byn/write", "http://localhost:2967",
+		map[string]any{
+			"dir":     "/tmp/proj",
+			"content": wantContent,
+			"trust":   false,
+		})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if string(f.lastBynContent) != wantContent {
+		t.Errorf("IPC content = %q, want %q", f.lastBynContent, wantContent)
+	}
+}
+
+// ---- /api/config tests -------------------------------------------------------
+
+// TestConfigGet_ReturnsContent: GET /api/config returns path, content, and parsed.
+func TestConfigGet_ReturnsContent(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := getURL(t, c, ts.URL+"/api/config")
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/config = %d, want 200", r.StatusCode)
+	}
+	var out struct {
+		Path    string            `json:"path"`
+		Content string            `json:"content"`
+		Parsed  *ipc.ConfigParsed `json:"parsed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Path == "" {
+		t.Error("config path must not be empty")
+	}
+	if out.Content == "" {
+		t.Error("config content must not be empty (fakeDisp seeds it)")
+	}
+	if out.Parsed == nil {
+		t.Fatal("parsed must be present when config parses successfully")
+	}
+	if out.Parsed.UIPort != 2967 {
+		t.Errorf("parsed.ui_port = %d, want 2967", out.Parsed.UIPort)
+	}
+	if out.Parsed.IdleTimeout != "15m0s" {
+		t.Errorf("parsed.idle_timeout = %q, want %q", out.Parsed.IdleTimeout, "15m0s")
+	}
+}
+
+// TestConfigSet_AuthRequired_NoCreds: POST without password or presence_token →
+// the daemon returns auth_required → 401.
+func TestConfigSet_AuthRequired_NoCreds(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/config", "http://localhost:2967",
+		map[string]string{"content": "[ui]\nport = 2967\n"})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("config set without creds = %d, want 401", r.StatusCode)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body["code"] != string(ipc.CodeAuthRequired) {
+		t.Errorf("code = %q, want auth_required", body["code"])
+	}
+}
+
+// TestConfigSet_ForwardsContent: POST with password returns 200 and the daemon
+// receives the content bytes.
+func TestConfigSet_ForwardsContent(t *testing.T) {
+	f := &fakeDisp{}
+	ts, c := newTestServer(t, f)
+	const wantContent = "[daemon]\nidle_timeout = \"10m\"\n"
+	r := post(t, c, ts.URL+"/api/config", "http://localhost:2967",
+		map[string]any{"content": wantContent, "password": "correct-horse"})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("config set = %d, want 200", r.StatusCode)
+	}
+	if string(f.lastConfigContent) != wantContent {
+		t.Errorf("IPC content = %q, want %q", f.lastConfigContent, wantContent)
+	}
+	var resp ipc.ConfigSetResp
+	if err := json.NewDecoder(r.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ChangeNotes) == 0 {
+		t.Error("expected change_notes in response")
+	}
+}
+
+// TestConfigSet_CSRF: cross-origin POST must be rejected with 403.
+func TestConfigSet_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/config", "http://evil.example",
+		map[string]string{"content": "[ui]\nport = 2967\n", "password": "pw"})
+	r.Body.Close()
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin config set = %d, want 403", r.StatusCode)
+	}
+}
+
+// TestConfig_MethodNotAllowed: methods other than GET/POST must return 405.
+func TestConfig_MethodNotAllowed(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/config", nil)
+	req.Header.Set("Origin", "http://localhost:2967")
+	r, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE /api/config = %d, want 405", r.StatusCode)
+	}
+}
+
+// ---- /api/config/validate tests -----------------------------------------------
+
+// TestConfigValidate_ValidContent: POST valid config → 200 with parsed.
+func TestConfigValidate_ValidContent(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/config/validate", "http://localhost:2967",
+		map[string]string{"content": "[ui]\nport = 2967\n"})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("config validate = %d, want 200", r.StatusCode)
+	}
+	var out ipc.ConfigValidateResp
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Errors) != 0 {
+		t.Errorf("expected no errors for valid content; got: %v", out.Errors)
+	}
+	if out.Parsed == nil {
+		t.Fatal("expected parsed to be non-nil for valid content")
+	}
+	if out.Parsed.UIPort != 2967 {
+		t.Errorf("parsed.ui_port = %d, want 2967", out.Parsed.UIPort)
+	}
+}
+
+// TestConfigValidate_InvalidContent: POST invalid config → 200 with errors, no parsed.
+func TestConfigValidate_InvalidContent(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/config/validate", "http://localhost:2967",
+		map[string]string{"content": "BADTOML [[["})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("config validate (invalid) = %d, want 200", r.StatusCode)
+	}
+	var out ipc.ConfigValidateResp
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Errors) == 0 {
+		t.Fatal("expected errors for invalid content")
+	}
+	if out.Errors[0].Section != "toml" {
+		t.Errorf("errors[0].section = %q, want \"toml\"", out.Errors[0].Section)
+	}
+	if out.Parsed != nil {
+		t.Error("parsed must be nil when errors are present")
+	}
+}
+
+// TestConfigValidate_CSRF: cross-origin POST must be rejected with 403.
+func TestConfigValidate_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/config/validate", "http://evil.example",
+		map[string]string{"content": "[ui]\nport = 2967\n"})
+	r.Body.Close()
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin config validate = %d, want 403", r.StatusCode)
+	}
+}
+
+// TestConfigValidate_MethodNotAllowed: GET must return 405.
+func TestConfigValidate_MethodNotAllowed(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/config/validate")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/config/validate = %d, want 405", resp.StatusCode)
+	}
+}
+
+// TestBynRead_ParsedFieldPassthrough: byn/read passes through the Parsed
+// struct from the daemon response so the studio builder can pre-populate.
+func TestBynRead_ParsedFieldPassthrough(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/byn/read", "http://localhost:2967",
+		map[string]string{"path": "/proj/.byn"})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("byn/read = %d, want 200", r.StatusCode)
+	}
+	var out struct {
+		Path        string `json:"path"`
+		TrustStatus string `json:"trust_status"`
+		Parsed      *struct {
+			Scope struct {
+				Vault string `json:"vault"`
+			} `json:"scope"`
+			Env     []string `json:"env"`
+			Actions []string `json:"actions"`
+		} `json:"parsed"`
+		ParseError string `json:"parse_error"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Parsed == nil {
+		t.Fatal("expected parsed field in byn/read response, got nil")
+	}
+	if out.Parsed.Scope.Vault != "default" {
+		t.Errorf("parsed.scope.vault = %q, want \"default\"", out.Parsed.Scope.Vault)
+	}
+	if len(out.Parsed.Env) != 1 || out.Parsed.Env[0] != "API_KEY" {
+		t.Errorf("parsed.env = %v, want [API_KEY]", out.Parsed.Env)
+	}
+	if len(out.Parsed.Actions) != 1 || out.Parsed.Actions[0] != "make test" {
+		t.Errorf("parsed.actions = %v, want [make test]", out.Parsed.Actions)
+	}
+}
+
+// ---- /api/daemon/reload tests ------------------------------------------
+
+// TestDaemonReload_ReturnsChangeNotes: POST /api/daemon/reload returns 200
+// and the change_notes from the daemon.
+func TestDaemonReload_ReturnsChangeNotes(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/daemon/reload", "http://localhost:2967", map[string]any{})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/daemon/reload = %d, want 200", r.StatusCode)
+	}
+	var out ipc.DaemonReloadResp
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.ChangeNotes) == 0 {
+		t.Error("expected change_notes in response")
+	}
+}
+
+// TestDaemonReload_CSRF: cross-origin POST must be rejected with 403.
+func TestDaemonReload_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/daemon/reload", "http://evil.example", map[string]any{})
+	r.Body.Close()
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin daemon/reload = %d, want 403", r.StatusCode)
+	}
+}
+
+// TestDaemonReload_MethodNotAllowed: GET to daemon/reload must return 405.
+func TestDaemonReload_MethodNotAllowed(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/daemon/reload")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/daemon/reload = %d, want 405", resp.StatusCode)
+	}
+}
+
+// ---- /api/daemon/restart tests -----------------------------------------
+
+// TestDaemonRestart_Acknowledges: POST /api/daemon/restart returns 200 with
+// a message before the daemon shuts down.
+func TestDaemonRestart_Acknowledges(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/daemon/restart", "http://localhost:2967", map[string]any{})
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/daemon/restart = %d, want 200", r.StatusCode)
+	}
+	var out ipc.DaemonRestartResp
+	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message == "" {
+		t.Error("expected non-empty message in restart response")
+	}
+}
+
+// TestDaemonRestart_CSRF: cross-origin POST must be rejected with 403.
+func TestDaemonRestart_CSRF(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	r := post(t, c, ts.URL+"/api/daemon/restart", "http://evil.example", map[string]any{})
+	r.Body.Close()
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin daemon/restart = %d, want 403", r.StatusCode)
+	}
+}
+
+// TestDaemonRestart_MethodNotAllowed: GET to daemon/restart must return 405.
+func TestDaemonRestart_MethodNotAllowed(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/daemon/restart")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/daemon/restart = %d, want 405", resp.StatusCode)
+	}
+}
+
+// ---- /api/fs/readfile tests ------------------------------------------------
+
+// TestFSReadFile_HappyPath: GET /api/fs/readfile?path=<file> returns 200 and
+// the file content in {"content": "..."}.
+func TestFSReadFile_HappyPath(t *testing.T) {
+	// Write a temp file with known content.
+	f, err := os.CreateTemp("", "byn-test-readfile-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	const want = "hello byn\nline2\n"
+	if _, err := io.WriteString(f, want); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/fs/readfile?path="+f.Name())
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("fs/readfile happy path = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != want {
+		t.Errorf("content = %q, want %q", out.Content, want)
+	}
+}
+
+// TestFSReadFile_TooLarge: a file exceeding 4 MiB must return 413.
+func TestFSReadFile_TooLarge(t *testing.T) {
+	f, err := os.CreateTemp("", "byn-test-readfile-large-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	// Write 4 MiB + 1 byte.
+	big := make([]byte, (4<<20)+1)
+	if _, err := f.Write(big); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/fs/readfile?path="+f.Name())
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("fs/readfile too large = %d, want 413", resp.StatusCode)
+	}
+}
+
+// TestFSReadFile_DirectoryRejected: passing a directory path must return 400.
+func TestFSReadFile_DirectoryRejected(t *testing.T) {
+	dir := t.TempDir()
+
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/fs/readfile?path="+dir)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("fs/readfile dir path = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestFSReadFile_EmptyPath: omitting the path param must return 400.
+func TestFSReadFile_EmptyPath(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+	resp := getURL(t, c, ts.URL+"/api/fs/readfile")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("fs/readfile empty path = %d, want 400", resp.StatusCode)
 	}
 }

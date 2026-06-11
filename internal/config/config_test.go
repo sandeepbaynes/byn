@@ -294,6 +294,91 @@ func TestLoad_PortRange(t *testing.T) {
 	}
 }
 
+// TestParse_ValidBytes verifies Parse accepts valid content and returns the
+// parsed config.
+func TestParse_ValidBytes(t *testing.T) {
+	content := []byte("[security]\nper_action_auth = true\n")
+	got, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse valid: %v", err)
+	}
+	if !got.Security.PerActionAuth {
+		t.Error("Parse: PerActionAuth should be true")
+	}
+	// Defaults are preserved for omitted keys.
+	if got.UI.Port != DefaultUIPort {
+		t.Errorf("Parse: UI.Port = %d, want default %d", got.UI.Port, DefaultUIPort)
+	}
+}
+
+// TestParse_BadTOML verifies Parse rejects bad TOML.
+func TestParse_BadTOML(t *testing.T) {
+	_, err := Parse([]byte("not toml [[["))
+	if err == nil {
+		t.Fatal("Parse(bad TOML) error = nil, want error")
+	}
+}
+
+// TestParse_OutOfRange verifies Parse rejects out-of-range values.
+func TestParse_OutOfRange(t *testing.T) {
+	_, err := Parse([]byte("[ui]\nport = 99999\n"))
+	if err == nil {
+		t.Fatal("Parse(out-of-range port) error = nil, want error")
+	}
+}
+
+// TestParse_UnknownKey verifies Parse rejects unknown keys.
+func TestParse_UnknownKey(t *testing.T) {
+	_, err := Parse([]byte("bogus = 1\n"))
+	if err == nil {
+		t.Fatal("Parse(unknown key) error = nil, want error")
+	}
+}
+
+// TestParse_EmptyBytes returns defaults (same as missing file via Load).
+func TestParse_EmptyBytes(t *testing.T) {
+	got, err := Parse([]byte{})
+	if err != nil {
+		t.Fatalf("Parse(empty): %v", err)
+	}
+	if got != Default() {
+		t.Errorf("Parse(empty) = %+v, want Default() %+v", got, Default())
+	}
+}
+
+// TestSerializeCfgDefaultForm feeds the EXACT string that the JS serializeCfg
+// function produces for the default form values into config.Parse. This guards
+// against serializer drift: if serializeCfg changes its output shape or
+// escaping, the test must be updated in sync.
+//
+// Keep these default values in sync with the comment above serializeCfg in
+// internal/ui/assets/app.js:
+//
+//	uiEnabled=true, uiPort=2967, idleTimeout="15m0s", perActionAuth=false
+func TestSerializeCfgDefaultForm(t *testing.T) {
+	// This is the verbatim output of serializeCfg({
+	//   uiEnabled:true, uiPort:2967, idleTimeout:"15m0s", perActionAuth:false
+	// }) as of the last sync with app.js.
+	jsSerialized := "[ui]\nenabled = true\nport    = 2967\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n[security]\nper_action_auth = false\n"
+
+	got, err := Parse([]byte(jsSerialized))
+	if err != nil {
+		t.Fatalf("Parse(JS default form output): %v\nInput was:\n%s", err, jsSerialized)
+	}
+	if !got.UI.Enabled {
+		t.Errorf("UI.Enabled = false, want true")
+	}
+	if got.UI.Port != DefaultUIPort {
+		t.Errorf("UI.Port = %d, want %d", got.UI.Port, DefaultUIPort)
+	}
+	if time.Duration(got.Daemon.IdleTimeout) != DefaultIdleTimeout {
+		t.Errorf("Daemon.IdleTimeout = %v, want %v", time.Duration(got.Daemon.IdleTimeout), DefaultIdleTimeout)
+	}
+	if got.Security.PerActionAuth {
+		t.Errorf("Security.PerActionAuth = true, want false")
+	}
+}
+
 // itoa is a tiny local helper so the test file has no extra imports just
 // for formatting an int into TOML.
 func itoa(n int) string {
