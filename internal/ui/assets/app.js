@@ -57,6 +57,7 @@ const state = {
   vaults: [],
   entries: [], defaultNames: new Set(), filter: "",
   revealTimers: {},
+  revealCells: {},  // name → value cell <span>, for reveal-all in the entries view
 };
 
 // Armed for ~700ms after pressing `l`, so the `l a` chord can lock all vaults.
@@ -2265,6 +2266,12 @@ function badgeFor(s) {
 
 function renderEntries() {
   const box = $("#content-body"); box.innerHTML = "";
+  // Value cells are recreated on each render — reset the reveal-all registry
+  // and drop pending mask timers (the fresh rows start masked).
+  state.revealCells = {};
+  state.revealAllBtn = null;
+  for (const t of Object.keys(state.revealTimers)) clearTimeout(state.revealTimers[t]);
+  state.revealTimers = {};
   if (vaultLocked(state.scope.vault)) {
     const b = el("div", "locked-banner");
     b.appendChild(el("span", null, "🔒 unlock vault to see values"));
@@ -2274,11 +2281,22 @@ function renderEntries() {
     box.appendChild(b);
   } else if (state.scope.env) {
     const bar = el("div", "entry-tools");
+    const revealAll = el("button", "btn btn-ghost sm", "reveal all");
+    revealAll.title = "reveal every value in this env (R) · click a value to reveal just one";
+    revealAll.onclick = entriesToggleRevealAll;
+    state.revealAllBtn = revealAll;
     const imp = el("button", "btn btn-ghost sm", "import");
     imp.title = "import KEY=value lines (or drag a .env file here)"; imp.onclick = importEnv;
     const exp = el("button", "btn btn-ghost sm", "export");
     exp.title = "download this env as a .env file"; exp.onclick = exportEnv;
-    bar.appendChild(imp); bar.appendChild(exp);
+    bar.appendChild(revealAll); bar.appendChild(imp); bar.appendChild(exp);
+    // Reset-to-default only for a non-default (inheriting) env.
+    if (state.scope.env !== "default") {
+      const reset = el("button", "btn btn-ghost sm", "reset to default");
+      reset.title = "remove all overrides + added vars in this env (it will inherit default)";
+      reset.onclick = resetEnvToDefault;
+      bar.appendChild(reset);
+    }
     box.appendChild(bar);
   }
   const tbl = el("div", "tbl");
@@ -2326,6 +2344,7 @@ function entryRow(s, i) {
   else { name.title = "inherited from default"; }
   row.appendChild(name);
   const val = el("span", "cell val"); val.appendChild(maskDots());
+  state.revealCells[s.name] = val; // for reveal-all in the entries view
   // Editing an inherited var writes an OVERRIDE into the current env
   // (put targets the exact scope — it does not touch the default).
   val.title = inherited ? "click to reveal · double-click to override" : "click to reveal · double-click to edit";
@@ -2407,6 +2426,133 @@ function toggleReveal(s, valEl) {
 async function copyValue(s) {
   try { const value = await revealValue(s); await navigator.clipboard.writeText(value); toast("copied " + s.name); }
   catch (e) { toast(e.message || "copy failed", true); }
+}
+
+// revealManyValues fetches plaintext for a list of { scope, name } requests
+// with ONE up-front authorization when per_action_auth requires it: a password
+// is reused across reads; a single-use passkey token covers one read, so the
+// rest re-prompt (same as the .env export). Calls onValue(req, value) for each
+// success. Returns true when complete, false on cancel / locked / failure
+// (with a toast). Each read is an audited `get`.
+async function revealManyValues(reqs, vault, onValue) {
+  let creds = null; // reusable password; passkey tokens are single-use
+  for (const req of reqs) {
+    const base = { scope: req.scope, name: req.name };
+    if (creds && creds.password) base.password = creds.password;
+    let data;
+    try {
+      data = await api("POST", "/api/entry/reveal", base);
+    } catch (e) {
+      if (e.code !== "auth_required") { toast(e.message || ("could not reveal " + req.name), true); return false; }
+      if (!creds) { creds = await authorizeStepUp(vault); if (!creds) return false; }
+      try {
+        data = await api("POST", "/api/entry/reveal", Object.assign({}, base, {
+          password: creds.password || "", presence_token: creds.presence_token || undefined,
+        }));
+      } catch (e2) { toast(e2.message || ("could not reveal " + req.name), true); return false; }
+      if (creds.presence_token && !creds.password) creds = null;
+    }
+    onValue(req, data.value);
+  }
+  return true;
+}
+
+// ---- reveal-all + reset, for the entries (env-vars) view ------------------
+
+// entriesAllRevealed is true when every value cell is currently revealed.
+function entriesAllRevealed() {
+  const names = Object.keys(state.revealCells);
+  if (!names.length) return false;
+  return names.every((n) => state.revealCells[n].classList.contains("revealed"));
+}
+
+// entriesUpdateRevealBtn syncs the toolbar button label.
+function entriesUpdateRevealBtn() {
+  if (state.revealAllBtn) state.revealAllBtn.textContent = entriesAllRevealed() ? "hide all" : "reveal all";
+}
+
+// entriesHideAll re-masks every revealed value.
+function entriesHideAll() {
+  for (const s of state.entries) {
+    const val = state.revealCells[s.name];
+    if (val && val.classList.contains("revealed")) hideReveal(s, val);
+  }
+  entriesUpdateRevealBtn();
+}
+
+// entriesToggleRevealAll reveals every value at once (one up-front auth), or
+// masks them all if every one is already revealed. Bound to the toolbar button
+// and `R`. Single-click on a row still reveals just that one (unchanged).
+async function entriesToggleRevealAll() {
+  if (state.view !== "entries") return;
+  if (vaultLocked(state.scope.vault)) { toast("unlock the vault to reveal values", true); return; }
+  const entries = state.entries || [];
+  if (!entries.length) return;
+  if (entriesAllRevealed()) { entriesHideAll(); return; }
+  // Inherited vars read from the default env (mirrors single-row reveal).
+  const reqs = entries
+    .filter((s) => { const v = state.revealCells[s.name]; return v && !v.classList.contains("revealed"); })
+    .map((s) => ({
+      s, name: s.name,
+      scope: { vault: state.scope.vault, project: state.scope.project, env: s.source === "default" ? "default" : state.scope.env },
+    }));
+  if (!reqs.length) { entriesUpdateRevealBtn(); return; }
+  if (state.revealAllBtn) { state.revealAllBtn.disabled = true; state.revealAllBtn.textContent = "revealing…"; }
+  await revealManyValues(reqs, state.scope.vault, (req, v) => {
+    const val = state.revealCells[req.name];
+    if (!val) return;
+    val.classList.add("revealed"); val.textContent = v;
+    clearTimeout(state.revealTimers[req.name]);
+    if (revealHideAfterMs > 0) state.revealTimers[req.name] = setTimeout(() => hideReveal(req.s, val), revealHideAfterMs);
+  });
+  if (state.revealAllBtn) state.revealAllBtn.disabled = false;
+  entriesUpdateRevealBtn();
+}
+
+// resetEnvToDefault removes every override + added var in the current
+// (non-default) env, leaving it inheriting default entirely. The default env
+// and other envs are untouched. Confirmed via a byn modal; the deletes share
+// one authorization (a password is reused; a passkey re-prompts per delete).
+async function resetEnvToDefault() {
+  const env = state.scope.env;
+  if (!env || env === "default") return;
+  const own = (state.entries || []).filter((s) => s.source !== "default");
+  if (!own.length) { toast("nothing to reset — no overrides or added vars in " + env); return; }
+  const locked = vaultLocked(state.scope.vault);
+  const o = {
+    title: "Reset “" + env + "” to default?",
+    danger: true, okText: "reset to default",
+    message: "Delete all " + own.length + " override(s) and added var(s) in “" + env +
+      "”? It will then inherit the default env entirely. The default env and other envs are untouched. This cannot be undone.",
+  };
+  if (locked) {
+    o.message += "\n\nThis vault is locked — enter the master password to authorize the deletes. The vault stays locked.";
+    o.fields = [{ key: "password", label: "master password", type: "password", placeholder: "password",
+      validate: (v) => (v ? null : "password required") }];
+  }
+  const r = await openDialog(o);
+  if (!r) return;
+  let creds = locked && r.password ? { password: r.password } : null;
+  let failed = 0;
+  for (const s of own) {
+    const base = { scope: curScope(), name: s.name };
+    if (creds && creds.password) base.password = creds.password;
+    try {
+      await api("POST", "/api/entry/delete", base);
+    } catch (e) {
+      if (e.code !== "auth_required") { failed++; continue; }
+      if (!creds) { creds = await authorizeStepUp(state.scope.vault); if (!creds) break; }
+      try {
+        await api("POST", "/api/entry/delete", Object.assign({}, base, {
+          password: creds.password || "", presence_token: creds.presence_token || undefined,
+        }));
+      } catch (e2) { failed++; }
+      if (creds.presence_token && !creds.password) creds = null;
+    }
+  }
+  await loadEntries();
+  if (failed) toast(failed + " of " + own.length + " could not be deleted", true);
+  else toast("reset “" + env + "” to default — " + own.length + " removed");
 }
 
 function editName(s, cell) {
@@ -3198,11 +3344,10 @@ function openBynStudio(opts) {
     resetBtn: null,
     dirDropdownEl: null,
     trustEntries: [],
-    // Reveal-all state: shows real env-var values inline (gated by unlock/auth).
-    revealed: false,
-    revealValues: {},   // name → plaintext (only while revealed)
+    // Reveal state: shows real env-var values inline (gated by unlock/auth).
+    // Per-value: single-click toggles one; reveal-all toggles every one.
     revealValueEls: {}, // name → value <span> (rebuilt each render)
-    revealTimer: null,
+    revealTimers: {},   // name → per-value auto-hide timer
     revealBtn: null,
   };
   // Pre-populate envVarSwitches from already-loaded entries (the entries that
@@ -3513,7 +3658,9 @@ function studioShowDeepLinkError(path, daemonMsg) {
 // Guarded: shows a byn modal when the studio has unsaved edits.
 async function closeStudio() {
   await guardDirtyNav(() => {
-    if (studioState) clearTimeout(studioState.revealTimer); // drop any reveal timer
+    if (studioState) { // drop any per-value reveal timers
+      for (const t of Object.keys(studioState.revealTimers || {})) clearTimeout(studioState.revealTimers[t]);
+    }
     studioState = null;
     leaveOverlayView();
   });
@@ -3746,35 +3893,95 @@ async function studioReset() {
 
 // ---- studio reveal-all (show real env-var values, gated by unlock/auth) ----
 
-// studioToggleRevealAll reveals (or re-masks) the actual values for every vault
-// var in the scope being edited. Reveal is gated by the daemon's reveal path:
-// the vault must be unlocked and per_action_auth (if on) triggers a step-up.
-// Bound to the env-card button and the `R` shortcut.
-async function studioToggleRevealAll() {
-  if (!studioState) return;
-  if (studioState.revealed) { studioHideAll(); return; }
-  const names = studioState.vaultVarNames || [];
-  if (!names.length || studioState.envAll) return; // nothing to reveal
-  const vault = (studioState.vault || "").trim();
-  if (!vault) { toast("set a vault in [scope] to reveal values", true); return; }
-  const scope = {
-    vault,
+// studioScopeForReveal returns the {vault, project, env} of the scope being
+// edited (project/env default like the var-name fetch).
+function studioScopeForReveal() {
+  return {
+    vault:   (studioState.vault   || "").trim(),
     project: (studioState.project || "").trim() || "default",
     env:     (studioState.env     || "").trim() || "default",
   };
+}
+
+// studioShowValue paints fetched plaintext into a value span + arms its
+// per-value auto-hide timer.
+function studioShowValue(name, span, v) {
+  span.classList.add("revealed");
+  span.classList.toggle("studio-val-empty", v === ""); // namespaced — global .empty has 54px padding
+  span.textContent = v === "" ? "(empty)" : v; // textContent — XSS-safe, clears children
+  clearTimeout(studioState.revealTimers[name]);
+  if (revealHideAfterMs > 0) {
+    studioState.revealTimers[name] = setTimeout(() => studioHideOne(name), revealHideAfterMs);
+  }
+}
+
+// studioRevealOne fetches + shows ONE value (single-click). Gated by the
+// audited reveal path: vault unlocked + per_action_auth step-up via apiWithAuth.
+async function studioRevealOne(name) {
+  if (!studioState || !studioState.revealValueEls[name]) return;
+  const scope = studioScopeForReveal();
+  if (!scope.vault) { toast("set a vault in [scope] to reveal values", true); return; }
+  try {
+    const data = await apiWithAuth("POST", "/api/entry/reveal", { scope, name }, scope.vault);
+    const span = studioState && studioState.revealValueEls[name];
+    if (span) studioShowValue(name, span, data.value);
+  } catch (e) { toast(e.message || ("could not reveal " + name), true); }
+  studioUpdateRevealBtn();
+}
+
+// studioHideOne re-masks ONE value + clears its timer.
+function studioHideOne(name) {
+  if (!studioState) return;
+  clearTimeout(studioState.revealTimers[name]);
+  delete studioState.revealTimers[name];
+  const span = studioState.revealValueEls[name];
+  if (span) {
+    span.classList.remove("revealed", "studio-val-empty");
+    span.textContent = ""; // clears children (XSS-safe), then re-mask
+    span.appendChild(maskDots());
+  }
+  studioUpdateRevealBtn();
+}
+
+// studioToggleOne flips one value between revealed and masked (single-click).
+function studioToggleOne(name) {
+  if (!studioState) return;
+  const span = studioState.revealValueEls[name];
+  if (!span) return;
+  if (span.classList.contains("revealed")) studioHideOne(name);
+  else studioRevealOne(name);
+}
+
+// studioAllRevealed is true when every scope var's value span is revealed.
+function studioAllRevealed() {
+  const names = (studioState && studioState.vaultVarNames) || [];
+  if (!names.length) return false;
+  return names.every((n) => {
+    const s = studioState.revealValueEls[n];
+    return s && s.classList.contains("revealed");
+  });
+}
+
+// studioToggleRevealAll reveals every scope value at once (one up-front auth),
+// or masks them all if every one is already revealed. Bound to the env-card
+// button and the `R` shortcut.
+async function studioToggleRevealAll() {
+  if (!studioState) return;
+  const names = studioState.vaultVarNames || [];
+  if (!names.length || studioState.envAll) return; // nothing to reveal
+  if (studioAllRevealed()) { studioHideAll(); return; }
+  const scope = studioScopeForReveal();
+  if (!scope.vault) { toast("set a vault in [scope] to reveal values", true); return; }
   if (studioState.revealBtn) { studioState.revealBtn.disabled = true; studioState.revealBtn.textContent = "revealing…"; }
   const vals = await studioRevealScopeValues(scope, names);
   if (!studioState) return; // studio closed mid-fetch
   if (studioState.revealBtn) studioState.revealBtn.disabled = false;
   if (!vals) { studioUpdateRevealBtn(); return; } // cancelled / locked / failed
-  studioState.revealValues = vals;
-  studioState.revealed = true;
-  studioApplyReveal();
-  studioUpdateRevealBtn();
-  clearTimeout(studioState.revealTimer);
-  if (revealHideAfterMs > 0) {
-    studioState.revealTimer = setTimeout(() => studioHideAll(), revealHideAfterMs);
+  for (const name of names) {
+    const span = studioState.revealValueEls[name];
+    if (span && name in vals) studioShowValue(name, span, vals[name]);
   }
+  studioUpdateRevealBtn();
 }
 
 // studioRevealScopeValues fetches plaintext for `names` in `scope`, authorizing
@@ -3784,63 +3991,20 @@ async function studioToggleRevealAll() {
 // vault / failure (with a toast). Each read is an audited `get`.
 async function studioRevealScopeValues(scope, names) {
   const out = {};
-  let creds = null; // reusable password; passkey tokens are single-use
-  for (const name of names) {
-    const base = { scope, name };
-    if (creds && creds.password) base.password = creds.password;
-    let data;
-    try {
-      data = await api("POST", "/api/entry/reveal", base);
-    } catch (e) {
-      if (e.code !== "auth_required") {
-        toast(e.message || ("could not reveal " + name), true);
-        return null;
-      }
-      if (!creds) {
-        creds = await authorizeStepUp(scope.vault);
-        if (!creds) return null; // user cancelled the step-up
-      }
-      try {
-        data = await api("POST", "/api/entry/reveal", Object.assign({}, base, {
-          password: creds.password || "",
-          presence_token: creds.presence_token || undefined,
-        }));
-      } catch (e2) {
-        toast(e2.message || ("could not reveal " + name), true);
-        return null;
-      }
-      // A single-use passkey token is now spent; keep a reusable password.
-      if (creds.presence_token && !creds.password) creds = null;
-    }
-    out[name] = data.value;
-  }
-  return out;
+  const ok = await revealManyValues(
+    names.map((n) => ({ scope, name: n })), scope.vault,
+    (req, v) => { out[req.name] = v; });
+  return ok ? out : null;
 }
 
-// studioApplyReveal writes the cached plaintext into the per-row value spans.
-function studioApplyReveal() {
-  if (!studioState || !studioState.revealed) return;
-  const vals = studioState.revealValues || {};
-  for (const [name, span] of Object.entries(studioState.revealValueEls || {})) {
-    if (!(name in vals)) continue;
-    const v = vals[name];
-    span.classList.add("revealed");
-    span.classList.toggle("studio-val-empty", v === ""); // namespaced — global .empty has 54px padding
-    span.textContent = v === "" ? "(empty)" : v; // textContent — XSS-safe, clears children
-  }
-}
-
-// studioHideAll re-masks all values, clears the cache + timer, and resets state.
+// studioHideAll re-masks every value + clears every per-value timer.
 function studioHideAll() {
   if (!studioState) return;
-  clearTimeout(studioState.revealTimer);
-  studioState.revealTimer = null;
-  studioState.revealed = false;
-  studioState.revealValues = {};
-  for (const span of Object.values(studioState.revealValueEls || {})) {
-    span.classList.remove("revealed", "studio-val-empty");
-    span.textContent = ""; // clears children (XSS-safe), then re-mask
-    span.appendChild(maskDots());
+  for (const name of Object.keys(studioState.revealValueEls || {})) studioHideOne(name);
+  // Clear any orphan timers for names no longer rendered.
+  for (const name of Object.keys(studioState.revealTimers || {})) {
+    clearTimeout(studioState.revealTimers[name]);
+    delete studioState.revealTimers[name];
   }
   studioUpdateRevealBtn();
 }
@@ -3848,7 +4012,7 @@ function studioHideAll() {
 // studioUpdateRevealBtn syncs the env-card button label to the reveal state.
 function studioUpdateRevealBtn() {
   if (!studioState || !studioState.revealBtn) return;
-  studioState.revealBtn.textContent = studioState.revealed ? "hide all" : "reveal all";
+  studioState.revealBtn.textContent = studioAllRevealed() ? "hide all" : "reveal all";
 }
 
 // renderBuilderPanel fills the builder section cards into el.
@@ -3935,16 +4099,16 @@ function renderBuilderPanel(panel) {
   // is shown (real scope vars, not the "*" wildcard).
   studioState.revealValueEls = {};
   studioState.revealBtn = null;
-  const canReveal = vaultNames.length > 0 && !studioState.envAll;
-  if (!canReveal && studioState.revealed) {
-    clearTimeout(studioState.revealTimer);
-    studioState.revealTimer = null;
-    studioState.revealed = false;
-    studioState.revealValues = {};
+  // Value spans are recreated, so any pending per-value timers point at stale
+  // DOM — clear them; the freshly-rendered rows start masked.
+  for (const t of Object.keys(studioState.revealTimers || {})) {
+    clearTimeout(studioState.revealTimers[t]);
   }
+  studioState.revealTimers = {};
+  const canReveal = vaultNames.length > 0 && !studioState.envAll;
   if (canReveal) {
     const revealBtn = el("button", "btn btn-ghost sm studio-reveal-btn",
-      studioState.revealed ? "hide all" : "reveal all");
+      studioAllRevealed() ? "hide all" : "reveal all");
     revealBtn.type = "button";
     revealBtn.title = "show the real values for this scope (R) — vault must be unlocked";
     revealBtn.onclick = studioToggleRevealAll;
@@ -3991,8 +4155,10 @@ function renderBuilderPanel(panel) {
     selAllRow.appendChild(selAllLabel);
     envList.appendChild(selAllRow);
 
-    // Per vault-var toggle switch rows, each with a (masked) value span that
-    // reveal-all populates.
+    // Per vault-var toggle switch rows. Each gets a (masked) value span:
+    // single-click reveals/hides just that value (200ms-debounced so it doesn't
+    // fight the double-click); double-click toggles the include switch. Value
+    // clicks stop propagation so they don't also hit the row's switch toggle.
     for (const name of vaultNames) {
       const swRow = studioSwitchRow(name, !!switches[name], (checked) => {
         studioState.envVarSwitches[name] = checked;
@@ -4001,13 +4167,22 @@ function renderBuilderPanel(panel) {
       });
       const valSpan = el("span", "studio-var-val mono");
       valSpan.appendChild(maskDots());
+      valSpan.title = "click to reveal / hide · double-click to toggle inject";
       studioState.revealValueEls[name] = valSpan;
+      let vct = null;
+      valSpan.onclick = (e) => {
+        e.stopPropagation();
+        if (vct) return; // a double-click is in progress
+        vct = setTimeout(() => { vct = null; studioToggleOne(name); }, 200);
+      };
+      valSpan.ondblclick = (e) => {
+        e.stopPropagation();
+        if (vct) { clearTimeout(vct); vct = null; }
+        swRow.click(); // toggle the include switch
+      };
       swRow.appendChild(valSpan);
       envList.appendChild(swRow);
     }
-    // Re-apply revealed values to the freshly-built spans (reveal survives a
-    // re-render, e.g. toggling a switch, until the timer or hide-all fires).
-    studioApplyReveal();
   } else {
     // Vault names unavailable (locked/empty vault or no scope).
     const notice = el("div", "studio-vault-notice",
@@ -4868,8 +5043,10 @@ function wire() {
       lockChordArmed = true; setTimeout(() => { lockChordArmed = false; }, 700);
     }
     else if (e.key === "a" && lockChordArmed) { lockChordArmed = false; lockAllVaults(); }
-    // R reveals all scope values in the studio (matches the TUI's R reveal).
+    // R reveals/hides all values (matches the TUI's R reveal) — in the studio
+    // env card and in the entries view.
     else if (e.key === "R" && state.view === "studio") { e.preventDefault(); studioToggleRevealAll(); }
+    else if (e.key === "R" && state.view === "entries") { e.preventDefault(); entriesToggleRevealAll(); }
     else if (e.key === "?") { e.preventDefault(); toggleHelp(); }
     else if (e.key === "Escape") hideHelp();
   });

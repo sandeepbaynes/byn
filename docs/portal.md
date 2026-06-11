@@ -17,6 +17,17 @@ byn web            # opens the portal in your browser
 
 The portal binds loopback only (`127.0.0.1`), never the network.
 
+## The env-vars view
+
+Values are masked by default. **Single-click** a value to reveal it (it re-masks
+after `[ui] reveal_hide_after`, default 15s); double-click to edit. **Reveal all**
+(toolbar) or **`Shift+R`** reveals/hides every value at once, authorizing once.
+**import** / **export** read and write `.env` files.
+
+For a non-default env (one that inherits `default`), **reset to default** removes
+every override and added var in that env — leaving it inheriting `default`
+entirely — after a confirm dialog. The `default` env and other envs are untouched.
+
 ## Trust boundary: loopback + owner-token
 
 Binding to `127.0.0.1` blocks network access but does **not** prevent other
@@ -106,12 +117,14 @@ The **builder** tab presents a structured form:
 - **Env-vars to inject** — a checkbox list of every entry in the selected
   scope; tick the ones `byn exec` should inject into the child process. An
   **inject ALL vars ("\*")** toggle injects every secret instead of a list.
-  **Reveal all** (top-right of the card, or press **`R`** — same key as the
-  TUI) shows the real value next to every scope var so you don't have to switch
-  to the env view. Reveal goes through the audited reveal path: the vault must
-  be unlocked, and with `per_action_auth` on it prompts for your password or
-  passkey first. Values re-mask after `[ui] reveal_hide_after` (default 15s) and
-  when you leave the studio.
+  **Reveal all** (top-right of the card, or press **`Shift+R`** — same key as
+  the TUI) shows the real value next to every scope var so you don't have to switch
+  to the env view. You can also **single-click any one value** to reveal/hide
+  just that var; **double-click a value** toggles its inject switch (clicking the
+  name or switch toggles it too). Reveal goes through the audited reveal path:
+  the vault must be unlocked, and with `per_action_auth` on it prompts for your
+  password or passkey first (reveal-all authorizes once). Values re-mask after
+  `[ui] reveal_hide_after` (default 15s) and when you leave the studio.
 - **Actions allowlist** — commands that may run without per-call auth. An
   **allow ALL commands ("\*")** toggle mirrors the env wildcard toggle.
 
