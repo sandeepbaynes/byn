@@ -404,6 +404,61 @@ func TestSerializeCfgDefaultForm(t *testing.T) {
 	}
 }
 
+// TestLoad_Privsep_Absent verifies that omitting [security] privsep leaves the
+// pointer nil and PrivsepEnabled() false — the conservative OFF default.
+func TestLoad_Privsep_Absent(t *testing.T) {
+	path := writeConfig(t, "")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Security.Privsep != nil {
+		t.Errorf("Privsep = %v, want nil (absent)", *got.Security.Privsep)
+	}
+	if got.PrivsepEnabled() {
+		t.Error("PrivsepEnabled() = true, want false when absent")
+	}
+}
+
+// TestLoad_Privsep_True verifies that privsep = true is detected as ON.
+func TestLoad_Privsep_True(t *testing.T) {
+	path := writeConfig(t, "[security]\nprivsep = true\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Security.Privsep == nil || !*got.Security.Privsep {
+		t.Fatalf("Privsep = %v, want non-nil true", got.Security.Privsep)
+	}
+	if !got.PrivsepEnabled() {
+		t.Error("PrivsepEnabled() = false, want true when privsep = true")
+	}
+}
+
+// TestLoad_Privsep_False verifies that privsep = false is detected as OFF
+// (present but explicitly disabled) — distinct from absent at the pointer
+// level, identical at the PrivsepEnabled() boundary.
+func TestLoad_Privsep_False(t *testing.T) {
+	path := writeConfig(t, "[security]\nprivsep = false\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Security.Privsep == nil || *got.Security.Privsep {
+		t.Fatalf("Privsep = %v, want non-nil false", got.Security.Privsep)
+	}
+	if got.PrivsepEnabled() {
+		t.Error("PrivsepEnabled() = true, want false when privsep = false")
+	}
+}
+
+// TestDefault_PrivsepOff verifies the built-in Default() leaves privsep off.
+func TestDefault_PrivsepOff(t *testing.T) {
+	if Default().PrivsepEnabled() {
+		t.Error("Default().PrivsepEnabled() = true, want false")
+	}
+}
+
 // itoa is a tiny local helper so the test file has no extra imports just
 // for formatting an int into TOML.
 func itoa(n int) string {

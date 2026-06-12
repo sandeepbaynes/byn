@@ -37,6 +37,7 @@ func daemonConfigFor(dir string) (daemon.Config, error) {
 		UIPort:      cfg.UI.Port,
 		SessionTTL:  time.Duration(cfg.Security.SessionTTL),
 		SessionIdle: time.Duration(cfg.Security.SessionIdle),
+		Privsep:     cfg.PrivsepEnabled(),
 	}, nil
 }
 

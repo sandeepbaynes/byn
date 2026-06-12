@@ -99,6 +99,16 @@ type Security struct {
 	// session idle time without repeating the value. Use "0s" explicitly to
 	// disable idle expiry for sessions while keeping the vault idle timeout.
 	SessionIdle Duration `toml:"session_idle"`
+
+	// Privsep opts the daemon into running trusted-.byn `byn exec` children
+	// SERVER-side under privilege separation (the _byn-exec service user),
+	// instead of in-process as the owner. It is presence-detecting: a nil
+	// pointer (key absent) means OFF — the conservative default while privsep
+	// is still rolling out. Set `privsep = true` to enable, `false` to keep it
+	// explicitly off. Enabling it requires `byn setup` to have provisioned the
+	// service users; otherwise exec.spawn returns an actionable not-provisioned
+	// error rather than silently falling back to an owner-UID spawn.
+	Privsep *bool `toml:"privsep"`
 }
 
 // Default returns the built-in defaults, applied when the file is absent
@@ -112,6 +122,15 @@ func Default() Config {
 			SessionIdle: 0, // 0 ⇒ inherit [daemon] idle_timeout at runtime
 		},
 	}
+}
+
+// PrivsepEnabled reports whether [security] privsep is set to true. A nil
+// pointer (key absent) OR an explicit false both yield false — privsep is
+// off unless the config opts in. Folding the nil/false cases into one helper
+// keeps every consumer (the daemon wiring, the CLI exec routing) reading the
+// same single source of truth.
+func (c Config) PrivsepEnabled() bool {
+	return c.Security.Privsep != nil && *c.Security.Privsep
 }
 
 // Path returns the config file path for a given $BYN_DIR.

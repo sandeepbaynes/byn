@@ -1,6 +1,6 @@
 //go:build linux
 
-package privsep
+package fdpass
 
 import "golang.org/x/sys/unix"
 

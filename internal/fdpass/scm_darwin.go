@@ -1,6 +1,6 @@
 //go:build darwin
 
-package privsep
+package fdpass
 
 import "golang.org/x/sys/unix"
 

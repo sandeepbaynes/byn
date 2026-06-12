@@ -12,6 +12,7 @@ import (
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
+	"github.com/sandeepbaynes/byn/internal/fdpass"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
@@ -67,8 +68,39 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	if err == nil {
 		root = withCaller(root, socketCaller(uid, pid, env.Session))
 	}
+
+	// exec.spawn carries its child's three stdio fds out-of-band: right after
+	// the request frame the CLI SendFDs([]int{0,1,2}) over this same connection.
+	// Receive them HERE (before dispatch), stash them in the request context for
+	// handleExecSpawn, and close the daemon's copies after dispatch returns. The
+	// spawner dups what it needs (privsep dupStdio), so closing our originals
+	// post-dispatch frees them without affecting the running child. Every other
+	// op is untouched — only exec.spawn does the fd dance.
+	if err == nil && env.Op == ipc.OpExecSpawn {
+		fds, rcvErr := recvExecSpawnFDs(conn)
+		if rcvErr != nil {
+			_ = ipc.WriteFrame(conn, ipc.NewError(env.ID, ipc.CodeBadRequest,
+				fmt.Sprintf("exec.spawn: receive stdio fds: %v", rcvErr), ""))
+			return
+		}
+		defer fdpass.CloseAll(fds)
+		root = withExecSpawnFDs(root, fds[0], fds[1], fds[2])
+	}
+
 	resp := d.dispatch(root, env)
 	_ = ipc.WriteFrame(conn, resp)
+}
+
+// recvExecSpawnFDs extracts the raw fd of the connection and receives EXACTLY
+// the three stdio fds the CLI sent via SCM_RIGHTS right after the request frame.
+// The returned fds are the daemon's own copies (the kernel dup'd them into our
+// table); the caller closes them after dispatch.
+func recvExecSpawnFDs(conn net.Conn) ([]int, error) {
+	cfd, err := fdpass.ConnFD(conn)
+	if err != nil {
+		return nil, err
+	}
+	return fdpass.RecvFDs(cfd, 3)
 }
 
 // Dispatch routes one IPC envelope in-process and returns the response.
