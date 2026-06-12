@@ -93,21 +93,12 @@ func installHelper(run runner, srcHelperPath, destPath, configPath string, execU
 // (shipped beside the byn binary); destPath is where it is installed;
 // configPath is the root-owned config the helper reads at runtime.
 func Setup(run runner, srcHelperPath, destPath, configPath string) error {
-	result, err := provisionUsers(osLookup, run)
-	if err != nil {
+	if _, err := provisionUsers(osLookup, run); err != nil {
 		return err
 	}
-	var execUID, execGID int
-	if result.AlreadyProvisioned {
-		execUID, execGID, err = osLookup(ExecUser)
-		if err != nil {
-			return fmt.Errorf("lookup %s after provisioning: %w", ExecUser, err)
-		}
-	} else {
-		execUID, execGID, err = osLookup(ExecUser)
-		if err != nil {
-			return fmt.Errorf("lookup %s after creating: %w", ExecUser, err)
-		}
+	execUID, execGID, err := osLookup(ExecUser)
+	if err != nil {
+		return fmt.Errorf("lookup %s after provisioning: %w", ExecUser, err)
 	}
 	return installHelper(run, srcHelperPath, destPath, configPath, execUID, execGID)
 }

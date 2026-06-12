@@ -1,4 +1,4 @@
-//go:build linux
+//go:build darwin
 
 package privsep
 
@@ -9,13 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestLinuxCreateUserCommands(t *testing.T) {
-	conf := sysusersConf()
-	assert.Contains(t, conf, "u _byn ")
-	assert.Contains(t, conf, "u _byn-exec ")
-	assert.Contains(t, conf, "/usr/sbin/nologin")
-}
 
 func TestProvisionIsNoOpWhenPresent(t *testing.T) {
 	done, err := provisionUsers(func(name string) (int, int, error) {
@@ -38,11 +31,10 @@ func TestProvisionRunsCommandWhenUsersAbsent(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.NotEmpty(t, ran, "should have run at least one command to create users")
-}
-
-func TestHelperConfigPath_Linux(t *testing.T) {
-	got := HelperConfigPath()
-	assert.Equal(t, "/var/lib/byn/exec-helper.conf", got)
+	// On darwin both users are created via sysadminctl.
+	for _, c := range ran {
+		assert.Equal(t, "sysadminctl", c)
+	}
 }
 
 func TestInstallHelperWritesConfig(t *testing.T) {
@@ -50,11 +42,14 @@ func TestInstallHelperWritesConfig(t *testing.T) {
 	err := installHelper(func(cmd string, args ...string) error {
 		cmds = append(cmds, cmd)
 		return nil
-	}, "/src/byn-exec-helper", "/usr/local/libexec/byn-exec-helper",
-		"/var/lib/byn/exec-helper.conf", 411, 411)
+	}, "/src/byn-exec-helper", helperDestPathDarwin,
+		helperConfigPathDarwin, 411, 411)
 	assert.NoError(t, err)
-	// Should call install, setcap, install (state dir), sh (config write)
+	// Should call: install (binary), install (state dir), sh (config write)
 	assert.GreaterOrEqual(t, len(cmds), 3)
+	assert.Equal(t, "install", cmds[0], "first command must install the binary with 4755")
+	assert.Equal(t, "install", cmds[1], "second command must create the support dir")
+	assert.Equal(t, "sh", cmds[2], "third command must write the config via sh")
 }
 
 func TestInstallHelperErrorPaths(t *testing.T) {
@@ -66,9 +61,8 @@ func TestInstallHelperErrorPaths(t *testing.T) {
 	}
 	steps := []step{
 		{"install binary", 0},
-		{"setcap", 1},
-		{"create state dir", 2},
-		{"write config", 3},
+		{"create state dir", 1},
+		{"write config", 2},
 	}
 	for _, s := range steps {
 		s := s
@@ -80,10 +74,15 @@ func TestInstallHelperErrorPaths(t *testing.T) {
 					return sentinel
 				}
 				return nil
-			}, "/src/byn-exec-helper", "/usr/local/libexec/byn-exec-helper",
-				"/var/lib/byn/exec-helper.conf", 411, 411)
+			}, "/src/byn-exec-helper", helperDestPathDarwin,
+				helperConfigPathDarwin, 411, 411)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, sentinel)
 		})
 	}
+}
+
+func TestHelperConfigPath_Darwin(t *testing.T) {
+	got := HelperConfigPath()
+	assert.Equal(t, "/Library/Application Support/byn/exec-helper.conf", got)
 }

@@ -9,7 +9,7 @@ func TestHelpFor_AllCanonicalCommandsRegistered(t *testing.T) {
 	canonical := []string{
 		"init", "unlock", "lock", "put", "get", "list", "delete", "exec",
 		"rename", "edit", "daemon", "status", "version", "help", "vault",
-		"project", "env", "import", "export",
+		"project", "env", "import", "export", "setup",
 	}
 	for _, name := range canonical {
 		if got := helpFor(name); got == "" {
