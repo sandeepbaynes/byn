@@ -73,6 +73,14 @@ type Config struct {
 	// not-provisioned error. The spawner is built ONLY when this is true AND the
 	// service users are actually provisioned (`byn setup`).
 	Privsep bool
+
+	// AllowRoot overrides the start-time refusal to run as root (uid 0). Wired
+	// from the daemon start `--allow-root` flag; default false. A root daemon
+	// defeats the _byn privsep separation (least privilege), so by default the
+	// daemon refuses to start as uid 0 with an actionable error. This escape
+	// hatch is posture hygiene only — NOT a defense against an existing root
+	// attacker — and using it logs a prominent warning.
+	AllowRoot bool
 }
 
 // vaultEntry is the daemon's handle on one open vault.
@@ -308,6 +316,17 @@ func New(cfg Config) (*Daemon, error) {
 // first-command latency on a normal install stays low. Other vaults
 // open on first IPC lookup.
 func (d *Daemon) Start(ctx context.Context) error {
+	// Refuse to run as root (uid 0) before any side effects: a root daemon
+	// negates the _byn privsep separation (least privilege). --allow-root
+	// overrides, but loudly — running as root is posture-hostile, not a defense.
+	euid := os.Geteuid()
+	if err := refuseRoot(euid, d.cfg.AllowRoot); err != nil {
+		return err
+	}
+	if euid == 0 && d.cfg.AllowRoot {
+		fmt.Fprintln(os.Stderr, "byn daemon: WARNING — running as root with --allow-root; "+
+			"this defeats the _byn privilege separation (least privilege). Do NOT do this in production.")
+	}
 	if err := os.MkdirAll(d.cfg.Dir, 0o700); err != nil {
 		return fmt.Errorf("daemon: mkdir %s: %w", d.cfg.Dir, err)
 	}

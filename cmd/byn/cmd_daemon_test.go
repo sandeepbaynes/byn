@@ -118,6 +118,18 @@ func TestRunDaemonStart_DetachedTriggersAlreadyRunning(t *testing.T) {
 	}
 }
 
+// --allow-root is a recognized daemon-start flag (it threads into
+// daemon.Config.AllowRoot). With a fake daemon already responding, start
+// short-circuits to "already running" — proving the flag parses cleanly rather
+// than erroring as unknown.
+func TestRunDaemonStart_AllowRootFlagAccepted(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	if got := runDaemonStart([]string{"--allow-root"}); got != exitOK {
+		t.Fatalf("got %d, want exitOK (flag accepted, daemon already running)", got)
+	}
+}
+
 // ---- reload -------------------------------------------------------------
 
 func TestRunDaemonReload_NotRunning(t *testing.T) {

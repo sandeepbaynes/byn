@@ -147,6 +147,7 @@ func runDaemonStart(args []string) int {
 	fs := flag.NewFlagSet("daemon start", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	foreground := fs.Bool("foreground", false, "run in foreground (do not detach)")
+	allowRoot := fs.Bool("allow-root", false, "override the refusal to run as root (NOT recommended)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -156,18 +157,19 @@ func runDaemonStart(args []string) int {
 		return exitErr
 	}
 	if *foreground {
-		return runDaemonForeground(dir)
+		return runDaemonForeground(dir, *allowRoot)
 	}
 	// Detached: re-exec ourselves with --foreground in a new session.
-	return runDaemonDetached(dir)
+	return runDaemonDetached(dir, *allowRoot)
 }
 
-func runDaemonForeground(dir string) int {
+func runDaemonForeground(dir string, allowRoot bool) int {
 	cfg, err := daemonConfigFor(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
+	cfg.AllowRoot = allowRoot
 	d, err := daemon.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -206,7 +208,7 @@ func runDaemonForeground(dir string) int {
 	return exitOK
 }
 
-func runDaemonDetached(dir string) int {
+func runDaemonDetached(dir string, allowRoot bool) int {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: mkdir %s: %v\n", dir, err)
 		return exitErr
@@ -233,7 +235,13 @@ func runDaemonDetached(dir string) int {
 	}
 	defer func() { _ = logFile.Close() }()
 
-	cmd := exec.Command(self, "daemon", "start", "--foreground") // #nosec G204 -- self-path, fixed args
+	// Forward --allow-root so the detached --foreground child inherits the
+	// operator's explicit opt-in; otherwise it would re-trigger the root refusal.
+	startArgs := []string{"daemon", "start", "--foreground"}
+	if allowRoot {
+		startArgs = append(startArgs, "--allow-root")
+	}
+	cmd := exec.Command(self, startArgs...) // #nosec G204 -- self-path, fixed args
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
