@@ -229,7 +229,13 @@ func TestPrivsep_CredLeakProof(t *testing.T) {
 	}
 
 	// --- Start daemon, init + unlock the vault, put the sentinel secret. ---
-	if _, se, code := s.run("", "daemon", "start"); code != 0 {
+	// This integration job runs as root, and NU-6 added a root-refusal to the
+	// daemon (it wants to run as _byn, not root). Pass --allow-root so the
+	// daemon starts under the test harness; the proof here is the exec CHILD
+	// running as _byn-exec (≠ the daemon's uid, root here), which holds
+	// regardless of the daemon's own uid. Without this, the test would t.Fatal
+	// at daemon start whenever `byn setup` fully succeeds.
+	if _, se, code := s.run("", "daemon", "start", "--allow-root"); code != 0 {
 		t.Fatalf("daemon start: code=%d stderr=%q", code, se)
 	}
 	t.Cleanup(s.stopDaemon)
