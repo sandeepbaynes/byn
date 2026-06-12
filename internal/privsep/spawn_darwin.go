@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Config configures a Spawner.
@@ -80,6 +81,14 @@ func (s *darwinSpawner) Spawn(req SpawnReq) (int, error) {
 		return -1, fmt.Errorf("privsep: Spawn: argv[0] %q is not an absolute path (resolve via exec.LookPath before calling Spawn)", req.Argv[0])
 	}
 
+	// Reject any env entry that contains a NUL byte — a NUL inside a value
+	// would corrupt the NUL-delimited fd-3 framing read by the helper.
+	for _, kv := range req.Env {
+		if strings.IndexByte(kv, 0) >= 0 {
+			return -1, fmt.Errorf("privsep: env entry contains NUL byte")
+		}
+	}
+
 	// Create a pipe for the child environment. The write end is closed once all
 	// KEY=VALUE\0 pairs have been written (done in a goroutine to avoid deadlock
 	// when the env is large enough to fill the pipe buffer before the helper
@@ -106,12 +115,21 @@ func (s *darwinSpawner) Spawn(req SpawnReq) (int, error) {
 	helperArgs := append([]string{"--"}, req.Argv...)
 	cmd := exec.Command(s.cfg.HelperPath, helperArgs...) //nolint:gosec // HelperPath is operator-installed
 
-	// Wire the child stdio to the caller-supplied fds.
-	// os.NewFile does NOT take ownership; we do NOT close these fds here —
-	// the caller manages their lifetime.
-	cmd.Stdin = os.NewFile(uintptr(req.Stdin), "stdin")
-	cmd.Stdout = os.NewFile(uintptr(req.Stdout), "stdout")
-	cmd.Stderr = os.NewFile(uintptr(req.Stderr), "stderr")
+	// Dup the caller's stdio fds so cmd owns separate fds; the daemon's
+	// req.Stdin/out/err are never closed by the Spawner.
+	stdinFile, stdoutFile, stderrFile, err := dupStdio(req)
+	if err != nil {
+		_ = envR.Close()
+		return -1, err
+	}
+	defer func() {
+		_ = stdinFile.Close()
+		_ = stdoutFile.Close()
+		_ = stderrFile.Close()
+	}()
+	cmd.Stdin = stdinFile
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stderrFile
 
 	// ExtraFiles[0] → fd 3 in the helper (Go guarantees: fd 3+i for ExtraFiles[i]).
 	// Only the env pipe is added — no other daemon fds must appear here.
