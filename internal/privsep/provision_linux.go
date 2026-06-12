@@ -24,6 +24,10 @@ func HelperDestPath() string {
 	return helperDestPathLinux
 }
 
+// sysusersDropDir is the standard drop-in directory for systemd-sysusers.
+// Some older distros use /etc/sysusers.d instead.
+const sysusersDropDir = "/usr/lib/sysusers.d"
+
 // sysusersConf returns the declarative sysusers.d content creating both service
 // users as system accounts with no login shell. Applied via systemd-sysusers.
 func sysusersConf() string {
@@ -47,7 +51,7 @@ func provisionUsers(lookup uidLookup, run runner) (ProvisionResult, error) {
 	}
 	conf := sysusersConf()
 	if err := run("sh", "-c",
-		fmt.Sprintf("printf '%%s' %q > /usr/lib/sysusers.d/byn.conf && systemd-sysusers", conf)); err != nil {
+		fmt.Sprintf("printf '%%s' %q > "+sysusersDropDir+"/byn.conf && systemd-sysusers", conf)); err != nil {
 		return ProvisionResult{}, fmt.Errorf("create service users: %w", err)
 	}
 	return ProvisionResult{}, nil
@@ -84,23 +88,12 @@ func installHelper(run runner, srcHelperPath, destPath, configPath string, execU
 // (shipped beside the byn binary); destPath is where it is installed;
 // configPath is the root-owned config the helper reads at runtime.
 func Setup(run runner, srcHelperPath, destPath, configPath string) error {
-	result, err := provisionUsers(osLookup, run)
-	if err != nil {
+	if _, err := provisionUsers(osLookup, run); err != nil {
 		return err
 	}
-	var execUID, execGID int
-	if result.AlreadyProvisioned {
-		// Users were already present; look them up now.
-		execUID, execGID, err = osLookup(ExecUser)
-		if err != nil {
-			return fmt.Errorf("lookup %s after provisioning: %w", ExecUser, err)
-		}
-	} else {
-		// Users were just created; look up the newly created exec user.
-		execUID, execGID, err = osLookup(ExecUser)
-		if err != nil {
-			return fmt.Errorf("lookup %s after creating: %w", ExecUser, err)
-		}
+	execUID, execGID, err := osLookup(ExecUser)
+	if err != nil {
+		return fmt.Errorf("lookup %s after provisioning: %w", ExecUser, err)
 	}
 	return installHelper(run, srcHelperPath, destPath, configPath, execUID, execGID)
 }
