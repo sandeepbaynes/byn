@@ -578,6 +578,27 @@ DESCRIPTION
        command line. Alias execs are logged as "alias NAME → resolved argv"
        (capped at 200 chars).
 
+   PRIVILEGE SEPARATION
+       With [security] privsep enabled in ~/.byn/config, a trusted-.byn
+       pinned exec runs its child as the _byn-exec service user (set up
+       via 'byn setup'), so other same-UID processes can't read the
+       injected secrets from the child's environment. --no-privsep
+       forces the in-process path. Ad-hoc exec (no .byn) always runs
+       in-process.
+
+       Privsep is opt-in and off by default. If [security] privsep is on
+       but 'byn setup' has not provisioned the service users, exec fails
+       with an actionable error rather than silently running in-process.
+
+OPTIONS
+       --no-privsep
+           Force the legacy in-process exec path even when [security]
+           privsep is enabled. The child is run by the calling user via
+           execve(2) instead of the daemon spawning it under _byn-exec.
+           Place it before the "--" separator (direct form) or before the
+           alias NAME (alias form); tokens after that boundary are the
+           child's argv.
+
 EXAMPLES
        Direct form — run a python script with stored env vars set:
            $ byn exec -- python deploy.py
