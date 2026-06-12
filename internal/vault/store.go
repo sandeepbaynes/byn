@@ -18,6 +18,21 @@ import (
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
 
+// kdfParams is the Argon2 cost profile used when wrapping the vault key
+// (Init + ChangePassword). It defaults to production cost
+// (vcrypto.DefaultArgon2Params); a non-test binary therefore always
+// pays full KDF cost. Tests may lower it via SetKDFParamsForTesting.
+var kdfParams = vcrypto.DefaultArgon2Params
+
+// SetKDFParamsForTesting overrides the Argon2 cost profile used to wrap
+// the vault key. It exists solely to let tests that perform real vault
+// init/unlock avoid the ~1s/op production KDF cost. It is exported
+// because tests in other packages (daemon, ui) need it.
+//
+// MUST NEVER be called from production code: lowering these params
+// weakens the at-rest security of the wrapped vault key.
+func SetKDFParamsForTesting(p vcrypto.Argon2Params) { kdfParams = p }
+
 // Per-vault on-disk layout (all under <root>/vaults/<vaultName>/):
 //
 //	vault.db      — SQLite database (v2 schema)
@@ -329,7 +344,7 @@ func Init(ctx context.Context, root, vaultName string, password []byte) (*Store,
 	}
 	defer zero(vk)
 
-	wrapped, err := vcrypto.Wrap(password, vk, vcrypto.DefaultArgon2Params)
+	wrapped, err := vcrypto.Wrap(password, vk, kdfParams)
 	if err != nil {
 		return nil, fmt.Errorf("vault: wrap: %w", err)
 	}
@@ -471,7 +486,7 @@ func (s *Store) ChangePassword(oldPassword, newPassword []byte) error {
 	}
 	defer zero(vk)
 
-	newWrapped, err := vcrypto.Wrap(newPassword, vk, vcrypto.DefaultArgon2Params)
+	newWrapped, err := vcrypto.Wrap(newPassword, vk, kdfParams)
 	if err != nil {
 		return fmt.Errorf("vault: wrap: %w", err)
 	}
