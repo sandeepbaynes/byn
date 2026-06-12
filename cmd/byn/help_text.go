@@ -819,7 +819,10 @@ SUBCOMMANDS
            Register the daemon as a user auto-start service (launchd
            LaunchAgent on macOS, systemd --user unit on Linux) so it
            comes up on login. Writes the service file and loads it
-           best-effort. No root required.
+           best-effort. No root required. This is the auto-start path
+           for the default (non-privsep) install; privilege-separated
+           installs use "byn setup" instead (which installs a SYSTEM
+           service running the daemon as the _byn service user).
 
        uninstall
            Disable and remove the auto-start service.
@@ -1405,57 +1408,83 @@ SEE ALSO
 `,
 
 	"setup": `NAME
-       byn-setup - provision privsep service users and install the spawn helper
+       byn-setup - provision (or remove) privilege separation for the daemon
 
 SYNOPSIS
        sudo byn setup
+       sudo byn setup --uninstall [--purge]
 
 DESCRIPTION
-       Creates the _byn and _byn-exec service accounts required for privilege
-       separation and installs the prebuilt privileged spawn helper
-       (byn-exec-helper) at the system libexec path. Also writes the
-       root-owned, root-only-writable UID/GID config that the helper reads at
-       runtime to determine which user to drop to.
+       Provisions the full privilege-separation install in one idempotent,
+       root-required step. byn setup:
 
-       This command MUST be run as root (via sudo). It is idempotent: re-running
-       when the service accounts already exist still (re)installs the helper and
-       config, then exits 0.
+         1. Creates the _byn and _byn-exec service accounts and installs the
+            prebuilt privileged spawn helper (byn-exec-helper) plus its
+            root-owned UID/GID config.
+         2. Installs and loads the system service that runs the daemon as the
+            _byn service user (a systemd system unit on Linux, a LaunchDaemon
+            on macOS) — NOT the human owner.
+         3. Relocates any legacy per-user ~/.byn vault into the fixed per-OS
+            system data path, chowned to _byn (trust + passkeys preserved —
+            same machine). Skipped on a fresh install with no legacy vault.
+         4. Records the OWNER UID — the human who ran sudo — as the single UID
+            the daemon allowlists on its peer-credential-gated socket. byn
+            setup reads SUDO_UID for this; running as real root (not via sudo)
+            fails rather than recording root as the owner.
+         5. Verifies the post-conditions (system data dir present + owned by
+            _byn, owner record readable).
 
-       Normally run automatically by the byn installer. Manual invocation is
-       only required when upgrading the helper binary without a full reinstall.
+       This command MUST be run as root, via sudo so SUDO_UID is set. It is
+       idempotent: re-running on an already-provisioned host (re)installs the
+       helper + service, re-records the owner, and exits 0 — safe on every
+       install and upgrade. The prebuilt byn-exec-helper must sit beside the
+       byn binary; if it is missing, setup fails telling you to reinstall byn.
+       On platforms other than Linux and macOS, byn setup is not supported.
 
-       The prebuilt byn-exec-helper binary must be present in the same directory
-       as the byn binary. If it is missing, byn setup fails with a clear message
-       instructing you to reinstall byn.
+       Setup provisions privsep; it does not enable it. Privilege separation is
+       opt-in: set "[security] privsep = true" in ~/.byn/config and restart the
+       daemon to engage it. With privsep enabled and provisioned, the daemon
+       spawns trusted-.byn pinned exec children as _byn-exec. Enable privsep
+       WITHOUT having run setup and the daemon warns and trusted-.byn exec fails
+       closed (it never silently runs owner-UID).
 
-       On Linux, service accounts are created via systemd-sysusers. On macOS,
-       sysadminctl is used. On other platforms, byn setup is not supported.
-
-       Setup only provisions privsep; it does not enable it. Privilege
-       separation is opt-in: set "[security] privsep = true" in ~/.byn/config
-       and restart the daemon to engage it. With privsep enabled and
-       provisioned, the daemon spawns trusted-.byn pinned exec children as
-       _byn-exec. If privsep is disabled (the default), setup has not been run,
-       or the command is an ad-hoc exec with no .byn, exec children run
-       in-process as the calling user (no privilege separation).
+       --uninstall reverses a previous setup: it uninstalls the system service,
+       removes the spawn helper + its config, and removes the owner record. By
+       default it LEAVES the vault (the system data dir) intact. Add --purge to
+       ALSO delete the system data dir and every secret in it — a destructive
+       action gated behind a typed "yes" confirmation. The vault is NEVER
+       removed without --purge.
 
 OPTIONS
-       None.
+       --uninstall
+           Reverse a previous setup. Removes the service, spawn helper, and
+           owner record; keeps the vault unless --purge is also given.
+
+       --purge
+           With --uninstall, ALSO remove the system data dir (the vault and all
+           secrets). Destructive and irreversible; requires a typed confirmation.
 
 EXAMPLES
        Provision privsep on a fresh install:
            $ sudo byn setup
-           privsep provisioned (_byn, _byn-exec); spawn helper installed
+           byn provisioned: daemon runs as _byn, owner UID 501 allowlisted
 
-       Re-run after upgrading the helper binary:
+       Re-run after upgrading byn (idempotent):
            $ sudo byn setup
 
+       Uninstall privsep but keep the vault:
+           $ sudo byn setup --uninstall
+
+       Uninstall AND destroy the vault:
+           $ sudo byn setup --uninstall --purge
+
 EXIT STATUS
-       0    Provisioning succeeded (or was already complete).
-       1    Not running as root, missing prebuilt helper, or OS command failed.
+       0    Provisioning / teardown succeeded (or was already complete).
+       1    Not run as root, no SUDO_UID (run via sudo), missing prebuilt
+            helper, a relocate/verify failure, or an aborted purge.
 
 SEE ALSO
-       byn(1), byn-daemon(1)
+       byn(1), byn-daemon(1), byn-migrate(1)
 `,
 
 	"migrate": `NAME
