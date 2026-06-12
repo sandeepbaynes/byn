@@ -706,6 +706,12 @@ func (d *Daemon) handleTrustRemove(env *ipc.Envelope) *ipc.Envelope {
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
+	// Privsep: best-effort revoke the exec service user's ACL on the project dir
+	// when a record was actually removed (no-op when privsep is off; never fails
+	// untrust). Mirrors grantProjectACL at trust time.
+	if removed {
+		d.revokeProjectACL(req.Path)
+	}
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustRemoveResp{Removed: removed})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -759,6 +765,9 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 			fmt.Sprintf("trust refused: %v", gerr),
 			"fix the .byn before trusting it")
 	}
+	// Privsep: best-effort grant the exec service user access to the project
+	// dir the .byn lives in (no-op when privsep is off; never fails the grant).
+	d.grantProjectACL(req.Path)
 	d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK})
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustGrantResp{
 		Path:            canon,
