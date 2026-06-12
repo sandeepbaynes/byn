@@ -21,13 +21,15 @@ const (
 	exitDaemonErr  = 3
 )
 
-// defaultDir returns the fixed per-OS system data root (internal/paths). There
-// is no runtime override in a production build — a repointable data root is
-// attack surface (spec §6.5). Tests isolate a tempdir via the byntest build
-// tag (paths.DataDir honors BYN_TEST_DIR only there). It returns an error in
-// the signature for call-site compatibility; the fixed path can never fail.
+// defaultDir returns the active data root (internal/paths): the fixed per-OS
+// system path once an install is provisioned there, else the legacy per-user
+// ~/.byn (preserving today's behavior while privsep is opt-in-off — spec D3).
+// There is no runtime env override in a production build — a repointable data
+// root is attack surface (spec §6.5); tests isolate a tempdir via the byntest
+// build tag (paths.DataDir honors BYN_TEST_DIR only there). The error covers an
+// undiscoverable home dir on the legacy branch.
 func defaultDir() (string, error) {
-	return paths.DataDir(), nil
+	return paths.DataDir()
 }
 
 // newClient constructs an IPC client targeting the daemon's socket

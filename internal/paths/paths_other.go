@@ -6,5 +6,5 @@ package paths
 // the BSDs, etc.). It keeps the package building cross-platform; byn's daemon
 // is supported only on Linux and macOS. The path mirrors the Linux layout so a
 // curious cross-build has a sensible, non-empty value rather than "".
-func dataDir() string    { return "/var/lib/byn" }
-func socketPath() string { return "/var/lib/byn/daemon.sock" }
+func systemDataDir() string { return "/var/lib/byn" }
+func socketPath() string    { return "/var/lib/byn/daemon.sock" }
