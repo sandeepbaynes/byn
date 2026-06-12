@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/fdpass"
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -189,4 +190,109 @@ func TestHandleConn_ExecSpawnNoFDs_BadRequest(t *testing.T) {
 
 	d.handleConn(serverConn)
 	<-done // we don't assert on the (possibly nil) client read after close.
+}
+
+// TestRecvExecSpawnFDs_StressNoEAGAIN drives the exact request-frame-then-fds
+// handshake recvExecSpawnFDs sees from a real client, in a tight loop. It is the
+// regression test for the fd-receipt race: the client WriteFrames the request
+// (whose bytes wake the daemon's read) and only afterwards SendFDs the control
+// message. A raw Recvmsg on the runtime's non-blocking fd would catch the gap
+// and return EAGAIN, spuriously failing a valid exec roughly 1-in-10 under load;
+// the netpoller-aware rc.Read in recvExecSpawnFDs must instead wait for the
+// control message. Every one of the 200 iterations must receive exactly 3 fds
+// with no error.
+func TestRecvExecSpawnFDs_StressNoEAGAIN(t *testing.T) {
+	const iters = 200
+	for i := 0; i < iters; i++ {
+		clientConn, serverConn := pairConn(t)
+
+		// Three real, distinct stdio fds to pass each iteration.
+		rIn, wIn, perr1 := os.Pipe()
+		rOut, wOut, perr2 := os.Pipe()
+		rErr, wErr, perr3 := os.Pipe()
+		if perr1 != nil || perr2 != nil || perr3 != nil {
+			t.Fatalf("iter %d: pipe: %v/%v/%v", i, perr1, perr2, perr3)
+		}
+
+		// Daemon side runs alongside the client send below and mirrors handleConn
+		// EXACTLY: ReadEnvelope (drains the request frame, whose arrival is what
+		// the netpoller wakes on) THEN recvExecSpawnFDs (reads the separate SCM
+		// control message). This is the precise ordering that exhibited the race.
+		type recvResult struct {
+			fds []int
+			err error
+		}
+		recvCh := make(chan recvResult, 1)
+		go func() {
+			if _, rerr := ipc.ReadEnvelope(serverConn); rerr != nil {
+				recvCh <- recvResult{err: rerr}
+				return
+			}
+			fds, rerr := recvExecSpawnFDs(serverConn)
+			recvCh <- recvResult{fds: fds, err: rerr}
+		}()
+
+		// Client side: mirror ipc.Client.CallWithFDs ordering exactly — the
+		// request frame FIRST, then the fds via SCM_RIGHTS over the same conn.
+		env, nerr := ipc.NewRequest("stress-fd", ipc.OpExecSpawn, ipc.ExecSpawnReq{
+			ExecFetchReq: ipc.ExecFetchReq{Path: "/tmp/x", Command: "x run"},
+			AbsTarget:    "/bin/true",
+		})
+		if nerr != nil {
+			t.Fatalf("iter %d: NewRequest: %v", i, nerr)
+		}
+		if werr := ipc.WriteFrame(clientConn, env); werr != nil {
+			t.Fatalf("iter %d: WriteFrame: %v", i, werr)
+		}
+		cfd, ferr := fdpass.ConnFD(clientConn)
+		if ferr != nil {
+			t.Fatalf("iter %d: ConnFD: %v", i, ferr)
+		}
+		if serr := fdpass.SendFDs(cfd, []int{int(rIn.Fd()), int(wOut.Fd()), int(wErr.Fd())}); serr != nil {
+			t.Fatalf("iter %d: SendFDs: %v", i, serr)
+		}
+
+		res := <-recvCh
+		if res.err != nil {
+			t.Fatalf("iter %d: recvExecSpawnFDs: %v", i, res.err)
+		}
+		if len(res.fds) != 3 {
+			t.Fatalf("iter %d: got %d fds, want 3", i, len(res.fds))
+		}
+		fdpass.CloseAll(res.fds)
+
+		_ = wIn.Close()
+		_ = rOut.Close()
+		_ = rErr.Close()
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	}
+}
+
+// TestRecvExecSpawnFDs_MissingFDsTimesOut proves a client that sends the request
+// frame but NEVER the fds (and keeps its conn open so the peer never closes)
+// makes recvExecSpawnFDs time out cleanly via its own read deadline rather than
+// hang forever. The netpoller surfaces the deadline as a non-EAGAIN error from
+// rc.Read, which recvExecSpawnFDs returns. This is the safety valve that keeps a
+// half-speaking client from wedging the handler.
+func TestRecvExecSpawnFDs_MissingFDsTimesOut(t *testing.T) {
+	clientConn, serverConn := pairConn(t)
+	// Hold the client conn open for the whole test so recvExecSpawnFDs must rely
+	// on its own deadline, not on peer EOF.
+	defer func() { _ = clientConn.Close() }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, rerr := recvExecSpawnFDs(serverConn)
+		done <- rerr
+	}()
+
+	select {
+	case rerr := <-done:
+		if rerr == nil {
+			t.Fatal("expected a timeout/error when no fds are sent, got nil")
+		}
+	case <-time.After(execSpawnFDTimeout + 3*time.Second):
+		t.Fatal("recvExecSpawnFDs hung past its deadline (no clean timeout)")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
@@ -91,16 +92,52 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	_ = ipc.WriteFrame(conn, resp)
 }
 
-// recvExecSpawnFDs extracts the raw fd of the connection and receives EXACTLY
-// the three stdio fds the CLI sent via SCM_RIGHTS right after the request frame.
-// The returned fds are the daemon's own copies (the kernel dup'd them into our
-// table); the caller closes them after dispatch.
+// execSpawnFDTimeout bounds how long the daemon waits for the client's
+// SCM_RIGHTS control message after the exec.spawn request frame. A client that
+// sends a frame but never the fds must not wedge the handler — the deadline
+// surfaces as a non-EAGAIN error from rc.Read and we fail cleanly.
+const execSpawnFDTimeout = 5 * time.Second
+
+// recvExecSpawnFDs receives EXACTLY the three stdio fds the CLI sent via
+// SCM_RIGHTS right after the request frame. The returned fds are the daemon's
+// own copies (the kernel dup'd them into our table); the caller closes them
+// after dispatch.
+//
+// The receive is driven through the conn's SyscallConn().Read so it is
+// netpoller-aware. The request frame's bytes can wake ReadEnvelope before the
+// separate control message lands; a raw Recvmsg on the runtime's non-blocking
+// fd would then return EAGAIN and spuriously fail a valid exec (~1-in-10 under
+// load). rc.Read parks on the netpoller until the fd is readable and retries
+// the callback, so we WAIT for the control message instead of racing it. The
+// callback returns false on EAGAIN to keep waiting; any other outcome (success
+// or a real error) completes the read. A fresh read deadline bounds the wait
+// (the handler cleared the long-op deadline earlier), so a client that sends a
+// frame but never the fds times out cleanly rather than hanging.
 func recvExecSpawnFDs(conn net.Conn) ([]int, error) {
-	cfd, err := fdpass.ConnFD(conn)
+	sc, ok := conn.(syscall.Conn)
+	if !ok {
+		return nil, fmt.Errorf("conn does not support fd passing")
+	}
+	rc, err := sc.SyscallConn()
 	if err != nil {
 		return nil, err
 	}
-	return fdpass.RecvFDs(cfd, 3)
+	_ = conn.SetReadDeadline(time.Now().Add(execSpawnFDTimeout))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	var fds []int
+	var opErr error
+	rerr := rc.Read(func(fd uintptr) bool {
+		fds, opErr = fdpass.RecvFDs(int(fd), 3)
+		// Returning false keeps waiting when the control message hasn't arrived
+		// yet; the netpoller re-invokes us when the fd becomes readable (or the
+		// deadline fires, which surfaces as a non-EAGAIN error from rc.Read).
+		return !errors.Is(opErr, syscall.EAGAIN)
+	})
+	if rerr != nil {
+		return nil, rerr // deadline/timeout or runtime error
+	}
+	return fds, opErr
 }
 
 // Dispatch routes one IPC envelope in-process and returns the response.
