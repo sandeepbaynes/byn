@@ -50,3 +50,15 @@ func TestRecvFDs_WrongCountRejected(t *testing.T) {
 	_, err := RecvFDs(b, 3)
 	require.Error(t, err)
 }
+
+// TestRecvFDs_ClosedSocketErrors exercises the Recvmsg-error path: closing
+// one end of the socketpair before calling RecvFDs must return an error.
+func TestRecvFDs_ClosedSocketErrors(t *testing.T) {
+	a, b := socketpair(t)
+	// Close the sending end; RecvFDs on b should immediately return an error.
+	unix.Close(a)
+	defer unix.Close(b)
+
+	_, err := RecvFDs(b, 1)
+	require.Error(t, err)
+}
