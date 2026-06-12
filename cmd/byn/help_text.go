@@ -756,9 +756,9 @@ SEE ALSO
        byn-daemon - control the background daemon
 
 SYNOPSIS
-       byn start [--foreground]      (alias: byn daemon start)
+       byn start [--foreground] [--allow-root]  (alias: byn daemon start)
        byn stop                      (alias: byn daemon stop)
-       byn restart [--foreground]    (alias: byn daemon restart)
+       byn restart [--foreground] [--allow-root] (alias: byn daemon restart)
        byn reload                    (alias: byn daemon reload)
        byn status                    (alias: byn daemon status)
        byn daemon install
@@ -775,19 +775,24 @@ DESCRIPTION
        detected and replaced on start.
 
 SUBCOMMANDS
-       start [--foreground]
+       start [--foreground] [--allow-root]
            Start the daemon. Detaches by default; --foreground keeps
            it in the foreground for supervised setups or development.
+           The daemon REFUSES to run as root (uid 0): a root daemon
+           defeats the _byn privilege separation it installs (least
+           privilege). --allow-root overrides this (NOT recommended —
+           posture hygiene only, not a defense against an existing
+           root attacker) and logs a prominent warning.
 
        stop
            SIGTERM the daemon via the pidfile. Waits up to 5s for
            a graceful exit before warning.
 
-       restart [--foreground]
+       restart [--foreground] [--allow-root]
            Stop the running daemon (if any) and start a fresh one —
            one command instead of stop + start. Picks up a NEW
            binary and config. Degrades to a plain start when nothing
-           is running.
+           is running. Forwards --foreground / --allow-root to start.
 
        reload
            Signal the running daemon (SIGHUP) to re-read ~/.byn/config

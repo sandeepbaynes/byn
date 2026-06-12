@@ -575,15 +575,19 @@ is an ad\-hoc exec with no
 exec children run in\-process as the calling user (no privsep).
 .SS Daemon control
 .TP
-.B start \fR[\fB\-\-foreground\fR]
-Start the daemon (detached by default). Alias: \fBbyn daemon start\fR.
+.B start \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
+Start the daemon (detached by default). The daemon refuses to run as root
+(uid 0) \(em a root daemon defeats the \fB_byn\fR privilege separation it
+installs; pass \fB\-\-allow\-root\fR to override (NOT recommended). Alias:
+\fBbyn daemon start\fR.
 .TP
 .B stop
 SIGTERM the daemon via its pidfile. Alias: \fBbyn daemon stop\fR.
 .TP
-.B restart \fR[\fB\-\-foreground\fR]
+.B restart \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
 Stop the running daemon (if any) and start a fresh one \- one command
-instead of stop + start. Picks up a new binary and config. Alias:
+instead of stop + start. Picks up a new binary and config. Forwards
+\fB\-\-foreground\fR / \fB\-\-allow\-root\fR to start. Alias:
 \fBbyn daemon restart\fR.
 .TP
 .B reload
@@ -681,6 +685,14 @@ name.
 .B \-\-foreground
 Used by \fBdaemon start\fR. Run in the foreground instead of
 detaching. Useful for development and supervised\-service setups.
+.TP
+.B \-\-allow\-root
+Used by \fBdaemon start\fR / \fBdaemon restart\fR. Override the refusal to
+run the daemon as root (uid 0). A root daemon defeats the \fB_byn\fR
+privilege separation it installs (least privilege), so the daemon refuses to
+start as root by default. This override is posture hygiene only \(em it is NOT
+a defense against an attacker who already has root \(em and using it logs a
+prominent warning. NOT recommended.
 .TP
 .B \-\-no\-privsep
 Used by \fBexec\fR. Force the legacy in\-process exec path even when
