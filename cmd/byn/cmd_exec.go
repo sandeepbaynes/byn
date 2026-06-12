@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
@@ -54,6 +55,14 @@ import (
 //   - shell builtins (cd, source, etc.) cannot be exec'd directly —
 //     wrap them via `bash -c '...'`.
 func runExec(args []string, scope cliScope) int {
+	// Strip the byn-exec `--no-privsep` flag BEFORE the alias/direct dispatch.
+	// It is byn's own flag (like the global scope flags the pre-parser handles),
+	// so it must appear before the `--` separator in direct form and before the
+	// alias NAME in alias form. Anything after `--` (or after the alias name) is
+	// the child's argv and is never scanned for it. When set, it forces the
+	// legacy in-process path regardless of [security] privsep.
+	args, noPrivsep := stripNoPrivsep(args)
+
 	// Dispatch: alias form vs direct form.
 	// Alias form: first arg is non-empty, does not start with "-", and is not "--".
 	// Direct form: first arg is "--" (or we get the usage error below).
@@ -109,6 +118,17 @@ func runExec(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, "")
 
+	// The CLI is a separate process from the daemon, so it learns whether
+	// privsep is enabled by reading the SAME ~/.byn/config the daemon reads
+	// (config.Load on the data dir). A missing/invalid file yields defaults
+	// (privsep OFF) — we never want a config read error to block exec, so a
+	// load failure degrades to the legacy in-process path silently.
+	privsepOn := !noPrivsep
+	if privsepOn {
+		cfg, cerr := config.Load(config.Path(dir))
+		privsepOn = cerr == nil && cfg.PrivsepEnabled()
+	}
+
 	// One round-trip: the daemon verifies trust, enforces the .byn's
 	// [exec] env allowlist AND [exec] actions pinlist server-side, and
 	// returns only approved values (a compromised CLI can't widen either
@@ -139,6 +159,29 @@ func runExec(args []string, scope cliScope) int {
 			Command: cmd,
 			Argv:    childArgv,
 		}
+	}
+
+	// PRIVSEP ROUTING (NU-5). When [security] privsep is enabled and this is a
+	// trusted-.byn DIRECT exec, the daemon spawns the child SERVER-side under the
+	// _byn-exec service user (so other same-UID processes can't read the injected
+	// secrets from the child's environment). The child's stdio fds travel to the
+	// daemon out-of-band via SCM_RIGHTS; the child's exit code comes back in the
+	// response.
+	//
+	// Scope of the privsep path (everything else uses the legacy in-process path):
+	//   - ad-hoc exec (scope.SourcePath == "") → LEGACY. privsep confines only the
+	//     trusted-.byn pinned exec contract; ad-hoc runs in-process (resolves the
+	//     T6 ad-hoc gap — ad-hoc has no .byn to bind the spawn to).
+	//   - alias exec → LEGACY. The CLI cannot resolve AbsTarget up front because
+	//     the alias is expanded SERVER-side (childArgv[0] is unknown until the
+	//     daemon returns ResolvedArgv). Direct exec only for v1.
+	//   - --no-privsep, or privsep off (the DEFAULT) → LEGACY, byte-for-byte.
+	if privsepOn && scope.SourcePath != "" && !isAliasExec {
+		if rc, handled := runExecPrivsep(client, req, childArgv); handled {
+			return rc
+		}
+		// Not handled ⇒ the daemon predates exec.spawn (unknown_op). Fall through
+		// to the legacy in-process path below.
 	}
 
 	var fetched ipc.ExecFetchResp
@@ -254,6 +297,138 @@ func runExec(args []string, scope cliScope) int {
 	}
 	// Unreachable if Exec succeeded.
 	return exitErr
+}
+
+// stripNoPrivsep removes the byn-exec `--no-privsep` flag from the part of args
+// that belongs to byn (everything up to the first `--` separator or the first
+// non-flag alias-NAME token). Tokens at/after that boundary are the child's argv
+// and are passed through opaquely — a child of its own may legitimately take a
+// `--no-privsep` flag. Returns the cleaned args and whether the flag was present.
+func stripNoPrivsep(args []string) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	found := false
+	boundary := false // once true, copy the rest verbatim (child argv)
+	for _, a := range args {
+		if boundary {
+			out = append(out, a)
+			continue
+		}
+		if a == "--" {
+			// Direct-form separator: byn flags end here.
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		if !strings.HasPrefix(a, "-") {
+			// Alias NAME (or a bare token): byn flag parsing ends here too.
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		if a == "--no-privsep" {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
+}
+
+// runExecPrivsep drives the SERVER-side privsep spawn for a trusted-.byn DIRECT
+// exec. It resolves the child binary, builds the ExecSpawnReq (the SAME
+// ExecFetchReq the legacy path would send, PLUS BaseEnv + the resolved
+// AbsTarget), and calls CallWithFDs passing the child's three stdio fds via
+// SCM_RIGHTS. The daemon authorizes (shared gate with exec.fetch), drops the
+// child to _byn-exec, and returns its exit code.
+//
+// handled=false means the daemon does not know exec.spawn (unknown_op) — an
+// older daemon — and the caller should fall back to the legacy in-process path.
+// In every other case handled=true and rc is the final exit code.
+//
+// Auth retry mirrors the legacy path: on a TTY, an auth_required reply prompts
+// once for the master password and retries. A not-provisioned reply (privsep
+// enabled but `byn setup` never run) is a HARD error with an actionable hint —
+// we never silently fall back to an owner-UID in-process run, because the user
+// explicitly opted into privsep.
+func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string) (rc int, handled bool) {
+	// Resolve the child binary in PATH. Same failure mode as the legacy path.
+	absTarget, err := exec.LookPath(childArgv[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
+		return exitErr, true
+	}
+
+	spawnReq := ipc.ExecSpawnReq{
+		ExecFetchReq: req,
+		BaseEnv:      os.Environ(),
+		AbsTarget:    absTarget,
+	}
+	stdio := []int{int(os.Stdin.Fd()), int(os.Stdout.Fd()), int(os.Stderr.Fd())}
+
+	var resp ipc.ExecSpawnResp
+	callErr := client.CallWithFDs(ipc.OpExecSpawn, spawnReq, &resp, client.Session, stdio)
+
+	// Auth retry: an auth_required reply on a TTY prompts once and retries with
+	// the password attached. Same UX as the legacy exec.fetch path.
+	if isAuthRequiredErr(callErr) && stdinIsTTY() {
+		leadIn := yellow("Authorization required.") + dim(" Enter the master password to authorize.")
+		if scopeHasByn(req) {
+			var em *ipc.ErrResponse
+			if errors.As(callErr, &em) {
+				leadIn = yellow("Authorization required.") + dim(" "+em.Message+".")
+			} else {
+				leadIn = yellow("Authorization required.") + dim(" Command not pinned in [exec] actions.")
+			}
+		}
+		pw, wipe, perr := authorizingPasswordWithLeadIn(false, leadIn)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
+			return exitErr, true
+		}
+		defer wipe()
+		spawnReq.Password = pw
+		callErr = client.CallWithFDs(ipc.OpExecSpawn, spawnReq, &resp, client.Session, stdio)
+	}
+
+	switch {
+	case callErr == nil:
+		// The child ran SERVER-side and exited; propagate its exit code as our
+		// own. We return it (rather than os.Exit) so run()/main does the exit —
+		// keeps runExec testable and matches every other command handler.
+		return resp.ExitCode, true
+	case isNotProvisionedErr(callErr):
+		// Privsep was explicitly requested but `byn setup` never provisioned the
+		// service users. This is actionable and must NOT silently fall back to an
+		// owner-UID in-process run — that would defeat the opt-in.
+		fmt.Fprintln(os.Stderr, boldRed("Error:")+" privsep is enabled but not set up.")
+		fmt.Fprintln(os.Stderr, yellow("Run:")+" "+cyan("sudo byn setup")+"   "+
+			dim("(or disable [security] privsep, or pass --no-privsep)"))
+		return exitDaemonErr, true
+	case isUnknownOpErr(callErr):
+		// Daemon predates exec.spawn — signal the caller to use the legacy path.
+		return 0, false
+	default:
+		return handleExecFetchError(callErr), true
+	}
+}
+
+// scopeHasByn reports whether the exec request is bound to a trusted .byn (so
+// an auth_required reply means "command not pinned" rather than "ad-hoc gated").
+func scopeHasByn(req ipc.ExecFetchReq) bool { return req.Path != "" }
+
+// isNotProvisionedErr reports whether err is the daemon's "privsep not
+// provisioned" reply — a CodeBadRequest whose recover hint is `byn setup`. The
+// daemon returns this when [security] privsep is on but `byn setup` has not run.
+func isNotProvisionedErr(err error) bool {
+	var em *ipc.ErrResponse
+	return errors.As(err, &em) && em.Code == ipc.CodeBadRequest && em.Recover == "byn setup"
+}
+
+// isUnknownOpErr reports whether err is the daemon's unknown_op reply (the
+// daemon is older than this CLI and does not implement the requested op).
+func isUnknownOpErr(err error) bool {
+	var em *ipc.ErrResponse
+	return errors.As(err, &em) && em.Code == ipc.CodeUnknownOp
 }
 
 // execCommandLabel renders the child argv for the audit log (so a

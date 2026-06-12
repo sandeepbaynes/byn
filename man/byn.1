@@ -285,6 +285,16 @@ the CLI prompts once for the master password and retries when no session
 is present. Trusted\-\fB.byn\fR exec with an unmatched command is also
 gated (same retry flow). Trusted\-\fB.byn\fR exec with a pinned command
 runs free \(em the session gate and the actions list are independent.
+.IP
+\fBPrivilege separation:\fR with \fB[security] privsep\fR enabled in
+\fI~/.byn/config\fR, a trusted\-\fB.byn\fR pinned exec runs its child as
+the \fB_byn\-exec\fR service user (set up via \fBbyn setup\fR), so other
+same\-UID processes cannot read the injected secrets from the child's
+environment. \fB\-\-no\-privsep\fR forces the in\-process path. Ad\-hoc
+exec (no \fB.byn\fR) always runs in\-process. Privsep is opt\-in and off
+by default; if it is enabled but \fBbyn setup\fR has not provisioned the
+service users, exec fails with an actionable error rather than silently
+running in\-process.
 See
 .BR byn-exec (1).
 .SS Bulk I/O
@@ -665,6 +675,14 @@ name.
 .B \-\-foreground
 Used by \fBdaemon start\fR. Run in the foreground instead of
 detaching. Useful for development and supervised\-service setups.
+.TP
+.B \-\-no\-privsep
+Used by \fBexec\fR. Force the legacy in\-process exec path even when
+\fB[security] privsep\fR is enabled \(em the child is run by the calling
+user via \fBexecve\fR(2) instead of the daemon spawning it under the
+\fB_byn\-exec\fR service user. Place it before the "\fB\-\-\fR" separator
+(direct form) or before the alias \fINAME\fR (alias form); tokens after
+that boundary are the child's argv.
 .SH ENVIRONMENT
 .TP
 .B BYN_DIR
@@ -740,6 +758,9 @@ Optional TOML configuration (no file extension). Recognised keys:
 absolute lifetime of a minted session; \fB"0s"\fR disables the limit),
 \fB[security] session_idle\fR (Go duration; default \fB"0s"\fR \(em
 sliding idle window; \fB"0s"\fR inherits \fIidle_timeout\fR), and
+\fB[security] privsep\fR (boolean; default OFF when the key is absent \(em
+opt the daemon into running trusted\-\fB.byn\fR exec children under the
+\fB_byn\-exec\fR service user; requires \fBbyn setup\fR).
 Unknown keys (including the removed \fBper_action_auth\fR) are rejected with an error. A missing file uses the
 defaults. Loaded at
 .BR "byn start" ;
