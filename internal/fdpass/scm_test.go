@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package privsep
+package fdpass
 
 import (
 	"os"

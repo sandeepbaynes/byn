@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -68,6 +69,101 @@ func regularFileTarget(t *testing.T, name string) string {
 		t.Fatalf("write target: %v", err)
 	}
 	return p
+}
+
+// ---- stripDangerousEnv -----------------------------------------------------
+
+func TestStripDangerousEnv(t *testing.T) {
+	in := []string{
+		"PATH=/usr/bin",
+		"LD_PRELOAD=/evil.so",
+		"TERM=xterm",
+		"LD_LIBRARY_PATH=/evil/lib",
+		"LD_AUDIT=/evil/audit.so",
+		"DYLD_INSERT_LIBRARIES=/evil.dylib",
+		"DYLD_LIBRARY_PATH=/evil/dyld",
+		"DYLD_FRAMEWORK_PATH=/evil/fw",
+		"HOME=/home/me",
+		"MALFORMED_NO_EQUALS",
+		"API_KEY=injected", // a normal var that happens to look secret-y
+	}
+	got := stripDangerousEnv(in)
+
+	gotSet := map[string]bool{}
+	for _, kv := range got {
+		gotSet[kv] = true
+	}
+	// Dangerous keys must be gone.
+	for _, bad := range []string{
+		"LD_PRELOAD=/evil.so", "LD_LIBRARY_PATH=/evil/lib", "LD_AUDIT=/evil/audit.so",
+		"DYLD_INSERT_LIBRARIES=/evil.dylib", "DYLD_LIBRARY_PATH=/evil/dyld",
+		"DYLD_FRAMEWORK_PATH=/evil/fw",
+	} {
+		if gotSet[bad] {
+			t.Errorf("dangerous entry %q survived strip", bad)
+		}
+	}
+	// Normal vars (and the malformed, '='-less entry) must survive.
+	for _, keep := range []string{
+		"PATH=/usr/bin", "TERM=xterm", "HOME=/home/me", "MALFORMED_NO_EQUALS",
+		"API_KEY=injected",
+	} {
+		if !gotSet[keep] {
+			t.Errorf("expected %q to survive strip, but it was removed", keep)
+		}
+	}
+	// Exactly the 6 dangerous entries removed: 11 in, 5 out.
+	if len(got) != 5 {
+		t.Errorf("len(stripped) = %d, want 5 (6 dangerous removed from 11)", len(got))
+	}
+	// Input must not be mutated.
+	if len(in) != 11 {
+		t.Errorf("input slice mutated: len = %d, want 11", len(in))
+	}
+}
+
+// TestExecSpawn_StripsDangerousEnvKeepsInjected proves the strip is wired into
+// the spawn path: an LD_PRELOAD in BaseEnv is gone from the child env, while a
+// benign BaseEnv var and the injected secret both survive.
+func TestExecSpawn_StripsDangerousEnvKeepsInjected(t *testing.T) {
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "API_KEY", []byte("secret-api"))
+
+	target := regularFileTarget(t, "mytool")
+	byn := writeBynContent(t,
+		"[scope]\n\n[exec]\nenv = [\"API_KEY\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	fs := &fakeSpawner{}
+	d.spawner = fs
+
+	req := ipc.ExecSpawnReq{
+		ExecFetchReq: ipc.ExecFetchReq{Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"}},
+		BaseEnv:      []string{"PATH=/usr/bin", "LD_PRELOAD=/evil.so", "DYLD_INSERT_LIBRARIES=/evil.dylib"},
+		AbsTarget:    target,
+	}
+	if resp := d.handleExecSpawn(ctxWithPipeFDs(t), spawnEnvelope(t, req)); resp.Err != nil {
+		t.Fatalf("unexpected error: %+v", resp.Err)
+	}
+	for _, kv := range fs.got.Env {
+		if strings.HasPrefix(kv, "LD_PRELOAD=") || strings.HasPrefix(kv, "DYLD_INSERT_LIBRARIES=") {
+			t.Errorf("dangerous env %q reached the child", kv)
+		}
+	}
+	envMap := map[string]string{}
+	for _, kv := range fs.got.Env {
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			envMap[kv[:i]] = kv[i+1:]
+		}
+	}
+	if envMap["PATH"] != "/usr/bin" {
+		t.Errorf("benign PATH dropped: %q", envMap["PATH"])
+	}
+	if envMap["API_KEY"] != "secret-api" {
+		t.Errorf("injected API_KEY dropped: %q", envMap["API_KEY"])
+	}
 }
 
 // ---- not provisioned -------------------------------------------------------

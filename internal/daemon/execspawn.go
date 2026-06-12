@@ -61,6 +61,45 @@ func valuesToEnv(values []ipc.ExecFetchValue) []string {
 	return env
 }
 
+// dangerousEnvKeys are dynamic-linker controls that can make a freshly-spawned
+// child load attacker-supplied code (LD_PRELOAD / LD_AUDIT, the macOS DYLD_*
+// equivalents, and the library-search overrides). The daemon receives BaseEnv
+// from the (potentially compromised) CLI, so it must NOT trust it verbatim:
+// these keys are stripped at the boundary before the child env is built. The
+// child still inherits the rest of the terminal env; injected secrets are
+// appended afterward and are unaffected.
+var dangerousEnvKeys = map[string]struct{}{
+	"LD_PRELOAD":            {},
+	"LD_LIBRARY_PATH":       {},
+	"LD_AUDIT":              {},
+	"DYLD_INSERT_LIBRARIES": {},
+	"DYLD_LIBRARY_PATH":     {},
+	"DYLD_FRAMEWORK_PATH":   {},
+}
+
+// stripDangerousEnv returns env with every entry whose KEY is in
+// dangerousEnvKeys removed. Entries without an '=' are kept as-is (a malformed
+// pair is not a dynamic-linker control). The input slice is not mutated.
+func stripDangerousEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		eq := -1
+		for i := 0; i < len(kv); i++ {
+			if kv[i] == '=' {
+				eq = i
+				break
+			}
+		}
+		if eq >= 0 {
+			if _, bad := dangerousEnvKeys[kv[:eq]]; bad {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // handleExecSpawn runs a `byn exec` child SERVER-side under privilege separation
 // (NU-5). It reuses handleExecFetch's authorization via the shared authorizeExec
 // gate, then spawns the resolved target through the privsep helper, which drops
@@ -106,10 +145,14 @@ func (d *Daemon) handleExecSpawn(ctx context.Context, env *ipc.Envelope) *ipc.En
 		return le
 	}
 
-	// Build the COMPLETE child env: BaseEnv first, injected values last so the
-	// injected secrets win on duplicate keys.
-	childEnv := make([]string, 0, len(req.BaseEnv)+len(values))
-	childEnv = append(childEnv, req.BaseEnv...)
+	// Build the COMPLETE child env: BaseEnv first (with dangerous dynamic-linker
+	// keys stripped — defense in depth: the daemon must not trust BaseEnv
+	// verbatim), injected values last so the injected secrets win on duplicate
+	// keys. Stripping happens BEFORE the append so a caller cannot smuggle an
+	// LD_PRELOAD that loads attacker code into the dropped child.
+	baseEnv := stripDangerousEnv(req.BaseEnv)
+	childEnv := make([]string, 0, len(baseEnv)+len(values))
+	childEnv = append(childEnv, baseEnv...)
 	childEnv = append(childEnv, valuesToEnv(values)...)
 
 	// Validate the CLI-resolved absolute target (SECURITY).

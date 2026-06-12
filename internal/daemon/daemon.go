@@ -64,6 +64,14 @@ type Config struct {
 	// IdleTimeout (the daemon's vault idle timeout). Wired from
 	// config.Security.SessionIdle.
 	SessionIdle time.Duration
+
+	// Privsep, when true, opts the daemon into building the privsep spawner so
+	// trusted-.byn `byn exec` children run SERVER-side under the _byn-exec
+	// service user. Wired from config.Security via config.PrivsepEnabled() —
+	// false (the default) keeps d.spawner nil and exec.spawn fails closed with a
+	// not-provisioned error. The spawner is built ONLY when this is true AND the
+	// service users are actually provisioned (`byn setup`).
+	Privsep bool
 }
 
 // vaultEntry is the daemon's handle on one open vault.
@@ -242,18 +250,23 @@ func New(cfg Config) (*Daemon, error) {
 		fmt.Fprintf(os.Stderr, "byn: machine id unavailable (%v); trust-store machine-fingerprint MAC disabled\n", err)
 	}
 
-	// Privsep spawner: built ONLY when the service users + helper are
-	// provisioned (`byn setup`). When unprovisioned (or on an unsupported
-	// platform) d.spawner stays nil and exec.spawn returns a clean fallback
-	// error — the daemon never spawns the exec child at the owner UID.
-	if st, err := privsep.LookupState(); err == nil && st.Provisioned {
-		d.spawner = privsep.NewSpawner(privsep.Config{
-			HelperPath: privsep.HelperDestPath(),
-			Exec:       st,
-			// Seatbelt (Darwin) denies the exec child byn's own state dir + socket.
-			StateDir:   d.cfg.Dir,
-			SocketPath: d.SocketPath(),
-		})
+	// Privsep spawner: built ONLY when the operator OPTED IN (cfg.Privsep, from
+	// [security] privsep = true) AND the service users + helper are provisioned
+	// (`byn setup`). When privsep is off, unprovisioned, or on an unsupported
+	// platform, d.spawner stays nil and exec.spawn returns a clean fallback
+	// error — the daemon never spawns the exec child at the owner UID. Gating on
+	// the config (not just provisioning) lets a provisioned host still run the
+	// legacy in-process exec until the operator turns privsep on.
+	if cfg.Privsep {
+		if st, err := privsep.LookupState(); err == nil && st.Provisioned {
+			d.spawner = privsep.NewSpawner(privsep.Config{
+				HelperPath: privsep.HelperDestPath(),
+				Exec:       st,
+				// Seatbelt (Darwin) denies the exec child byn's own state dir + socket.
+				StateDir:   d.cfg.Dir,
+				SocketPath: d.SocketPath(),
+			})
+		}
 	}
 	return d, nil
 }
