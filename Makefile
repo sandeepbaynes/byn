@@ -11,6 +11,10 @@ GOFLAGS     ?=
 PKG         := ./...
 BIN_DIR     := bin
 BIN         := $(BIN_DIR)/byn
+# Privileged spawn helper for NU-5 exec-child privsep. Installed root-owned
+# with file caps by `byn setup`, which resolves it BESIDE the byn binary —
+# so it ships next to byn and is built alongside it here.
+HELPER      := $(BIN_DIR)/byn-exec-helper
 
 # Cross-compile targets for release artifacts (pure-Go, CGO disabled).
 DIST_DIR  := dist
@@ -28,6 +32,7 @@ all: build
 build:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(BIN) ./cmd/byn
+	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(HELPER) ./cmd/byn-exec-helper
 
 man: $(MANFILE)
 	@echo "Preview: man $(MANFILE)"
@@ -45,10 +50,11 @@ uninstall-man:
 install: build install-man
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
-	@echo "Installed $(BINDIR)/byn ($(VERSION))"
+	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
+	@echo "Installed $(BINDIR)/byn (+ byn-exec-helper) ($(VERSION))"
 
 uninstall: uninstall-man
-	rm -f $(DESTDIR)$(BINDIR)/byn
+	rm -f $(DESTDIR)$(BINDIR)/byn $(DESTDIR)$(BINDIR)/byn-exec-helper
 
 test:
 	$(GO) test $(GOFLAGS) -race -timeout 15m $(PKG)

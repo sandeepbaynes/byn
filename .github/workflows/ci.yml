@@ -47,3 +47,36 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
+
+  # Root-gated NU-5 privilege-separation integration test. The cred-leak proof
+  # (TestPrivsep_CredLeakProof) needs real privilege: `byn setup` creates the
+  # _byn-exec service user + setcaps the spawn helper, the child drops to that
+  # uid, and a non-root process then proves it cannot read the child's
+  # /proc/<pid>/environ. It t.Skips cleanly on the non-root `test` jobs above;
+  # here it runs for real as root. GitHub's ubuntu runner user is sudo-capable.
+  privsep-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # systemd-sysusers, setcap, setfacl, setpriv — the privsep setup +
+      # cross-uid /proc read prerequisites. systemd + libcap2-bin ship on the
+      # ubuntu runner; acl + util-linux provide setfacl/setpriv.
+      - name: Install privsep prerequisites
+        run: sudo apt-get update && sudo apt-get install -y acl libcap2-bin util-linux systemd
+
+      # Build byn + the prebuilt byn-exec-helper (the test resolves the helper
+      # beside the test byn, but `make build` proves the shipping build works).
+      - name: Build
+        run: make build
+
+      # Run ONLY the privsep integration test as root. -E preserves the env and
+      # PATH so `go` and the Go build cache resolve; the test itself rebuilds
+      # byn + the helper into a tempdir and drives a real daemon.
+      - name: Privsep integration test (root)
+        run: sudo -E env "PATH=$PATH" "HOME=$HOME" go test -tags=integration -timeout 15m -run TestPrivsep ./tests/integration/...
