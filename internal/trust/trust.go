@@ -1,5 +1,5 @@
 // Package trust is the shared reader/writer for the TOFU trust store
-// (`<BYN_DIR>/trusted_byn.json`) that records which `.byn` project files the
+// (`<data-dir>/trusted_byn.json`) that records which `.byn` project files the
 // user has approved. The CLI establishes trust (`byn trust`); the daemon
 // reads it (so the portal can show the trust list) and can revoke an entry.
 //
@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 )
 
-// Filename is the trust store file inside $BYN_DIR.
+// Filename is the trust store file inside <data-dir>.
 const Filename = "trusted_byn.json"
 
 // Record is one trusted `.byn` file: its canonical path and the SHA-256 of

@@ -107,7 +107,7 @@ func TestRunTrustAdd_DaemonRejectsWrongPassword(t *testing.T) {
 }
 
 func TestRunTrustAdd_MissingFile(t *testing.T) {
-	t.Setenv("BYN_DIR", t.TempDir())
+	t.Setenv("BYN_TEST_DIR", t.TempDir())
 	if got := runTrustAdd([]string{filepath.Join(t.TempDir(), "nope")}); got != exitErr {
 		t.Fatalf("got %d", got)
 	}

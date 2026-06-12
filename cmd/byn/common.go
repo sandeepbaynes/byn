@@ -10,6 +10,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/daemon"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/paths"
 )
 
 // Exit codes.
@@ -20,16 +21,13 @@ const (
 	exitDaemonErr  = 3
 )
 
-// defaultDir returns ~/.byn, or the BYN_DIR env override.
+// defaultDir returns the fixed per-OS system data root (internal/paths). There
+// is no runtime override in a production build — a repointable data root is
+// attack surface (spec §6.5). Tests isolate a tempdir via the byntest build
+// tag (paths.DataDir honors BYN_TEST_DIR only there). It returns an error in
+// the signature for call-site compatibility; the fixed path can never fail.
 func defaultDir() (string, error) {
-	if env := os.Getenv("BYN_DIR"); env != "" {
-		return env, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not determine home directory: %w", err)
-	}
-	return filepath.Join(home, ".byn"), nil
+	return paths.DataDir(), nil
 }
 
 // newClient constructs an IPC client targeting the daemon's socket

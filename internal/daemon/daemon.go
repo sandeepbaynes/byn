@@ -352,7 +352,7 @@ func (d *Daemon) UIPort() int {
 // goroutine is registered with the waitgroup so Shutdown drains it. A bind
 // error is returned and leaves uiSrv nil.
 //
-// The portal owner-token is loaded (or created) from $BYN_DIR/portal.token
+// The portal owner-token is loaded (or created) from <data-dir>/portal.token
 // (mode 0600). A token-load failure is fatal for the portal: the portal is
 // disabled (same path as a bind failure) and a warning is printed to stderr.
 // The daemon keeps serving the socket. The token is persisted across daemon

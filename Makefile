@@ -56,11 +56,14 @@ install: build install-man
 uninstall: uninstall-man
 	rm -f $(DESTDIR)$(BINDIR)/byn $(DESTDIR)$(BINDIR)/byn-exec-helper
 
+# The byntest tag compiles the data-root test seam (internal/paths) so tests can
+# isolate a tempdir via BYN_TEST_DIR. It is NEVER in a production build — see
+# internal/paths/paths_testdir.go.
 test:
-	$(GO) test $(GOFLAGS) -race -timeout 15m $(PKG)
+	$(GO) test $(GOFLAGS) -tags=byntest -race -timeout 15m $(PKG)
 
 test-integration:
-	$(GO) test $(GOFLAGS) -tags=integration -race -timeout 15m ./tests/integration/...
+	$(GO) test $(GOFLAGS) -tags='integration byntest' -race -timeout 15m ./tests/integration/...
 
 lint:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
@@ -70,7 +73,7 @@ lint:
 	golangci-lint run
 
 cover:
-	$(GO) test $(GOFLAGS) -race -coverprofile=coverage.out -covermode=atomic $(PKG)
+	$(GO) test $(GOFLAGS) -tags=byntest -race -coverprofile=coverage.out -covermode=atomic $(PKG)
 	$(GO) tool cover -func=coverage.out | tail -1
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"

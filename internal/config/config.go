@@ -16,7 +16,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Filename is the config file name inside $BYN_DIR. It has no extension
+// Filename is the config file name inside the data dir. It has no extension
 // (TOML inside) to match byn's other on-disk files.
 const Filename = "config"
 
@@ -68,8 +68,8 @@ type Config struct {
 }
 
 // UI configures the local browser admin portal (Phase 2). Port is read
-// per-$BYN_DIR, so multiple data dirs can each later serve their own
-// portal on a distinct port without colliding.
+// from the data dir's config, so a future multi-instance layout can serve
+// a distinct port without colliding.
 type UI struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
@@ -133,7 +133,7 @@ func (c Config) PrivsepEnabled() bool {
 	return c.Security.Privsep != nil && *c.Security.Privsep
 }
 
-// Path returns the config file path for a given $BYN_DIR.
+// Path returns the config file path for a given data dir.
 func Path(dir string) string {
 	return filepath.Join(dir, Filename)
 }

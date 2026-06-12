@@ -91,7 +91,6 @@ func daemonServiceSpec() (serviceSpec, error) {
 	if err != nil {
 		return serviceSpec{}, err
 	}
-	bynDir := os.Getenv("BYN_DIR") // "" ⇒ the service uses the default ~/.byn
 
 	switch runtime.GOOS {
 	case "darwin":
@@ -99,7 +98,7 @@ func daemonServiceSpec() (serviceSpec, error) {
 		return serviceSpec{
 			manager: "launchd",
 			path:    path,
-			content: launchdPlist(bin, bynDir),
+			content: launchdPlist(bin),
 			load:    [][]string{{"launchctl", "unload", path}, {"launchctl", "load", "-w", path}},
 			unload:  [][]string{{"launchctl", "unload", path}},
 		}, nil
@@ -108,7 +107,7 @@ func daemonServiceSpec() (serviceSpec, error) {
 		return serviceSpec{
 			manager: "systemd user",
 			path:    path,
-			content: systemdUnit(bin, bynDir),
+			content: systemdUnit(bin),
 			load:    [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "--now", "byn.service"}},
 			unload:  [][]string{{"systemctl", "--user", "disable", "--now", "byn.service"}},
 		}, nil
@@ -118,11 +117,9 @@ func daemonServiceSpec() (serviceSpec, error) {
 }
 
 // launchdPlist renders a macOS LaunchAgent that runs the daemon in foreground.
-func launchdPlist(bin, bynDir string) string {
-	env := ""
-	if bynDir != "" {
-		env = fmt.Sprintf("  <key>EnvironmentVariables</key>\n  <dict>\n    <key>BYN_DIR</key>\n    <string>%s</string>\n  </dict>\n", bynDir)
-	}
+// The daemon's data root is the fixed system path (internal/paths); there is no
+// per-service data-dir override.
+func launchdPlist(bin string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -139,17 +136,15 @@ func launchdPlist(bin, bynDir string) string {
   <true/>
   <key>KeepAlive</key>
   <true/>
-%s</dict>
+</dict>
 </plist>
-`, launchdLabel, bin, env)
+`, launchdLabel, bin)
 }
 
 // systemdUnit renders a systemd --user unit that runs the daemon in foreground.
-func systemdUnit(bin, bynDir string) string {
-	env := ""
-	if bynDir != "" {
-		env = fmt.Sprintf("Environment=BYN_DIR=%s\n", bynDir)
-	}
+// The daemon's data root is the fixed system path (internal/paths); there is no
+// per-service data-dir override.
+func systemdUnit(bin string) string {
 	return fmt.Sprintf(`[Unit]
 Description=byn secrets daemon
 After=default.target
@@ -157,9 +152,9 @@ After=default.target
 [Service]
 Type=simple
 ExecStart=%s start --foreground
-%sRestart=on-failure
+Restart=on-failure
 
 [Install]
 WantedBy=default.target
-`, bin, env)
+`, bin)
 }

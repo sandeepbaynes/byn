@@ -97,9 +97,9 @@ func ipcUnlock(t *testing.T, s *session, pw string) *ipc.Client {
 }
 
 // vaultDBPath returns the path to the default vault's SQLite database in the
-// given BYN_DIR.
-func vaultDBPath(bynDir string) string {
-	return filepath.Join(bynDir, "vaults", "default", "vault.db")
+// given data dir.
+func vaultDBPath(dataDir string) string {
+	return filepath.Join(dataDir, "vaults", "default", "vault.db")
 }
 
 // ------------------------------------------------------------------ Test 1: cross-terminal denial
