@@ -28,8 +28,8 @@ func TestE2E_EnvClear(t *testing.T) {
 		t.Fatalf("preview must not delete; list=%q", out)
 	}
 
-	// With --yes: cleared.
-	if _, _, code := s.run("", "env", "clear", "--yes"); code != 0 {
+	// With --yes: cleared (--password-stdin for non-TTY auth).
+	if _, _, code := s.runPW("", "env", "clear", "--yes", "--password-stdin"); code != 0 {
 		t.Fatalf("env clear --yes failed: %d", code)
 	}
 	if out, _ := s.mustRun("", "list"); strings.Contains(out, "X") || strings.Contains(out, "Y") {

@@ -39,6 +39,27 @@ type Record struct {
 	// VKMAC binds the record to proof-of-password (vault-key-derived) and is
 	// verified at use-time — blocks a same-UID local forge.
 	VKMAC string `json:"vk_mac,omitempty"`
+	// MTimeUnixNano is the .byn's modification time at grant. Part of the
+	// v2 fingerprint: change-then-revert still forces re-trust. mtime is
+	// forgeable (`touch -t`) — a tamper-detection SIGNAL, not a guarantee.
+	MTimeUnixNano int64 `json:"mtime_unix_nano,omitempty"`
+	// Snapshot is the full .byn content at grant (a manifest, not a
+	// secret) — the diff base for `byn trust diff`.
+	Snapshot string `json:"snapshot,omitempty"`
+	// Actions / Auth are the policy tables parsed from the .byn AT GRANT
+	// TIME and MAC-bound, so a rogue cannot edit policy post-trust.
+	Actions []string          `json:"actions,omitempty"`
+	Auth    map[string]string `json:"auth,omitempty"`
+	// Aliases are the named entry points from the [aliases] top-level table,
+	// parsed at grant time and MAC-bound like Actions/Auth so a rogue cannot
+	// inject new aliases after the file is trusted.
+	Aliases map[string]string `json:"aliases,omitempty"`
+	// Scope* mirror the .byn's [scope] at grant — they let the daemon
+	// resolve which trusted .byn governs a request scope for [auth]
+	// policy lookup without re-reading the file.
+	ScopeVault   string `json:"scope_vault,omitempty"`
+	ScopeProject string `json:"scope_project,omitempty"`
+	ScopeEnv     string `json:"scope_env,omitempty"`
 }
 
 // Store is the file content.
@@ -166,29 +187,4 @@ func Status(dir, path, hash string) (Stat, error) {
 		}
 	}
 	return StatusUntrusted, nil
-}
-
-// Grant inserts or updates the trust record for a canonical path. It reports
-// changed=true only when a record already existed with a *different* hash
-// (the file changed since it was last trusted) — letting callers warn loudly
-// on a re-trust versus a first-time grant. Granting an identical hash is a
-// no-op (changed=false, no write). The caller is responsible for authorizing
-// the grant (the daemon gates it on the master password); this function is
-// the storage primitive only.
-func Grant(dir, path, hash string) (changed bool, err error) {
-	s, err := Load(dir)
-	if err != nil {
-		return false, err
-	}
-	for i, r := range s.Records {
-		if r.Path == path {
-			if r.SHA256 == hash {
-				return false, nil // already trusted, identical content
-			}
-			s.Records[i].SHA256 = hash
-			return true, Save(dir, s)
-		}
-	}
-	s.Records = append(s.Records, Record{Path: path, SHA256: hash})
-	return false, Save(dir, s)
 }

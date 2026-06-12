@@ -212,3 +212,165 @@ func TestPreParseGlobals_MissingValue(t *testing.T) {
 		t.Fatalf("err = %v, want missing-value", err)
 	}
 }
+
+// ── exec passthrough boundary tests (Part A.2) ──────────────────────────────
+
+// TestExecPassthroughBoundary_AliasBoundary: when exec is followed by an alias
+// name, the boundary index is the slot AFTER the alias name (first opaque arg).
+func TestExecPassthroughBoundary_AliasBoundary(t *testing.T) {
+	// ["exec", "name", "--vault", "prod"] → boundary at index 2 (after "name")
+	args := []string{"exec", "name", "--vault", "prod"}
+	got := execPassthroughBoundary(args)
+	if got != 2 {
+		t.Errorf("boundary = %d, want 2", got)
+	}
+}
+
+// TestExecPassthroughBoundary_DirectForm: exec followed by "--" → boundary at
+// the "--" itself.
+func TestExecPassthroughBoundary_DirectForm(t *testing.T) {
+	args := []string{"exec", "--", "cmd", "--vault", "prod"}
+	got := execPassthroughBoundary(args)
+	if got != 1 {
+		t.Errorf("boundary = %d, want 1 (index of --)", got)
+	}
+}
+
+// TestExecPassthroughBoundary_GlobalsBeforeExec: exec after globals → boundary
+// at index of first non-flag after exec.
+func TestExecPassthroughBoundary_GlobalsBeforeExec(t *testing.T) {
+	// ["--vault", "x", "exec", "name", "--flag"] → exec at 2, alias "name" at 3, boundary at 4.
+	args := []string{"--vault", "x", "exec", "name", "--flag"}
+	got := execPassthroughBoundary(args)
+	if got != 4 {
+		t.Errorf("boundary = %d, want 4", got)
+	}
+}
+
+// TestExecPassthroughBoundary_NoExec: no exec subcommand → returns -1.
+func TestExecPassthroughBoundary_NoExec(t *testing.T) {
+	args := []string{"list", "--vault", "x"}
+	got := execPassthroughBoundary(args)
+	if got != -1 {
+		t.Errorf("boundary = %d, want -1 (no exec)", got)
+	}
+}
+
+// TestPreParseGlobals_ExecAliasPassthrough: `byn exec name --vault prod` must
+// pass --vault prod through untouched (not consume it as a global flag), while
+// `byn --vault x exec name` must consume the pre-exec global flag normally.
+func TestPreParseGlobals_ExecAliasPassthrough(t *testing.T) {
+	t.Setenv(envFallbackKeys.Vault, "")
+	t.Setenv(envFallbackKeys.Project, "")
+	t.Setenv(envFallbackKeys.Env, "")
+
+	// Case 1: --vault after alias name must NOT be consumed.
+	sc, out, err := preParseGlobals([]string{"exec", "deploy", "--vault", "prod"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if sc.Vault != "" {
+		t.Errorf("scope.Vault = %q, want empty (passthrough should not set it)", sc.Vault)
+	}
+	// The entire suffix ["deploy", "--vault", "prod"] must appear in out.
+	wantOut := []string{"exec", "deploy", "--vault", "prod"}
+	if !reflect.DeepEqual(out, wantOut) {
+		t.Errorf("out = %v, want %v", out, wantOut)
+	}
+
+	// Case 2: --vault BEFORE exec must be consumed normally.
+	sc2, out2, err2 := preParseGlobals([]string{"--vault", "x", "exec", "deploy"})
+	if err2 != nil {
+		t.Fatalf("err: %v", err2)
+	}
+	if sc2.Vault != "x" {
+		t.Errorf("scope.Vault = %q, want x", sc2.Vault)
+	}
+	wantOut2 := []string{"exec", "deploy"}
+	if !reflect.DeepEqual(out2, wantOut2) {
+		t.Errorf("out = %v, want %v", out2, wantOut2)
+	}
+}
+
+// TestJsonModeFromArgs_ExecAliasPassthrough: --json after the alias name must
+// NOT flip agent mode.
+func TestJsonModeFromArgs_ExecAliasPassthrough(t *testing.T) {
+	// --json after alias name: opaque → must not flip agent mode.
+	if jsonModeFromArgs([]string{"exec", "alias", "--json"}) {
+		t.Error("--json after exec alias name should NOT flip agent mode")
+	}
+	// --json before exec: must flip agent mode.
+	if !jsonModeFromArgs([]string{"--json", "exec", "alias"}) {
+		t.Error("--json before exec should flip agent mode")
+	}
+	// --json with direct form: after "--" is already blocked by original check.
+	if jsonModeFromArgs([]string{"exec", "--", "--json"}) {
+		t.Error("--json after -- should NOT flip agent mode")
+	}
+}
+
+// TestWantsHelp_ExecAliasPassthrough: --help / -h after the alias name must
+// NOT trigger byn's own help display.
+func TestWantsHelp_ExecAliasPassthrough(t *testing.T) {
+	// --help after alias name: opaque → must NOT trigger byn help.
+	// This is tested via wantsHelp with the slice trimmed at the alias boundary
+	// (as main.go does it): wantsHelp(rest[:aliasIdx]) where rest = ["myalias", "--help"].
+	// When trimmed to rest[:0] = [], wantsHelp must return false.
+	if wantsHelp([]string{}) {
+		t.Error("wantsHelp(empty) should be false")
+	}
+	// wantsHelp on pre-alias slice: only items before the alias — no --help there.
+	if wantsHelp([]string{"myalias"}[:0]) { // empty slice (all before the alias)
+		t.Error("no help flags before alias: wantsHelp should be false")
+	}
+	// Confirm wantsHelp still works for normal cases.
+	if !wantsHelp([]string{"--help"}) {
+		t.Error("wantsHelp([--help]) should be true")
+	}
+	if !wantsHelp([]string{"-h"}) {
+		t.Error("wantsHelp([-h]) should be true")
+	}
+	if !wantsHelp([]string{"help"}) {
+		t.Error("wantsHelp([help]) should be true (single token)")
+	}
+}
+
+// TestPreParseGlobals_ExecNoAliasName: `byn exec` or `byn exec --help` (no
+// alias name) — no passthrough boundary, pre-parser works normally.
+func TestPreParseGlobals_ExecNoAliasName(t *testing.T) {
+	t.Setenv(envFallbackKeys.Vault, "")
+	t.Setenv(envFallbackKeys.Project, "")
+	t.Setenv(envFallbackKeys.Env, "")
+
+	// byn exec (no further args): no boundary.
+	sc, out, err := preParseGlobals([]string{"exec"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if sc.Vault != "" {
+		t.Errorf("scope.Vault = %q, want empty", sc.Vault)
+	}
+	if !reflect.DeepEqual(out, []string{"exec"}) {
+		t.Errorf("out = %v, want [exec]", out)
+	}
+}
+
+// TestPreParseGlobals_DirectFormUnchanged: `byn exec -- cmd` (direct form)
+// must pass everything after "--" through unchanged (existing behaviour).
+func TestPreParseGlobals_DirectFormUnchanged(t *testing.T) {
+	t.Setenv(envFallbackKeys.Vault, "")
+	t.Setenv(envFallbackKeys.Project, "")
+	t.Setenv(envFallbackKeys.Env, "")
+
+	sc, out, err := preParseGlobals([]string{"exec", "--", "cmd", "--vault", "x"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if sc.Vault != "" {
+		t.Errorf("scope.Vault = %q, want empty", sc.Vault)
+	}
+	want := []string{"exec", "--", "cmd", "--vault", "x"}
+	if !reflect.DeepEqual(out, want) {
+		t.Errorf("out = %v, want %v", out, want)
+	}
+}

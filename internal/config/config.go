@@ -30,6 +30,16 @@ const DefaultUIPort = 2967
 // via [daemon] idle_timeout; "0s" disables auto-relock.
 const DefaultIdleTimeout = 15 * time.Minute
 
+// DefaultSessionTTL is the default absolute lifetime of a minted session.
+// After this period the session is revoked regardless of activity.
+const DefaultSessionTTL = 12 * time.Hour
+
+// DefaultRevealHideAfter is how long the browser portal shows a revealed
+// secret value before re-masking it. Overridable via [ui] reveal_hide_after;
+// "0s" keeps values shown until manually hidden. Display-only (browser-side);
+// the daemon stores and serves it but does not act on it.
+const DefaultRevealHideAfter = 15 * time.Second
+
 // Duration is a time.Duration that decodes from a TOML duration string
 // such as "15m" or "0s" (Go's time.ParseDuration syntax).
 type Duration time.Duration
@@ -52,8 +62,9 @@ func (d Duration) MarshalText() ([]byte, error) {
 // Config is the parsed ~/.byn/config. Use Default() for the baseline and
 // Load() to read from disk; the Go zero value is not a valid config.
 type Config struct {
-	UI     UI     `toml:"ui"`
-	Daemon Daemon `toml:"daemon"`
+	UI       UI       `toml:"ui"`
+	Daemon   Daemon   `toml:"daemon"`
+	Security Security `toml:"security"`
 }
 
 // UI configures the local browser admin portal (Phase 2). Port is read
@@ -62,6 +73,10 @@ type Config struct {
 type UI struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
+	// RevealHideAfter is how long the portal shows a revealed secret value
+	// before re-masking it. "0s" keeps it shown until manually hidden.
+	// Browser-side display behavior only — the daemon serves it, never acts.
+	RevealHideAfter Duration `toml:"reveal_hide_after"`
 }
 
 // Daemon configures daemon-wide behavior.
@@ -71,18 +86,52 @@ type Daemon struct {
 	IdleTimeout Duration `toml:"idle_timeout"`
 }
 
+// Security configures the NU-track per-action authorization gates.
+type Security struct {
+	// SessionTTL is the absolute lifetime of a minted session (from creation
+	// time). 0 disables the absolute-TTL check (sessions are bounded only by
+	// the idle window and explicit lock/end calls). Default: 12h.
+	SessionTTL Duration `toml:"session_ttl"`
+
+	// SessionIdle is the sliding idle window for a session. A session that
+	// has not been validated within this window expires. 0 (default) inherits
+	// [daemon] idle_timeout — set the daemon's idle timeout to also bound
+	// session idle time without repeating the value. Use "0s" explicitly to
+	// disable idle expiry for sessions while keeping the vault idle timeout.
+	SessionIdle Duration `toml:"session_idle"`
+}
+
 // Default returns the built-in defaults, applied when the file is absent
 // or a key is omitted.
 func Default() Config {
 	return Config{
-		UI:     UI{Enabled: true, Port: DefaultUIPort},
+		UI:     UI{Enabled: true, Port: DefaultUIPort, RevealHideAfter: Duration(DefaultRevealHideAfter)},
 		Daemon: Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
+		Security: Security{
+			SessionTTL:  Duration(DefaultSessionTTL),
+			SessionIdle: 0, // 0 ⇒ inherit [daemon] idle_timeout at runtime
+		},
 	}
 }
 
 // Path returns the config file path for a given $BYN_DIR.
 func Path(dir string) string {
 	return filepath.Join(dir, Filename)
+}
+
+// Parse decodes and validates a config from raw bytes (no disk access).
+// It is used by config.set to validate the new content before writing it to
+// disk. Returns the parsed Config or a validation error.
+func Parse(content []byte) (Config, error) {
+	cfg := Default()
+	dec := toml.NewDecoder(strings.NewReader(string(content))).DisallowUnknownFields()
+	if derr := dec.Decode(&cfg); derr != nil {
+		return Config{}, derr
+	}
+	if verr := cfg.validate(); verr != nil {
+		return Config{}, verr
+	}
+	return cfg, nil
 }
 
 // Load reads and validates the config at path. A missing file is not an
@@ -116,6 +165,10 @@ func (c Config) validate() error {
 	if time.Duration(c.Daemon.IdleTimeout) < 0 {
 		return fmt.Errorf("daemon.idle_timeout %v must not be negative (use \"0s\" to disable)",
 			time.Duration(c.Daemon.IdleTimeout))
+	}
+	if time.Duration(c.UI.RevealHideAfter) < 0 {
+		return fmt.Errorf("ui.reveal_hide_after %v must not be negative (use \"0s\" to disable auto-hide)",
+			time.Duration(c.UI.RevealHideAfter))
 	}
 	return nil
 }

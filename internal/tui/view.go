@@ -35,12 +35,15 @@ func (m Model) View() string {
 	detail := m.renderDetail()
 	body := joinHorizontal(rail, content, detail)
 
-	// Overlay modals (centered) — SCOPE picker, CONFIRM-DELETE.
+	// Overlay modals (centered) — SCOPE picker, CONFIRM-DELETE, AUTH REQUIRED.
 	if m.Mode == ModeScopePicker {
 		body = overlayCenter(body, m.renderScopePicker(), m.Width, m.Layout.Content.H+m.Layout.TopBar.H)
 	}
 	if m.Mode == ModeConfirmDelete {
 		body = overlayCenter(body, m.renderConfirm(), m.Width, m.Layout.Content.H+m.Layout.TopBar.H)
+	}
+	if m.Mode == ModeAuthRequired {
+		body = overlayCenter(body, m.renderAuthRequired(), m.Width, m.Layout.Content.H+m.Layout.TopBar.H)
 	}
 
 	status := m.renderStatus()
@@ -205,6 +208,8 @@ func (m Model) modeBadge() string {
 		return m.styles.ModeAudit.Render("AUDIT")
 	case ModeHelp:
 		return m.styles.ModeHelp.Render("HELP")
+	case ModeAuthRequired:
+		return m.styles.ModeConfirm.Render("AUTHORIZE")
 	}
 	return m.Mode.String()
 }
@@ -272,6 +277,8 @@ func (m Model) statusHints() string {
 		return m.styles.StatusHint.Render("q back  r refresh  / filter")
 	case ModeHelp:
 		return m.styles.StatusHint.Render("ESC close")
+	case ModeAuthRequired:
+		return m.styles.StatusHint.Render("Enter submit  ESC cancel")
 	}
 	return ""
 }

@@ -18,6 +18,21 @@ import (
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
 
+// kdfParams is the Argon2 cost profile used when wrapping the vault key
+// (Init + ChangePassword). It defaults to production cost
+// (vcrypto.DefaultArgon2Params); a non-test binary therefore always
+// pays full KDF cost. Tests may lower it via SetKDFParamsForTesting.
+var kdfParams = vcrypto.DefaultArgon2Params
+
+// SetKDFParamsForTesting overrides the Argon2 cost profile used to wrap
+// the vault key. It exists solely to let tests that perform real vault
+// init/unlock avoid the ~1s/op production KDF cost. It is exported
+// because tests in other packages (daemon, ui) need it.
+//
+// MUST NEVER be called from production code: lowering these params
+// weakens the at-rest security of the wrapped vault key.
+func SetKDFParamsForTesting(p vcrypto.Argon2Params) { kdfParams = p }
+
 // Per-vault on-disk layout (all under <root>/vaults/<vaultName>/):
 //
 //	vault.db      — SQLite database (v2 schema)
@@ -34,8 +49,16 @@ const (
 	// changes; no v1 migration is supported (pre-1.0 waiver). v3
 	// added: entries.require_2fa column, meta keys for audit chain
 	// seed/head, entries_state_hash, and meta.totp_secret_v1 reserved
-	// slot.
-	schemaVersion = 3
+	// slot. v4: file_meta.sha256_plain renamed to sha256_hmac (keyed
+	// HMAC-SHA256 under a vault-key-derived subkey; eliminates the
+	// offline guess-confirmation oracle).
+	schemaVersion = 4
+
+	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
+	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of
+	// plain SHA-256 prevents a stolen database from serving as an offline
+	// guess-confirmation oracle.
+	FileMetaMACKeyInfo = "byn:file-meta-mac:v1"
 
 	// DefaultProjectName is the project created at vault init. It's a
 	// regular project — no leading-underscore sentinel — so rename and
@@ -165,10 +188,17 @@ type Entry struct {
 // EntryInfo is a list-only view (no plaintext value). List doesn't
 // require Unlock; daemon callers can show the index of a locked
 // vault.
+//
+// IsEmpty is true when the stored value is the empty byte sequence. It is
+// derived from ciphertext length (XChaCha20-Poly1305 AEAD with XChaCha
+// nonces: 1 version byte + 24-byte nonce + 16-byte Poly1305 tag = 41 bytes
+// of overhead; empty plaintext → exactly 41 bytes). This is deterministic
+// and requires no decryption.
 type EntryInfo struct {
 	Name      string
 	Kind      string
 	Source    Source
+	IsEmpty   bool // true when stored ciphertext encodes an empty value
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -314,7 +344,7 @@ func Init(ctx context.Context, root, vaultName string, password []byte) (*Store,
 	}
 	defer zero(vk)
 
-	wrapped, err := vcrypto.Wrap(password, vk, vcrypto.DefaultArgon2Params)
+	wrapped, err := vcrypto.Wrap(password, vk, kdfParams)
 	if err != nil {
 		return nil, fmt.Errorf("vault: wrap: %w", err)
 	}
@@ -456,7 +486,7 @@ func (s *Store) ChangePassword(oldPassword, newPassword []byte) error {
 	}
 	defer zero(vk)
 
-	newWrapped, err := vcrypto.Wrap(newPassword, vk, vcrypto.DefaultArgon2Params)
+	newWrapped, err := vcrypto.Wrap(newPassword, vk, kdfParams)
 	if err != nil {
 		return fmt.Errorf("vault: wrap: %w", err)
 	}
@@ -945,18 +975,19 @@ func (s *Store) ListEnvVars(ctx context.Context, scope Scope) ([]EntryInfo, erro
 		return nil, err
 	}
 	// Combine env-specific entries (preferred) with default entries
-	// (fallback for unshadowed names).
+	// (fallback for unshadowed names). Include length(value) so callers
+	// can determine emptiness without decryption.
 	rows, err := s.db.QueryContext(ctx,
 		`WITH scope_entries AS (
-			SELECT name, kind, created_at, updated_at, 'scope' AS source
+			SELECT name, kind, created_at, updated_at, 'scope' AS source, length(value) AS ct_len
 			FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		), default_entries AS (
-			SELECT name, kind, created_at, updated_at, 'default' AS source
+			SELECT name, kind, created_at, updated_at, 'default' AS source, length(value) AS ct_len
 			FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		)
-		SELECT name, kind, created_at, updated_at, source FROM scope_entries
+		SELECT name, kind, created_at, updated_at, source, ct_len FROM scope_entries
 		UNION ALL
-		SELECT name, kind, created_at, updated_at, source FROM default_entries
+		SELECT name, kind, created_at, updated_at, source, ct_len FROM default_entries
 		WHERE name NOT IN (SELECT name FROM scope_entries)
 		ORDER BY name`,
 		projectID, envID, projectID, defaultEnvID)
@@ -1210,9 +1241,15 @@ func (s *Store) decryptEntry(key []byte, r entryRow, source Source) (Entry, erro
 
 // listEntriesForEnv returns metadata for every entry in (project, env)
 // matching kind='env_var'. Source is uniform across all rows.
+// emptyCiphertextLen is the byte length of an XChaCha20-Poly1305 ciphertext
+// that encodes empty plaintext. Layout: 1 (version) + 24 (XChaCha nonce) +
+// 16 (Poly1305 tag) = 41. Any stored value whose length equals this constant
+// has an empty plaintext — no decryption required.
+const emptyCiphertextLen = 41
+
 func (s *Store) listEntriesForEnv(ctx context.Context, projectID, envID int64, source Source) ([]EntryInfo, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, created_at, updated_at FROM entries
+		`SELECT name, kind, created_at, updated_at, length(value) FROM entries
 		 WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		 ORDER BY name`,
 		projectID, envID)
@@ -1225,10 +1262,12 @@ func (s *Store) listEntriesForEnv(ctx context.Context, projectID, envID int64, s
 	for rows.Next() {
 		var info EntryInfo
 		var createdNs, updatedNs int64
-		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs); err != nil {
+		var ctLen int
+		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &ctLen); err != nil {
 			return nil, err
 		}
 		info.Source = source
+		info.IsEmpty = ctLen == emptyCiphertextLen
 		info.CreatedAt = time.Unix(createdNs, 0).UTC()
 		info.UpdatedAt = time.Unix(updatedNs, 0).UTC()
 		out = append(out, info)
@@ -1242,11 +1281,13 @@ func scanEntryInfos(rows *sql.Rows) ([]EntryInfo, error) {
 		var info EntryInfo
 		var createdNs, updatedNs int64
 		var source string
-		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &source); err != nil {
+		var ctLen int
+		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &source, &ctLen); err != nil {
 			return nil, err
 		}
 		info.CreatedAt = time.Unix(createdNs, 0).UTC()
 		info.UpdatedAt = time.Unix(updatedNs, 0).UTC()
+		info.IsEmpty = ctLen == emptyCiphertextLen
 		if source == "default" {
 			info.Source = SourceDefault
 		}

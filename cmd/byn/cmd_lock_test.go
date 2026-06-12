@@ -22,3 +22,18 @@ func TestRunLock_All(t *testing.T) {
 		t.Errorf("Name = %q, want * (lock all)", req.Name)
 	}
 }
+
+// TestRunLock_Session ends the current terminal's session without locking.
+func TestRunLock_Session(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpSessionEnd, ipc.SessionEndResp{})
+
+	got := runLock([]string{"--session"}, cliScope{})
+	if got != exitOK {
+		t.Fatalf("runLock --session = %d, want exitOK", got)
+	}
+	calls := fd.callsFor(ipc.OpSessionEnd)
+	if len(calls) != 1 {
+		t.Fatalf("got %d OpSessionEnd calls, want 1", len(calls))
+	}
+}

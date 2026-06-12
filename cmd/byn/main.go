@@ -16,6 +16,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Build metadata. version/commit/buildDate are stamped at build time via
@@ -77,8 +78,7 @@ func run(args []string) int {
 			}
 			if srcPath != "" {
 				scope = mergeDiscoveryScope(scope, discScope)
-				scope.SourcePath = srcPath        // byn exec verifies trust against this
-				scope.ExecEnv = discScope.ExecEnv // byn exec injection allowlist
+				scope.SourcePath = srcPath // byn exec verifies trust against this
 				hintf("Using scope from %s: %s.", srcPath, scope)
 			}
 		}
@@ -112,7 +112,38 @@ func run(args []string) int {
 	// — AWS-CLI convention. Intercept before subcommand routing so
 	// the per-command help blob is shown instead of running the
 	// command with a bogus arg.
-	if wantsHelp(rest) {
+	//
+	// Exec passthrough exception: for `byn exec NAME ...`, a --help
+	// after the alias name is meant for the alias's child process, not
+	// byn.  wantsHelp is called with the exec-boundary-trimmed slice so
+	// `byn exec myalias --help` does NOT show byn help.
+	// `byn exec --help` (no alias name) still shows byn exec help.
+	helpArgs := rest
+	if cmd == "exec" {
+		// Find the exec passthrough boundary within rest.
+		// rest = args after "exec", so boundary relative to original
+		// argv is already past the "exec" token.
+		for bi, a := range rest {
+			if a == "--" {
+				// Direct form: trim at "--".
+				helpArgs = rest[:bi]
+				break
+			}
+			if !strings.HasPrefix(a, "-") {
+				// This is the alias name. Everything from here is opaque —
+				// help check must not see it.
+				// Exception: "help" as the alias name is byn's own meta-command,
+				// not a real alias (e.g. `byn exec help` shows exec help).
+				if a == "help" {
+					// Leave helpArgs = rest so wantsHelp sees "help" and fires.
+					break
+				}
+				helpArgs = rest[:bi]
+				break
+			}
+		}
+	}
+	if wantsHelp(helpArgs) {
 		return printCommandHelp(cmd)
 	}
 

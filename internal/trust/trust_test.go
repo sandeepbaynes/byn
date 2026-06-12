@@ -87,56 +87,6 @@ func TestHash_Deterministic(t *testing.T) {
 	}
 }
 
-func TestGrant_NewRecord(t *testing.T) {
-	dir := t.TempDir()
-	changed, err := Grant(dir, "/a/.byn", "hash1")
-	if err != nil {
-		t.Fatalf("Grant: %v", err)
-	}
-	if changed {
-		t.Error("granting a brand-new path should report changed=false")
-	}
-	s, _ := Load(dir)
-	if len(s.Records) != 1 || s.Records[0].Path != "/a/.byn" || s.Records[0].SHA256 != "hash1" {
-		t.Fatalf("record not stored: %+v", s.Records)
-	}
-}
-
-func TestGrant_SameHashIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := Grant(dir, "/a/.byn", "hash1"); err != nil {
-		t.Fatal(err)
-	}
-	changed, err := Grant(dir, "/a/.byn", "hash1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed {
-		t.Error("re-granting the same hash should report changed=false")
-	}
-	if s, _ := Load(dir); len(s.Records) != 1 {
-		t.Fatalf("duplicate record created: %+v", s.Records)
-	}
-}
-
-func TestGrant_ChangedHash(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := Grant(dir, "/a/.byn", "hash1"); err != nil {
-		t.Fatal(err)
-	}
-	changed, err := Grant(dir, "/a/.byn", "hash2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Error("granting a different hash for a known path should report changed=true")
-	}
-	s, _ := Load(dir)
-	if len(s.Records) != 1 || s.Records[0].SHA256 != "hash2" {
-		t.Fatalf("hash not updated: %+v", s.Records)
-	}
-}
-
 func TestCanonicalize(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f")
@@ -166,7 +116,8 @@ func TestStat_String(t *testing.T) {
 
 func TestStatus(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Grant(dir, "/a/.byn", "hash1"); err != nil {
+	// Use Put (the authoritative writer) to seed a record — Grant was removed.
+	if _, err := Put(dir, Record{Path: "/a/.byn", SHA256: "hash1"}); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {

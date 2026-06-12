@@ -51,10 +51,10 @@ uninstall: uninstall-man
 	rm -f $(DESTDIR)$(BINDIR)/byn
 
 test:
-	$(GO) test $(GOFLAGS) -race $(PKG)
+	$(GO) test $(GOFLAGS) -race -timeout 15m $(PKG)
 
 test-integration:
-	$(GO) test $(GOFLAGS) -tags=integration -race ./tests/integration/...
+	$(GO) test $(GOFLAGS) -tags=integration -race -timeout 15m ./tests/integration/...
 
 lint:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \

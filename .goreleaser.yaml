@@ -3,9 +3,9 @@
 # Dry run:   goreleaser release --snapshot --clean
 # Real run:  git tag v0.0.1 && git push --tags   (CI does the rest)
 #
-# Produces raw per-platform binaries named byn-<os>-<arch> + a
-# byn-<version>.sha256 manifest — the exact names install.sh and
-# packaging/aur/PKGBUILD already expect.
+# Produces per-platform tar.gz archives named byn-<os>-<arch>.tar.gz (binary +
+# man page + LICENSE) + a byn-<version>.sha256 manifest — the names install.sh
+# and packaging/aur/PKGBUILD expect.
 version: 2
 
 project_name: byn
@@ -32,8 +32,14 @@ builds:
 
 archives:
   - id: byn
-    formats: [binary]
-    name_template: 'byn-{{ .Os }}-{{ .Arch }}{{ if eq .Os "windows" }}.exe{{ end }}'
+    formats: [tar.gz]
+    name_template: 'byn-{{ .Os }}-{{ .Arch }}'
+    # Bundle the man page + license alongside the binary so Homebrew, the curl
+    # installer, and AUR can install `man byn` — not just the deb/rpm/apk.
+    files:
+      - man/byn.1
+      - LICENSE
+      - README.md
 
 checksum:
   name_template: "byn-{{ .Version }}.sha256"
@@ -74,6 +80,10 @@ brews:
     homepage: https://github.com/sandeepbaynes/byn
     description: "Local-first secure secrets vault and credential manager."
     license: "BUSL-1.1"
+    # GoReleaser does not auto-detect the bundled man page, so install it
+    # explicitly (path is relative to the extracted archive root).
+    extra_install: |
+      man1.install "man/byn.1"
     test: |
       assert_match "byn #{version}", shell_output("#{bin}/byn version")
     skip_upload: auto

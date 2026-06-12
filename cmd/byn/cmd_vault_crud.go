@@ -61,7 +61,7 @@ func runVaultList(args []string) int {
 		return exitErr
 	}
 	var resp ipc.VaultListResp
-	if err := newClient(dir).Call(ipc.OpVaultList, ipc.VaultListReq{}, &resp); err != nil {
+	if err := newClient(dir, "").Call(ipc.OpVaultList, ipc.VaultListReq{}, &resp); err != nil {
 		return handleCallError(err)
 	}
 	if *jsonOut {
@@ -112,8 +112,8 @@ func runVaultDelete(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpVaultDelete,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, name).Call(ipc.OpVaultDelete,
 			ipc.VaultDeleteReq{Name: name, Password: pw}, &ipc.VaultDeleteResp{})
 	})
 	if rc == exitOK {
@@ -155,8 +155,8 @@ func runVaultRename(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpVaultRename,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, oldName).Call(ipc.OpVaultRename,
 			ipc.VaultRenameReq{OldName: oldName, NewName: newName, Password: pw},
 			&ipc.VaultRenameResp{})
 	})

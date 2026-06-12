@@ -3,9 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<!-- theme-color for native chrome: dark default, overridden if light is active -->
+<meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#0b0c0f">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f4f0">
+<meta name="color-scheme" content="dark light">
 <title>byn</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/static/style.css">
+<!-- apply theme before first paint to avoid flash -->
+<script>
+(function(){var t=localStorage.getItem('byn.theme')||'system';var h=document.documentElement;if(t==='light'||t==='dark'){h.setAttribute('data-theme',t);}else{var m=window.matchMedia('(prefers-color-scheme: light)');h.setAttribute('data-theme',m.matches?'light':'dark');}})();
+</script>
 </head>
 <body>
 <div class="grain" aria-hidden="true"></div>
@@ -36,17 +44,24 @@
         <button id="audit-btn" class="btn btn-ghost sm" title="audit log for this vault">audit</button>
         <button id="trust-btn" class="btn btn-ghost sm" title="trusted .byn files">trust</button>
         <button id="byn-btn" class="btn btn-ghost sm" title="create a .byn scope file for a project">.byn</button>
+        <button id="settings-btn" class="btn btn-ghost sm" title="global config settings">settings</button>
         <button id="passkey-btn" class="btn btn-ghost sm" title="passkeys / Touch ID">passkey</button>
+        <div class="theme-switcher" id="theme-switcher" aria-label="color theme">
+          <button class="theme-btn" id="theme-dark"   title="dark theme"   aria-label="dark theme"   aria-pressed="false"></button>
+          <button class="theme-btn" id="theme-light"  title="light theme"  aria-label="light theme"  aria-pressed="false"></button>
+          <button class="theme-btn" id="theme-system" title="system theme" aria-label="system theme" aria-pressed="false"></button>
+        </div>
         <div id="help-wrap" class="help-wrap">
           <button id="help-btn" class="btn btn-ghost sm" title="keyboard shortcuts (?)" aria-label="keyboard shortcuts">?</button>
           <div id="help-pop" class="help-pop" hidden>
             <div class="help-title">keyboard</div>
             <dl class="help-list">
-              <div><dt>⌘/Ctrl&nbsp;P</dt><dd>spotlight: go to vault/project/env</dd></div>
+              <div><dt>⌘/Ctrl&nbsp;P</dt><dd>go to vault/project/env</dd></div>
               <div><dt>n</dt><dd>new env-var</dd></div>
               <div><dt>u</dt><dd>unlock current vault</dd></div>
               <div><dt>l</dt><dd>lock current vault</dd></div>
               <div><dt>l a</dt><dd>lock all vaults</dd></div>
+              <div><dt>Shift R</dt><dd>reveal / hide all values</dd></div>
               <div><dt>⌘/Ctrl&nbsp;↵</dt><dd>save inline edit</dd></div>
               <div><dt>↵</dt><dd>newline inside a value</dd></div>
               <div><dt>Esc</dt><dd>cancel edit / close</dd></div>

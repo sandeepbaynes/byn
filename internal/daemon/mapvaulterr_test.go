@@ -1,11 +1,52 @@
 package daemon
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
+
+// TestMapProviderErr_VaultNotInit_NotInternal: ErrNotInit wrapped inside a
+// provider "auth: open vault: %w" error must map to CodeNotInit — not
+// CodeInternal — so a password grant against an uninitialized vault gives
+// an actionable error.
+func TestMapProviderErr_VaultNotInit_NotInternal(t *testing.T) {
+	wrapped := fmt.Errorf("auth: open vault: %w", vault.ErrNotInit)
+	env := mapProviderErr("id1", wrapped)
+	if env == nil {
+		t.Fatal("mapProviderErr returned nil for non-nil error")
+	}
+	if env.Err == nil {
+		t.Fatal("envelope has no Err field")
+	}
+	if env.Err.Code != ipc.CodeNotInit {
+		t.Fatalf("Code = %v, want not_init (got CodeInternal on regression)", env.Err.Code)
+	}
+	if env.Err.Recover == "" {
+		t.Error("CodeNotInit response should carry a non-empty Recover hint")
+	}
+}
+
+// TestMapProviderErr_VaultFingerprintMismatch_NotInternal: ErrFingerprintMismatch
+// wrapped inside a provider error must map to CodeFingerprint — not CodeInternal.
+func TestMapProviderErr_VaultFingerprintMismatch_NotInternal(t *testing.T) {
+	wrapped := fmt.Errorf("auth: open vault: %w", vault.ErrFingerprintMismatch)
+	env := mapProviderErr("id1", wrapped)
+	if env == nil {
+		t.Fatal("mapProviderErr returned nil for non-nil error")
+	}
+	if env.Err == nil {
+		t.Fatal("envelope has no Err field")
+	}
+	if env.Err.Code != ipc.CodeFingerprint {
+		t.Fatalf("Code = %v, want fingerprint (got CodeInternal on regression)", env.Err.Code)
+	}
+	if env.Err.Recover == "" {
+		t.Error("CodeFingerprint response should carry a non-empty Recover hint")
+	}
+}
 
 func TestMapVaultErr_AllCases(t *testing.T) {
 	cases := []struct {

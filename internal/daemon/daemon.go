@@ -15,6 +15,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/config"
+	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/machineid"
 	"github.com/sandeepbaynes/byn/internal/ui"
 	"github.com/sandeepbaynes/byn/internal/vault"
@@ -53,6 +54,15 @@ type Config struct {
 	// config.UI at daemon start.
 	UIEnabled bool
 	UIPort    int
+
+	// SessionTTL is the absolute lifetime of a minted session (from creation
+	// time). 0 disables the absolute-TTL check. Wired from config.Security.SessionTTL.
+	SessionTTL time.Duration
+
+	// SessionIdle is the sliding idle window for a session. 0 inherits
+	// IdleTimeout (the daemon's vault idle timeout). Wired from
+	// config.Security.SessionIdle.
+	SessionIdle time.Duration
 }
 
 // vaultEntry is the daemon's handle on one open vault.
@@ -108,11 +118,33 @@ type Daemon struct {
 	// letting a trust grant accept the passkey instead of the master password.
 	presenceTokens *presenceTokens
 
+	// bootstrapTokens are one-time, 60s-TTL tokens minted by web.bootstrap
+	// (UID-gated Unix socket) and consumed at POST /api/session/bootstrap.
+	// They allow the CLI to hand off an authorized session to the browser
+	// without embedding the long-lived portal token in argv or URLs where
+	// it would be visible to `ps`.
+	bootstrapTokens *bootstrapTokens
+
+	// sessions is the NU-3 session store: a mutex-guarded map of live session
+	// tokens keyed by the token string (32 random bytes, hex-encoded). Each
+	// session binds a vault unlock to the surface (cli/portal) and UID that
+	// performed it, with an optional TTYDev constraint for socket callers. The
+	// store is initialized in New() with TTL/idle from config; the janitor
+	// sweeps it alongside idle-vault checks.
+	sessions *sessionStore
+
 	// reloadMu serializes Reload so two concurrent SIGHUPs can't interleave
 	// portal restarts.
 	reloadMu sync.Mutex
 
 	limiter *auth.RateLimiter
+
+	// authProviders is the pluggable auth-provider registry. Two built-in
+	// providers are registered in New(): "password" and "passkey". The EE
+	// superset binary registers additional providers at startup.
+	// EE registers providers here (see project rules: pluggability is mandatory);
+	// exported in NU-4.
+	authProviders *auth.Registry
 
 	// fpMACKey keys the trust store's machine-fingerprint MAC, derived once
 	// from machineid at New. nil when the machine id is unavailable (the
@@ -159,22 +191,39 @@ func New(cfg Config) (*Daemon, error) {
 		cfg.OwnerUID = uint32(euid) //nolint:gosec // bounded by check above
 	}
 
+	// Resolve the session idle window: 0 ⇒ inherit the vault idle timeout.
+	sessionIdle := cfg.SessionIdle
+	if sessionIdle == 0 {
+		sessionIdle = cfg.IdleTimeout
+	}
+
 	d := &Daemon{
-		cfg:            cfg,
-		socketPath:     filepath.Join(cfg.Dir, SocketFilename),
-		pidPath:        filepath.Join(cfg.Dir, PIDFilename),
-		limiterPath:    filepath.Join(cfg.Dir, auth.RateLimiterFile),
-		ownerUID:       cfg.OwnerUID,
-		closeCh:        make(chan struct{}),
-		vaults:         make(map[string]*vaultEntry),
-		pkChallenges:   newPasskeyChallenges(),
-		presenceTokens: newPresenceTokens(),
+		cfg:             cfg,
+		socketPath:      filepath.Join(cfg.Dir, SocketFilename),
+		pidPath:         filepath.Join(cfg.Dir, PIDFilename),
+		limiterPath:     filepath.Join(cfg.Dir, auth.RateLimiterFile),
+		ownerUID:        cfg.OwnerUID,
+		closeCh:         make(chan struct{}),
+		vaults:          make(map[string]*vaultEntry),
+		pkChallenges:    newPasskeyChallenges(),
+		presenceTokens:  newPresenceTokens(),
+		bootstrapTokens: newBootstrapTokens(),
+		sessions:        newSessionStore(cfg.SessionTTL, sessionIdle),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
 	d.limiter = auth.NewRateLimiter(d.limiterPath)
 	if cfg.Clock != nil {
 		d.limiter.SetClock(cfg.Clock)
 	}
+
+	// Build the pluggable auth-provider registry with the two built-in
+	// providers. The EE superset binary registers additional providers after
+	// calling New() and before Start().
+	// EE registers providers here (see project rules: pluggability is mandatory);
+	// exported in NU-4.
+	d.authProviders = auth.NewRegistry()
+	d.authProviders.Register(&passwordProvider{d: d})
+	d.authProviders.Register(&passkeyProvider{d: d})
 	// Trust-store machine-fingerprint MAC key, derived once. A failure here
 	// degrades only the fp-MAC layer (the vault-key MAC still protects records).
 	if id, err := machineid.ID(); err == nil {
@@ -259,13 +308,31 @@ func (d *Daemon) UIPort() int {
 // given port (<=0 ⇒ ui default). The caller MUST hold uiMu. The Serve
 // goroutine is registered with the waitgroup so Shutdown drains it. A bind
 // error is returned and leaves uiSrv nil.
+//
+// The portal owner-token is loaded (or created) from $BYN_DIR/portal.token
+// (mode 0600). A token-load failure is fatal for the portal: the portal is
+// disabled (same path as a bind failure) and a warning is printed to stderr.
+// The daemon keeps serving the socket. The token is persisted across daemon
+// restarts so browser localStorage remains valid.
 func (d *Daemon) startUILocked(port int) error {
 	select {
 	case <-d.closeCh:
 		return errors.New("daemon: shutting down")
 	default:
 	}
-	srv := ui.New(d, ui.Config{Port: port})
+	tokenPath := filepath.Join(d.cfg.Dir, ui.TokenFilename)
+	tok, err := ui.LoadOrCreateToken(tokenPath)
+	if err != nil {
+		// Fail-closed: a missing or unreadable token would leave all API
+		// routes ungated. Disable the portal entirely instead.
+		return fmt.Errorf("portal disabled: portal token unavailable: %w", err)
+	}
+	// Fail-closed: an empty token would disable the owner-token gate for
+	// all /api/* routes, granting any local process unrestricted access.
+	if tok == "" {
+		return fmt.Errorf("portal disabled: portal token is empty (fail-closed)")
+	}
+	srv := ui.New(d, ui.Config{Port: port, Token: tok, Bootstrap: d})
 	if err := srv.Listen(); err != nil {
 		return err
 	}
@@ -281,6 +348,21 @@ func (d *Daemon) startUILocked(port int) error {
 // SocketPath returns the absolute path to the bound Unix socket.
 func (d *Daemon) SocketPath() string { return d.socketPath }
 
+// ConsumeBootstrap implements ui.BootstrapConsumer. It consumes the one-time
+// bootstrap token t and returns the persistent portal token if t was valid and
+// unexpired. Returns "" when t is invalid, expired, or already consumed.
+func (d *Daemon) ConsumeBootstrap(t string) string {
+	if !d.bootstrapTokens.consume(t, time.Now()) {
+		return ""
+	}
+	d.uiMu.Lock()
+	defer d.uiMu.Unlock()
+	if d.uiSrv == nil {
+		return ""
+	}
+	return d.uiSrv.Token()
+}
+
 // Shutdown drains in-flight connections and releases socket + pidfile.
 // All open vaults are closed (which zeros their in-memory keys).
 // Idempotent.
@@ -293,6 +375,29 @@ func (d *Daemon) Shutdown(timeout time.Duration) {
 			d.uiSrv = nil
 		}
 		d.uiMu.Unlock()
+		// Emit session.end audit events for every live session before the
+		// vault auditors and root context are torn down. This must happen
+		// before rootCancel() so the audit writes land against open loggers.
+		// endVault is called per vault rather than wiping the map outright so
+		// each event is attributed to the correct vault log.
+		d.vaultsMu.RLock()
+		vaultNames := make([]string, 0, len(d.vaults))
+		for name := range d.vaults {
+			vaultNames = append(vaultNames, name)
+		}
+		d.vaultsMu.RUnlock()
+		// Use rootCtx (still live at this point) for the shutdown audit events.
+		shutdownCtx := d.handlerCtx()
+		for _, name := range vaultNames {
+			for _, surface := range d.sessions.endVault(name) {
+				d.auditEmit(shutdownCtx, name, audit.Event{
+					Op:            string(ipc.OpSessionEnd),
+					Outcome:       audit.OutcomeOK,
+					CallerSurface: surface,
+				})
+			}
+		}
+
 		if d.rootCancel != nil {
 			// Cancel the daemon-scoped context so in-flight SQLite +
 			// audit operations observe shutdown immediately. The
@@ -312,6 +417,12 @@ func (d *Daemon) Shutdown(timeout time.Duration) {
 			delete(d.vaults, name)
 		}
 		d.vaultsMu.Unlock()
+		// Session store was already drained per-vault above; clear any
+		// remaining entries (e.g. sessions for vaults not opened in this
+		// process) so no tokens outlive the daemon process.
+		d.sessions.mu.Lock()
+		d.sessions.sessions = make(map[string]*session)
+		d.sessions.mu.Unlock()
 		_ = os.Remove(d.pidPath)
 	})
 }
@@ -409,6 +520,7 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 	}
 	d.vaultsMu.RUnlock()
 
+	ctx := d.handlerCtx()
 	locked := 0
 	for _, e := range entries {
 		if e.store.IsLocked() {
@@ -420,9 +532,19 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 		}
 		if now.Sub(time.Unix(0, last)) >= to {
 			e.store.Lock()
+			// End all sessions for this vault and emit session.end audit events
+			// (idle-janitor path). Token is never logged — only vault + surface.
+			for _, surface := range d.sessions.endVault(e.name) {
+				d.auditEmit(ctx, e.name, audit.Event{
+					Op: string(ipc.OpSessionEnd), Outcome: audit.OutcomeOK,
+					CallerSurface: surface,
+				})
+			}
 			locked++
 		}
 	}
+	// Sweep expired sessions (TTL + idle) regardless of vault lock state.
+	d.sessions.sweep(now)
 	return locked
 }
 
@@ -431,9 +553,10 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 // Reload re-reads ~/.byn/config and applies the settings that can change at
 // runtime without dropping daemon state: the idle re-lock timeout and the
 // embedded browser portal (enable / disable / port). Open vaults stay open
-// and unlocked across a reload. It returns a human-readable list of what
-// changed (empty when nothing did). The data dir, owner UID and binary
-// version are fixed at start and are never reloaded — those need a restart.
+// and unlocked across a reload. It returns a
+// human-readable list of what changed (empty when nothing did). The data dir,
+// owner UID and binary version are fixed at start and are never reloaded —
+// those need a restart.
 func (d *Daemon) Reload() ([]string, error) {
 	cfg, err := config.Load(config.Path(d.cfg.Dir))
 	if err != nil {

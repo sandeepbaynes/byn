@@ -20,13 +20,19 @@ func bootstrapUnlocked(t *testing.T) *session {
 		t.Fatalf("daemon start failed")
 	}
 	t.Cleanup(s.stopDaemon)
-	pw := "correct-horse-battery-staple"
+	const pw = "correct-horse-battery-staple"
 	if _, _, code := s.run(pw, "init", "--password-stdin"); code != 0 {
 		t.Fatalf("init failed")
 	}
 	if _, _, code := s.run(pw, "unlock", "--password-stdin"); code != 0 {
 		t.Fatalf("unlock failed")
 	}
+	// Store the password so auth-gated CLI calls (get, delete, rename, export,
+	// etc.) can use --password-stdin via authedRun / authedMustRun.
+	// Non-TTY integration tests have no session file (ttyRdev()==0 ⇒ byn unlock
+	// does not save a session); per-action credentials are the documented agent
+	// workflow.
+	s.pw = pw
 	return s
 }
 
@@ -65,7 +71,8 @@ func TestE2E_Scope_EnvVarFallback(t *testing.T) {
 		t.Fatalf("put into alpha (via env) failed")
 	}
 	// Read back with explicit --project alpha → success.
-	stdout, _ = s.mustRun("", "--project", "alpha", "get", "K")
+	// Non-TTY: use --password-stdin for this auth-gated get.
+	stdout, _ = s.mustRunPW("", "--project", "alpha", "get", "--password-stdin", "K")
 	if stdout != "v1" {
 		t.Fatalf("get K in alpha = %q, want %q", stdout, "v1")
 	}
@@ -132,14 +139,14 @@ func TestE2E_Project_CRUD(t *testing.T) {
 	if !strings.Contains(stdout, "billing") {
 		t.Fatalf("project list missing 'billing':\n%s", stdout)
 	}
-	if _, _, code := s.run("", "project", "rename", "billing", "payments"); code != 0 {
+	if _, _, code := s.runPW("", "project", "rename", "--password-stdin", "billing", "payments"); code != 0 {
 		t.Fatalf("project rename failed")
 	}
 	stdout, _ = s.mustRun("", "project", "list")
 	if strings.Contains(stdout, "billing") || !strings.Contains(stdout, "payments") {
 		t.Fatalf("rename did not take effect:\n%s", stdout)
 	}
-	if _, _, code := s.run("", "project", "delete", "payments"); code != 0 {
+	if _, _, code := s.runPW("", "project", "delete", "--password-stdin", "payments"); code != 0 {
 		t.Fatalf("project delete failed")
 	}
 }
@@ -169,11 +176,11 @@ func TestE2E_Import_Dotenv(t *testing.T) {
 	if _, _, code := s.run("", "import", path); code != 0 {
 		t.Fatalf("import failed")
 	}
-	stdout, _ := s.mustRun("", "get", "DB_URL")
+	stdout, _ := s.mustRunPW("", "get", "--password-stdin", "DB_URL")
 	if stdout != "postgres://localhost/x" {
 		t.Fatalf("DB_URL = %q", stdout)
 	}
-	stdout, _ = s.mustRun("", "get", "API_KEY")
+	stdout, _ = s.mustRunPW("", "get", "--password-stdin", "API_KEY")
 	if stdout != "sek=ret with spaces" {
 		t.Fatalf("API_KEY = %q (quoted-with-= roundtrip broken)", stdout)
 	}
@@ -189,7 +196,7 @@ func TestE2E_Import_JSON(t *testing.T) {
 	if _, _, code := s.run("", "import", path); code != 0 {
 		t.Fatalf("import json failed")
 	}
-	stdout, _ := s.mustRun("", "get", "N")
+	stdout, _ := s.mustRunPW("", "get", "--password-stdin", "N")
 	if stdout != "42" {
 		t.Fatalf("N = %q want 42", stdout)
 	}
@@ -205,7 +212,7 @@ func TestE2E_Import_YAML(t *testing.T) {
 	if _, _, code := s.run("", "import", path); code != 0 {
 		t.Fatalf("import yaml failed")
 	}
-	stdout, _ := s.mustRun("", "get", "K1")
+	stdout, _ := s.mustRunPW("", "get", "--password-stdin", "K1")
 	if stdout != "v1" {
 		t.Fatalf("K1 = %q", stdout)
 	}
@@ -233,7 +240,7 @@ func TestE2E_Import_Stdin(t *testing.T) {
 	if _, _, code := s.run(stdin, "import", "--format", "env"); code != 0 {
 		t.Fatalf("import from stdin failed")
 	}
-	stdout, _ := s.mustRun("", "get", "FOO")
+	stdout, _ := s.mustRunPW("", "get", "--password-stdin", "FOO")
 	if stdout != "bar" {
 		t.Fatalf("FOO = %q", stdout)
 	}
@@ -247,7 +254,7 @@ func TestE2E_Export_DotenvRoundtrip(t *testing.T) {
 	if _, _, code := s.run("v with spaces", "put", "TRICKY"); code != 0 {
 		t.Fatalf("put tricky failed")
 	}
-	stdout, _ := s.mustRun("", "export")
+	stdout, _ := s.mustRunPW("", "export", "--password-stdin")
 	if !strings.Contains(stdout, "GREETING=hello") {
 		t.Fatalf("export missing GREETING:\n%s", stdout)
 	}
@@ -264,7 +271,7 @@ func TestE2E_Export_JSON(t *testing.T) {
 	if _, _, code := s.run("v2", "put", "B"); code != 0 {
 		t.Fatalf("put failed")
 	}
-	stdout, _ := s.mustRun("", "export", "--format", "json")
+	stdout, _ := s.mustRunPW("", "export", "--password-stdin", "--format", "json")
 	var got map[string]string
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatalf("export --format json: not valid JSON:\n%s\nerr=%v", stdout, err)
@@ -280,7 +287,7 @@ func TestE2E_Export_FileOutput(t *testing.T) {
 		t.Fatalf("put failed")
 	}
 	out := filepath.Join(s.dir, "dump.env")
-	if _, _, code := s.run("", "export", "--output", out); code != 0 {
+	if _, _, code := s.runPW("", "export", "--password-stdin", "--output", out); code != 0 {
 		t.Fatalf("export --output failed")
 	}
 	body, err := os.ReadFile(out)
@@ -313,8 +320,8 @@ func TestE2E_Import_ReplaceWipesOldKeys(t *testing.T) {
 	if err := os.WriteFile(path, []byte("NEW_KEY=v1\n"), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	// --replace --yes (no TTY → --yes required).
-	if so, se, code := s.run("", "import", "--replace", "--yes", path); code != 0 {
+	// --replace --yes (no TTY → --yes required; --password-stdin for delete auth).
+	if so, se, code := s.runPW("", "import", "--replace", "--yes", "--password-stdin", path); code != 0 {
 		t.Fatalf("import --replace --yes failed: code=%d\nstdout=%q\nstderr=%q", code, so, se)
 	}
 	// Old keys should be gone; new key present.
@@ -402,7 +409,7 @@ func TestE2E_ImportExport_Roundtrip(t *testing.T) {
 	if _, _, code := s.run("", "import", srcPath); code != 0 {
 		t.Fatalf("import failed")
 	}
-	exported, _ := s.mustRun("", "export")
+	exported, _ := s.mustRunPW("", "export", "--password-stdin")
 	for _, want := range []string{"A=1", "B=2", "C=3"} {
 		if !strings.Contains(exported, want) {
 			t.Fatalf("export missing %q:\n%s", want, exported)

@@ -13,8 +13,8 @@ BYN                        default / billing / staging                          
                                                                                                                                             
                            RECENT AUDIT                                                       view all (ga)                                 
                            ────────────────────────────────────────────────────────────────────────────────                                 
-                             21:49  get          DB_URL            ok                                                                       
-                             21:49  put          STRIPE_SK         ok                                                                       
+                             08:41  get          DB_URL            ok                                                                       
+                             08:41  put          STRIPE_SK         ok                                                                       
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -31,5 +31,5 @@ BYN                        default / billing / staging                          
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
+                      test                                                                                                                  
 NORMAL  default/billing/staging  unlocked                                  [rail]  j/k nav  Tab swap  i edit  a add  : cmd  / search  ? help

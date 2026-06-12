@@ -58,10 +58,10 @@ while the vault is unlocked.
 (version + salt + Argon2 params + nonce). Any bit-flip in the header
 MUST fail unwrap.
 
-1.2.4. Argon2id parameters: time ∈ [1, 8], memory ∈ [64 MiB, 1 GiB],
-threads ∈ [1, 8], key length = 32. Defaults: time=4, memory=256 MiB,
-threads=4. Out-of-range parameters in a stored header MUST be rejected
-at unwrap.
+1.2.4. Argon2id parameters: time ∈ [1, 16], memory ∈ [8 MiB, 1 GiB],
+threads ∈ [1, 16], key length = 32. Defaults (`DefaultArgon2Params`):
+time=2, memory=64 MiB, threads=4 (tuned for ~1s on a laptop).
+Out-of-range parameters in a stored header MUST be rejected at unwrap.
 
 1.2.5. Row-value encryption: `XChaCha20-Poly1305-Seal(key=vault_key, nonce=24B random, plaintext=value, aad=vault_id ‖ 0x1F ‖ kind ‖ 0x1F ‖ name)`.
 

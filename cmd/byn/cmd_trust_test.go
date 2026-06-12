@@ -211,3 +211,249 @@ func TestRunTrust_ListBranch(t *testing.T) {
 		t.Fatalf("ls got %d", got)
 	}
 }
+
+// ---- policy rendering (spec §4.5 footgun guard) ----------------------------
+
+// TestRenderTrustPolicy_Actions_Wildcard verifies that a "*" actions allowlist
+// renders as a loud warning with "ALL commands run re-auth-free".
+func TestRenderTrustPolicy_Actions_Wildcard(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:            "/proj/.byn",
+			SHA256:          strings.Repeat("a", 64),
+			ActionsWildcard: true,
+		})
+	})
+	if !strings.Contains(out, "ALL commands run re-auth-free") {
+		t.Errorf("wildcard output %q missing loud warning", out)
+	}
+	if !strings.Contains(out, `"*"`) {
+		t.Errorf("wildcard output %q missing literal *", out)
+	}
+}
+
+// TestRenderTrustPolicy_Actions_List verifies that a specific list of actions
+// is rendered as a comma-separated list.
+func TestRenderTrustPolicy_Actions_List(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:    "/proj/.byn",
+			SHA256:  strings.Repeat("a", 64),
+			Actions: []string{"pnpm run start", "make test"},
+		})
+	})
+	if !strings.Contains(out, "pnpm run start") || !strings.Contains(out, "make test") {
+		t.Errorf("actions-list output %q missing actions", out)
+	}
+}
+
+// TestRenderTrustPolicy_Actions_None verifies that a .byn with no [exec]
+// actions renders the "no [exec] actions" note.
+func TestRenderTrustPolicy_Actions_None(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:   "/proj/.byn",
+			SHA256: strings.Repeat("a", 64),
+		})
+	})
+	if !strings.Contains(out, "no [exec] actions") {
+		t.Errorf("no-actions output %q missing note", out)
+	}
+}
+
+// TestRenderTrustPolicy_Auth_PolicyLine verifies that non-empty [auth] overrides
+// are rendered with key=value pairs.
+func TestRenderTrustPolicy_Auth_PolicyLine(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:   "/proj/.byn",
+			SHA256: strings.Repeat("a", 64),
+			Auth:   map[string]string{"get": "none", "delete": "always"},
+		})
+	})
+	if !strings.Contains(out, "auth policy overrides") {
+		t.Errorf("auth output %q missing 'auth policy overrides'", out)
+	}
+	if !strings.Contains(out, "get=none") || !strings.Contains(out, "delete=always") {
+		t.Errorf("auth output %q missing key=value pairs", out)
+	}
+}
+
+// TestRenderTrustPolicy_Auth_Empty verifies that an empty [auth] table is not
+// rendered (no spurious "auth policy overrides:" line).
+func TestRenderTrustPolicy_Auth_Empty(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:   "/proj/.byn",
+			SHA256: strings.Repeat("a", 64),
+		})
+	})
+	if strings.Contains(out, "auth policy overrides") {
+		t.Errorf("empty-auth output %q should not contain 'auth policy overrides'", out)
+	}
+}
+
+// TestRenderTrustPolicy_ExecNone verifies that [auth] exec="none" renders a
+// bold "exec=none — ANY command runs re-auth-free" line and does NOT print
+// the misleading "no [exec] actions — every exec requires authorization" line.
+func TestRenderTrustPolicy_ExecNone(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:   "/proj/.byn",
+			SHA256: strings.Repeat("a", 64),
+			Auth:   map[string]string{"exec": "none"},
+			// No actions pinned — exec=none replaces the "no [exec] actions" text.
+		})
+	})
+	// Must explain that any command runs free.
+	if !strings.Contains(out, "ANY command runs re-auth-free") {
+		t.Errorf("exec=none output %q missing 'ANY command runs re-auth-free'", out)
+	}
+	// Must include exec=none in the auth policy overrides line.
+	if !strings.Contains(out, "exec=none") {
+		t.Errorf("exec=none output %q missing 'exec=none'", out)
+	}
+	// Must NOT print the misleading "every byn exec ... require authorization" line.
+	if strings.Contains(out, "every byn exec") {
+		t.Errorf("exec=none output %q must not print 'every byn exec ... require authorization' (that's false when exec=none)", out)
+	}
+}
+
+// TestRenderTrustPolicy_ExecNoneWithActions verifies that when both [exec] actions
+// are pinned AND [auth] exec="none" is set, the pinned actions take precedence
+// in the rendering (exec=none is still printed in the auth overrides table).
+func TestRenderTrustPolicy_ExecNoneWithActions(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:    "/proj/.byn",
+			SHA256:  strings.Repeat("a", 64),
+			Actions: []string{"make test"},
+			Auth:    map[string]string{"exec": "none"},
+		})
+	})
+	// Pinned actions take the first branch; the actions list must still appear.
+	if !strings.Contains(out, "make test") {
+		t.Errorf("output %q missing 'make test' (pinned actions should appear)", out)
+	}
+	// exec=none still appears in the auth overrides table.
+	if !strings.Contains(out, "exec=none") {
+		t.Errorf("output %q missing 'exec=none' (auth overrides must still be printed)", out)
+	}
+}
+
+// TestRunTrustAdd_PolicyRenderedAfterGrant verifies that the policy rendering
+// is included in the CLI output after a successful single grant.
+func TestRunTrustAdd_PolicyRenderedAfterGrant(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpTrustGrantBulk, ipc.TrustGrantBulkResp{
+		Results: []ipc.TrustGrantResult{{
+			Path:    "/canon/.byn",
+			SHA256:  strings.Repeat("a", 64),
+			Actions: []string{"pnpm run dev"},
+		}},
+	})
+	tpath := writeDotByn(t, "[scope]\nvault = \"a\"\n")
+	withStdin(t, "s3cret\n")
+
+	out := captureStderr(t, func() {
+		if got := runTrustAdd([]string{"--password-stdin", tpath}); got != exitOK {
+			t.Fatalf("got %d", got)
+		}
+	})
+	if !strings.Contains(out, "pnpm run dev") {
+		t.Errorf("output %q should contain 'pnpm run dev' from policy rendering", out)
+	}
+}
+
+// ---- alias rendering (spec §4.5 footgun guard) --------------------------------
+
+// TestRenderTrustPolicy_Aliases_Listed verifies that aliases are rendered as
+// "name → value" pairs in sorted order.
+func TestRenderTrustPolicy_Aliases_Listed(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:   "/proj/.byn",
+			SHA256: strings.Repeat("a", 64),
+			Aliases: map[string]string{
+				"test":   "npm test",
+				"scrape": "npm run scrape",
+			},
+		})
+	})
+	if !strings.Contains(out, "aliases:") {
+		t.Errorf("aliases output %q missing 'aliases:'", out)
+	}
+	if !strings.Contains(out, "test → npm test") {
+		t.Errorf("aliases output %q missing 'test → npm test'", out)
+	}
+	if !strings.Contains(out, "scrape → npm run scrape") {
+		t.Errorf("aliases output %q missing 'scrape → npm run scrape'", out)
+	}
+}
+
+// TestRenderTrustPolicy_Aliases_Empty verifies that no aliases line is printed
+// when there are no aliases.
+func TestRenderTrustPolicy_Aliases_Empty(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:   "/proj/.byn",
+			SHA256: strings.Repeat("a", 64),
+		})
+	})
+	if strings.Contains(out, "aliases:") {
+		t.Errorf("output %q should not contain 'aliases:' when none declared", out)
+	}
+}
+
+// ---- LOUD action warnings (spec §4.5 footgun guard) -------------------------
+
+// TestRenderTrustPolicy_Warning_ArgsTail verifies that a LOUD "Warning:" line is
+// printed when an action contains {{args}} (permits arbitrary extra arguments).
+func TestRenderTrustPolicy_Warning_ArgsTail(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:    "/proj/.byn",
+			SHA256:  strings.Repeat("a", 64),
+			Actions: []string{"npm test {{args}}"},
+		})
+	})
+	if !strings.Contains(out, "Warning:") {
+		t.Errorf("{{args}} action output %q missing 'Warning:'", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "arbitrary") {
+		t.Errorf("{{args}} action output %q missing 'arbitrary'", out)
+	}
+}
+
+// TestRenderTrustPolicy_Warning_ShellInterpreter verifies that a LOUD "Warning:"
+// line is printed for a shell-interpreter-with-placeholder action.
+func TestRenderTrustPolicy_Warning_ShellInterpreter(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:    "/proj/.byn",
+			SHA256:  strings.Repeat("a", 64),
+			Actions: []string{"sh -c {{str}}"},
+		})
+	})
+	if !strings.Contains(out, "Warning:") {
+		t.Errorf("shell-interpreter action output %q missing 'Warning:'", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "wildcard-equivalent") {
+		t.Errorf("shell-interpreter action output %q missing 'wildcard-equivalent'", out)
+	}
+}
+
+// TestRenderTrustPolicy_NoWarning_LiteralAction verifies that a plain literal
+// action (no placeholders) generates NO loud warnings.
+func TestRenderTrustPolicy_NoWarning_LiteralAction(t *testing.T) {
+	out := captureStderr(t, func() {
+		renderTrustPolicy(ipc.TrustGrantResult{
+			Path:    "/proj/.byn",
+			SHA256:  strings.Repeat("a", 64),
+			Actions: []string{"npm run build"},
+		})
+	})
+	if strings.Contains(out, "Warning:") {
+		t.Errorf("literal action output %q should not contain 'Warning:'", out)
+	}
+}

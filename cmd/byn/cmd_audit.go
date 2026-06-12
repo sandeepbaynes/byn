@@ -59,7 +59,7 @@ func runAuditView(args []string, scope cliScope) int {
 		return exitErr
 	}
 	var resp ipc.AuditTailResp
-	if err := newClient(dir).Call(ipc.OpAuditTail,
+	if err := newClient(dir, scope.Vault).Call(ipc.OpAuditTail,
 		ipc.AuditTailReq{Vault: scope.Vault, Lines: *lines}, &resp); err != nil {
 		return handleCallError(err)
 	}
@@ -99,7 +99,7 @@ func runAuditTail(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	client := newClient(dir)
+	client := newClient(dir, scope.Vault)
 
 	var resp ipc.AuditTailResp
 	if err := client.Call(ipc.OpAuditTail,
@@ -242,7 +242,7 @@ func runAuditVerify(args []string, scope cliScope) int {
 		return exitErr
 	}
 	var resp ipc.AuditVerifyResp
-	if err := newClient(dir).Call(ipc.OpAuditVerify,
+	if err := newClient(dir, scope.Vault).Call(ipc.OpAuditVerify,
 		ipc.AuditVerifyReq{Vault: scope.Vault}, &resp); err != nil {
 		return handleCallError(err)
 	}

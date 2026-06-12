@@ -72,7 +72,7 @@ func runPasswd(args []string, scope cliScope) int {
 		return exitErr
 	}
 
-	err = newClient(dir).Call(ipc.OpVaultPasswd,
+	err = newClient(dir, scope.Vault).Call(ipc.OpVaultPasswd,
 		ipc.VaultPasswdReq{Name: scope.Vault, OldPassword: oldPw, NewPassword: newPw},
 		&ipc.VaultPasswdResp{})
 	if rc := handleCallError(err); rc != exitOK {

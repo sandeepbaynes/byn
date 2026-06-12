@@ -69,6 +69,11 @@ type session struct {
 	t   *testing.T
 	bin string
 	dir string
+	// pw is the vault master password stored at bootstrap time.
+	// Non-TTY integration tests have no session file (ttyRdev()==0 ⇒ no session
+	// is written by byn unlock).  Auth-gated CLI calls must supply the password
+	// explicitly via --password-stdin; pw is the credential for those calls.
+	pw string
 }
 
 func newSession(t *testing.T) *session {
@@ -91,6 +96,13 @@ func (s *session) run(stdin string, args ...string) (string, string, int) {
 	cmd.Env = append(os.Environ(), "BYN_DIR="+s.dir)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
+	} else {
+		// Explicitly redirect stdin from /dev/null so the child process does not
+		// inherit the test runner's TTY. Without this, byn sees a TTY on stdin and
+		// attempts an interactive password prompt — which then fails with "not a
+		// terminal" when the test binary's stdin is a character device but not
+		// configured for raw-mode input (typical when run under `go test`).
+		cmd.Stdin = strings.NewReader("")
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -114,6 +126,41 @@ func (s *session) mustRun(stdin string, args ...string) (string, string) {
 		s.t.Fatalf("byn %v exited %d\nstdout: %s\nstderr: %s", args, code, stdout, stderr)
 	}
 	return stdout, stderr
+}
+
+// runPW runs a byn command, prepending s.pw+"\n" to stdin.
+// Use for auth-gated operations (get --password-stdin, delete --password-stdin,
+// export --password-stdin, etc.) where the caller supplies --password-stdin in
+// the args and just needs the password injected as stdin.
+//
+// Non-TTY integration tests have no session file (ttyRdev()==0 ⇒ byn unlock
+// does not write a session); per-action credentials via --password-stdin are
+// the documented agent workflow.
+func (s *session) runPW(extraStdin string, args ...string) (string, string, int) {
+	s.t.Helper()
+	if s.pw == "" {
+		s.t.Fatal("runPW: s.pw is empty — set s.pw (e.g. via bootstrapUnlocked) before using runPW")
+	}
+	return s.run(s.pw+"\n"+extraStdin, args...)
+}
+
+// mustRunPW is runPW that fatals on non-zero exit.
+func (s *session) mustRunPW(extraStdin string, args ...string) (string, string) {
+	s.t.Helper()
+	stdout, stderr, code := s.runPW(extraStdin, args...)
+	if code != 0 {
+		s.t.Fatalf("byn %v exited %d\nstdout: %s\nstderr: %s", args, code, stdout, stderr)
+	}
+	return stdout, stderr
+}
+
+// runPWInDir is runPW but runs in a specific working directory.
+func (s *session) runPWInDir(cwd string, extraEnv []string, args ...string) (string, string, int) {
+	s.t.Helper()
+	if s.pw == "" {
+		s.t.Fatal("runPWInDir: s.pw is empty")
+	}
+	return s.runInDir(cwd, s.pw+"\n", extraEnv, args...)
 }
 
 func (s *session) stopDaemon() {
@@ -197,21 +244,25 @@ func TestE2E_GoldenPath(t *testing.T) {
 	}
 
 	// Put then Get.
+	// Insert (new name) is free; get/delete need --password-stdin in non-TTY
+	// context (ttyRdev()==0 ⇒ no session file is written by byn unlock; agent
+	// workflow is per-action credentials via --password-stdin).
+	s.pw = pw
 	if _, _, code := s.run("s3cr3t-value", "put", "k"); code != 0 {
 		t.Fatalf("put exited %d", code)
 	}
-	stdout, _ = s.mustRun("", "get", "k")
+	stdout, _ = s.mustRunPW("", "get", "--password-stdin", "k")
 	if stdout != "s3cr3t-value" {
 		t.Fatalf("get value = %q, want %q", stdout, "s3cr3t-value")
 	}
 
-	// List shows the key.
+	// List shows the key (list is free — no session or password needed).
 	stdout, _ = s.mustRun("", "list")
 	if !strings.Contains(stdout, "k\n") && stdout != "k\n" && !strings.HasPrefix(stdout, "k") {
 		t.Fatalf("list missing 'k':\n%s", stdout)
 	}
 
-	// Lock; subsequent Get fails with code 3.
+	// Lock; subsequent Get fails with code 3 (vault locked, no session).
 	if _, _, code := s.run("", "lock"); code != 0 {
 		t.Fatalf("lock exited %d", code)
 	}
@@ -224,13 +275,13 @@ func TestE2E_GoldenPath(t *testing.T) {
 	if _, _, code := s.run(pw, "unlock", "--password-stdin"); code != 0 {
 		t.Fatalf("re-unlock exited %d", code)
 	}
-	stdout, _ = s.mustRun("", "get", "k")
+	stdout, _ = s.mustRunPW("", "get", "--password-stdin", "k")
 	if stdout != "s3cr3t-value" {
 		t.Fatalf("post-relock get value = %q, want %q", stdout, "s3cr3t-value")
 	}
 
-	// Delete.
-	if _, _, code := s.run("", "delete", "k"); code != 0 {
+	// Delete — needs --password-stdin in non-TTY context.
+	if _, _, code := s.runPW("", "delete", "--password-stdin", "k"); code != 0 {
 		t.Fatalf("delete exited %d", code)
 	}
 	_, _, code = s.run("", "get", "k")
@@ -339,9 +390,11 @@ func TestE2E_HarnessSelfCheck(t *testing.T) {
 
 // TestE2E_Exec_InjectsEnvVars exercises the core injection path:
 //   - daemon up, vault unlocked, two env-var entries stored
-//   - `byn exec -- env` shows both vars in the child's environ
+//   - `byn exec -- env` (via a trusted .byn) shows both vars in the child's environ
 //   - parent shell env never had them
-//   - exit code propagates from the child
+//
+// NU-3: ad-hoc exec requires fresh credentials; the test uses a trusted .byn
+// with /usr/bin/env pinned in [exec] actions so exec runs credential-free.
 func TestE2E_Exec_InjectsEnvVars(t *testing.T) {
 	s := newSession(t)
 	_, _ = s.mustRun("", "daemon", "start")
@@ -361,11 +414,26 @@ func TestE2E_Exec_InjectsEnvVars(t *testing.T) {
 		t.Fatalf("put API_TOKEN exited %d", code)
 	}
 
-	// Child is /usr/bin/env (POSIX-standard, always present on
-	// Unix). Its stdout is the inherited environ.
-	stdout, _, code := s.run("", "exec", "--", "env")
+	// Set up a trusted .byn that pins /usr/bin/env in [exec] actions and
+	// allows both vars in [exec] env.  This satisfies the NU-3 auth gate for
+	// exec without requiring fresh credentials on every invocation.
+	projDir := filepath.Join(s.dir, "exec-inject-proj")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatalf("mkdir projDir: %v", err)
+	}
+	bynContent := "[scope]\nproject = \"default\"\n[exec]\nenv = [\"DB_URL\", \"API_TOKEN\"]\nactions = [\"/usr/bin/env\"]\n"
+	if err := os.WriteFile(filepath.Join(projDir, ".byn"), []byte(bynContent), 0o600); err != nil {
+		t.Fatalf("write .byn: %v", err)
+	}
+	if _, se, code := s.runInDir(projDir, pw+"\n", nil, "trust", "--password-stdin", filepath.Join(projDir, ".byn")); code != 0 {
+		t.Fatalf("trust .byn: code=%d stderr=%q", code, se)
+	}
+
+	// Child is /usr/bin/env (POSIX-standard, always present on Unix).
+	// Its stdout is the inherited environ + injected vars.
+	stdout, se, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
 	if code != 0 {
-		t.Fatalf("exec env exited %d\nstdout:\n%s", code, stdout)
+		t.Fatalf("exec env exited %d\nstderr: %s\nstdout:\n%s", code, se, stdout)
 	}
 	if !strings.Contains(stdout, "DB_URL=db-secret-value") {
 		t.Fatalf("child env missing DB_URL=db-secret-value:\n%s", stdout)
@@ -390,19 +458,40 @@ func TestE2E_Exec_RequiresSeparator(t *testing.T) {
 }
 
 func TestE2E_Exec_PropagatesExitCode(t *testing.T) {
+	// NU-3: ad-hoc exec requires fresh credentials; use a trusted .byn with
+	// /bin/bash {{args}} pinned so the exit-code-propagation test runs free.
 	s := newSession(t)
 	_, _ = s.mustRun("", "daemon", "start")
 	t.Cleanup(s.stopDaemon)
 
 	const pw = "exec-test-password"
-	_, _, _ = s.run(pw, "init", "--password-stdin")
-	_, _, _ = s.run(pw, "unlock", "--password-stdin")
+	if _, _, code := s.run(pw, "init", "--password-stdin"); code != 0 {
+		t.Fatalf("init exited %d", code)
+	}
+	if _, _, code := s.run(pw, "unlock", "--password-stdin"); code != 0 {
+		t.Fatalf("unlock exited %d", code)
+	}
+
+	projDir := filepath.Join(s.dir, "exec-exit-proj")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatalf("mkdir projDir: %v", err)
+	}
+	// Pin "/bin/bash {{args}}" so any /bin/bash invocation (with any args) runs
+	// free.  We use the absolute path to avoid PATH-resolution issues in the
+	// restricted test env that runInDir sets up.
+	bynContent := "[scope]\nproject = \"default\"\n[exec]\nenv = []\nactions = [\"/bin/bash {{args}}\"]\n"
+	if err := os.WriteFile(filepath.Join(projDir, ".byn"), []byte(bynContent), 0o600); err != nil {
+		t.Fatalf("write .byn: %v", err)
+	}
+	if _, se, code := s.runInDir(projDir, pw+"\n", nil, "trust", "--password-stdin", filepath.Join(projDir, ".byn")); code != 0 {
+		t.Fatalf("trust .byn: code=%d stderr=%q", code, se)
+	}
 
 	// Child exits 7; exec replaces the byn CLI process, so the
 	// shell sees 7 as the exit code of the whole invocation.
-	_, _, code := s.run("", "exec", "--", "bash", "-c", "exit 7")
+	_, se, code := s.runInDir(projDir, "", nil, "exec", "--", "/bin/bash", "-c", "exit 7")
 	if code != 7 {
-		t.Fatalf("exec exit code = %d, want 7", code)
+		t.Fatalf("exec exit code = %d, want 7; stderr: %s", code, se)
 	}
 }
 
@@ -410,28 +499,46 @@ func TestE2E_Exec_StoredOverridesParent(t *testing.T) {
 	// When a stored entry has the same name as a var already in the
 	// parent shell, the stored value wins (last-value-wins per POSIX,
 	// which is what most shells/libraries follow).
+	//
+	// NU-3: ad-hoc exec requires fresh credentials; use a trusted .byn with
+	// /bin/bash {{args}} pinned so exec runs credential-free.
 	s := newSession(t)
 	_, _ = s.mustRun("", "daemon", "start")
 	t.Cleanup(s.stopDaemon)
 
 	const pw = "exec-test-password"
-	_, _, _ = s.run(pw, "init", "--password-stdin")
-	_, _, _ = s.run(pw, "unlock", "--password-stdin")
-	_, _, _ = s.run("stored-value", "put", "OVERRIDE_ME")
-
-	// Run with OVERRIDE_ME=parent-value in byn's environment.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, s.bin, "exec", "--", "bash", "-c", "echo OVERRIDE_ME=$OVERRIDE_ME")
-	cmd.Env = append(os.Environ(),
-		"BYN_DIR="+s.dir,
-		"OVERRIDE_ME=parent-value")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("run: %v", err)
+	if _, _, code := s.run(pw, "init", "--password-stdin"); code != 0 {
+		t.Fatalf("init exited %d", code)
 	}
-	got := strings.TrimSpace(stdout.String())
+	if _, _, code := s.run(pw, "unlock", "--password-stdin"); code != 0 {
+		t.Fatalf("unlock exited %d", code)
+	}
+	if _, _, code := s.run("stored-value", "put", "OVERRIDE_ME"); code != 0 {
+		t.Fatalf("put OVERRIDE_ME exited %d", code)
+	}
+
+	projDir := filepath.Join(s.dir, "exec-override-proj")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatalf("mkdir projDir: %v", err)
+	}
+	// Use the absolute path to avoid PATH-resolution issues in the restricted
+	// test env that runInDir sets up; pin /bin/bash so any invocation is free.
+	bynContent := "[scope]\nproject = \"default\"\n[exec]\nenv = [\"OVERRIDE_ME\"]\nactions = [\"/bin/bash {{args}}\"]\n"
+	if err := os.WriteFile(filepath.Join(projDir, ".byn"), []byte(bynContent), 0o600); err != nil {
+		t.Fatalf("write .byn: %v", err)
+	}
+	if _, se, code := s.runInDir(projDir, pw+"\n", nil, "trust", "--password-stdin", filepath.Join(projDir, ".byn")); code != 0 {
+		t.Fatalf("trust .byn: code=%d stderr=%q", code, se)
+	}
+
+	// Run with OVERRIDE_ME=parent-value in byn's environment via runInDir's
+	// extra env parameter. The stored value must win over the parent env.
+	stdout, se, code := s.runInDir(projDir, "", []string{"OVERRIDE_ME=parent-value"},
+		"exec", "--", "/bin/bash", "-c", "echo OVERRIDE_ME=$OVERRIDE_ME")
+	if code != 0 {
+		t.Fatalf("exec exited %d; stderr: %s", code, se)
+	}
+	got := strings.TrimSpace(stdout)
 	if got != "OVERRIDE_ME=stored-value" {
 		t.Fatalf("override behaviour broke: got %q, want OVERRIDE_ME=stored-value", got)
 	}

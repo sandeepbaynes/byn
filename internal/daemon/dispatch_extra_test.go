@@ -8,14 +8,23 @@ import (
 )
 
 // Helper: set up unlocked vault for tests below.
+// After a successful unlock the session token minted by the daemon is stored
+// in c.Session so all subsequent c.Call invocations automatically carry it.
+// This mirrors real CLI behaviour (NU-3): the client attaches its session
+// token to every request so value-touching ops are authorized without
+// re-supplying credentials.
 func initUnlocked(t *testing.T, c *ipc.Client, pw []byte) {
 	t.Helper()
 	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{}); err != nil {
 		t.Fatalf("VaultInit: %v", err)
 	}
-	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
+	var unlockResp ipc.VaultUnlockResp
+	tok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &unlockResp, nil)
+	if err != nil {
 		t.Fatalf("VaultUnlock: %v", err)
 	}
+	// Store session so subsequent calls carry it.
+	c.Session = tok
 }
 
 func TestVaultList_OverIPC(t *testing.T) {

@@ -31,9 +31,28 @@ byn daemon install
 
 ```sh
 byn init                    # creates the vault and sets your master password
-byn unlock                  # unlocks it for this daemon session
+byn unlock                  # unlocks it for this terminal
 byn status                  # confirm: daemon up, vault unlocked
 ```
+
+Each terminal window gets its own session — `byn unlock` in one terminal does
+not unlock for other terminals or background scripts. Run `byn unlock` once per
+terminal. Use `byn lock --session` to revoke just this terminal's access without
+affecting other open sessions.
+
+> **Before you store real secrets — three things byn depends on:**
+> 1. **Pick a long, high-entropy master passphrase.** The vault file is portable
+>    by design, so a stolen copy is only as safe as that passphrase.
+> 2. **Turn on host full-disk encryption** (FileVault / LUKS) — it protects the
+>    vault file *and* the entry names/metadata, which are plaintext at rest.
+> 3. **Run AI agents and untrusted tooling under a separate OS user or VM, not
+>    your primary account** — code running as your UID can reach an unlocked
+>    vault.
+>
+> The full, honest list is in
+> [Known weaknesses & how to protect yourself](security.md#known-weaknesses--how-to-protect-yourself)
+> and the [Best practices](security.md#best-practices) checklist. Worth two
+> minutes before this gets your production credentials.
 
 ## 4. Store your first secret
 
@@ -69,13 +88,31 @@ byn web                     # opens the local admin portal in your browser
 
 Store, reveal, rename, import/export, and browse the tamper-evident audit log
 visually. From the portal you can also **enroll a passkey / Touch ID** for
-password-free unlock, and use the **`.byn`** button to pin a project to a scope.
+password-free unlock, and use the **`.byn`** button to open the `.byn studio` —
+an assisted authoring environment for project scope files: structured builder
+form, inline TOML validator, command-tester (simulate the exec gate before
+trusting), and one-click save+trust. See [portal.md](portal.md) for the full
+panel reference.
 
 ## Next steps
 
 - **Per-project scope:** drop a `.byn` in a project root (or generate it from the
   portal) so `byn` auto-selects the right vault/project/env there — and
-  `[exec] env` controls exactly which vars `byn exec` injects. See
+  `[exec] env` controls exactly which vars `byn exec` injects. Use
+  `[exec] actions` to pin the specific commands that run without per-call
+  authorization (the secure default requires it):
+
+  ```toml
+  [scope]
+  project = "myapp"
+
+  [exec]
+  env     = ["DATABASE_URL", "AWS_ACCESS_KEY_ID"]
+  actions = ["/usr/bin/env", "/usr/local/bin/your-app"]
+  ```
+
+  Approve the file once with `byn trust ./.byn`, then `byn exec` injects
+  env-vars password-free for the listed commands. See
   [byn-file-format.md](byn-file-format.md).
 - **Organize:** secrets live at **vault → project → env** —
   `byn project create`, `byn env create`. Full command list in the
@@ -83,5 +120,8 @@ password-free unlock, and use the **`.byn`** button to pin a project to a scope.
 - **Daily driver:** run `byn` with no arguments for the TUI, and `byn doctor` to
   self-check the daemon, vault, schema, and audit chain.
 
-Your secrets are encrypted at rest, never in plaintext on disk, and never
-exposed to your shell — or to agents that don't go through byn.
+Your secret *values* are encrypted at rest and never written to disk in
+plaintext, never exposed to your shell, and never handed to agents that don't
+go through byn. (Entry *names* and metadata are plaintext at rest, and code
+running as your own UID can still reach an unlocked vault — see
+[Known weaknesses](security.md#known-weaknesses--how-to-protect-yourself).)

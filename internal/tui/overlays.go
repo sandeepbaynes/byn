@@ -188,6 +188,59 @@ func (m Model) renderHelp() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+// ---- AUTH REQUIRED overlay ----------------------------------------------
+
+// renderAuthRequired renders the "Authorize" password overlay shown when the
+// daemon returns CodeAuthRequired. The password is masked (replaced with
+// bullets). Any retry error is shown in red beneath the input so the user can
+// correct their password without leaving the overlay.
+func (m Model) renderAuthRequired() string {
+	if m.authReq == nil {
+		return ""
+	}
+	ar := m.authReq
+
+	// Title row.
+	title := m.styles.ModeConfirm.Render("Authorize")
+
+	// Subtitle: render the daemon's cause message. This is already
+	// human-readable (e.g. the daemon's auth gate message or the
+	// .byn [auth] policy message).
+	cause := ar.Cause
+	if cause == "" {
+		cause = "vault requires password confirmation"
+	}
+	subtitle := m.styles.DetailLabel.Render(cause)
+
+	// Password field: maskedInput (bullet per rune).
+	masked := strings.Repeat("•", len(ar.buf))
+	if len(ar.buf) == 0 {
+		masked = m.styles.Placeholder.Render("(enter password)")
+	}
+	pwLabel := m.styles.SectionHeader.Render("Password: ") + masked + "█"
+
+	// Retry error (wrong password etc.) shown in red.
+	errLine := ""
+	if ar.retryErr != "" {
+		errLine = m.styles.Error.Render("✘ " + ar.retryErr)
+	}
+
+	rows := []string{
+		title,
+		"",
+		subtitle,
+		"",
+		pwLabel,
+	}
+	if errLine != "" {
+		rows = append(rows, "", errLine)
+	}
+	rows = append(rows, "", m.styles.StatusHint.Render("Enter submit  ESC cancel"))
+
+	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	return m.styles.Modal.Render(body)
+}
+
 // ---- AUDIT view ---------------------------------------------------------
 
 // auditCaller renders who ran an event for the audit views, e.g.
