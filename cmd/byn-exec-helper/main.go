@@ -5,8 +5,13 @@
 // Contract (the daemon sets this up before exec; the helper trusts NO external
 // input — no flags, no env-derived behavior):
 //   - argv: byn-exec-helper -- TARGET [ARGS...]   (after -- is the child)
-//   - the env to inject is read from fd 3 (a pipe the daemon writes),
-//     NUL-delimited KEY=VALUE — NEVER passed on argv (argv is world-readable).
+//   - fd 3 carries the COMPLETE, NUL-delimited child environment (the daemon
+//     builds it: owner's terminal env minus sensitive vars, plus injected
+//     secrets). The helper sets the child env to EXACTLY this — it never leaks
+//     its own process environment. Env is NEVER passed on argv (argv is
+//     world-readable).
+//   - the daemon MUST pass an ABSOLUTE target path (it resolves PATH itself,
+//     unprivileged) — the helper does no PATH lookup.
 //   - stdio fds 0/1/2 are already the owner's terminal fds (dup'd by the daemon).
 //   - the target _byn-exec uid/gid are read at runtime from a root-owned,
 //     root-only-writable config at a COMPILED-IN path (readTargetIDs), not from
@@ -19,6 +24,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -54,12 +60,17 @@ func fatal(format string, a ...any) {
 // lines "<uid>\n<gid>\n". The ONLY source of the target IDs; not
 // caller-influenceable (path is a constant; file is root-only-writable).
 func readTargetIDs() (uid, gid int, err error) {
-	fi, err := os.Lstat(helperConfigPath)
+	// O_NOFOLLOW rejects a final-component symlink. NOTE: it only guards the
+	// final component; intermediate-dir integrity relies on the installer making
+	// all parent dirs root-owned (an install invariant — Task 4/5).
+	f, err := os.OpenFile(helperConfigPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return 0, 0, fmt.Errorf("stat config %s: %w", helperConfigPath, err)
+		return 0, 0, fmt.Errorf("open config %s: %w", helperConfigPath, err)
 	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return 0, 0, fmt.Errorf("config %s is a symlink", helperConfigPath)
+	defer f.Close()     //nolint:errcheck // read-only fd; close error is inconsequential
+	fi, err := f.Stat() // fstat on the OPEN fd — same object we read, no swap window
+	if err != nil {
+		return 0, 0, err
 	}
 	if !fi.Mode().IsRegular() {
 		return 0, 0, fmt.Errorf("config %s is not a regular file", helperConfigPath)
@@ -70,7 +81,7 @@ func readTargetIDs() (uid, gid int, err error) {
 	if fi.Mode().Perm()&0o022 != 0 {
 		return 0, 0, fmt.Errorf("config %s is group/other-writable", helperConfigPath)
 	}
-	data, err := os.ReadFile(helperConfigPath)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -111,7 +122,7 @@ func main() {
 	}
 	childArgv := os.Args[sep+1:]
 
-	injected, err := readEnvFD(3)
+	childEnv, err := readEnvFD(3)
 	if err != nil {
 		fatal("reading injected env: %v", err)
 	}
@@ -120,7 +131,10 @@ func main() {
 		fatal("dropping privileges: %v", err)
 	}
 
-	env := append(os.Environ(), injected...)
+	// fd 3 is the COMPLETE child environment the daemon curated; the helper
+	// sets the child env to EXACTLY this and never leaks its own (daemon-
+	// inherited) process environment.
+	env := childEnv
 
 	if err := execTarget(childArgv, env); err != nil {
 		fatal("exec %s: %v", childArgv[0], err)

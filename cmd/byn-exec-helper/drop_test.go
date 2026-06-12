@@ -19,3 +19,11 @@ func TestDropPlanOrder(t *testing.T) {
 func TestDropPlanRefusesRoot(t *testing.T) {
 	assert.Panics(t, func() { dropPlan(0, 411) })
 }
+
+// TestExecTargetRejectsRelative confirms a non-absolute target is rejected
+// BEFORE any exec. This is safely testable because execTarget returns the
+// error before reaching unix.Exec (no PATH lookup, no process replacement).
+func TestExecTargetRejectsRelative(t *testing.T) {
+	err := execTarget([]string{"relativecmd"}, nil)
+	assert.Error(t, err)
+}
