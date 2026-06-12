@@ -100,6 +100,32 @@ func TestSpawnRejectsEmptyArgv(t *testing.T) {
 	assert.Equal(t, -1, code)
 }
 
+// TestSpawnRejectsNULInEnv verifies that Spawn returns an error when any env
+// entry contains a NUL byte. The NUL check is performed before any dup/pipe/
+// spawn, so this test does NOT require root and runs everywhere.
+func TestSpawnRejectsNULInEnv(t *testing.T) {
+	s := NewSpawner(Config{HelperPath: "/nonexistent/byn-exec-helper"})
+	stdinR, stdinW, err := os.Pipe()
+	require.NoError(t, err)
+	defer stdinR.Close()
+	defer stdinW.Close()
+	stdoutR, stdoutW, err := os.Pipe()
+	require.NoError(t, err)
+	defer stdoutR.Close()
+	defer stdoutW.Close()
+
+	code, err := s.Spawn(SpawnReq{
+		Argv:   []string{"/bin/true"},
+		Env:    []string{"K=a\x00b"},
+		Stdin:  int(stdinR.Fd()),
+		Stdout: int(stdoutW.Fd()),
+		Stderr: int(stdoutW.Fd()),
+	})
+	require.Error(t, err, "expected an error for NUL byte in env entry")
+	assert.Equal(t, -1, code)
+	assert.Contains(t, err.Error(), "NUL")
+}
+
 // TestSpawnRunsAsExecUser verifies that the child process is spawned as
 // the _byn-exec user (ExecUID). Requires root + provisioned + BYN_TEST_HELPER.
 func TestSpawnRunsAsExecUser(t *testing.T) {
