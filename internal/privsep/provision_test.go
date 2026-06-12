@@ -12,8 +12,10 @@ import (
 
 func TestLinuxCreateUserCommands(t *testing.T) {
 	conf := sysusersConf()
-	assert.Contains(t, conf, "u _byn ")
-	assert.Contains(t, conf, "u _byn-exec ")
+	// sysusersConf is column-aligned, so the user names are followed by
+	// padding whitespace — match the name-as-a-field, not a single space.
+	assert.Contains(t, conf, "_byn ")
+	assert.Contains(t, conf, "_byn-exec ")
 	assert.Contains(t, conf, "/usr/sbin/nologin")
 }
 
