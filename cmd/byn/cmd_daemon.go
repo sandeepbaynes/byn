@@ -215,7 +215,7 @@ func runDaemonDetached(dir string) int {
 	c := newClient(dir, "")
 	if err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err == nil {
 		fmt.Fprintf(os.Stderr, "byn daemon already running (socket %s).\n",
-			filepath.Join(dir, daemon.SocketFilename))
+			activeSocketPath(dir))
 		return exitOK
 	}
 
@@ -255,7 +255,7 @@ func runDaemonDetached(dir string) int {
 		return exitErr
 	}
 	fmt.Fprintf(os.Stderr, "byn daemon started (pid %d, socket %s).\n",
-		childPID, filepath.Join(dir, daemon.SocketFilename))
+		childPID, activeSocketPath(dir))
 	return exitOK
 }
 

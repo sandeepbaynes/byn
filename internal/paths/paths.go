@@ -9,8 +9,6 @@
 // (paths_testdir.go), which is never compiled into a production binary.
 package paths
 
-import "path/filepath"
-
 // DataDir resolves the active data root: the fixed system path when byn has
 // been provisioned there (it exists), otherwise the legacy per-user ~/.byn.
 // The error path covers an undiscoverable home dir on the legacy branch.
@@ -31,5 +29,5 @@ func OwnerRecordPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "owner"), nil
+	return OwnerRecordIn(d), nil
 }

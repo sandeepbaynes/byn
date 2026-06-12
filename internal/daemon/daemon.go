@@ -17,6 +17,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/machineid"
+	"github.com/sandeepbaynes/byn/internal/paths"
 	"github.com/sandeepbaynes/byn/internal/privsep"
 	"github.com/sandeepbaynes/byn/internal/ui"
 	"github.com/sandeepbaynes/byn/internal/vault"
@@ -207,12 +208,31 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.Version == "" {
 		cfg.Version = "dev"
 	}
+	// Resolve the allowlisted owner UID. An explicit cfg.OwnerUID (set by tests
+	// or a caller) always wins. Otherwise: when the install is provisioned (an
+	// owner record exists in the data dir) the daemon allowlists the RECORDED
+	// owner UID — under privsep the daemon runs as _byn, so its own euid is NOT
+	// the human owner and must never be inferred (NU-6 note #1). When
+	// unprovisioned (opt-in privsep off) it keeps geteuid() exactly as today
+	// (spec D3 — no behavior change for current installs).
 	if cfg.OwnerUID == 0 {
 		euid := os.Geteuid()
 		if euid < 0 {
 			return nil, fmt.Errorf("daemon: geteuid returned negative %d", euid)
 		}
-		cfg.OwnerUID = uint32(euid) //nolint:gosec // bounded by check above
+		recordExists, recorded, oerr := resolveOwnerRecord(cfg.Dir)
+		if oerr != nil {
+			return nil, oerr
+		}
+		cfg.OwnerUID = resolveOwnerUID(recordExists, recorded, euid)
+	}
+
+	// Resolve the socket location once, DRY with the CLI: the runtime socket
+	// when provisioned (owner-traversable parent, _byn-owned 0700 state dir
+	// stays private), else the data-dir socket exactly as today.
+	socketPath, serr := paths.ActiveSocketPath(cfg.Dir)
+	if serr != nil {
+		return nil, fmt.Errorf("daemon: resolve socket path: %w", serr)
 	}
 
 	// Resolve the session idle window: 0 ⇒ inherit the vault idle timeout.
@@ -223,7 +243,7 @@ func New(cfg Config) (*Daemon, error) {
 
 	d := &Daemon{
 		cfg:             cfg,
-		socketPath:      filepath.Join(cfg.Dir, SocketFilename),
+		socketPath:      socketPath,
 		pidPath:         filepath.Join(cfg.Dir, PIDFilename),
 		limiterPath:     filepath.Join(cfg.Dir, auth.RateLimiterFile),
 		ownerUID:        cfg.OwnerUID,
@@ -789,6 +809,9 @@ func (d *Daemon) handlePidFile() error {
 }
 
 func (d *Daemon) bind() error {
+	if err := d.ensureSocketDir(); err != nil {
+		return err
+	}
 	if _, err := os.Stat(d.socketPath); err == nil {
 		if c, err := net.Dial("unix", d.socketPath); err == nil {
 			_ = c.Close()
@@ -814,6 +837,43 @@ func (d *Daemon) bind() error {
 	d.listenerMu.Lock()
 	d.listener = l
 	d.listenerMu.Unlock()
+	return nil
+}
+
+// ensureSocketDir makes sure the socket's parent directory exists and is
+// reachable by the owner.
+//
+// Unprovisioned / legacy: the socket lives inside the data dir, which Start
+// already created 0700 — so the parent equals cfg.Dir and this is a no-op, and
+// today's behavior is preserved exactly.
+//
+// Provisioned: the runtime socket lives under a SEPARATE parent (e.g.
+// /run/byn) so the _byn:_byn 0700 state dir can stay unreadable to the human
+// while the socket parent is *traversable* — the human owner (a different UID
+// than the _byn daemon) must be able to reach the socket inode to connect.
+// The parent is created/chmod'd 0755 (owner-traversable); the socket FILE stays
+// 0600 and peercred-gated (bind() chmods it), so traversability of the dir does
+// NOT widen access to the socket. Full ownership/service install is Task 8/9;
+// here we do only what is needed to bind + connect.
+func (d *Daemon) ensureSocketDir() error {
+	dir := filepath.Dir(d.socketPath)
+	if dir == d.cfg.Dir {
+		return nil // legacy/unprovisioned: data dir already created 0700
+	}
+	// 0755 is deliberate and load-bearing: the socket parent MUST be traversable
+	// (o+x) by the human owner UID, which is a DIFFERENT UID than the _byn daemon
+	// that creates it — that cross-UID reach is the entire point of relocating
+	// the socket out of the _byn-private 0700 state dir. The socket FILE stays
+	// 0600 + peercred-gated (bind() chmods it), so a traversable parent does NOT
+	// widen access to the socket itself.
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: owner-traversable socket parent is intentional (see comment)
+		return fmt.Errorf("daemon: mkdir socket dir %s: %w", dir, err)
+	}
+	// MkdirAll honors umask, so force the traversable mode explicitly: the
+	// owner UID needs +x on the path to reach the peercred-gated socket.
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // G302: owner-traversable socket parent is intentional (see comment)
+		return fmt.Errorf("daemon: chmod socket dir %s: %w", dir, err)
+	}
 	return nil
 }
 
