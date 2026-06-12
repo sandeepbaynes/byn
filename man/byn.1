@@ -536,31 +536,47 @@ Origin check. Disable with \fB[ui] enabled = false\fR. See
 \fBbyn-web\fR(1).
 .SS System setup (privsep)
 .TP
-.B setup
-Provision the
+.B setup \fR[\fB\-\-uninstall \fR[\fB\-\-purge\fR]]
+Provision the full privilege\-separation install in one idempotent,
+root\-required step. With no flags,
+.B byn setup
+(1) creates the
 .I _byn
 and
 .I _byn\-exec
-service accounts required for privilege separation and install the prebuilt
-privileged spawn helper
+service accounts and installs the prebuilt privileged spawn helper
 .RI ( byn\-exec\-helper )
-at the system libexec path.
-Also writes the root\-owned, root\-only\-writable UID/GID config that the
-helper reads at runtime to determine which user to drop to.
+plus its root\-owned UID/GID config; (2) installs and loads the system service
+that runs the daemon as the
+.I _byn
+service user (a systemd system unit on Linux, a LaunchDaemon on macOS) \(em NOT
+the human owner; (3) relocates any legacy per\-user
+.I ~/.byn
+vault into the fixed per\-OS system data path, chowned to
+.I _byn
+(trust + passkeys preserved \(em same machine), skipping this on a fresh
+install; (4) records the OWNER UID \(em the human who ran sudo, read from
+.IR SUDO_UID
+\(em as the single UID the daemon allowlists on its peer\-credential\-gated
+socket; and (5) verifies the post\-conditions.
 .IP
-Must be run as root:
+Must be run as root, via sudo so
+.I SUDO_UID
+is set:
 .BR "sudo byn setup" .
-Idempotent \(em re\-running when the service accounts already exist still
-reinstalls the helper and config, then exits 0.
-Normally run automatically by the byn installer; manual invocation is only
-required when upgrading the helper binary without a full reinstall.
+Running as real root (not via sudo) fails rather than recording root as the
+owner. Idempotent \(em re\-running on an already\-provisioned host reinstalls
+the helper + service, re\-records the owner, and exits 0 (safe on every install
+and upgrade). The prebuilt
+.I byn\-exec\-helper
+must sit beside the byn binary.
 .IP
 On Linux, accounts are created via
 .BR systemd\-sysusers (8).
 On macOS,
 .BR sysadminctl (8)
-is used.
-Setup only provisions privsep; it does not enable it.
+is used. Other platforms are unsupported.
+Setup provisions privsep; it does not enable it.
 Privilege separation is opt\-in: set
 .B [security] privsep = true
 in
@@ -569,10 +585,19 @@ and restart the daemon to engage it.
 With privsep enabled and provisioned, the daemon spawns trusted\-.byn pinned
 exec children as
 .IR _byn\-exec .
-If privsep is disabled (the default), or setup has not been run, or the command
-is an ad\-hoc exec with no
-.IR .byn ,
-exec children run in\-process as the calling user (no privsep).
+Enable privsep without having run setup and the daemon warns; trusted\-.byn
+exec then fails closed (it never silently runs owner\-UID).
+.IP
+.B \-\-uninstall
+reverses a previous setup: it uninstalls the system service, removes the spawn
+helper + config, and removes the owner record. It LEAVES the vault (the system
+data dir) intact by default. Add
+.B \-\-purge
+to ALSO delete the system data dir and every secret in it \(em a destructive,
+irreversible action gated behind a typed
+.B yes
+confirmation. The vault is NEVER removed without
+.BR \-\-purge .
 .TP
 .B migrate \fR[\fB\-\-from \fIpath\fR] \fR[\fB\-\-force\fR]
 Adopt a byn vault tree into the fixed per\-OS system data path with the
@@ -662,6 +687,11 @@ Register the daemon as a user auto-start service (launchd LaunchAgent on
 macOS, a systemd \fB\-\-user\fR unit on Linux) so it starts on login.
 Writes the service file and loads it best-effort.
 No root.
+This is the auto-start path for the default (non-privsep) install;
+privilege-separated installs use
+.B byn setup
+instead (which installs a SYSTEM service running the daemon as
+.IR _byn ).
 .TP
 .B daemon uninstall
 Disable and remove the auto-start service.

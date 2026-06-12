@@ -292,7 +292,9 @@ func New(cfg Config) (*Daemon, error) {
 	// the config (not just provisioning) lets a provisioned host still run the
 	// legacy in-process exec until the operator turns privsep on.
 	if cfg.Privsep {
-		if st, err := privsep.LookupState(); err == nil && st.Provisioned {
+		st, err := privsep.LookupState()
+		switch {
+		case err == nil && st.Provisioned:
 			d.spawner = privsep.NewSpawner(privsep.Config{
 				HelperPath: privsep.HelperDestPath(),
 				Exec:       st,
@@ -300,6 +302,16 @@ func New(cfg Config) (*Daemon, error) {
 				StateDir:   d.cfg.Dir,
 				SocketPath: d.SocketPath(),
 			})
+		default:
+			// privsep is opted-in but the host is NOT provisioned (`byn setup`
+			// never ran / wrong UIDs / unsupported platform). Do NOT silently
+			// fall back to an owner-UID spawn — that drops the protection the
+			// operator turned on. Warn loudly + actionably here (the spawner
+			// stays nil, so exec.spawn fails closed with the same hint). This is
+			// the not-provisioned guard for opt-in privsep (NU-6 decision #3).
+			fmt.Fprintln(os.Stderr, "byn daemon: WARNING — [security] privsep is enabled but this "+
+				"install is not provisioned; run `sudo byn setup` to engage privilege separation "+
+				"(until then trusted-.byn exec fails closed rather than running owner-UID).")
 		}
 	}
 	return d, nil
