@@ -1385,4 +1385,55 @@ DESCRIPTION
 SEE ALSO
        byn-trust(1)
 `,
+
+	"setup": `NAME
+       byn-setup - provision privsep service users and install the spawn helper
+
+SYNOPSIS
+       sudo byn setup
+
+DESCRIPTION
+       Creates the _byn and _byn-exec service accounts required for privilege
+       separation and installs the prebuilt privileged spawn helper
+       (byn-exec-helper) at the system libexec path. Also writes the
+       root-owned, root-only-writable UID/GID config that the helper reads at
+       runtime to determine which user to drop to.
+
+       This command MUST be run as root (via sudo). It is idempotent: re-running
+       when the service accounts already exist still (re)installs the helper and
+       config, then exits 0.
+
+       Normally run automatically by the byn installer. Manual invocation is
+       only required when upgrading the helper binary without a full reinstall.
+
+       The prebuilt byn-exec-helper binary must be present in the same directory
+       as the byn binary. If it is missing, byn setup fails with a clear message
+       instructing you to reinstall byn.
+
+       On Linux, service accounts are created via systemd-sysusers. On macOS,
+       sysadminctl is used. On other platforms, byn setup is not supported.
+
+       After setup, the byn daemon automatically uses privilege separation when
+       spawning exec children — no further configuration is required. If setup
+       has not been run, the daemon falls back to running exec children as the
+       calling user (no privilege separation).
+
+OPTIONS
+       None.
+
+EXAMPLES
+       Provision privsep on a fresh install:
+           $ sudo byn setup
+           privsep provisioned (_byn, _byn-exec); spawn helper installed
+
+       Re-run after upgrading the helper binary:
+           $ sudo byn setup
+
+EXIT STATUS
+       0    Provisioning succeeded (or was already complete).
+       1    Not running as root, missing prebuilt helper, or OS command failed.
+
+SEE ALSO
+       byn(1), byn-daemon(1)
+`,
 }
