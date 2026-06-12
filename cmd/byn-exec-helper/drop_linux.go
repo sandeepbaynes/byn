@@ -45,6 +45,32 @@ func dropTo(uid, gid int) error {
 		return fmt.Errorf("clearing capabilities: %w", err)
 	}
 
+	// 6. Mark the child undumpable BEFORE execve. After the drop the child runs
+	//    as _byn-exec; a SAME-UID _byn-exec peer could otherwise read this
+	//    child's /proc/<pid>/environ and harvest its injected secrets. With
+	//    dumpable=0 the kernel reparents /proc/<pid>/* to root:root, so only
+	//    root can read it, and core dumps are disabled (a crash can't spill the
+	//    injected env to disk). Consistent with the helper's all-or-nothing
+	//    hardening: lowering one's own dumpable flag never requires privilege,
+	//    so a failure here is anomalous — abort rather than exec a child with a
+	//    weaker posture than promised. The dumpable flag is preserved across
+	//    execve when the new image is a non-suid binary (the daemon resolves an
+	//    ordinary target), so the executed child stays undumpable.
+	if err := setUndumpable(); err != nil {
+		return fmt.Errorf("setting undumpable: %w", err)
+	}
+
+	return nil
+}
+
+// setUndumpable clears the process dumpable flag via prctl(PR_SET_DUMPABLE, 0)
+// so a same-UID peer cannot read this process's /proc/<pid>/{mem,environ,…} and
+// so a crash cannot core-dump the injected secrets. Best-effort hardening on
+// top of the UID boundary; it does not defend against root.
+func setUndumpable() error {
+	if err := unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0); err != nil {
+		return fmt.Errorf("prctl(PR_SET_DUMPABLE, 0): %w", err)
+	}
 	return nil
 }
 

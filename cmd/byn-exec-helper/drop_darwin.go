@@ -50,8 +50,22 @@ func dropTo(uid, gid int) error {
 		return fmt.Errorf("egid readback: got %d, want %d", gotEGID, gid)
 	}
 
+	// Mark the child undumpable before execve (no-op on macOS — PR_SET_DUMPABLE
+	// is a Linux prctl; macOS gates cross-UID args/env reads in the kernel and
+	// the daemon is shipped with the hardened runtime). Kept in the drop
+	// sequence so the Linux/macOS helpers share one shape.
+	if err := setUndumpable(); err != nil {
+		return fmt.Errorf("setting undumpable: %w", err)
+	}
+
 	return nil
 }
+
+// setUndumpable is a no-op on macOS: there is no PR_SET_DUMPABLE, and the
+// cross-UID env-read protection comes from the kernel's sysctl_procargsx UID
+// check plus the daemon's hardened runtime (see .goreleaser.yaml). Present so
+// dropTo has the same shape as the Linux helper.
+func setUndumpable() error { return nil }
 
 // readEnvFD reads NUL-delimited KEY=VALUE pairs from the given file descriptor.
 // fd 3 is used by convention so env vars are never visible on argv.
