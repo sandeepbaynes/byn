@@ -111,6 +111,13 @@ const (
 	// /api/session/bootstrap for the persistent portal token and stores that
 	// in localStorage. The bootstrap token never reappears after the exchange.
 	OpWebBootstrap Op = "web.bootstrap" //nolint:gosec // G101: op name, not a credential
+
+	// OpSessionEnd revokes the session token carried in the request Envelope.Session.
+	// The request body is empty; the daemon invalidates the token and returns an
+	// empty response.  Idempotent (no-op when the token is absent or already expired).
+	// The CLI calls this on explicit `byn lock` (Task 3) to guarantee the session
+	// is cleared on the daemon side even when the local session file is wiped first.
+	OpSessionEnd Op = "session.end" //nolint:gosec // G101: op name, not a credential
 )
 
 // AllOps is the canonical op list. Used by the daemon dispatcher to
@@ -131,6 +138,7 @@ var AllOps = []Op{
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
 	OpWebBootstrap,
+	OpSessionEnd,
 }
 
 // Envelope is the top-level wire frame. Exactly one of Req/Resp/Err
@@ -139,13 +147,24 @@ var AllOps = []Op{
 //
 // We use json.RawMessage for Req/Resp so the body can be unmarshaled
 // into an op-specific struct after the envelope is parsed.
+//
+// Session carries an opaque session token (32 random bytes, hex-encoded)
+// produced by the daemon when a vault.unlock or passkey PRF cold-unlock
+// succeeds.  On request frames the client may include its current token; the
+// daemon uses it (NU-3 Task 2+) to skip per-action re-authorization inside
+// an active session.  On response frames the daemon sets it when a new session
+// is minted (vault.unlock success, passkey auth finish with Unlocked=true).
+// omitempty ensures the field is absent on every frame that does not use it,
+// preserving backward-compatibility with v1/v2 clients that do not understand
+// sessions.
 type Envelope struct {
-	V    uint    `json:"v"`
-	ID   string  `json:"id"`
-	Op   Op      `json:"op,omitempty"`
-	Req  []byte  `json:"req,omitempty"`
-	Resp []byte  `json:"resp,omitempty"`
-	Err  *ErrMsg `json:"err,omitempty"`
+	V       uint    `json:"v"`
+	ID      string  `json:"id"`
+	Op      Op      `json:"op,omitempty"`
+	Req     []byte  `json:"req,omitempty"`
+	Resp    []byte  `json:"resp,omitempty"`
+	Err     *ErrMsg `json:"err,omitempty"`
+	Session []byte  `json:"session,omitempty"` //nolint:gosec // G101: session token, not a static credential
 }
 
 // ErrMsg is a structured error returned by the daemon. The client
@@ -236,6 +255,12 @@ type VaultSummary struct {
 	Initialized bool       `json:"initialized"`
 	Locked      bool       `json:"locked"`
 	LastActive  *time.Time `json:"last_active,omitempty"`
+	// NU-3 Task 3: populated by handleStatus when the caller has an active session
+	// for this vault (checked via the token in Envelope.Session). omitempty ensures
+	// these fields are absent for vaults without an active session, preserving
+	// backward-compat with older clients that do not know about sessions.
+	SessionActive    bool       `json:"session_active,omitempty"`
+	SessionExpiresAt *time.Time `json:"session_expires_at,omitempty"`
 }
 
 // ---- Vault lifecycle ---------------------------------------------------
@@ -257,8 +282,16 @@ type VaultUnlockReq struct {
 	Password []byte `json:"password"`
 }
 
-// VaultUnlockResp is empty.
-type VaultUnlockResp struct{}
+// VaultUnlockResp carries the session token minted on successful unlock
+// (NU-3).  The CLI stores this token and includes it in subsequent requests
+// via Envelope.Session.  omitempty: absent on old daemons that do not support
+// sessions (zero-value []byte is omitted), backward-compatible.
+type VaultUnlockResp struct {
+	// SessionToken is the newly minted session token (32 random bytes,
+	// hex-encoded).  Absent when the daemon has not yet implemented sessions
+	// (old daemon, new CLI) — the CLI falls back to password-per-action.
+	SessionToken []byte `json:"session_token,omitempty"` //nolint:gosec // G101: not a static credential
+}
 
 // VaultLockReq locks the named vault. Name="" or Name="default" locks
 // the default vault. Name="*" locks all currently-unlocked vaults.
@@ -365,13 +398,14 @@ type ProjectDeleteReq struct {
 // ProjectDeleteResp is empty.
 type ProjectDeleteResp struct{}
 
-// ProjectRenameReq renames a project. Password authorizes the rename when
-// the vault is locked (one-shot verify, no unlock); empty when unlocked.
+// ProjectRenameReq renames a project. Password or PresenceToken authorizes
+// the rename when no session exists; empty when a valid session is presented.
 type ProjectRenameReq struct {
-	Vault    string `json:"vault,omitempty"`
-	OldName  string `json:"old_name"`
-	NewName  string `json:"new_name"`
-	Password []byte `json:"password,omitempty"`
+	Vault         string `json:"vault,omitempty"`
+	OldName       string `json:"old_name"`
+	NewName       string `json:"new_name"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // ProjectRenameResp is empty.
@@ -424,14 +458,15 @@ type EnvDeleteReq struct {
 // EnvDeleteResp is empty.
 type EnvDeleteResp struct{}
 
-// EnvRenameReq renames a non-default env. Password authorizes the rename
-// when the vault is locked (one-shot verify, no unlock); empty when unlocked.
+// EnvRenameReq renames a non-default env. Password or PresenceToken authorizes
+// the rename when no session exists; empty when a valid session is presented.
 type EnvRenameReq struct {
-	Vault    string `json:"vault,omitempty"`
-	Project  string `json:"project"`
-	OldName  string `json:"old_name"`
-	NewName  string `json:"new_name"`
-	Password []byte `json:"password,omitempty"`
+	Vault         string `json:"vault,omitempty"`
+	Project       string `json:"project"`
+	OldName       string `json:"old_name"`
+	NewName       string `json:"new_name"`
+	Password      []byte `json:"password,omitempty"`
+	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
 // EnvRenameResp is empty.
@@ -1118,6 +1153,11 @@ type PasskeyAuthFinishResp struct {
 	// follow-up trust grant in place of the master password (empty if the vault
 	// is not unlocked). Short-lived and single-use.
 	PresenceToken []byte `json:"presence_token,omitempty"`
+	// SessionToken is minted when Unlocked=true (PRF cold-unlock succeeded).
+	// The portal stores this and includes it in subsequent Envelope.Session
+	// frames.  omitempty: absent when the vault was not unlocked by this
+	// ceremony (session-only passkey or missing KEK).
+	SessionToken []byte `json:"session_token,omitempty"` //nolint:gosec // G101: not a static credential
 }
 
 // PasskeyInfo is one enrolled credential, names + timestamps only (no secret).
@@ -1209,3 +1249,13 @@ type DoctorCheck struct {
 type DoctorResp struct {
 	Checks []DoctorCheck `json:"checks"`
 }
+
+// ---- Session (NU-3) ----------------------------------------------------
+
+// SessionEndReq ends the session carried in the request Envelope.Session.
+// No request body fields — the token to revoke is in the envelope header.
+type SessionEndReq struct{} //nolint:gosec // G101: req type, not a static credential
+
+// SessionEndResp is empty — the op is idempotent; the caller should not
+// branch on whether a token was actually present.
+type SessionEndResp struct{} //nolint:gosec // G101: resp type, not a static credential

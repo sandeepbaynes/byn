@@ -30,6 +30,10 @@ const DefaultUIPort = 2967
 // via [daemon] idle_timeout; "0s" disables auto-relock.
 const DefaultIdleTimeout = 15 * time.Minute
 
+// DefaultSessionTTL is the default absolute lifetime of a minted session.
+// After this period the session is revoked regardless of activity.
+const DefaultSessionTTL = 12 * time.Hour
+
 // DefaultRevealHideAfter is how long the browser portal shows a revealed
 // secret value before re-masking it. Overridable via [ui] reveal_hide_after;
 // "0s" keeps values shown until manually hidden. Display-only (browser-side);
@@ -84,21 +88,42 @@ type Daemon struct {
 
 // Security configures the NU-track per-action authorization gates.
 type Security struct {
-	// PerActionAuth requires a fresh authorization (master password or a
-	// one-time presence token) for get, overwrite-put, and delete EVEN
-	// while the vault is unlocked. Opt-in until sessions (NU-3) restore
-	// one-auth-per-session ergonomics. Trusted-.byn exec is unaffected:
-	// the .byn is the authorization. Insert and list stay free.
-	PerActionAuth bool `toml:"per_action_auth"`
+	// PerActionAuth is a DEPRECATED flag. The NU-3 session matrix is always
+	// active regardless of this value — sessions (minted by unlock) provide
+	// the per-action ergonomics. The flag is kept as a *bool so the daemon
+	// can detect whether it was explicitly set in the config file (nil =
+	// absent; non-nil = user set true or false) and emit a deprecation
+	// warning in BOTH cases. Operators should remove it from the config.
+	//
+	// Formerly: required fresh auth (password/token) per operation while
+	// unlocked. That semantics now applies unconditionally via the session
+	// gate (session OR fresh credentials); per_action_auth is a no-op.
+	PerActionAuth *bool `toml:"per_action_auth"`
+
+	// SessionTTL is the absolute lifetime of a minted session (from creation
+	// time). 0 disables the absolute-TTL check (sessions are bounded only by
+	// the idle window and explicit lock/end calls). Default: 12h.
+	SessionTTL Duration `toml:"session_ttl"`
+
+	// SessionIdle is the sliding idle window for a session. A session that
+	// has not been validated within this window expires. 0 (default) inherits
+	// [daemon] idle_timeout — set the daemon's idle timeout to also bound
+	// session idle time without repeating the value. Use "0s" explicitly to
+	// disable idle expiry for sessions while keeping the vault idle timeout.
+	SessionIdle Duration `toml:"session_idle"`
 }
 
 // Default returns the built-in defaults, applied when the file is absent
 // or a key is omitted.
 func Default() Config {
 	return Config{
-		UI:       UI{Enabled: true, Port: DefaultUIPort, RevealHideAfter: Duration(DefaultRevealHideAfter)},
-		Daemon:   Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
-		Security: Security{PerActionAuth: false},
+		UI:     UI{Enabled: true, Port: DefaultUIPort, RevealHideAfter: Duration(DefaultRevealHideAfter)},
+		Daemon: Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
+		Security: Security{
+			PerActionAuth: nil, // absent → no deprecation warning
+			SessionTTL:    Duration(DefaultSessionTTL),
+			SessionIdle:   0, // 0 ⇒ inherit [daemon] idle_timeout at runtime
+		},
 	}
 }
 

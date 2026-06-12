@@ -1568,11 +1568,21 @@ func (m Model) keyAuthRequired(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		// Cancel: clear overlay, flash the original denial reason.
+		// Zero the put payload (a secret value) before releasing the reference.
+		for i := range ar.value {
+			ar.value[i] = 0
+		}
+		ar.value = ar.value[:0]
 		m.Mode = ModeNormal
 		m.authReq = nil
 		m.flash("auth_required: "+ar.Cause, false)
 		return m, nil
 	case "ctrl+c":
+		// Zero the put payload (a secret value) before quitting.
+		for i := range ar.value {
+			ar.value[i] = 0
+		}
+		ar.value = ar.value[:0]
 		return m, tea.Quit
 	case "enter":
 		if len(ar.buf) == 0 {
@@ -1637,6 +1647,14 @@ func (m Model) handleAuthRetry(msg authRetryMsg) (tea.Model, tea.Cmd) {
 	// Success: dismiss overlay.
 	m.Mode = ModeNormal
 	ar := m.authReq
+	// Zero the put payload (authReqState.value invariant: must be cleared on
+	// every exit from ModeAuthRequired, including successful submit).
+	if ar != nil {
+		for i := range ar.value {
+			ar.value[i] = 0
+		}
+		ar.value = ar.value[:0]
+	}
 	m.authReq = nil
 
 	switch msg.kind {

@@ -269,7 +269,8 @@ func TestNU2_Policy_GetNone_E2E(t *testing.T) {
 	}
 
 	// `byn get DB_URL` in the alpha scope: should succeed WITHOUT any password
-	// because [auth] get = "none" overrides per_action_auth for this scope.
+	// because [auth] get = "none" in the trusted .byn makes this op completely
+	// free — no session or password required for this specific scope.
 	stdout, se, code := s.runInDir(alphaDir, "", nil, "get", "DB_URL")
 	if code != 0 {
 		t.Fatalf("get DB_URL in alpha scope (should be free via [auth] get=none): code=%d stderr=%q",
@@ -279,13 +280,17 @@ func TestNU2_Policy_GetNone_E2E(t *testing.T) {
 		t.Errorf("get DB_URL = %q, want s3cret-db", strings.TrimSpace(stdout))
 	}
 
-	// `byn get OTHER_KEY` in a different (default) scope still requires the
-	// password — non-TTY with no password supplied must fail.
-	// The rate-limiter may be active from prior wrong-pw tests; wait briefly.
-	time.Sleep(600 * time.Millisecond)
+	// `byn get OTHER_KEY` in the default scope — lock the vault first to clear
+	// all active sessions (NU-3: lock invalidates session tokens). Without a
+	// session and without a password, the NU-3 auth gate returns auth_required
+	// and the command fails.  This verifies the default matrix (session OR
+	// fresh credentials) rather than the deprecated per_action_auth flag.
+	if _, _, lockCode := s.run("", "lock"); lockCode != 0 {
+		t.Fatalf("lock: code=%d", lockCode)
+	}
 	_, stderrOther, codeOther := s.run("", "get", "OTHER_KEY")
 	if codeOther == 0 {
-		t.Fatal("get in default scope (per_action_auth=true, no password) should fail; got 0")
+		t.Fatal("get in default scope (locked vault, no session, no password) should fail; got 0")
 	}
 	_ = stderrOther // non-zero exit is the assertion; exact message may vary
 }

@@ -427,12 +427,19 @@ but does help against accidental disk swap on memory pressure.
 
 ## CLI-level controls
 
-### Per-action auth (`[security] per_action_auth`)
+### Per-action auth (`[security] per_action_auth`) — deprecated
 
-An opt-in mode that requires a fresh authorization — master password or
-a portal presence token — for every sensitive call, **even while the
-vault is already unlocked**. Toggled in `~/.byn/config` and hot-applied
-via `byn daemon reload` without restarting.
+> **Deprecated in NU-3.** This config key is accepted but **ignored** — a
+> warning is printed at daemon startup. The NU-3 session matrix supersedes it:
+> value operations always require either a live session or fresh credentials,
+> regardless of whether `per_action_auth` was on or off. Remove the key from
+> `~/.byn/config` to eliminate the warning.
+
+The old behaviour (now the default, not opt-in) required fresh authorization —
+master password or a portal presence token — for every sensitive call, **even
+while the vault is already unlocked**. NU-3 preserves this guarantee via the
+session gate and removes the per-call Argon2id overhead by letting a valid
+session satisfy the gate.
 
 **Gated operations:** `get`, overwrite-`put`, `delete`, `rename`,
 `env clear`, `env delete`, `project delete`, `vault delete`,
@@ -482,23 +489,22 @@ consumed on first use, never stored beyond the one request). A wrong
 password or expired/unknown token is rejected and does not change the
 vault's lock state.
 
-**`export` under per_action_auth:** `byn export` issues one `get` per
-entry. With `--password-stdin`, the password is read once from stdin
-and reused for every get (CLI path). Without `--password-stdin`, the
-CLI prompts once interactively on the first `auth_required` and reuses
-the same password for the rest. Each entry still re-verifies via
-Argon2id, so large exports are slow under this flag — session tokens
-(NU-3) will fix this. Portal export steps up per-entry (presence tokens
-are single-use; batch authorization lands with sessions/NU-3).
+**`export` under a session (NU-3):** with an active session in the current
+terminal, `byn export` issues one `get` per entry and every get is authorized
+by the session token — zero password prompts. Without a session, the first
+`get` returns `auth_required` and the CLI prompts once interactively (or reads
+from `--password-stdin`) and reuses the same password for all subsequent gets.
+Each per-password get re-verifies via Argon2id, so large exports without a
+session are slow. Running `byn unlock` first (or using `--password-stdin` on
+`byn export`) avoids this cost.
 
-**Honest ceiling:** per_action_auth raises the per-call cost for
-a same-UID adversary that controls the terminal — it can no longer
-draw on an ambient unlocked session silently. It does **not** stop a
-process running as you from calling the daemon socket directly (same-UID
-peer-credential check is unchanged), ptracing the daemon while unlocked,
-or keylogging the password prompt. Session tokens (NU-3) will restore
-one-auth-per-session ergonomics. Privilege separation (NU-5/6) is the
-path to a stronger UID boundary.
+**Honest ceiling:** the session gate raises the cost for a same-UID
+adversary that does not control the terminal that unlocked — it can no longer
+draw on an ambient unlocked session silently. It does **not** stop a process
+running as you from calling the daemon socket directly (same-UID peer-credential
+check is unchanged), ptracing the daemon while unlocked, or acquiring the TTY
+via `TIOCSCTTY` (see NU-3 session model above). Privilege separation (NU-5/6)
+is the path to a stronger UID boundary.
 
 ### `.byn` `[auth]` per-scope policy
 
@@ -639,6 +645,122 @@ maison-agent/staging.` Never `Stored "DB_URL=…" in …`. Set
 
 ---
 
+## NU-3 session model and no-global-unlock
+
+**This is a behaviour flip. Read before upgrading.**
+
+### What changed
+
+NU-3 replaced the old ambient-unlock model with **per-terminal, per-surface
+sessions**. Under NU-2 and earlier, running `byn unlock` in any terminal
+effectively opened the vault for every process with your UID — a coding agent,
+a background script, or a second shell could all `byn get` freely once any one
+terminal had unlocked. Under NU-3, **an unlocked vault does not grant other
+same-UID callers anything**. Each terminal, portal tab, or TUI session must
+authenticate independently.
+
+#### Session binding
+
+A session token is minted by the daemon when `byn unlock` (or `byn web`
+unlock, or TUI unlock) succeeds. The daemon binds the token to:
+
+- **vault name** — the token is only valid for the vault it was minted for.
+- **effective UID** — always enforced; cross-UID use is impossible.
+- **controlling-TTY device number** — for CLI sessions, the daemon resolves the
+  socket peer's controlling terminal at mint time (Darwin: `Eproc.Tdev` via
+  `kern.proc.pid` sysctl; Linux: `tty_nr` from `/proc/<pid>/stat`). Commands
+  from the same terminal window (and child processes that inherit it) reuse the
+  session; a request from a different terminal is treated as unauthenticated.
+
+Portal sessions use **uid-only binding** (ttyDev = 0) because there is no
+socket peer — the browser portal authenticates through the owner-token gate,
+not through a TTY. Daemon-process reloads preserve portal sessions; `byn lock`
+clears them.
+
+#### Token storage
+
+The CLI writes the token to `$BYN_DIR/sessions/<hash>` (mode 0600). The file
+name is a truncated SHA-256 of `"ttyDev\x00vault"`, so each
+terminal-plus-vault pair has one file. Subsequent commands in the same terminal
+automatically load and forward the token without re-prompting.
+
+#### Honest limits
+
+- **Same-UID TIOCSCTTY residual:** a malicious same-UID process can acquire
+  the current controlling terminal via `TIOCSCTTY` and then construct a request
+  that looks TTY-bound. This is an accepted gap at user-space; privilege
+  separation (agents on their own UID) is the closure.
+- **Root ceiling:** unchanged. Root can read daemon memory, socket, and session
+  files.
+- **TTYDev-0 degradation:** when a socket caller has no controlling terminal
+  (piped script, CI), the session falls back to uid-only binding. A warning is
+  logged. That session accepts any same-UID caller on the socket, which is
+  tolerated because the socket is mode 0600 and already UID-gated.
+
+---
+
+### NU-3 migration guide
+
+#### What breaks
+
+| Scenario | Old behaviour | New behaviour |
+|---|---|---|
+| `byn unlock` in terminal A, then `byn get KEY` in terminal B | **Worked.** Vault was unlocked for all callers. | **Fails with `auth_required`.** Terminal B has no session. |
+| Script that calls `byn get KEY` without unlocking first | Worked if any terminal had unlocked | Fails with `auth_required`. Script must supply credentials. |
+| `[security] per_action_auth = true` in config | Required per-call password | Config key is **deprecated and ignored** (a startup warning is logged). The NU-3 session matrix always requires a session or fresh credentials for value ops — `per_action_auth` is a no-op. |
+| `byn export` without an active session | Would prompt per-entry (under per_action_auth) | With an active session, zero prompts. Without a session, `auth_required`. Use `--password-stdin` or unlock first. |
+
+#### What to do
+
+**Interactive use (daily driver):**
+
+```sh
+# Unlock once per terminal window.
+byn unlock
+
+# Work normally — every command in this terminal carries the session token.
+byn get DB_URL
+byn exec -- make migrate
+
+# When done, revoke this terminal's session without locking the vault
+# for other callers (e.g. the portal).
+byn lock --session
+```
+
+**Non-interactive / CI / scripts:**
+
+```sh
+# Option 1: password-stdin on every call.
+echo "$BYN_PW" | byn get DB_URL --password-stdin
+
+# Option 2: unlock once (prints session file), then work.
+echo "$BYN_PW" | byn unlock --password-stdin
+byn get DB_URL       # session file present; no re-auth needed
+
+# Option 3: [auth] none in the .byn (disables the auth gate for
+#             that scope/operation — use sparingly).
+```
+
+**Agents (`--json` / byn exec inside a trusted `.byn`):**
+
+- Trusted `.byn` exec with a pinned `[exec] actions` entry **runs free** —
+  no session or credentials required. This is unchanged.
+- Ad-hoc exec (no `.byn`) **requires auth**. Supply `--password-stdin` or
+  run from inside a trusted `.byn` scope.
+- `list` and new-name `put` (insert) are **always free** — no session needed.
+
+**Remove `per_action_auth` from config:**
+
+```toml
+# ~/.byn/config — remove or comment out this line:
+# per_action_auth = true   ← deprecated; remove it
+```
+
+The line is harmless (ignored) but generates a startup warning. Remove it to
+keep the config clean.
+
+---
+
 ## NU-2 migration guide
 
 NU-2 (released after v0.1.0) hardened the trust store with per-record
@@ -727,7 +849,6 @@ deployment surface grows.
 | `--quiet` flag | `BYN_HINTS=0` + shell redirection works | When users ask for it |
 | Constant-time `wrong_password` vs vault-not-found | Same response today (existence oracle defense) | If we ever change that |
 | **OS deny-read layer** (Seatbelt/Landlock) paired with the shim | A PATH-shim alone is bypassable (abs path, `PATH` rewrite, direct file read); containment needs a kernel deny-read on the cred files. Out of scope pre-public. | Phase 3, when shims land; see internal design notes |
-| **Session tokens** (NU-3) | per_action_auth ships the per-call gate; session tokens restore one-auth-per-session ergonomics so power users aren't re-prompted for the same workflow | NU-3 slice; designed |
 | **Privilege separation** (NU-5/6) | A same-UID process can still ptrace the daemon or connect to the socket; true isolation needs the daemon on a different UID/sandbox | NU-5/6; kernel-level change |
 | **Fingerprinted exec allowlist** | Only pre-authorized commands get exec rights — strong for sealed tools, defeated for agent-authored interpreters | Phase 3, with shims |
 | **Ephemeral scoped credential broker** | Vend short-lived STS tokens via AWS `credential_process` so the durable key never leaves the daemon (Case B cloud creds) | Post-launch; larger scope (cloud integration) |

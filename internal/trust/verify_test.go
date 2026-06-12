@@ -44,7 +44,7 @@ func TestVerify_Statuses(t *testing.T) {
 	const mtime int64 = 1_700_000_000_000_000_000 // arbitrary fixed nanoseconds
 
 	// No record ⇒ untrusted.
-	if st, _, _ := Verify(dir, path, hash, mtime, fpKey, vkKey); st != VerifyUntrusted {
+	if st, _, _, _ := Verify(dir, path, hash, mtime, fpKey, vkKey); st != VerifyUntrusted {
 		t.Fatalf("no record: %s, want untrusted", st)
 	}
 
@@ -56,7 +56,7 @@ func TestVerify_Statuses(t *testing.T) {
 	if _, err := Put(dir, recV1); err != nil {
 		t.Fatal(err)
 	}
-	if st, _, _ := Verify(dir, path, hash, mtime, fpKey, vkKey); st != VerifyStale {
+	if st, _, _, _ := Verify(dir, path, hash, mtime, fpKey, vkKey); st != VerifyStale {
 		t.Fatalf("v1 record: %s, want stale", st)
 	}
 
@@ -69,27 +69,27 @@ func TestVerify_Statuses(t *testing.T) {
 	}
 
 	// Both layers verify (unlocked).
-	if st, vk, _ := Verify(dir2, path, hash, mtime, fpKey, vkKey); st != VerifyTrusted || !vk {
+	if st, vk, _, _ := Verify(dir2, path, hash, mtime, fpKey, vkKey); st != VerifyTrusted || !vk {
 		t.Fatalf("valid: %s vkChecked=%v, want trusted+true", st, vk)
 	}
 	// Locked (vkKey nil): fp-MAC alone, vkChecked=false.
-	if st, vk, _ := Verify(dir2, path, hash, mtime, fpKey, nil); st != VerifyTrusted || vk {
+	if st, vk, _, _ := Verify(dir2, path, hash, mtime, fpKey, nil); st != VerifyTrusted || vk {
 		t.Fatalf("locked: %s vkChecked=%v, want trusted+false", st, vk)
 	}
 	// Content changed.
-	if st, _, _ := Verify(dir2, path, "different-hash", mtime, fpKey, vkKey); st != VerifyChanged {
+	if st, _, _, _ := Verify(dir2, path, "different-hash", mtime, fpKey, vkKey); st != VerifyChanged {
 		t.Fatalf("changed: %s, want changed", st)
 	}
 	// mtime drift with same content → changed (v2 record).
-	if st, _, _ := Verify(dir2, path, hash, mtime+1, fpKey, vkKey); st != VerifyChanged {
+	if st, _, _, _ := Verify(dir2, path, hash, mtime+1, fpKey, vkKey); st != VerifyChanged {
 		t.Fatalf("mtime drift: %s, want changed", st)
 	}
 	// Cross-machine copy: different fp key ⇒ tampered.
-	if st, _, _ := Verify(dir2, path, hash, mtime, key(0xCC), vkKey); st != VerifyTampered {
+	if st, _, _, _ := Verify(dir2, path, hash, mtime, key(0xCC), vkKey); st != VerifyTampered {
 		t.Fatalf("cross-machine: %s, want tampered", st)
 	}
 	// Same-UID forge: wrong vault key ⇒ tampered (vk layer).
-	if st, _, _ := Verify(dir2, path, hash, mtime, fpKey, key(0xDD)); st != VerifyTampered {
+	if st, _, _, _ := Verify(dir2, path, hash, mtime, fpKey, key(0xDD)); st != VerifyTampered {
 		t.Fatalf("wrong vault key: %s, want tampered", st)
 	}
 
@@ -98,7 +98,7 @@ func TestVerify_Statuses(t *testing.T) {
 	if _, err := Put(dir3, Record{Path: path, SHA256: hash}); err != nil {
 		t.Fatal(err)
 	}
-	if st, _, _ := Verify(dir3, path, hash, mtime, fpKey, vkKey); st != VerifyStale {
+	if st, _, _, _ := Verify(dir3, path, hash, mtime, fpKey, vkKey); st != VerifyStale {
 		t.Fatalf("pre-hardening: %s, want stale", st)
 	}
 }

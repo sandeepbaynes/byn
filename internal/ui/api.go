@@ -105,6 +105,27 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, op ipc.Op, req, res
 	return true
 }
 
+// runInVault is like run but attaches the portal's stored session token for
+// vaultName (if any) to the in-process envelope.  Any session token returned
+// by the daemon is stored back into the portal's per-vault token map so
+// subsequent ops in the same vault reuse it without re-prompting.
+//
+// Use this for every handler that operates on a specific vault and might
+// benefit from the session the portal holds (reveal, put, delete, rename,
+// project/env CRUD on unlocked vaults, etc.).
+func (s *Server) runInVault(w http.ResponseWriter, r *http.Request, vaultName string, op ipc.Op, req, resp any) bool {
+	ipcErr, err := s.callInVault(r.Context(), vaultName, op, req, resp)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if ipcErr != nil {
+		writeIPCErr(w, ipcErr)
+		return false
+	}
+	return true
+}
+
 // GET /api/status — vault list + lock state. Public so the unlock screen
 // can populate before authentication. Carries no secret values.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +137,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/unlock {vault, password} — unlock a single vault's key in the
-// daemon. There is no portal session; this just toggles daemon lock state.
+// daemon and capture the minted session token in the portal's in-memory map.
+// Subsequent ops routed through runInVault automatically carry this token so
+// the user authenticates once per portal session.
+//
+// Token secrecy: the token is stored only in the Go process heap (sync.Map)
+// and never sent to the browser.  The JS does NOT need to track it; the
+// portal Go layer threads it transparently via callInVault.
 func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Vault    string `json:"vault"`
@@ -126,15 +153,32 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	vaultName := defaultVault(body.Vault)
 	req := ipc.VaultUnlockReq{Name: body.Vault, Password: []byte(body.Password)}
-	if !s.run(w, r, ipc.OpVaultUnlock, req, &ipc.VaultUnlockResp{}) {
+	var unlockResp ipc.VaultUnlockResp
+	ipcErr, returned, err := s.callCapture(r.Context(), s.loadVaultSession(vaultName), ipc.OpVaultUnlock, req, &unlockResp)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if ipcErr != nil {
+		writeIPCErr(w, ipcErr)
+		return
+	}
+	// Store the session token minted by the daemon.  The response body carries
+	// it in SessionToken; the envelope header has it in resp.Session.  Use
+	// whichever is present (body is authoritative; header is the fallback).
+	if tok := unlockResp.SessionToken; len(tok) > 0 {
+		s.storeVaultSession(vaultName, tok)
+	} else if len(returned) > 0 {
+		s.storeVaultSession(vaultName, returned)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vault": body.Vault})
 }
 
 // POST /api/lock {vault} — re-lock a single vault (zeroes its key). Empty
-// or "*" locks every unlocked vault.
+// or "*" locks every unlocked vault.  Clears the portal's in-memory session
+// token(s) for the affected vault(s) so subsequent ops re-authenticate.
 func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Vault string `json:"vault"`
@@ -147,11 +191,18 @@ func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
 	if !s.run(w, r, ipc.OpVaultLock, ipc.VaultLockReq{Name: name}, &ipc.VaultLockResp{}) {
 		return
 	}
+	// Mirror the lock on the portal's session map: the daemon ended the
+	// session(s) on its side when it processed the lock; clear locally too.
+	if name == "*" {
+		s.clearAllVaultSessions()
+	} else {
+		s.clearVaultSession(name)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // POST /api/vaults {name, password} — create a vault and unlock it so it
-// is immediately usable.
+// is immediately usable.  Captures the session token minted on unlock.
 func (s *Server) handleVaults(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -169,9 +220,24 @@ func (s *Server) handleVaults(w http.ResponseWriter, r *http.Request) {
 	if !s.run(w, r, ipc.OpVaultInit, ipc.VaultInitReq{Name: body.Name, Password: pw}, &ipc.VaultInitResp{}) {
 		return
 	}
-	// Init leaves the vault locked; unlock it so the user can use it now.
-	if !s.run(w, r, ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: body.Name, Password: pw}, &ipc.VaultUnlockResp{}) {
+	// Init leaves the vault locked; unlock it so the user can use it now and
+	// capture the minted session token.
+	vaultName := defaultVault(body.Name)
+	var unlockResp ipc.VaultUnlockResp
+	ipcErr, returned, err := s.callCapture(r.Context(), nil, ipc.OpVaultUnlock,
+		ipc.VaultUnlockReq{Name: body.Name, Password: pw}, &unlockResp)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if ipcErr != nil {
+		writeIPCErr(w, ipcErr)
+		return
+	}
+	if tok := unlockResp.SessionToken; len(tok) > 0 {
+		s.storeVaultSession(vaultName, tok)
+	} else if len(returned) > 0 {
+		s.storeVaultSession(vaultName, returned)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vault": body.Name})
 }
@@ -335,7 +401,7 @@ func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req := ipc.PutReq{Scope: body.Scope.toIPC(), Name: body.Name, Value: []byte(body.Value), CreateOnly: body.CreateOnly, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
-		if !s.run(w, r, ipc.OpPut, req, &ipc.PutResp{}) {
+		if !s.runInVault(w, r, body.Scope.Vault, ipc.OpPut, req, &ipc.PutResp{}) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -345,8 +411,11 @@ func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/entry/reveal {scope, name, password?, presence_token?} — the audited value read.
-// When [security] per_action_auth is on the daemon returns auth_required unless
-// the caller supplies either a master password or a one-time presence_token.
+// When no portal session is active (or [auth] always policy applies) the daemon
+// returns auth_required unless the caller supplies a master password or a
+// one-time presence_token.  With an active portal session the gate passes without
+// re-prompting — the JS apiWithAuth handles the auth_required fallback for the
+// "no session / session expired" case.
 func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Scope         scopeBody `json:"scope"`
@@ -360,7 +429,7 @@ func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 	}
 	var resp ipc.GetResp
 	req := ipc.GetReq{Scope: body.Scope.toIPC(), Name: body.Name, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
-	if !s.run(w, r, ipc.OpGet, req, &resp) {
+	if !s.runInVault(w, r, body.Scope.Vault, ipc.OpGet, req, &resp) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -385,7 +454,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := ipc.DeleteReq{Scope: body.Scope.toIPC(), Name: body.Name, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
-	if !s.run(w, r, ipc.OpDelete, req, &ipc.DeleteResp{}) {
+	if !s.runInVault(w, r, body.Scope.Vault, ipc.OpDelete, req, &ipc.DeleteResp{}) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -407,7 +476,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := ipc.RenameReq{Scope: body.Scope.toIPC(), OldName: body.OldName, NewName: body.NewName, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
-	if !s.run(w, r, ipc.OpRename, req, &ipc.RenameResp{}) {
+	if !s.runInVault(w, r, body.Scope.Vault, ipc.OpRename, req, &ipc.RenameResp{}) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -426,7 +495,7 @@ func (s *Server) handleProjectRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := ipc.ProjectRenameReq{Vault: b.Vault, OldName: b.OldName, NewName: b.NewName, Password: []byte(b.Password)}
-	if !s.run(w, r, ipc.OpProjectRename, req, &ipc.ProjectRenameResp{}) {
+	if !s.runInVault(w, r, b.Vault, ipc.OpProjectRename, req, &ipc.ProjectRenameResp{}) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -446,7 +515,7 @@ func (s *Server) handleEnvRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := ipc.EnvRenameReq{Vault: b.Vault, Project: b.Project, OldName: b.OldName, NewName: b.NewName, Password: []byte(b.Password)}
-	if !s.run(w, r, ipc.OpEnvRename, req, &ipc.EnvRenameResp{}) {
+	if !s.runInVault(w, r, b.Vault, ipc.OpEnvRename, req, &ipc.EnvRenameResp{}) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

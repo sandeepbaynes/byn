@@ -68,7 +68,7 @@ func runInit(args []string, scope cliScope) int {
 		return exitErr
 	}
 
-	c := newClient(dir)
+	c := newClient(dir, "")
 	err = c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Name: scope.Vault, Password: pw}, &ipc.VaultInitResp{})
 	if rc := handleCallError(err); rc != exitOK {
 		return rc
@@ -112,8 +112,28 @@ func runUnlock(args []string, scope cliScope) int {
 		pw = pwBuf.Bytes()
 	}
 
-	return handleCallError(newClient(dir).Call(ipc.OpVaultUnlock,
-		ipc.VaultUnlockReq{Name: scope.Vault, Password: pw}, &ipc.VaultUnlockResp{}))
+	c := newClient(dir, scope.Vault)
+	var resp ipc.VaultUnlockResp
+	tok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock,
+		ipc.VaultUnlockReq{Name: scope.Vault, Password: pw}, &resp, c.Session)
+	if rc := handleCallError(err); rc != exitOK {
+		return rc
+	}
+	if len(tok) > 0 {
+		vaultKey := vaultSessionKey(scope.Vault)
+		dev := ttyRdev()
+		if dev != 0 {
+			if serr := saveSessionTokenWithDev(dir, dev, vaultKey, tok); serr != nil {
+				// Non-fatal: vault is already unlocked; session file is convenience only.
+				fmt.Fprintf(os.Stderr, "warning: could not save session token: %v\n", serr)
+			} else {
+				hintf("vault unlocked — session active for this terminal")
+			}
+		} else {
+			hintf("vault unlocked")
+		}
+	}
+	return exitOK
 }
 
 // readPasswordStdin reads stdin until EOF, strips a single trailing
@@ -166,6 +186,7 @@ func runLock(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("lock", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	all := fs.Bool("all", false, "lock every unlocked vault")
+	sessionOnly := fs.Bool("session", false, "end this terminal's session only (does not lock the vault)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -174,17 +195,34 @@ func runLock(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
+
+	if *sessionOnly {
+		// End only this terminal's session; leave the vault unlocked.
+		vaultKey := vaultSessionKey(scope.Vault)
+		if rc := handleCallError(newClient(dir, vaultKey).Call(
+			ipc.OpSessionEnd, ipc.SessionEndReq{}, &ipc.SessionEndResp{})); rc != exitOK {
+			return rc
+		}
+		deleteSessionToken(dir, vaultKey)
+		hintf("session ended for this terminal — vault remains unlocked")
+		return exitOK
+	}
+
 	name := scope.Vault
 	if *all {
 		name = "*" // daemon locks every unlocked vault
 	}
 	var resp ipc.VaultLockResp
-	if rc := handleCallError(newClient(dir).Call(ipc.OpVaultLock,
+	if rc := handleCallError(newClient(dir, scope.Vault).Call(ipc.OpVaultLock,
 		ipc.VaultLockReq{Name: name}, &resp)); rc != exitOK {
 		return rc
 	}
 	if *all {
+		deleteAllSessionTokens(dir)
 		hintf("Locked %d vault(s).", resp.Locked)
+	} else {
+		vaultKey := vaultSessionKey(scope.Vault)
+		deleteSessionToken(dir, vaultKey)
 	}
 	return exitOK
 }
@@ -272,7 +310,7 @@ func runPut(args []string, scope cliScope) int {
 
 	// putCall issues the IPC put with the given password (nil = no auth yet).
 	putCall := func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpPut,
+		return newClient(dir, scope.Vault).Call(ipc.OpPut,
 			ipc.PutReq{Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly, Password: pw},
 			&ipc.PutResp{})
 	}
@@ -293,7 +331,7 @@ func runPut(args []string, scope cliScope) int {
 			rc = handleCallError(firstErr)
 		}
 	} else {
-		rc = mutateWithAuthRetry(false, false, false, putCall)
+		rc = mutateWithAuthRetry(false, false, false, nil, putCall)
 	}
 
 	if rc == exitOK {
@@ -321,8 +359,8 @@ func runGet(args []string, scope cliScope) int {
 	}
 	name := fs.Arg(0)
 	var resp ipc.GetResp
-	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpGet, ipc.GetReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &resp)
+	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpGet, ipc.GetReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &resp)
 	})
 	if rc != exitOK {
 		return rc
@@ -393,7 +431,7 @@ func runList(args []string, scope cliScope) int {
 		return exitErr
 	}
 	var resp ipc.ListResp
-	err = newClient(dir).Call(ipc.OpList, ipc.ListReq{Scope: scope.ToIPC()}, &resp)
+	err = newClient(dir, scope.Vault).Call(ipc.OpList, ipc.ListReq{Scope: scope.ToIPC()}, &resp)
 	if rc := handleCallError(err); rc != exitOK {
 		return rc
 	}
@@ -457,8 +495,8 @@ func runDelete(args []string, scope cliScope) int {
 		return exitErr
 	}
 	name := fs.Arg(0)
-	rc := mutateWithAuthRetry(*pwStdin, false, true, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpDelete,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpDelete,
 			ipc.DeleteReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &ipc.DeleteResp{})
 	})
 	if rc == exitOK {
@@ -484,8 +522,8 @@ func runRename(args []string, scope cliScope) int {
 		return exitErr
 	}
 	old, neu := fs.Arg(0), fs.Arg(1)
-	rc := mutateWithAuthRetry(*pwStdin, false, false, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpRename,
+	rc := mutateWithAuthRetry(*pwStdin, false, false, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpRename,
 			ipc.RenameReq{Scope: scope.ToIPC(), OldName: old, NewName: neu, Password: pw},
 			&ipc.RenameResp{})
 	})

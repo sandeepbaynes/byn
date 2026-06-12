@@ -151,6 +151,7 @@ func TestPolicyGet_None_DifferentProject_StillGated(t *testing.T) {
 		vault.DefaultVaultName, pw)
 
 	// Get from project "other" without password → still auth_required (wrong scope).
+	c.Session = nil
 	err := c.Call(ipc.OpGet, ipc.GetReq{Scope: otherScope, Name: "KEY"}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("different-project get: code = %v, want auth_required (policy scope mismatch)", code)
@@ -227,18 +228,22 @@ func TestPolicyFor_LockedVault_PolicyIgnored(t *testing.T) {
 
 	// Lock the vault.
 	lockVaultStore(t, d, vault.DefaultVaultName)
+	c.Session = nil
 
 	// policyFor should return ok=false for a locked vault.
 	if _, ok := d.policyFor(vault.DefaultVaultName, vault.Scope{}); ok {
 		t.Error("policyFor should return ok=false when vault is locked")
 	}
 
-	// With flag OFF and vault locked, delete requires password via
-	// authorizeMutationWhileLocked (flag path) — not via policy "always".
-	// Without password → CodeLocked (not auth_required, which is the policy path).
+	// With flag OFF and vault locked, delete with no session or password → auth_required.
+	// Under NU-3, authorizeAction fires before the vault lock check so the daemon
+	// does not reveal lock state to unauthenticated callers. The policy "always"
+	// path (which would also return auth_required) is NOT used because policyFor
+	// returns ok=false for a locked vault — the NU-3 default matrix (no session →
+	// auth_required) produces the same code but via a different path.
 	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "KEY"}, &ipc.DeleteResp{})
-	if code := errCode(t, err); code != ipc.CodeLocked {
-		t.Fatalf("locked+flag off: code = %v, want locked (policy ignored, not always-path)", code)
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+		t.Fatalf("locked+flag off+no session: code = %v, want auth_required (NU-3 gate fires before lock check)", code)
 	}
 }
 
@@ -265,6 +270,7 @@ func TestPolicyFor_TamperedVKMAC_Ignored(t *testing.T) {
 
 	// Get without password — must be auth_required because the tampered
 	// record is ignored and flag is ON.
+	c.Session = nil
 	err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("tampered MAC: code = %v, want auth_required (record ignored)", code)
@@ -287,6 +293,7 @@ func TestPolicyFor_V1Record_Ignored(t *testing.T) {
 	injectV1Record(t, d.cfg.Dir, p, map[string]string{"get": "none"})
 
 	// Get without password — must be auth_required (v1 record ignored).
+	c.Session = nil
 	err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("v1 record: code = %v, want auth_required (v1 record ignored)", code)
@@ -512,6 +519,7 @@ func TestPolicyFor_AlteredVKMACField_Ignored(t *testing.T) {
 	}
 
 	// Get without password → auth_required (altered VKMAC record is ignored).
+	c.Session = nil
 	err = c.Call(ipc.OpGet, ipc.GetReq{Name: "K"}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("altered VKMAC: code = %v, want auth_required (record ignored)", code)

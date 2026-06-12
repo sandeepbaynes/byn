@@ -29,13 +29,20 @@ func daemonConfigFor(dir string) (daemon.Config, error) {
 	if err != nil {
 		return daemon.Config{}, err
 	}
+	if cfg.Security.PerActionAuth != nil {
+		fmt.Fprintf(os.Stderr,
+			"byn: deprecated config: [security] per_action_auth is always on; "+
+				"sessions provide ergonomics (run `byn unlock`). "+
+				"Remove per_action_auth from your config file.\n")
+	}
 	return daemon.Config{
-		Dir:           dir,
-		Version:       version,
-		IdleTimeout:   time.Duration(cfg.Daemon.IdleTimeout),
-		UIEnabled:     cfg.UI.Enabled,
-		UIPort:        cfg.UI.Port,
-		PerActionAuth: cfg.Security.PerActionAuth,
+		Dir:         dir,
+		Version:     version,
+		IdleTimeout: time.Duration(cfg.Daemon.IdleTimeout),
+		UIEnabled:   cfg.UI.Enabled,
+		UIPort:      cfg.UI.Port,
+		SessionTTL:  time.Duration(cfg.Security.SessionTTL),
+		SessionIdle: time.Duration(cfg.Security.SessionIdle),
 	}, nil
 }
 
@@ -210,7 +217,7 @@ func runDaemonDetached(dir string) int {
 		return exitErr
 	}
 	// Check whether a daemon already responds on the socket.
-	c := newClient(dir)
+	c := newClient(dir, "")
 	if err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err == nil {
 		fmt.Fprintf(os.Stderr, "byn daemon already running (socket %s).\n",
 			filepath.Join(dir, daemon.SocketFilename))
@@ -259,7 +266,7 @@ func runDaemonDetached(dir string) int {
 
 func waitForSocket(dir string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	c := newClient(dir)
+	c := newClient(dir, "")
 	for time.Now().Before(deadline) {
 		if err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err == nil {
 			return true
@@ -325,7 +332,7 @@ func runDaemonStatus(args []string) int {
 		return exitErr
 	}
 	var resp ipc.StatusResp
-	err = newClient(dir).Call(ipc.OpStatus, ipc.StatusReq{}, &resp)
+	err = newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp)
 	if rc := handleCallError(err); rc != exitOK {
 		return rc
 	}
@@ -351,6 +358,14 @@ func runDaemonStatus(args []string) int {
 			if v.LastActive != nil {
 				line += fmt.Sprintf("  (last active %s ago)",
 					time.Since(*v.LastActive).Round(time.Second))
+			}
+			if v.SessionActive {
+				if v.SessionExpiresAt != nil {
+					line += fmt.Sprintf("  [session: active, expires in %s]",
+						time.Until(*v.SessionExpiresAt).Round(time.Second))
+				} else {
+					line += "  [session: active]"
+				}
 			}
 			fmt.Println(line)
 		}

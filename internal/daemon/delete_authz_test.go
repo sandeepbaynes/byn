@@ -76,9 +76,10 @@ func TestEntryDelete_LockedNoPassword(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 	lockVaultStore(t, d, "default")
+	c.Session = nil
 
 	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "API_KEY"}, &ipc.DeleteResp{})
-	if code := errCode(t, err); code != ipc.CodeLocked {
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("code = %v, want locked", code)
 	}
 	// The entry survived: its NAME still lists while locked.
@@ -99,6 +100,7 @@ func TestEntryDelete_LockedWrongPassword(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 	lockVaultStore(t, d, "default")
+	c.Session = nil
 
 	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "API_KEY", Password: []byte("nope")}, &ipc.DeleteResp{})
 	if code := errCode(t, err); code != ipc.CodeWrongPassword {
@@ -128,10 +130,11 @@ func TestProjectDelete_LockedWithPassword(t *testing.T) {
 		t.Fatalf("project create: %v", err)
 	}
 	lockVaultStore(t, d, "default")
+	c.Session = nil
 
 	// No password → locked.
 	err := c.Call(ipc.OpProjectDelete, ipc.ProjectDeleteReq{Name: "svc"}, &ipc.ProjectDeleteResp{})
-	if code := errCode(t, err); code != ipc.CodeLocked {
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("no-password code = %v, want locked", code)
 	}
 	// With password → deleted, vault stays locked.
@@ -210,10 +213,13 @@ func TestVaultDelete_Unlocked(t *testing.T) {
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	initNamedLocked(t, c, "acme", pw)
-	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
+	var acmeUnlockRespDel ipc.VaultUnlockResp
+	acmeTokDel, err := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &acmeUnlockRespDel, nil)
+	if err != nil {
 		t.Fatalf("unlock acme: %v", err)
 	}
-	if err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme"}, &ipc.VaultDeleteResp{}); err != nil {
+	c.Session = acmeTokDel
+	if err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme", Password: pw}, &ipc.VaultDeleteResp{}); err != nil {
 		t.Fatalf("vault delete (unlocked): %v", err)
 	}
 	if _, err := os.Stat(vault.Dir(d.cfg.Dir, "acme")); !errors.Is(err, os.ErrNotExist) {
@@ -245,7 +251,7 @@ func TestVaultDelete_LockedNoPassword(t *testing.T) {
 	initNamedLocked(t, c, "acme", pw)
 
 	err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme"}, &ipc.VaultDeleteResp{})
-	if code := errCode(t, err); code != ipc.CodeLocked {
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("code = %v, want locked", code)
 	}
 	if _, err := os.Stat(vault.Dir(d.cfg.Dir, "acme")); err != nil {
@@ -263,6 +269,7 @@ func TestEntryDelete_LockedRateLimited(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 	lockVaultStore(t, d, "default")
+	c.Session = nil
 	_ = d.limiter.RecordFailure() // force backoff
 
 	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "K", Password: pw}, &ipc.DeleteResp{})

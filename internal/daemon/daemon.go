@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/config"
+	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/machineid"
 	"github.com/sandeepbaynes/byn/internal/ui"
 	"github.com/sandeepbaynes/byn/internal/vault"
@@ -54,9 +56,14 @@ type Config struct {
 	UIEnabled bool
 	UIPort    int
 
-	// PerActionAuth gates get/overwrite-put/delete on a fresh per-action
-	// authorization even while unlocked. Wired from config.Security.
-	PerActionAuth bool
+	// SessionTTL is the absolute lifetime of a minted session (from creation
+	// time). 0 disables the absolute-TTL check. Wired from config.Security.SessionTTL.
+	SessionTTL time.Duration
+
+	// SessionIdle is the sliding idle window for a session. 0 inherits
+	// IdleTimeout (the daemon's vault idle timeout). Wired from
+	// config.Security.SessionIdle.
+	SessionIdle time.Duration
 }
 
 // vaultEntry is the daemon's handle on one open vault.
@@ -90,12 +97,6 @@ type Daemon struct {
 	// idleTimeoutDur.
 	idleNanos atomic.Int64
 
-	// perActionFlag is the live [security] per_action_auth value. Atomic so
-	// Reload can flip it without holding any lock while handlers read it via
-	// perActionAuth(). The accessor returns the live value — read it at the
-	// start of each handler, not cached across IPC calls.
-	perActionFlag atomic.Bool
-
 	// janitorOnce guards a single idle-janitor goroutine. Start launches it
 	// when idle is enabled at boot; Reload launches it lazily when a config
 	// change enables idle after boot. Once started it runs until Shutdown,
@@ -124,6 +125,14 @@ type Daemon struct {
 	// without embedding the long-lived portal token in argv or URLs where
 	// it would be visible to `ps`.
 	bootstrapTokens *bootstrapTokens
+
+	// sessions is the NU-3 session store: a mutex-guarded map of live session
+	// tokens keyed by the token string (32 random bytes, hex-encoded). Each
+	// session binds a vault unlock to the surface (cli/portal) and UID that
+	// performed it, with an optional TTYDev constraint for socket callers. The
+	// store is initialized in New() with TTL/idle from config; the janitor
+	// sweeps it alongside idle-vault checks.
+	sessions *sessionStore
 
 	// reloadMu serializes Reload so two concurrent SIGHUPs can't interleave
 	// portal restarts.
@@ -183,6 +192,12 @@ func New(cfg Config) (*Daemon, error) {
 		cfg.OwnerUID = uint32(euid) //nolint:gosec // bounded by check above
 	}
 
+	// Resolve the session idle window: 0 ⇒ inherit the vault idle timeout.
+	sessionIdle := cfg.SessionIdle
+	if sessionIdle == 0 {
+		sessionIdle = cfg.IdleTimeout
+	}
+
 	d := &Daemon{
 		cfg:             cfg,
 		socketPath:      filepath.Join(cfg.Dir, SocketFilename),
@@ -194,9 +209,9 @@ func New(cfg Config) (*Daemon, error) {
 		pkChallenges:    newPasskeyChallenges(),
 		presenceTokens:  newPresenceTokens(),
 		bootstrapTokens: newBootstrapTokens(),
+		sessions:        newSessionStore(cfg.SessionTTL, sessionIdle),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
-	d.perActionFlag.Store(cfg.PerActionAuth)
 	d.limiter = auth.NewRateLimiter(d.limiterPath)
 	if cfg.Clock != nil {
 		d.limiter.SetClock(cfg.Clock)
@@ -361,6 +376,29 @@ func (d *Daemon) Shutdown(timeout time.Duration) {
 			d.uiSrv = nil
 		}
 		d.uiMu.Unlock()
+		// Emit session.end audit events for every live session before the
+		// vault auditors and root context are torn down. This must happen
+		// before rootCancel() so the audit writes land against open loggers.
+		// endVault is called per vault rather than wiping the map outright so
+		// each event is attributed to the correct vault log.
+		d.vaultsMu.RLock()
+		vaultNames := make([]string, 0, len(d.vaults))
+		for name := range d.vaults {
+			vaultNames = append(vaultNames, name)
+		}
+		d.vaultsMu.RUnlock()
+		// Use rootCtx (still live at this point) for the shutdown audit events.
+		shutdownCtx := d.handlerCtx()
+		for _, name := range vaultNames {
+			for _, surface := range d.sessions.endVault(name) {
+				d.auditEmit(shutdownCtx, name, audit.Event{
+					Op:            string(ipc.OpSessionEnd),
+					Outcome:       audit.OutcomeOK,
+					CallerSurface: surface,
+				})
+			}
+		}
+
 		if d.rootCancel != nil {
 			// Cancel the daemon-scoped context so in-flight SQLite +
 			// audit operations observe shutdown immediately. The
@@ -380,6 +418,12 @@ func (d *Daemon) Shutdown(timeout time.Duration) {
 			delete(d.vaults, name)
 		}
 		d.vaultsMu.Unlock()
+		// Session store was already drained per-vault above; clear any
+		// remaining entries (e.g. sessions for vaults not opened in this
+		// process) so no tokens outlive the daemon process.
+		d.sessions.mu.Lock()
+		d.sessions.sessions = make(map[string]*session)
+		d.sessions.mu.Unlock()
 		_ = os.Remove(d.pidPath)
 	})
 }
@@ -406,12 +450,6 @@ func (d *Daemon) handlerCtx() context.Context {
 // means auto-relock is disabled.
 func (d *Daemon) idleTimeoutDur() time.Duration {
 	return time.Duration(d.idleNanos.Load())
-}
-
-// perActionAuth reports whether [security] per_action_auth is currently on.
-// Read atomically so Reload can flip it without races.
-func (d *Daemon) perActionAuth() bool {
-	return d.perActionFlag.Load()
 }
 
 // ensureJanitor starts the idle-janitor goroutine exactly once for the
@@ -483,6 +521,7 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 	}
 	d.vaultsMu.RUnlock()
 
+	ctx := d.handlerCtx()
 	locked := 0
 	for _, e := range entries {
 		if e.store.IsLocked() {
@@ -494,9 +533,19 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 		}
 		if now.Sub(time.Unix(0, last)) >= to {
 			e.store.Lock()
+			// End all sessions for this vault and emit session.end audit events
+			// (idle-janitor path). Token is never logged — only vault + surface.
+			for _, surface := range d.sessions.endVault(e.name) {
+				d.auditEmit(ctx, e.name, audit.Event{
+					Op: string(ipc.OpSessionEnd), Outcome: audit.OutcomeOK,
+					CallerSurface: surface,
+				})
+			}
 			locked++
 		}
 	}
+	// Sweep expired sessions (TTL + idle) regardless of vault lock state.
+	d.sessions.sweep(now)
 	return locked
 }
 
@@ -529,14 +578,17 @@ func (d *Daemon) Reload() ([]string, error) {
 		}
 	}
 
-	// Per-action auth flag.
-	if old := d.perActionFlag.Load(); old != cfg.Security.PerActionAuth {
-		d.perActionFlag.Store(cfg.Security.PerActionAuth)
-		if cfg.Security.PerActionAuth {
-			changes = append(changes, "per_action_auth enabled")
-		} else {
-			changes = append(changes, "per_action_auth disabled")
-		}
+	// Per-action auth flag: deprecated — the NU-3 session matrix is always
+	// active; sessions provide the ergonomics. Warn whenever the key is
+	// explicitly present in the config file (nil = absent = no warning;
+	// non-nil covers both true AND false, since false means "matrix off"
+	// which is now also ignored and equally deserves the warning).
+	// The flag value is ignored; no change note is emitted (the setting has
+	// no effect and adding a note would confuse operators).
+	if cfg.Security.PerActionAuth != nil {
+		log.Printf("byn: deprecated config: [security] per_action_auth is always on; " +
+			"sessions provide ergonomics (run `byn unlock`). " +
+			"Remove per_action_auth from config.")
 	}
 
 	// Browser portal.

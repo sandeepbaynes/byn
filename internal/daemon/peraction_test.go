@@ -13,12 +13,14 @@ import (
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
-// startPerActionDaemonWithClient starts a daemon with per_action_auth enabled
-// and returns both the daemon and a connected client.
+// startPerActionDaemonWithClient starts a daemon and returns both the daemon
+// and a connected client. Under the NU-3 authorization matrix the per-action
+// auth gate is always active (session-or-credentials required for value-
+// touching ops); there is no separate flag to enable.
 func startPerActionDaemonWithClient(t *testing.T) (*Daemon, *ipc.Client) {
 	t.Helper()
 	dir := shortTempDir(t)
-	d := startBareDaemon(t, Config{Dir: dir, PerActionAuth: true})
+	d := startBareDaemon(t, Config{Dir: dir})
 	return d, ipc.NewClient(d.SocketPath())
 }
 
@@ -35,6 +37,7 @@ func TestPerActionGetWithoutPasswordAuthRequired(t *testing.T) {
 	}
 
 	// Get without password/token → auth_required.
+	c.Session = nil
 	err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("code = %v, want auth_required", code)
@@ -90,6 +93,7 @@ func TestPerActionGetWrongPasswordDenied(t *testing.T) {
 	}
 
 	// First wrong password → wrong_password.
+	c.Session = nil
 	err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY", Password: []byte("nope")}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeWrongPassword {
 		t.Fatalf("first wrong pw: code = %v, want wrong_password", code)
@@ -127,6 +131,7 @@ func TestPerActionGetPresenceTokenSucceeds(t *testing.T) {
 	}
 
 	// First use → ok.
+	c.Session = nil
 	var resp ipc.GetResp
 	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY", PresenceToken: tok}, &resp); err != nil {
 		t.Fatalf("get with token: %v", err)
@@ -177,6 +182,7 @@ func TestPerActionPresenceTokenWrongVaultRejected(t *testing.T) {
 
 	// Attempt get on "default" vault presenting the token minted for "other":
 	// must be rejected with auth_required because the token's vault doesn't match.
+	c.Session = nil
 	err = c.Call(ipc.OpGet, ipc.GetReq{Name: "DEFAULT_KEY", PresenceToken: tok}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("cross-vault get: code = %v, want auth_required", code)
@@ -265,6 +271,7 @@ func TestPerActionOverwriteRequiresAuth(t *testing.T) {
 	}
 
 	// Overwrite without password → auth_required.
+	c.Session = nil
 	err := c.Call(ipc.OpPut, ipc.PutReq{Name: "KEY", Value: []byte("v2")}, &ipc.PutResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("overwrite no pw: code = %v, want auth_required", code)
@@ -388,6 +395,7 @@ func TestPerActionDeleteRequiresAuthEvenUnlocked(t *testing.T) {
 	if d.lookupVault("default").store.IsLocked() {
 		t.Fatal("precondition: vault should be unlocked")
 	}
+	c.Session = nil
 	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "KEY"}, &ipc.DeleteResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("code = %v, want auth_required", code)
@@ -447,6 +455,7 @@ func TestPerActionEnvClearRequiresAuth(t *testing.T) {
 	}
 
 	// env.clear without creds → auth_required.
+	c.Session = nil
 	err := c.Call(ipc.OpEnvClear, ipc.EnvClearReq{}, &ipc.EnvClearResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("env.clear no creds: code = %v, want auth_required", code)
@@ -523,6 +532,7 @@ func TestPerActionRenameRequiresAuth(t *testing.T) {
 	}
 
 	// rename without creds → auth_required.
+	c.Session = nil
 	err := c.Call(ipc.OpRename, ipc.RenameReq{OldName: "OLD", NewName: "NEW"}, &ipc.RenameResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("rename no creds: code = %v, want auth_required", code)
@@ -686,24 +696,11 @@ func TestExecFetchAdHocFlagOnWithPasswordSucceeds(t *testing.T) {
 	}
 }
 
-// TestExecFetchAdHocFlagOffUnchanged: flag off + Path="" → whole scope, no
-// auth gate (existing behaviour preserved).
-func TestExecFetchAdHocFlagOffUnchanged(t *testing.T) {
-	// startTestDaemon uses Config{} — PerActionAuth defaults to false.
-	_, c := startTestDaemon(t)
-	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
-	putVar(t, c, ipc.Scope{}, "FOO", []byte("bar"))
-
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: ""})
-	if err != nil {
-		t.Fatalf("ad-hoc exec flag off: %v", err)
-	}
-	m := valueMap(resp.Values)
-	if m["FOO"] != "bar" {
-		t.Errorf("FOO = %q, want bar (flag off: no gate)", m["FOO"])
-	}
-}
+// Note: TestExecFetchAdHocFlagOffUnchanged and TestExecFetchAdHocNoBynInjectsWholeScope
+// were deleted (NU-3 spec review). They asserted free whole-scope ad-hoc exec — semantics
+// that no longer exist. The replacement tests live in execfetch_test.go:
+// TestExecFetchAdHocPasswordSucceeds, TestExecFetchAdHocWrongPasswordDenied,
+// TestExecFetchAdHocPresenceTokenSucceeds.
 
 // TestExecFetchTrustedStillFreeWithFlagOn: trusted .byn exec with a pinned
 // action stays credential-free even with per_action_auth on — the .byn
@@ -776,6 +773,7 @@ func TestPerActionProjectDeleteRequiresAuth(t *testing.T) {
 	}
 
 	// No creds → auth_required.
+	c.Session = nil
 	err := c.Call(ipc.OpProjectDelete, ipc.ProjectDeleteReq{Name: "svc"}, &ipc.ProjectDeleteResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("code = %v, want auth_required", code)
@@ -828,6 +826,7 @@ func TestPerActionEnvDeleteRequiresAuth(t *testing.T) {
 	}
 
 	// No creds → auth_required.
+	c.Session = nil
 	err := c.Call(ipc.OpEnvDelete, ipc.EnvDeleteReq{Project: "default", Name: "stg"}, &ipc.EnvDeleteResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("code = %v, want auth_required", code)
@@ -919,12 +918,83 @@ func TestPerActionVaultDeleteFlagOff(t *testing.T) {
 	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Name: "acme", Password: pw}, &ipc.VaultInitResp{}); err != nil {
 		t.Fatalf("vault init acme: %v", err)
 	}
-	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
+	var acmeUnlockRespDFO ipc.VaultUnlockResp
+	acmeTokDFO, unlockErrDFO := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &acmeUnlockRespDFO, nil)
+	if unlockErrDFO != nil {
+		t.Fatalf("vault unlock acme: %v", unlockErrDFO)
+	}
+	c.Session = acmeTokDFO
+	// No password → should succeed (flag off, vault unlocked).
+	if err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme", Password: pw}, &ipc.VaultDeleteResp{}); err != nil {
+		t.Fatalf("vault delete no pw (flag off): %v", err)
+	}
+}
+
+// TestVaultDelete_SessionOnly_Rejected: vault.delete ALWAYS requires fresh
+// credentials — a valid session for the target vault is NOT sufficient.
+// This pins the spec-review finding: vault.delete is no longer session-blessable.
+func TestVaultDelete_SessionOnly_Rejected(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// Create and unlock a second vault, capturing its session token.
+	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Name: "acme", Password: pw}, &ipc.VaultInitResp{}); err != nil {
+		t.Fatalf("vault init acme: %v", err)
+	}
+	var acmeUnlockResp ipc.VaultUnlockResp
+	acmeTok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &acmeUnlockResp, nil)
+	if err != nil {
 		t.Fatalf("vault unlock acme: %v", err)
 	}
-	// No password → should succeed (flag off, vault unlocked).
-	if err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme"}, &ipc.VaultDeleteResp{}); err != nil {
-		t.Fatalf("vault delete no pw (flag off): %v", err)
+	// Set the client session to the "acme" vault session — this is a valid
+	// session for the exact target vault. vault.delete must still reject it.
+	c.Session = acmeTok
+
+	// Session set for target vault, no password → auth_required (session is
+	// explicitly insufficient for vault.delete; fresh credentials required).
+	err = c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme"}, &ipc.VaultDeleteResp{})
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+		t.Fatalf("vault.delete with valid session: code = %v, want auth_required (session not sufficient)", code)
+	}
+
+	// Unlocked vault + no password → still auth_required.
+	// (The vault is already unlocked from the unlock above; session is set.)
+	c.Session = nil
+	err = c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme"}, &ipc.VaultDeleteResp{})
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+		t.Fatalf("vault.delete unlocked + no password: code = %v, want auth_required", code)
+	}
+
+	// Correct password → deleted.
+	if err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme", Password: pw}, &ipc.VaultDeleteResp{}); err != nil {
+		t.Fatalf("vault.delete with correct password: %v", err)
+	}
+}
+
+// TestVaultDelete_PresenceToken_Succeeds: a valid presence token (passkey flow)
+// authorizes vault.delete — presence tokens are accepted by authorizeActionAlways.
+func TestVaultDelete_PresenceToken_Succeeds(t *testing.T) {
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Name: "acme2", Password: pw}, &ipc.VaultInitResp{}); err != nil {
+		t.Fatalf("vault init acme2: %v", err)
+	}
+	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme2", Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
+		t.Fatalf("vault unlock acme2: %v", err)
+	}
+
+	tok, err := d.presenceTokens.mint("acme2", time.Now())
+	if err != nil {
+		t.Fatalf("mint presence token: %v", err)
+	}
+
+	// No password, but valid presence token → succeeds.
+	c.Session = nil
+	if err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme2", PresenceToken: tok}, &ipc.VaultDeleteResp{}); err != nil {
+		t.Fatalf("vault.delete with presence token: %v", err)
 	}
 }
 
@@ -997,11 +1067,14 @@ func TestPerActionVaultRenameFlagOff(t *testing.T) {
 	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Name: "acme", Password: pw}, &ipc.VaultInitResp{}); err != nil {
 		t.Fatalf("vault init acme: %v", err)
 	}
-	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
-		t.Fatalf("vault unlock acme: %v", err)
+	var acmeUnlockRespFO ipc.VaultUnlockResp
+	acmeTokFO, unlockErrFO := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Name: "acme", Password: pw}, &acmeUnlockRespFO, nil)
+	if unlockErrFO != nil {
+		t.Fatalf("vault unlock acme: %v", unlockErrFO)
 	}
+	c.Session = acmeTokFO
 	// No password → should succeed (flag off, vault unlocked).
-	if err := c.Call(ipc.OpVaultRename, ipc.VaultRenameReq{OldName: "acme", NewName: "brand"}, &ipc.VaultRenameResp{}); err != nil {
+	if err := c.Call(ipc.OpVaultRename, ipc.VaultRenameReq{OldName: "acme", NewName: "brand", Password: pw}, &ipc.VaultRenameResp{}); err != nil {
 		t.Fatalf("vault rename no pw (flag off): %v", err)
 	}
 
@@ -1024,71 +1097,68 @@ func TestPerActionVaultRenameFlagOff(t *testing.T) {
 
 // ---- reload test -------------------------------------------------------
 
-// TestPerActionReloadAppliesFlag: flip the flag in the config file, Reload,
-// assert gating turns on and then off.
-func TestPerActionReloadAppliesFlag(t *testing.T) {
+// TestPerActionReloadDeprecatedFlagIgnored: the deprecated [security]
+// per_action_auth flag is parsed and a warning is logged, but it does NOT
+// change the authorization behavior — the NU-3 session-based matrix is
+// always active regardless of the flag value. Reload succeeds and returns no
+// change note for the deprecated key.
+func TestPerActionReloadDeprecatedFlagIgnored(t *testing.T) {
 	dir := shortTempDir(t)
-	d := startBareDaemon(t, Config{Dir: dir}) // flag off at start
+	d := startBareDaemon(t, Config{Dir: dir})
 	c := ipc.NewClient(d.SocketPath())
 	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
+	initUnlocked(t, c, pw) // captures session into c.Session
 
 	// Seed an entry.
 	if err := c.Call(ipc.OpPut, ipc.PutReq{Name: "KEY", Value: []byte("v")}, &ipc.PutResp{}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
-	// Flag off — get should work without a password.
+	// Session is set — get should work (session satisfies the gate).
 	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{}); err != nil {
-		t.Fatalf("get before reload (flag off): %v", err)
+		t.Fatalf("get with session: %v", err)
 	}
 
-	// Enable per_action_auth via config and reload.
+	// Write per_action_auth = true into config and reload.
+	// The flag is deprecated and ignored; Reload must succeed and NOT emit
+	// a "per_action_auth enabled/disabled" change note.
 	writeConfig(t, dir, "[security]\nper_action_auth = true\n")
 	changes, err := d.Reload()
 	if err != nil {
-		t.Fatalf("Reload: %v", err)
+		t.Fatalf("Reload with deprecated flag: %v", err)
 	}
-	if !d.perActionAuth() {
-		t.Fatal("perActionAuth() = false after reload with per_action_auth = true")
-	}
-	found := false
 	for _, ch := range changes {
-		if ch == "per_action_auth enabled" {
-			found = true
+		if ch == "per_action_auth enabled" || ch == "per_action_auth disabled" {
+			t.Errorf("Reload emitted deprecated change note %q; flag is a no-op", ch)
 		}
 	}
-	if !found {
-		t.Errorf("Reload changes = %v, want a 'per_action_auth enabled' entry", changes)
+
+	// Session still valid — get must still succeed (flag does not affect behavior).
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{}); err != nil {
+		t.Fatalf("get after reload with deprecated flag=true: %v", err)
 	}
 
-	// Flag on — get without password → auth_required.
-	err = c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{})
+	// Get WITHOUT a session → auth_required (matrix always on).
+	freshClient := ipc.NewClient(d.SocketPath()) // no session
+	err = freshClient.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("after reload flag on: code = %v, want auth_required", code)
+		t.Fatalf("no-session get: code = %v, want auth_required (matrix always on)", code)
 	}
 
-	// Disable per_action_auth and reload again.
+	// Write per_action_auth = false and reload again — still no change note.
 	writeConfig(t, dir, "[security]\nper_action_auth = false\n")
 	changes, err = d.Reload()
 	if err != nil {
-		t.Fatalf("Reload disable: %v", err)
+		t.Fatalf("Reload with flag=false: %v", err)
 	}
-	if d.perActionAuth() {
-		t.Fatal("perActionAuth() = true after reload with per_action_auth = false")
-	}
-	found = false
 	for _, ch := range changes {
-		if ch == "per_action_auth disabled" {
-			found = true
+		if ch == "per_action_auth enabled" || ch == "per_action_auth disabled" {
+			t.Errorf("Reload flag=false emitted deprecated change note %q", ch)
 		}
 	}
-	if !found {
-		t.Errorf("Reload changes = %v, want a 'per_action_auth disabled' entry", changes)
-	}
 
-	// Flag off again — get without password → ok.
+	// Session still works after reload with flag=false.
 	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{}); err != nil {
-		t.Fatalf("get after reload flag off: %v", err)
+		t.Fatalf("get after reload flag=false: %v", err)
 	}
 }

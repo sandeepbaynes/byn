@@ -42,7 +42,7 @@ func runWeb(args []string) int {
 
 	// Best-effort daemon liveness check so we give an actionable hint
 	// rather than launching a browser at a dead port.
-	if err := newClient(dir).Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err != nil {
+	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err != nil {
 		fmt.Fprintln(os.Stderr, "Error: byn daemon is not running.")
 		fmt.Fprintln(os.Stderr, "Run: byn start")
 		return exitDaemonDown
@@ -52,7 +52,7 @@ func runWeb(args []string) int {
 	// single-use and expires in 60s, so a `ps` snapshot is of limited value
 	// to an attacker. The persistent portal token never appears in argv or URLs.
 	var bootResp ipc.WebBootstrapResp
-	if err := newClient(dir).Call(ipc.OpWebBootstrap, ipc.WebBootstrapReq{}, &bootResp); err != nil {
+	if err := newClient(dir, "").Call(ipc.OpWebBootstrap, ipc.WebBootstrapReq{}, &bootResp); err != nil {
 		// Fallback: open without auth — browser will show the "not authorized"
 		// notice and prompt the user to re-run `byn web`.
 		fmt.Fprintf(os.Stderr, "Warning: could not mint bootstrap token (%v); opening without auth.\n", err)

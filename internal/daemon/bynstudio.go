@@ -404,7 +404,7 @@ func (d *Daemon) handleBynRead(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 		}
 	}
 
-	status, _, verr := trust.Verify(d.cfg.Dir, canon, hash, currentMTime, d.fpMACKey, vkKey)
+	status, _, _, verr := trust.Verify(d.cfg.Dir, canon, hash, currentMTime, d.fpMACKey, vkKey)
 	if verr != nil {
 		return internalErr(env.ID, verr)
 	}
@@ -502,12 +502,16 @@ func (d *Daemon) handleConfigGet(ctx context.Context, env *ipc.Envelope) *ipc.En
 // configParsedFromConfig converts a config.Config into the wire-level
 // ConfigParsed for the portal's visual settings editor.
 func configParsedFromConfig(c config.Config) *ipc.ConfigParsed {
+	perActionAuth := false // absent (nil) → treat as false for the wire format
+	if c.Security.PerActionAuth != nil {
+		perActionAuth = *c.Security.PerActionAuth
+	}
 	return &ipc.ConfigParsed{
 		UIEnabled:       c.UI.Enabled,
 		UIPort:          c.UI.Port,
 		IdleTimeout:     time.Duration(c.Daemon.IdleTimeout).String(),
 		RevealHideAfter: time.Duration(c.UI.RevealHideAfter).String(),
-		PerActionAuth:   c.Security.PerActionAuth,
+		PerActionAuth:   perActionAuth,
 	}
 }
 

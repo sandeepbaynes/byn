@@ -76,51 +76,52 @@ func Lookup(dir, path string) (Record, bool, error) {
 // VerifyStale (not VerifyTampered) — they are authentic but pre-upgrade; ONE
 // guided re-trust upgrades them to v2. A v1 record with INVALID v1 MACs is
 // VerifyTampered.
-func Verify(dir, path, currentHash string, currentMTime int64, fpKey, vkKey []byte) (status VerifyStatus, vkChecked bool, err error) {
-	rec, ok, err := Lookup(dir, path)
+func Verify(dir, path, currentHash string, currentMTime int64, fpKey, vkKey []byte) (status VerifyStatus, vkChecked bool, rec Record, err error) {
+	var ok bool
+	rec, ok, err = Lookup(dir, path)
 	if err != nil {
-		return "", false, err
+		return "", false, Record{}, err
 	}
 	if !ok {
-		return VerifyUntrusted, false, nil
+		return VerifyUntrusted, false, Record{}, nil
 	}
 	// Content-hash check — applies to all record versions.
 	if rec.SHA256 != currentHash {
-		return VerifyChanged, false, nil
+		return VerifyChanged, false, rec, nil
 	}
 	// v2 mtime check: same content but file was touched → VerifyChanged.
 	if rec.IsV2() && rec.MTimeUnixNano != currentMTime {
-		return VerifyChanged, false, nil
+		return VerifyChanged, false, rec, nil
 	}
 	// Records with no MACs at all predate MAC hardening entirely.
 	if rec.FPMAC == "" && rec.VKMAC == "" {
-		return VerifyStale, false, nil // pre-hardening record
+		return VerifyStale, false, rec, nil // pre-hardening record
 	}
 	// v1 record (has MACs but predates v2/mtime hardening): verify its v1 MACs
 	// first. A v1 record with valid v1 MACs is stale (authentic but needs
 	// upgrade). A v1 record with INVALID v1 MACs is tampered.
 	if !rec.IsV2() {
 		if fpKey != nil && !rec.VerifyFPMAC(fpKey) {
-			return VerifyTampered, false, nil
+			return VerifyTampered, false, rec, nil
 		}
 		if vkKey != nil && !rec.VerifyVKMAC(vkKey) {
-			return VerifyTampered, true, nil
+			return VerifyTampered, true, rec, nil
 		}
-		return VerifyStale, vkKey != nil, nil
+		return VerifyStale, vkKey != nil, rec, nil
 	}
 	// v2 record: full MAC check.
 	// Machine layer — checked whenever we have the key (i.e. always, in
 	// practice). A record minted on another machine fails here.
 	if fpKey != nil && !rec.VerifyFPMAC(fpKey) {
-		return VerifyTampered, false, nil
+		return VerifyTampered, false, rec, nil
 	}
 	// Vault-key layer — only when the vault is unlocked. Defeats a same-UID
 	// local forge (minting it requires the password).
 	if vkKey != nil {
 		if !rec.VerifyVKMAC(vkKey) {
-			return VerifyTampered, true, nil
+			return VerifyTampered, true, rec, nil
 		}
 		vkChecked = true
 	}
-	return VerifyTrusted, vkChecked, nil
+	return VerifyTrusted, vkChecked, rec, nil
 }

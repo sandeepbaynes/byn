@@ -33,9 +33,16 @@ func defaultDir() (string, error) {
 }
 
 // newClient constructs an IPC client targeting the daemon's socket
-// inside the configured data dir.
-func newClient(dir string) *ipc.Client {
-	return ipc.NewClient(filepath.Join(dir, daemon.SocketFilename))
+// inside the configured data dir. When vault is non-empty (or "default"),
+// a session token for the current TTY + vault is loaded from disk and
+// attached to the client so the daemon can authorize without re-prompting.
+func newClient(dir, vault string) *ipc.Client {
+	c := ipc.NewClient(filepath.Join(dir, daemon.SocketFilename))
+	key := vaultSessionKey(vault)
+	if tok := loadSessionToken(dir, key); len(tok) > 0 {
+		c.Session = tok
+	}
+	return c
 }
 
 // handleCallError consistently formats and routes IPC errors to the
@@ -112,7 +119,7 @@ func isAuthRequiredErr(err error) bool {
 //
 // call builds and issues the IPC request with the supplied password (nil on
 // the first attempt, non-nil on the retry).
-func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, call func(password []byte) error) int {
+func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanupOnAuthRequired func(), call func(password []byte) error) int {
 	err := call(nil)
 	if err == nil {
 		return exitOK
@@ -123,6 +130,11 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, call f
 
 	if !locked && !authRequired {
 		return handleCallError(err)
+	}
+
+	// Call cleanup hook before prompting (clears a stale session file if any).
+	if (locked || authRequired) && cleanupOnAuthRequired != nil {
+		cleanupOnAuthRequired()
 	}
 
 	// JSON guard (no piped password): never prompt; print an actionable
@@ -155,7 +167,16 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, call f
 	}
 	pw, wipe, perr := authorizingPasswordWithLeadIn(pwStdin, leadIn)
 	if perr != nil {
+		// If we can't prompt (non-TTY, no --password-stdin), propagate the
+		// daemon's typed error rather than a generic exit-1.  The caller
+		// already printed the daemon error above; print the prompt failure so
+		// the user knows WHY we couldn't re-auth, then surface the exit code.
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
+		if !pwStdin && !stdinIsTTY() {
+			// Non-interactive: return the daemon error code (3) so scripts
+			// and tests can distinguish "needs auth" from generic failure.
+			return handleCallError(err)
+		}
 		return exitErr
 	}
 	defer wipe()

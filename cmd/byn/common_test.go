@@ -33,7 +33,7 @@ func TestDefaultDir_HomeFallback(t *testing.T) {
 }
 
 func TestNewClient_SocketPath(t *testing.T) {
-	c := newClient("/tmp/foo")
+	c := newClient("/tmp/foo", "")
 	want := filepath.Join("/tmp/foo", daemon.SocketFilename)
 	if c.SocketPath != want {
 		t.Fatalf("SocketPath = %q, want %q", c.SocketPath, want)
@@ -92,5 +92,48 @@ func TestZero_ClearsAllBytes(t *testing.T) {
 		if v != 0 {
 			t.Fatalf("byte %d = %d, want 0", i, v)
 		}
+	}
+}
+
+func TestMutateWithAuthRetry_CleanupCalledOnAuthRequired(t *testing.T) {
+	// The cleanup func must be called when the call func returns isAuthRequiredErr.
+	called := false
+	cleanup := func() { called = true }
+	authErr := &ipc.ErrResponse{Code: ipc.CodeAuthRequired, Message: "auth required"}
+	got := mutateWithAuthRetry(false, true, false, cleanup, func(_ []byte) error {
+		return authErr
+	})
+	// In jsonMode=true, no prompt — we get exitErr.
+	if got != exitErr {
+		t.Fatalf("got %d, want exitErr (%d)", got, exitErr)
+	}
+	if !called {
+		t.Fatal("cleanupOnAuthRequired was not called")
+	}
+}
+
+func TestMutateWithAuthRetry_CleanupCalledOnLocked(t *testing.T) {
+	// The cleanup func must also be called when the call func returns isLockedErr.
+	called := false
+	cleanup := func() { called = true }
+	lockedErr := &ipc.ErrResponse{Code: ipc.CodeLocked, Message: "vault is locked"}
+	got := mutateWithAuthRetry(false, true, false, cleanup, func(_ []byte) error {
+		return lockedErr
+	})
+	if got != exitErr {
+		t.Fatalf("got %d, want exitErr (%d)", got, exitErr)
+	}
+	if !called {
+		t.Fatal("cleanupOnAuthRequired was not called for locked error")
+	}
+}
+
+func TestMutateWithAuthRetry_NilCleanup_NoLocked(t *testing.T) {
+	// nil cleanup must not panic when a regular error occurs.
+	got := mutateWithAuthRetry(false, false, false, nil, func(_ []byte) error {
+		return errors.New("generic error")
+	})
+	if got == exitOK {
+		t.Fatal("expected non-OK")
 	}
 }

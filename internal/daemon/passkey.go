@@ -349,9 +349,26 @@ func (d *Daemon) handlePasskeyAuthFinish(ctx context.Context, env *ipc.Envelope)
 			presence = tok
 		}
 	}
-	resp, err := ipc.NewResponse(env.ID, ipc.PasskeyAuthFinishResp{CredentialID: cred.ID, Unlocked: unlocked, PresenceToken: presence})
+	// NU-3: mint a portal session when PRF cold-unlock succeeded (Unlocked=true).
+	// Portal callers authenticate through the portal token layer (not a Unix
+	// socket peer), so these sessions always use ttyDev=0 (uid-only binding).
+	var sessionToken []byte
+	if unlocked {
+		tok := d.mintSessionForPortal(name, time.Now())
+		sessionToken = []byte(tok)
+	}
+	respBody := ipc.PasskeyAuthFinishResp{
+		CredentialID:  cred.ID,
+		Unlocked:      unlocked,
+		PresenceToken: presence,
+		SessionToken:  sessionToken,
+	}
+	resp, err := ipc.NewResponse(env.ID, respBody)
 	if err != nil {
 		return internalErr(env.ID, err)
+	}
+	if len(sessionToken) > 0 {
+		resp.Session = sessionToken
 	}
 	return resp
 }

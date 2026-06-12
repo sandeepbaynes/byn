@@ -94,6 +94,14 @@ type Server struct {
 	port    int
 	token   string // owner-token; empty ⇒ gate disabled (tests)
 
+	// vaultTokens holds the in-memory session tokens the portal minted or
+	// received from vault.unlock / passkey.auth-finish.  Key = vault name
+	// (never empty; "default" for the default vault), value = string session
+	// token.  Never written to disk or sent to the browser — the portal
+	// re-attaches them transparently on every vault-scoped API call.
+	// sync.Map is used to avoid holding the main mutex during dispatch.
+	vaultTokens sync.Map // string → string
+
 	sessions  *pkSessions
 	bootstrap BootstrapConsumer // may be nil (tests that don't need bootstrap)
 }
@@ -241,6 +249,43 @@ func (s *Server) Port() int { return s.port }
 // ConsumeBootstrap implementation to hand the SPA the real long-lived token
 // after a successful one-time bootstrap exchange.
 func (s *Server) Token() string { return s.token }
+
+// loadVaultSession returns the in-memory session token for vaultName, or nil
+// if none is stored.  vaultName must be the normalised name ("default" for
+// the default vault).
+func (s *Server) loadVaultSession(vaultName string) []byte {
+	vaultName = defaultVault(vaultName)
+	if v, ok := s.vaultTokens.Load(vaultName); ok {
+		if tok, ok := v.(string); ok && tok != "" {
+			return []byte(tok)
+		}
+	}
+	return nil
+}
+
+// storeVaultSession saves a freshly minted session token for vaultName.
+// Passing nil or an empty slice is a no-op.
+func (s *Server) storeVaultSession(vaultName string, tok []byte) {
+	if len(tok) == 0 {
+		return
+	}
+	s.vaultTokens.Store(defaultVault(vaultName), string(tok))
+}
+
+// clearVaultSession removes the stored session token for vaultName.
+// Called on portal lock so subsequent ops re-authenticate.
+func (s *Server) clearVaultSession(vaultName string) {
+	s.vaultTokens.Delete(defaultVault(vaultName))
+}
+
+// clearAllVaultSessions removes every stored vault session token.
+// Called when all vaults are locked at once (vault="*").
+func (s *Server) clearAllVaultSessions() {
+	s.vaultTokens.Range(func(k, _ any) bool {
+		s.vaultTokens.Delete(k)
+		return true
+	})
+}
 
 // Close stops the server.
 func (s *Server) Close() error {

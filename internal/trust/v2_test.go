@@ -45,7 +45,7 @@ func TestV2_RoundTrip_Trusted(t *testing.T) {
 	if _, err := Put(dir, rec); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	st, vkChecked, err := Verify(dir, path, sha, mtime, fpKey, vkKey)
+	st, vkChecked, _, err := Verify(dir, path, sha, mtime, fpKey, vkKey)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestV2_MTimeDrift_SameHash(t *testing.T) {
 	}
 
 	// Same hash, different mtime (file was touched).
-	st, _, err := Verify(dir, path, sha, grantedMTime+1, fpKey, vkKey)
+	st, _, _, err := Verify(dir, path, sha, grantedMTime+1, fpKey, vkKey)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestV2_MTimeDrift_SameHash(t *testing.T) {
 	}
 
 	// Same hash AND same mtime → trusted.
-	st2, _, err := Verify(dir, path, sha, grantedMTime, fpKey, vkKey)
+	st2, _, _, err := Verify(dir, path, sha, grantedMTime, fpKey, vkKey)
 	if err != nil {
 		t.Fatalf("Verify same mtime: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestV1_AuthenticMACs_Stale(t *testing.T) {
 	}
 
 	// Any mtime is passed because v1 records ignore it.
-	st, _, err := Verify(dir, path, sha, 9999, fpKey, vkKey)
+	st, _, _, err := Verify(dir, path, sha, 9999, fpKey, vkKey)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestV1_ForgedField_Tampered(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	st, _, err := Verify(dir, path, sha, 0, fpKey, vkKey)
+	st, _, _, err := Verify(dir, path, sha, 0, fpKey, vkKey)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -176,7 +176,7 @@ func editAndVerify(t *testing.T, edit func(*Record)) {
 	}
 	// Pass the stored record's mtime so the mtime equality check does NOT
 	// fire; the MAC check must be what catches the tamper.
-	st, _, err := Verify(dir, path, sha, rec.MTimeUnixNano, fpKey, vkKey)
+	st, _, _, err := Verify(dir, path, sha, rec.MTimeUnixNano, fpKey, vkKey)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}

@@ -40,6 +40,8 @@ func runImport(args []string, scope cliScope) int {
 	skipExisting := fs.Bool("skip-existing", false, "add-only: skip keys that already exist (default: merge — add+overwrite)")
 	replace := fs.Bool("replace", false, "destructive: wipe every existing key in the scope before importing")
 	yes := fs.Bool("yes", false, "skip the confirmation prompt for --replace")
+	pwStdin := fs.Bool("password-stdin", false,
+		"if [security] per_action_auth is on, read the master password from stdin (non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -100,7 +102,7 @@ func runImport(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	client := newClient(dir)
+	client := newClient(dir, scope.Vault)
 	scopeIPC := scope.ToIPC()
 
 	// --replace: enumerate the existing entries in scope so we can
@@ -138,6 +140,33 @@ func runImport(args []string, scope cliScope) int {
 		return exitOK
 	}
 
+	// Shared auth state for both the wipe loop and the put loop.
+	// Both loops are auth-gated (per_action_auth). The password is read from
+	// stdin at most once — whichever loop first hits auth_required acquires it,
+	// and the other loop reuses the already-acquired bytes rather than trying to
+	// drain stdin a second time (which would produce an empty read).
+	var sharedPw []byte
+	var sharedPwWipeFn func()
+	sharedPwAcquired := false
+	acquireSharedPw := func() error {
+		if sharedPwAcquired {
+			return nil
+		}
+		leadIn := yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+		var perr error
+		sharedPw, sharedPwWipeFn, perr = authorizingPasswordWithLeadIn(*pwStdin, leadIn)
+		if perr != nil {
+			return perr
+		}
+		sharedPwAcquired = true
+		return nil
+	}
+	defer func() {
+		if sharedPwWipeFn != nil {
+			sharedPwWipeFn()
+		}
+	}()
+
 	if *replace {
 		if !*yes {
 			if !stdinIsTTY() {
@@ -159,16 +188,34 @@ func runImport(args []string, scope cliScope) int {
 		// Wipe step. Best-effort — N round-trips today; can be
 		// collapsed to one transactional daemon op if perf becomes a
 		// concern.
+		//
+		// Delete is auth-gated (authorizeAction: session OR password).
+		// On first auth_required we acquire the shared password once and
+		// reuse it for every subsequent delete (and the put loop below).
 		for _, e := range toWipe {
-			if err := client.Call(ipc.OpDelete,
-				ipc.DeleteReq{Scope: scopeIPC, Name: e.Name},
-				&ipc.DeleteResp{}); err != nil {
+			err := client.Call(ipc.OpDelete,
+				ipc.DeleteReq{Scope: scopeIPC, Name: e.Name, Password: sharedPw},
+				&ipc.DeleteResp{})
+			if err != nil && isAuthRequiredErr(err) {
+				if aerr := acquireSharedPw(); aerr != nil {
+					fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), aerr)
+					return exitErr
+				}
+				// Retry this entry with the now-known password.
+				err = client.Call(ipc.OpDelete,
+					ipc.DeleteReq{Scope: scopeIPC, Name: e.Name, Password: sharedPw},
+					&ipc.DeleteResp{})
+			}
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error deleting %q during wipe: %v\n", e.Name, err)
 				return exitErr
 			}
 		}
 	}
 
+	// Put loop: add/overwrite entries from the import file.
+	// Reuses sharedPw if already acquired by the wipe loop above; otherwise
+	// acquires it on the first auth_required encountered here.
 	created, updated, skipped := 0, 0, 0
 	for _, e := range entries {
 		req := ipc.PutReq{
@@ -176,8 +223,19 @@ func runImport(args []string, scope cliScope) int {
 			Name:       e.k,
 			Value:      []byte(e.v),
 			CreateOnly: *skipExisting,
+			Password:   sharedPw,
 		}
-		if err := client.Call(ipc.OpPut, req, &ipc.PutResp{}); err != nil {
+		err := client.Call(ipc.OpPut, req, &ipc.PutResp{})
+		if err != nil && isAuthRequiredErr(err) {
+			if aerr := acquireSharedPw(); aerr != nil {
+				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), aerr)
+				return exitErr
+			}
+			// Retry this entry with the now-known password.
+			req.Password = sharedPw
+			err = client.Call(ipc.OpPut, req, &ipc.PutResp{})
+		}
+		if err != nil {
 			if *skipExisting && isAlreadyExists(err) {
 				skipped++
 				continue

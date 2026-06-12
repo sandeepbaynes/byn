@@ -21,6 +21,10 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	cmd.Env = append([]string{"BYN_DIR=" + s.dir, "HOME=" + cwd, "USER=tester"}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
+	} else {
+		// Prevent the child from inheriting the test runner's TTY on stdin.
+		// Without this, byn sees a terminal and may attempt an interactive prompt.
+		cmd.Stdin = strings.NewReader("")
 	}
 	var stdoutBuf, stderrBuf strings.Builder
 	cmd.Stdout = &stdoutBuf
@@ -90,7 +94,8 @@ func TestE2E_Discovery_TrustThenList(t *testing.T) {
 	if so, se, code := s.runInDir(projDir, "v1", nil, "put", "K"); code != 0 {
 		t.Fatalf("put in scope failed code=%d\nstdout=%q\nstderr=%q", code, so, se)
 	}
-	stdout, _, code := s.runInDir(projDir, "", nil, "get", "K")
+	// Non-TTY: use --password-stdin for this auth-gated get.
+	stdout, _, code := s.runPWInDir(projDir, nil, "get", "--password-stdin", "K")
 	if code != 0 {
 		t.Fatalf("get exit %d", code)
 	}
@@ -312,7 +317,8 @@ func TestE2E_Discovery_NoDiscoveryFlag(t *testing.T) {
 		t.Fatalf("put with --no-discovery failed")
 	}
 	// And the value should be in the default scope.
-	stdout, _ := s.mustRun("", "get", "K")
+	// Non-TTY: use --password-stdin for this auth-gated get.
+	stdout, _ := s.mustRunPW("", "get", "--password-stdin", "K")
 	if stdout != "v1" {
 		t.Fatalf("get K (default scope, --no-discovery on put) = %q", stdout)
 	}

@@ -868,14 +868,9 @@ func TestConfigSet_InvalidRange_Refused(t *testing.T) {
 }
 
 func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
-	d, c := startTestDaemon(t)
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
-
-	// Verify initial state: per_action_auth is off.
-	if d.perActionAuth() {
-		t.Fatal("per_action_auth should be off initially")
-	}
 
 	// config.get to check current state.
 	var getResp ipc.ConfigGetResp
@@ -883,7 +878,8 @@ func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 		t.Fatalf("config.get: %v", err)
 	}
 
-	// Set config with per_action_auth = true.
+	// Set config with per_action_auth = true (deprecated flag — ignored by
+	// the NU-3 matrix but still parseable / storable for user awareness).
 	newContent := "[security]\nper_action_auth = true\n"
 	var setResp ipc.ConfigSetResp
 	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
@@ -893,23 +889,8 @@ func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 		t.Fatalf("config.set: %v", err)
 	}
 
-	// Reload should have been applied live.
-	if !d.perActionAuth() {
-		t.Fatal("per_action_auth should be on after config.set")
-	}
-
-	// Change notes should mention the flip.
-	found := false
-	for _, note := range setResp.ChangeNotes {
-		if strings.Contains(note, "per_action_auth") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected change note about per_action_auth; got: %v", setResp.ChangeNotes)
-	}
-
-	// config.get after set should return the new content.
+	// config.get after set should return the new content (field is stored even
+	// though it is ignored at runtime).
 	if err := c.Call(ipc.OpConfigGet, ipc.ConfigGetReq{}, &getResp); err != nil {
 		t.Fatalf("config.get after set: %v", err)
 	}

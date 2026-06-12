@@ -85,7 +85,8 @@ func TestDaemon_RegistryHasPasswordAndPasskeyAfterNew(t *testing.T) {
 // provider's approve decision wins.
 func TestEESeam_FakeApproveProvider(t *testing.T) {
 	dir := shortTempDir(t)
-	d := startBareDaemon(t, Config{Dir: dir, PerActionAuth: true})
+	// Under NU-3 the authorization gate is always active (no PerActionAuth flag).
+	d := startBareDaemon(t, Config{Dir: dir})
 	c := ipc.NewClient(d.SocketPath())
 
 	pw := []byte(authzPW)
@@ -94,6 +95,10 @@ func TestEESeam_FakeApproveProvider(t *testing.T) {
 	if err := c.Call(ipc.OpPut, ipc.PutReq{Name: "SECRET", Value: []byte("s3cret")}, &ipc.PutResp{}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
+
+	// Clear the session to force the password path (we want to test the provider,
+	// not the session gate).
+	c.Session = nil
 
 	// Before injection: get with a wrong password → wrong_password.
 	err := c.Call(ipc.OpGet, ipc.GetReq{Name: "SECRET", Password: []byte("wrong")}, &ipc.GetResp{})
@@ -127,7 +132,8 @@ func TestEESeam_FakeApproveProvider(t *testing.T) {
 // in denial — proving the registered provider's decision is authoritative.
 func TestEESeam_FakeDenyProvider(t *testing.T) {
 	dir := shortTempDir(t)
-	d := startBareDaemon(t, Config{Dir: dir, PerActionAuth: true})
+	// Under NU-3 the authorization gate is always active (no PerActionAuth flag).
+	d := startBareDaemon(t, Config{Dir: dir})
 	c := ipc.NewClient(d.SocketPath())
 
 	pw := []byte(authzPW)
@@ -136,6 +142,9 @@ func TestEESeam_FakeDenyProvider(t *testing.T) {
 	if err := c.Call(ipc.OpPut, ipc.PutReq{Name: "K", Value: []byte("v")}, &ipc.PutResp{}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
+
+	// Clear the session to force the password path (we want to test the provider).
+	c.Session = nil
 
 	// Register a deny provider under "password".
 	d.authProviders.Register(&namedDenyProvider{name: "password"})

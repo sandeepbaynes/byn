@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/trust"
@@ -331,27 +332,66 @@ func TestExecFetchWrongVaultDenied(t *testing.T) {
 	}
 }
 
-// ---- Test 7: ad-hoc (Path="") → whole scope, no trust check --------------
+// ---- Test 7: ad-hoc (Path="") always requires fresh credentials ---------------
+//
+// Under the NU-3 contract, ad-hoc exec NEVER accepts a session. Fresh
+// credentials (password or presence token) are always required.
 
-func TestExecFetchAdHocNoBynInjectsWholeScope(t *testing.T) {
+// TestExecFetchAdHocPasswordSucceeds: correct password → whole scope injected.
+func TestExecFetchAdHocPasswordSucceeds(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "FOO", []byte("bar"))
 
-	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: ""})
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: "", Password: pw})
 	if err != nil {
-		t.Fatalf("exec.fetch ad-hoc: %v", err)
+		t.Fatalf("ad-hoc exec with correct password: %v", err)
 	}
 	m := valueMap(resp.Values)
 	if m["FOO"] != "bar" {
-		t.Errorf("FOO = %q, want bar", m["FOO"])
+		t.Errorf("FOO = %q, want bar (whole scope returned on ad-hoc)", m["FOO"])
 	}
 	if resp.Wildcard {
 		t.Error("Wildcard should be false for ad-hoc (no .byn)")
 	}
 	if resp.NoneDeclared {
 		t.Error("NoneDeclared should be false for ad-hoc (no .byn)")
+	}
+}
+
+// TestExecFetchAdHocWrongPasswordDenied: wrong password → CodeWrongPassword.
+func TestExecFetchAdHocWrongPasswordDenied(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("val"))
+
+	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: "", Password: []byte("wrong-password")})
+	if code := errCode(t, err); code != ipc.CodeWrongPassword {
+		t.Fatalf("ad-hoc exec wrong password: code = %v, want wrong_password", code)
+	}
+}
+
+// TestExecFetchAdHocPresenceTokenSucceeds: valid presence token → whole scope injected.
+func TestExecFetchAdHocPresenceTokenSucceeds(t *testing.T) {
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "FOO", []byte("token-val"))
+
+	tok, err := d.presenceTokens.mint("default", time.Now())
+	if err != nil {
+		t.Fatalf("mint presence token: %v", err)
+	}
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: "", PresenceToken: tok})
+	if err != nil {
+		t.Fatalf("ad-hoc exec with presence token: %v", err)
+	}
+	m := valueMap(resp.Values)
+	if m["FOO"] != "token-val" {
+		t.Errorf("FOO = %q, want token-val", m["FOO"])
 	}
 }
 

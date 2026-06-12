@@ -128,10 +128,11 @@ func TestLoad_IdleTimeout_DefaultPreservedWhenOmitted(t *testing.T) {
 func TestRoundTrip_MarshalThenLoad(t *testing.T) {
 	// A non-default config marshalled to TOML and reloaded must compare
 	// equal — exercises Duration.MarshalText and the decode path together.
+	trueVal := true
 	want := Config{
 		UI:       UI{Enabled: false, Port: 8080},
 		Daemon:   Daemon{IdleTimeout: Duration(30 * time.Minute)},
-		Security: Security{PerActionAuth: true},
+		Security: Security{PerActionAuth: &trueVal},
 	}
 	out, err := toml.Marshal(want)
 	if err != nil {
@@ -142,8 +143,12 @@ func TestRoundTrip_MarshalThenLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != want {
-		t.Errorf("round-trip = %+v, want %+v (TOML was:\n%s)", got, want, out)
+	// Compare pointer fields by dereferencing.
+	if got.UI != want.UI || got.Daemon != want.Daemon {
+		t.Errorf("round-trip (non-pointer fields) = %+v, want %+v (TOML was:\n%s)", got, want, out)
+	}
+	if got.Security.PerActionAuth == nil || *got.Security.PerActionAuth != *want.Security.PerActionAuth {
+		t.Errorf("round-trip PerActionAuth = %v, want %v (TOML was:\n%s)", got.Security.PerActionAuth, want.Security.PerActionAuth, out)
 	}
 }
 
@@ -268,33 +273,57 @@ func TestLoad_WrongType_Errors(t *testing.T) {
 	}
 }
 
-func TestSecurityPerActionAuthDefaultsFalse(t *testing.T) {
+func TestSecurityPerActionAuthDefaultsAbsent(t *testing.T) {
+	// Default() must return nil (not set) so that presence detection works:
+	// absent means the key was never written → no deprecation warning.
 	cfg := Default()
-	if cfg.Security.PerActionAuth {
-		t.Errorf("Default().Security.PerActionAuth = true, want false")
+	if cfg.Security.PerActionAuth != nil {
+		t.Errorf("Default().Security.PerActionAuth = %v, want nil (absent)", cfg.Security.PerActionAuth)
 	}
 }
 
-func TestSecurityPerActionAuthLoads(t *testing.T) {
+func TestSecurityPerActionAuthLoadsTrue(t *testing.T) {
+	// Explicit per_action_auth = true → non-nil pointer holding true.
 	path := writeConfig(t, "[security]\nper_action_auth = true\n")
 	got, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load error = %v", err)
 	}
-	if !got.Security.PerActionAuth {
+	if got.Security.PerActionAuth == nil {
+		t.Fatal("Security.PerActionAuth = nil, want non-nil (true)")
+	}
+	if !*got.Security.PerActionAuth {
 		t.Errorf("Security.PerActionAuth = false, want true")
 	}
 }
 
-func TestSecuritySectionAbsentDefaultsFalse(t *testing.T) {
-	// A config file without a [security] section should default to false.
+func TestSecurityPerActionAuthLoadsFalse(t *testing.T) {
+	// Explicit per_action_auth = false → non-nil pointer holding false.
+	// A user who set false expressed "matrix off" — that's now ignored and
+	// equally deserves the deprecation warning (same as true).
+	path := writeConfig(t, "[security]\nper_action_auth = false\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if got.Security.PerActionAuth == nil {
+		t.Fatal("Security.PerActionAuth = nil, want non-nil (false)")
+	}
+	if *got.Security.PerActionAuth {
+		t.Errorf("Security.PerActionAuth = true, want false")
+	}
+}
+
+func TestSecuritySectionAbsentYieldsNilPerActionAuth(t *testing.T) {
+	// A config file without a [security] section must yield nil (absent),
+	// so no deprecation warning is emitted for clean configs.
 	path := writeConfig(t, "[ui]\nenabled = true\n")
 	got, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load error = %v", err)
 	}
-	if got.Security.PerActionAuth {
-		t.Errorf("Security.PerActionAuth = true, want false (absent section)")
+	if got.Security.PerActionAuth != nil {
+		t.Errorf("Security.PerActionAuth = %v, want nil (absent section)", got.Security.PerActionAuth)
 	}
 }
 
@@ -349,8 +378,11 @@ func TestParse_ValidBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse valid: %v", err)
 	}
-	if !got.Security.PerActionAuth {
-		t.Error("Parse: PerActionAuth should be true")
+	if got.Security.PerActionAuth == nil {
+		t.Fatal("Parse: PerActionAuth = nil, want non-nil (true)")
+	}
+	if !*got.Security.PerActionAuth {
+		t.Error("Parse: *PerActionAuth should be true")
 	}
 	// Defaults are preserved for omitted keys.
 	if got.UI.Port != DefaultUIPort {
@@ -426,7 +458,11 @@ func TestSerializeCfgDefaultForm(t *testing.T) {
 	if time.Duration(got.Daemon.IdleTimeout) != DefaultIdleTimeout {
 		t.Errorf("Daemon.IdleTimeout = %v, want %v", time.Duration(got.Daemon.IdleTimeout), DefaultIdleTimeout)
 	}
-	if got.Security.PerActionAuth {
+	// per_action_auth = false is explicitly set → non-nil pointer holding false.
+	if got.Security.PerActionAuth == nil {
+		t.Fatal("Security.PerActionAuth = nil, want non-nil (false) — serializeCfg always emits the key")
+	}
+	if *got.Security.PerActionAuth {
 		t.Errorf("Security.PerActionAuth = true, want false")
 	}
 }

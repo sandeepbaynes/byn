@@ -100,6 +100,20 @@ Disable the portal entirely with `[ui] enabled = false` in `~/.byn/config`.
 
 ---
 
+## Portal sessions (NU-3)
+
+When `byn unlock` succeeds through the portal, the daemon mints a per-vault
+session stored in **daemon-process memory** (not on disk — there is no
+controlling TTY for the browser context). Portal sessions are bound to the
+vault name and the daemon owner's UID; they are not TTY-scoped. A browser page
+reload keeps the session active (the persistent portal token in `localStorage`
+re-authenticates the request, and the in-memory session is still live). `byn
+lock` clears all sessions for that vault. The daemon auto-expires portal sessions
+on the same TTL and idle timers as CLI sessions (`[security] session_ttl`,
+default 12 h; `[security] session_idle`, default 0 — inherit `idle_timeout`).
+
+---
+
 ## .byn studio
 
 The `.byn studio` (accessible from the top-left **.byn** button) is an

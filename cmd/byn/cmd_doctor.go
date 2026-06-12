@@ -25,7 +25,7 @@ func runDoctor(args []string, _ cliScope) int {
 		return exitErr
 	}
 	var resp ipc.DoctorResp
-	if err := newClient(dir).Call(ipc.OpDoctor, ipc.DoctorReq{}, &resp); err != nil {
+	if err := newClient(dir, "").Call(ipc.OpDoctor, ipc.DoctorReq{}, &resp); err != nil {
 		return handleCallError(err)
 	}
 	if *jsonOut {

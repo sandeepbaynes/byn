@@ -186,10 +186,31 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 	}
 	t.Cleanup(s.stopDaemon)
 
-	// Init and unlock the vault.
+	// Init the vault — but do NOT unlock yet.  While the vault is locked and
+	// there is no active session, the NU-3 gate rejects wrong credentials.
 	if _, _, code := s.run(execfetchPW, "init", "--password-stdin"); code != 0 {
 		t.Fatalf("init failed")
 	}
+
+	// --- Gate verification: wrong password fails before any session exists ---
+	// byn get --password-stdin with wrong password on a locked vault (no session)
+	// must return auth_required / wrong_password → exit 3.
+	// Note: flag must come before the positional name arg (Go's flag package
+	// stops parsing flags at the first non-flag arg).
+	_, se, wcode := s.run("wrongpw\n", "get", "--password-stdin", "DB_URL")
+	if wcode == 0 {
+		t.Fatal("get with wrong password (locked, no session) should fail; got code 0")
+	}
+	if wcode != exitDaemonErrCode {
+		t.Errorf("get wrong pw: code = %d, want %d; stderr=%q", wcode, exitDaemonErrCode, se)
+	}
+
+	// The rate limiter was hit once above; wait for it to clear.
+	// The default backoff base is 500ms.
+	time.Sleep(600 * time.Millisecond)
+
+	// Unlock the vault — this mints a session token.  In NU-3 the session
+	// satisfies the auth gate for value ops without re-supplying a password.
 	if _, _, code := s.run(execfetchPW, "unlock", "--password-stdin"); code != 0 {
 		t.Fatalf("unlock failed")
 	}
@@ -199,26 +220,12 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 		t.Fatalf("put DB_URL: code=%d stdout=%q stderr=%q", code, so, se)
 	}
 
-	// --- Gate verification: wrong password fails ---
-	// byn get --password-stdin with wrong password: auth_required → wrong_password → exit 3.
-	// Note: flag must come before the positional name arg (Go's flag package
-	// stops parsing flags at the first non-flag arg).
-	_, se, wcode := s.run("wrongpw\n", "get", "--password-stdin", "DB_URL")
-	if wcode == 0 {
-		t.Fatal("get with wrong password should fail; got code 0")
-	}
-	if wcode != exitDaemonErrCode {
-		t.Errorf("get wrong pw: code = %d, want %d; stderr=%q", wcode, exitDaemonErrCode, se)
-	}
-
-	// The rate limiter was hit once above; wait for it to clear before the
-	// correct-password test.  The default backoff base is 500ms.
-	time.Sleep(600 * time.Millisecond)
-
 	// --- Gate verification: correct password succeeds ---
+	// Non-TTY: no session is written by unlock (ttyRdev()==0).  The agent
+	// workflow is --password-stdin per gated call.
 	stdout, _, okcode := s.run(execfetchPW+"\n", "get", "--password-stdin", "DB_URL")
 	if okcode != 0 {
-		t.Fatalf("get correct password: code=%d", okcode)
+		t.Fatalf("get with correct password: code=%d", okcode)
 	}
 	if strings.TrimSpace(stdout) != "s3cret-db" {
 		t.Errorf("get value = %q, want s3cret-db", strings.TrimSpace(stdout))

@@ -34,8 +34,16 @@ const (
 	// changes; no v1 migration is supported (pre-1.0 waiver). v3
 	// added: entries.require_2fa column, meta keys for audit chain
 	// seed/head, entries_state_hash, and meta.totp_secret_v1 reserved
-	// slot.
-	schemaVersion = 3
+	// slot. v4: file_meta.sha256_plain renamed to sha256_hmac (keyed
+	// HMAC-SHA256 under a vault-key-derived subkey; eliminates the
+	// offline guess-confirmation oracle).
+	schemaVersion = 4
+
+	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
+	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of
+	// plain SHA-256 prevents a stolen database from serving as an offline
+	// guess-confirmation oracle.
+	FileMetaMACKeyInfo = "byn:file-meta-mac:v1"
 
 	// DefaultProjectName is the project created at vault init. It's a
 	// regular project — no leading-underscore sentinel — so rename and

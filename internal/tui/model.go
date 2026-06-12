@@ -589,9 +589,14 @@ type authReqState struct {
 	priorMode Mode
 
 	// Fields used depending on kind:
-	scope      ipc.Scope
-	name       string // entry name (get/put/delete/rename)
-	value      []byte // put payload (put op)
+	scope ipc.Scope
+	name  string // entry name (get/put/delete/rename)
+	// value is the put payload (put op).
+	// Invariant: value MUST be zeroed on every exit from ModeAuthRequired
+	// (esc/cancel, ctrl+c quit, and successful submit). Zeroing on esc/ctrl+c
+	// is done in keyAuthRequired; zeroing on submit is done in handleAuthRetry
+	// once the retry has completed (successfully or the overlay is dismissed).
+	value      []byte
 	newName    string // rename new name (rename op)
 	createOnly bool   // true when the original add used CreateOnly
 }

@@ -119,6 +119,11 @@ DESCRIPTION
        the vault key. On success, future put/get/rename calls succeed
        until "byn lock" or the daemon is stopped.
 
+       A per-terminal session token is saved to disk so subsequent
+       commands in the same terminal window skip re-prompting. Run
+       "byn lock --session" to clear the token for the current
+       terminal without locking the vault for other callers.
+
        Failed unlock attempts trigger exponential backoff. The state is
        persisted across daemon restarts so killing the daemon does not
        reset the rate limit.
@@ -152,7 +157,7 @@ SEE ALSO
        byn-lock - lock the vault by clearing the in-memory key
 
 SYNOPSIS
-       byn lock
+       byn lock [--session]
 
 DESCRIPTION
        Asks the daemon to zero the in-memory vault key. Subsequent
@@ -162,8 +167,22 @@ DESCRIPTION
        Locking does NOT stop the daemon. The metadata index remains
        browseable; only value reads require unlock.
 
+       With --session, only the CLI session token for the current
+       terminal is revoked without locking the vault for other callers
+       (useful when leaving a shared machine while keeping the vault
+       available to other terminals or the portal).
+
+OPTIONS
+       --session
+           Revoke the CLI session for the current terminal only;
+           do not lock the vault.
+
 EXAMPLES
+       Lock vault for all callers:
            $ byn lock
+
+       Revoke only this terminal's session:
+           $ byn lock --session
 
 EXIT STATUS
        0    Vault locked (or was already locked).
@@ -765,10 +784,20 @@ SUBCOMMANDS
        reload
            Signal the running daemon (SIGHUP) to re-read ~/.byn/config
            and apply the runtime-changeable settings — idle_timeout,
-           [security] per_action_auth, and the web portal
-           (enable/disable/port) — WITHOUT a restart. Open vaults stay
-           unlocked. Use this for config tweaks; use restart to pick up
-           a new binary. Applied changes are logged to the daemon log.
+           the web portal (enable/disable/port) — WITHOUT a restart.
+           Open vaults stay unlocked. Use this for config tweaks; use
+           restart to pick up a new binary. Applied changes are logged
+           to the daemon log.
+
+           Runtime-changeable config keys:
+             [daemon]   idle_timeout   — vault auto-relock window
+             [ui]       port, enabled, reveal_hide_after
+             [security] session_ttl    — absolute session lifetime
+                                         (default 12h; 0 = no limit)
+             [security] session_idle   — sliding idle window
+                                         (default 0 = inherit idle_timeout)
+             [security] per_action_auth — DEPRECATED; always-on in
+                                          NU-3; remove from config
 
        status
            Print daemon state, socket path, vault lock state, and
@@ -1124,13 +1153,14 @@ DESCRIPTION
        single flat key→value document. Writes to stdout by default,
        or to PATH with --output (mode 0600).
 
-       When [security] per_action_auth is on, each entry's get
-       requires the master password. Use --password-stdin to supply
-       it once non-interactively; without the flag, the CLI prompts
-       once interactively on the first auth_required and reuses the
-       password for the rest. Each entry re-verifies via Argon2id, so
-       large exports are slow under the flag (session tokens in NU-3
-       will fix this).
+       With an active terminal session (from a prior "byn unlock")
+       every get is authorized by the session token — no password
+       prompts fire. Without a session, the first get returns
+       auth_required; the CLI prompts once interactively (or reads
+       from --password-stdin) and reuses the same password for the
+       remaining entries. Each per-password get re-verifies via
+       Argon2id, so large exports without a session are slow; run
+       "byn unlock" first (or use --password-stdin) to avoid this.
 
 OPTIONS
        --format env|yaml|json

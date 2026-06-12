@@ -11,7 +11,10 @@
 // entry. Without --password-stdin, on the first auth_required the CLI
 // prompts once interactively and reuses the same password for all
 // subsequent gets. Each entry re-verifies the password (Argon2id), so
-// large exports are slow under the flag — sessions (NU-3) will fix this.
+// NU-3 sessions are now in place: newClient loads the session token from
+// disk and threads it through every Get, so with an active session zero
+// auth prompts fire. The per-entry password path is retained for the
+// sessionless / per_action_auth case.
 package main
 
 import (
@@ -43,7 +46,7 @@ func runExport(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	client := newClient(dir)
+	client := newClient(dir, scope.Vault)
 
 	scopeIPC := scope.ToIPC()
 	var lresp ipc.ListResp

@@ -97,7 +97,7 @@ var schemaStatements = []string{
 		owner_gid        INTEGER NOT NULL DEFAULT -1,
 		encoding         TEXT    NOT NULL,
 		size_plain       INTEGER NOT NULL,
-		sha256_plain     BLOB,
+		sha256_hmac      BLOB,
 		allowed_readers  TEXT,
 		materialize_hint TEXT    NOT NULL DEFAULT 'fuse',
 		created_at       INTEGER NOT NULL,
@@ -304,9 +304,36 @@ func verifySchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("%w: on-disk version %d > supported %d (downgrade?)", ErrSchemaUnknown, n, schemaVersion)
 	}
 	if n < schemaVersion {
-		// Pre-1.0 explicitly waives backward compatibility. Refuse
-		// rather than attempt a phantom migration.
+		// v3 → v4: replace sha256_plain (unkeyed oracle) with sha256_hmac.
+		if n == 3 && schemaVersion == 4 {
+			if merr := migrateV3toV4(ctx, db); merr != nil {
+				return fmt.Errorf("vault: migrate v3→v4: %w", merr)
+			}
+			return nil
+		}
+		// Any other version mismatch is unsupported (pre-1.0 waiver).
 		return fmt.Errorf("%w: on-disk version %d < supported %d (pre-1.0: re-init the vault)", ErrSchemaUnknown, n, schemaVersion)
+	}
+	return nil
+}
+
+// migrateV3toV4 renames the sha256_plain column in file_meta to
+// sha256_hmac and nulls out the existing rows. The old unkeyed
+// SHA-256 values are meaningless as a keyed HMAC; callers will
+// backfill them on the next write. Bumps meta.schema_version to 4.
+func migrateV3toV4(ctx context.Context, db *sql.DB) error {
+	// ALTER TABLE RENAME COLUMN requires SQLite ≥ 3.25 (2018).
+	// modernc.org/sqlite bundles a recent SQLite, so this is safe.
+	if _, err := db.ExecContext(ctx, `ALTER TABLE file_meta RENAME COLUMN sha256_plain TO sha256_hmac`); err != nil {
+		return fmt.Errorf("rename column: %w", err)
+	}
+	// Null out existing rows — the old unkeyed values are useless as a keyed HMAC.
+	if _, err := db.ExecContext(ctx, `UPDATE file_meta SET sha256_hmac = NULL`); err != nil {
+		return fmt.Errorf("null old hashes: %w", err)
+	}
+	// Bump schema version.
+	if _, err := db.ExecContext(ctx, `UPDATE meta SET value = '4' WHERE key = 'schema_version'`); err != nil {
+		return fmt.Errorf("bump schema version: %w", err)
 	}
 	return nil
 }

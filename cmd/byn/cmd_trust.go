@@ -120,7 +120,7 @@ func runTrustAdd(args []string) int {
 			return exitErr
 		}
 		var resp ipc.TrustGrantBulkResp
-		cerr := newClient(dir).Call(ipc.OpTrustGrantBulk,
+		cerr := newClient(dir, v).Call(ipc.OpTrustGrantBulk,
 			ipc.TrustGrantBulkReq{Paths: byVault[v], Vault: v, Password: pw}, &resp)
 		wipe()
 		if cerr != nil {
@@ -242,7 +242,7 @@ func runUntrust(args []string, _ cliScope) int {
 		return exitErr
 	}
 
-	client := newClient(dir)
+	client := newClient(dir, "")
 	multi := len(paths) > 1
 	removed, absent := 0, 0
 	for _, p := range paths {
@@ -289,7 +289,7 @@ func runTrustList(args []string) int {
 		return exitErr
 	}
 	var resp ipc.TrustListResp
-	if cerr := newClient(dir).Call(ipc.OpTrustList, ipc.TrustListReq{}, &resp); cerr != nil {
+	if cerr := newClient(dir, "").Call(ipc.OpTrustList, ipc.TrustListReq{}, &resp); cerr != nil {
 		return handleCallError(cerr)
 	}
 	if *jsonOut {
@@ -333,7 +333,7 @@ func runTrustDiff(args []string) int {
 	}
 
 	var resp ipc.TrustDiffResp
-	if cerr := newClient(dir).Call(ipc.OpTrustDiff, ipc.TrustDiffReq{Path: path}, &resp); cerr != nil {
+	if cerr := newClient(dir, "").Call(ipc.OpTrustDiff, ipc.TrustDiffReq{Path: path}, &resp); cerr != nil {
 		return handleCallError(cerr)
 	}
 

@@ -107,7 +107,7 @@ func runExec(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return exitErr
 	}
-	client := newClient(dir)
+	client := newClient(dir, "")
 
 	// One round-trip: the daemon verifies trust, enforces the .byn's
 	// [exec] env allowlist AND [exec] actions pinlist server-side, and

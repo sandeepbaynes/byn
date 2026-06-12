@@ -116,37 +116,39 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 		return le
 	}
 
-	// Per-action auth gate for ad-hoc exec (Path=""). Trusted-.byn exec
+	// Auth gate for ad-hoc exec (Path=""). Sessions NEVER bless exec: the
+	// NU-3 matrix does not allow a session token to substitute for explicit
+	// credentials when exec hands out the whole scope. Trusted-.byn exec
 	// (Path!="") has its own [exec] actions gate below — the .byn contract
-	// applies regardless of the global per_action_auth flag (they are
-	// independent: the flag governs ops WITHOUT a .byn contract; the .byn
-	// actions list governs exec WITH a .byn contract). Ad-hoc exec hands
-	// out the whole scope, so it must be gated by the flag when on.
-	if d.perActionAuth() && req.Path == "" {
+	// is the authorization for that path and is independent of this gate.
+	// Ad-hoc exec always requires fresh credentials (password or presence
+	// token) because it exposes the entire vault scope without an env
+	// allowlist, making ambient session-based authorization too broad.
+	if req.Path == "" {
 		if len(req.Password) == 0 && len(req.PresenceToken) == 0 {
 			// No credentials supplied: emit the exec-specific message so the
 			// user understands that running from a trusted .byn is an alternative.
 			le := ipc.NewError(env.ID, ipc.CodeAuthRequired,
-				"ad-hoc exec requires authorization ([security] per_action_auth)",
-				"run from a directory with a trusted .byn, or supply the password")
+				"ad-hoc exec requires authorization (sessions do not authorize exec; use a trusted .byn or supply credentials)",
+				"run from a directory with a trusted .byn, or supply the master password")
 			auditExec(le)
 			return le
 		}
 		// Credentials present: verify UNCONDITIONALLY via authorizeActionAlways
-		// — NOT via authorizeAction.
+		// — NOT via authorizeAction (which would permit session bypass).
 		//
 		// WHY: ad-hoc exec presents no .byn file. The [auth] policy in a
 		// .byn frees only that .byn's own contract (exec WITH a specific
 		// file, which also carries an env allowlist). Ad-hoc exec has no
 		// such contract — it hands out the WHOLE scope with no env allowlist.
-		// Using authorizeAction here would let a trusted .byn in the same
-		// scope with [auth] exec="none" silently skip credential
+		// Using authorizeAction here would let a session or a trusted .byn in
+		// the same scope with [auth] exec="none" silently skip credential
 		// verification and inject ALL scope vars for ANY ad-hoc command.
-		// authorizeActionAlways bypasses policyFor entirely, ensuring the
-		// password/token is always verified for ad-hoc exec.
+		// authorizeActionAlways bypasses policyFor and session check entirely,
+		// ensuring fresh credentials are always required for ad-hoc exec.
 		if le := d.authorizeActionAlways(ctx, env.ID, vaultName, st,
-			"ad-hoc exec requires authorization ([security] per_action_auth)",
-			"run from a directory with a trusted .byn, or supply the password",
+			"ad-hoc exec requires authorization (supply credentials or use a trusted .byn)",
+			"run from a directory with a trusted .byn, or supply the master password",
 			req.Password, req.PresenceToken); le != nil {
 			auditExec(le)
 			return le
@@ -186,7 +188,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 		}
 		defer zeroBytes(vkKey)
 
-		status, _, verr := trust.Verify(d.cfg.Dir, canon, trust.Hash(body), currentMTime, d.fpMACKey, vkKey)
+		status, _, rec, verr := trust.Verify(d.cfg.Dir, canon, trust.Hash(body), currentMTime, d.fpMACKey, vkKey)
 		if verr != nil {
 			ie := internalErr(env.ID, verr)
 			auditExec(ie)
@@ -195,6 +197,14 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 		if status != trust.VerifyTrusted {
 			le := ipc.NewError(env.ID, ipc.CodeTrustDenied,
 				trustDenyMessage(canon, status), "byn trust "+canon)
+			auditExec(le)
+			return le
+		}
+		if rec.Path == "" {
+			// Verify said Trusted but returned no record — should be
+			// impossible, but be defensive.
+			le := ipc.NewError(env.ID, ipc.CodeTrustDenied,
+				canon+" is untrusted (record missing after verify)", "byn trust "+canon)
 			auditExec(le)
 			return le
 		}
@@ -214,20 +224,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 		// after trust cannot change the effective policy (see security argument
 		// in the function doc above). The file parse above is for [exec] env
 		// filtering only; actions/auth are record-authoritative.
-		rec, recOK, recErr := trust.Lookup(d.cfg.Dir, canon)
-		if recErr != nil {
-			ie := internalErr(env.ID, recErr)
-			auditExec(ie)
-			return ie
-		}
-		if !recOK {
-			// Verify said Trusted but Lookup found nothing — should be
-			// impossible (Verify calls Lookup internally), but be defensive.
-			le := ipc.NewError(env.ID, ipc.CodeTrustDenied,
-				canon+" is untrusted (record missing after verify)", "byn trust "+canon)
-			auditExec(le)
-			return le
-		}
+		// rec is already populated from Verify above — no second Lookup needed.
 
 		// ── Alias expansion (NU-2.1) ──────────────────────────────────────
 		// When the CLI sent an alias name, resolve it from the MAC-bound

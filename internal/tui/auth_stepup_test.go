@@ -628,3 +628,111 @@ func TestAuthRequired_OverlayShowsRetryErr(t *testing.T) {
 		t.Errorf("overlay missing retryErr in view:\n%s", stripped)
 	}
 }
+
+// ---- Value-zeroing invariant (authReqState.value) -----------------------
+//
+// The invariant: authReqState.value (the secret being written) MUST be
+// zeroed on every exit from ModeAuthRequired. The tests below verify that
+// esc/cancel and successful submit both honour this invariant. ctrl+c is
+// tested indirectly — the same zeroing block in keyAuthRequired fires.
+
+// TestAuthRequired_EscZeroesValue verifies that pressing Esc zeros the
+// value buffer before releasing the authReq reference.
+func TestAuthRequired_EscZeroesValue(t *testing.T) {
+	c := newAuthFakeClient(ipc.OpPut)
+	scope := ipc.Scope{Vault: "default", Project: "billing", Env: "staging"}
+	m := Model{
+		client:  c,
+		styles:  NewStyles(),
+		Width:   100,
+		Height:  30,
+		Layout:  Compute(100, 30),
+		entries: []ipc.SecretMeta{{Name: "DB_PASS"}},
+		Focus:   FocusContent,
+	}
+	// Seed value payload directly — simulates a put op that triggered auth_required.
+	payload := []byte("super-secret-value")
+	m.authReq = &authReqState{
+		Cause: "per_action_auth",
+		kind:  authRetryPut,
+		scope: scope,
+		name:  "DB_PASS",
+		value: payload,
+	}
+	m.Mode = ModeAuthRequired
+
+	// Press Esc — must zero and clear value before setting authReq = nil.
+	mAny, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mAny.(Model)
+
+	if m.Mode != ModeNormal {
+		t.Fatalf("mode = %v after ESC, want NORMAL", m.Mode)
+	}
+	if m.authReq != nil {
+		t.Fatal("authReq must be nil after ESC")
+	}
+	// The payload backing array should be zeroed.
+	for i, b := range payload {
+		if b != 0 {
+			t.Errorf("payload[%d] = %02x after ESC, want 0 (value not zeroed)", i, b)
+		}
+	}
+}
+
+// TestAuthRequired_SubmitZeroesValue verifies that after a successful retry
+// submit, handleAuthRetry zeros the put payload before releasing authReq.
+func TestAuthRequired_SubmitZeroesValue(t *testing.T) {
+	// Use fakeClient (always succeeds) because we are injecting the
+	// authReqState directly — the first call is the retry, and it should
+	// succeed so that handleAuthRetry runs.
+	c := fakeClient{}
+	scope := ipc.Scope{Vault: "default", Project: "billing", Env: "staging"}
+	m := Model{
+		client:  c,
+		styles:  NewStyles(),
+		Width:   100,
+		Height:  30,
+		Layout:  Compute(100, 30),
+		entries: []ipc.SecretMeta{{Name: "API_KEY"}},
+		Focus:   FocusContent,
+	}
+
+	// Directly set up ModeAuthRequired with a value payload (simulates the
+	// put op path: the edit form submitted, daemon returned auth_required,
+	// and the value was stored in authReq.value for retry).
+	payload := []byte("new-secret-value")
+	m.authReq = &authReqState{
+		Cause:     "per_action_auth",
+		kind:      authRetryPut,
+		scope:     scope,
+		name:      "API_KEY",
+		value:     payload,
+		priorMode: ModeNormal,
+	}
+	m.Mode = ModeAuthRequired
+
+	// Type password and submit.
+	m = typeRunes(m, "mypw")
+	mAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mAny.(Model)
+	if cmd == nil {
+		t.Fatal("no retry command after Enter")
+	}
+	// Run the retry command (fakeClient always succeeds).
+	retryMsg := cmd()
+	mAny, _ = m.Update(retryMsg)
+	m = mAny.(Model)
+
+	if m.Mode != ModeNormal {
+		t.Fatalf("mode = %v after successful retry, want NORMAL", m.Mode)
+	}
+	if m.authReq != nil {
+		t.Fatal("authReq must be nil after successful retry")
+	}
+	// The payload backing array should be zeroed by handleAuthRetry.
+	for i, b := range payload {
+		if b != 0 {
+			t.Errorf("payload[%d] = %02x after submit success, want 0 (value not zeroed by handleAuthRetry)", i, b)
+		}
+	}
+}

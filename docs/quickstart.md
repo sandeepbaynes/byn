@@ -31,9 +31,14 @@ byn daemon install
 
 ```sh
 byn init                    # creates the vault and sets your master password
-byn unlock                  # unlocks it for this daemon session
+byn unlock                  # unlocks it for this terminal
 byn status                  # confirm: daemon up, vault unlocked
 ```
+
+Each terminal window gets its own session — `byn unlock` in one terminal does
+not unlock for other terminals or background scripts. Run `byn unlock` once per
+terminal. Use `byn lock --session` to revoke just this terminal's access without
+affecting other open sessions.
 
 ## 4. Store your first secret
 

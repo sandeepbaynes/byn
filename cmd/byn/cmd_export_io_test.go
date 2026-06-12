@@ -181,6 +181,38 @@ func TestRunExport_PasswordStdinAttachedToEveryGet(t *testing.T) {
 	}
 }
 
+// TestRunExport_WithSessionNoPrompt verifies the one-auth contract: when a
+// valid session is already loaded by newClient, the daemon returns values
+// directly (no CodeAuthRequired), so zero password prompts are needed.
+func TestRunExport_WithSessionNoPrompt(t *testing.T) {
+	fd := startFakeDaemon(t)
+	// registerListGet simulates a daemon that authorizes via session and
+	// returns values immediately — no auth_required ever fires.
+	registerListGet(fd, map[string]string{"SECRET_A": "alpha", "SECRET_B": "beta"})
+
+	// No --password-stdin and no password in stdin; if any auth prompt
+	// fires the test would block or read garbage. The fact that it
+	// completes with exitOK proves zero prompts were needed.
+	rc := runExport(nil, cliScope{})
+	if rc != exitOK {
+		t.Fatalf("export with active session got rc=%d, want exitOK (zero auth prompts)", rc)
+	}
+
+	// Confirm every get carried no password (session was sufficient).
+	getCalls := fd.callsFor(ipc.OpGet)
+	if len(getCalls) == 0 {
+		t.Fatal("no get calls recorded — daemon was not contacted")
+	}
+	for _, call := range getCalls {
+		var req ipc.GetReq
+		requireUnmarshal(t, call.Body, &req)
+		if len(req.Password) != 0 {
+			t.Errorf("get for %q carried a password %q — expected none (session should be sufficient)",
+				req.Name, req.Password)
+		}
+	}
+}
+
 // TestRunExport_AuthRequiredWithoutFlag_HardFails: without --password-stdin, on auth_required
 // and non-TTY stdin, auth.Prompt returns ErrNoTerminal immediately without retry.
 func TestRunExport_AuthRequiredWithoutFlag_HardFails(t *testing.T) {
