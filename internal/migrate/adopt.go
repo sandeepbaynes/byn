@@ -42,6 +42,17 @@ type AdoptOptions struct {
 	// Chowner injects the ownership-setting call so the core is testable
 	// without root. nil defaults to [OSChown].
 	Chowner Chowner
+	// Transform, when non-nil, is a hook run on the STAGED tree AFTER it has
+	// been verified (well-formed, opens, audit-chain intact) but BEFORE the
+	// chown+atomic-commit. It receives the staged root and may mutate the
+	// staged copy in place. This is how cross-source [Import] drops the trust
+	// store + passkey enrollments (D1): the drop happens on the verified copy
+	// before it becomes the destination, so the adopted result NEVER contains
+	// trust/passkeys (no window, no half-state) — and verification still ran on
+	// the ORIGINAL artifacts, so a hostile import is rejected before anything is
+	// dropped or committed. A same-machine [Relocate] passes nil (keeps trust +
+	// passkeys). A Transform error aborts the adopt and leaves destDir untouched.
+	Transform func(stagedRoot string) error
 }
 
 // stagedDirMode is the permission the staged (and therefore adopted) tree gets:
@@ -121,6 +132,14 @@ func Adopt(src ImportSource, destDir string, opts AdoptOptions) (err error) {
 	}
 	if err := verifyStaged(staged); err != nil {
 		return err
+	}
+	// Transform runs on the verified staged copy BEFORE chown+commit, so any
+	// artifact it drops (Import's trust store + passkey tables) never reaches
+	// the destination, yet verification above ran on the ORIGINAL artifacts.
+	if opts.Transform != nil {
+		if err := opts.Transform(staged); err != nil {
+			return fmt.Errorf("migrate: transform staged tree: %w", err)
+		}
 	}
 	if err := applyOwnership(staged, opts.UID, opts.GID, chown); err != nil {
 		return err

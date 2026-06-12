@@ -336,6 +336,39 @@ func TestAdoptMultiVaultAllVerified(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dest, "vaults", "work", "vault.db"))
 }
 
+func TestAdoptTransformRunsAfterVerifyBeforeCommit(t *testing.T) {
+	srcRoot := buildRealVaultTree(t, "default", false)
+	dest := filepath.Join(t.TempDir(), "data")
+
+	// The transform plants a marker AND drops a file in the staged tree; both
+	// must survive into the committed destination (proving it ran on the staged
+	// copy before the atomic rename).
+	called := false
+	transform := func(stagedRoot string) error {
+		called = true
+		// vault.db must already exist + verify (transform runs after verify).
+		assert.FileExists(t, filepath.Join(stagedRoot, "vaults", "default", "vault.db"))
+		return os.WriteFile(filepath.Join(stagedRoot, "TRANSFORM_RAN"), []byte("yes"), 0o600)
+	}
+
+	require.NoError(t, Adopt(NewLocalSource(srcRoot), dest, AdoptOptions{UID: -1, GID: -1, Transform: transform}))
+	assert.True(t, called, "transform must have been invoked")
+	assert.FileExists(t, filepath.Join(dest, "TRANSFORM_RAN"), "transform output must reach the committed dest")
+}
+
+func TestAdoptTransformErrorAbortsAndLeavesDestUntouched(t *testing.T) {
+	srcRoot := buildRealVaultTree(t, "default", false)
+	dest := filepath.Join(t.TempDir(), "data")
+
+	transform := func(string) error { return errors.New("transform boom") }
+	err := Adopt(NewLocalSource(srcRoot), dest, AdoptOptions{UID: -1, GID: -1, Transform: transform})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transform")
+
+	assert.NoDirExists(t, dest, "a transform error must leave the dest uncreated")
+	assertNoStagingLeftover(t, dest)
+}
+
 // assertNoStagingLeftover confirms no `.byn-migrate-stage-*` or
 // `*.byn-migrate-old` residue is left beside dest after a (possibly failed)
 // Adopt — the fail-safe must clean up.

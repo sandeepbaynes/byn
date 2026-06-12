@@ -573,6 +573,57 @@ If privsep is disabled (the default), or setup has not been run, or the command
 is an ad\-hoc exec with no
 .IR .byn ,
 exec children run in\-process as the calling user (no privsep).
+.TP
+.B migrate \fR[\fB\-\-from \fIpath\fR] \fR[\fB\-\-force\fR]
+Adopt a byn vault tree into the fixed per\-OS system data path with the
+correct structure and ownership (the
+.I _byn
+service account, mode 0700).
+The source is verified WITHOUT its password \(em every
+.I vault.db
+must open as a well\-formed, correctly\-versioned vault whose
+.I wrapped.key/meta.json
+fingerprint matches and whose audit chain is intact \(em before anything is
+adopted; a malformed, truncated, or tampered source is rejected and the
+destination is left untouched. The adopt is atomic and re\-runnable; it never
+half\-migrates.
+.IP
+Must be run as root (it writes the
+.I _byn\-owned
+system path and chowns the tree). The
+.I _byn
+account must already exist; if it does not, run
+.B byn setup
+first \(em migrate adopts with the correct ownership, it does not create users.
+.IP
+With no
+.BR \-\-from ,
+.B migrate
+RELOCATES the legacy
+.I ~/.byn
+into the system path (the upgrade path). Same machine: the trust store and
+passkey enrollments are KEPT, and the old
+.I ~/.byn
+is removed only AFTER the destination is fully adopted.
+.IP
+With
+.BI \-\-from " path"
+,
+.B migrate
+IMPORTS an external vault (a backup, a mounted disk, a synced dir): it COPIES
+the tree in and NEVER deletes the source. An import brings vault DATA only \(em
+the trust store and passkey enrollments are DROPPED (trust is never silently
+carried across a machine boundary), so afterwards you MUST re\-trust your
+.I .byn
+files with
+.B byn trust
+and re\-enroll passkeys on this machine. A non\-empty destination is refused
+unless
+.B \-\-force
+is given.
+See
+.BR byn-setup (1),
+.BR byn-trust (1).
 .SS Daemon control
 .TP
 .B start \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]

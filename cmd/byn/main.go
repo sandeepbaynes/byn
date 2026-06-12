@@ -204,6 +204,8 @@ func run(args []string) int {
 		return runUntrust(rest, scope)
 	case "setup":
 		return runSetup(rest)
+	case "migrate":
+		return runMigrate(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "byn: unknown command %q\n", cmd)
 		printUsage(os.Stderr)
@@ -219,7 +221,7 @@ func skipDiscoveryFor(cmd string) bool {
 	switch cmd {
 	case "trust", "untrust", "daemon", "start", "stop", "restart", "reload",
 		"version", "--version", "-v",
-		"help", "--help", "-h", "doctor", "web", "ui", "setup":
+		"help", "--help", "-h", "doctor", "web", "ui", "setup", "migrate":
 		return true
 	}
 	return false
@@ -333,6 +335,11 @@ Trust (.byn TOFU):
   trust [PATH]               Approve a .byn file (default: ./.byn)
   trust list                 List trusted paths (also: --json)
   untrust [PATH]             Revoke trust (default: ./.byn)
+
+System (privsep, root-required):
+  setup                      Provision the _byn/_byn-exec service users
+  migrate [--from PATH]      Adopt a vault into the system path (relocate
+                             legacy ~/.byn, or import an external vault)
 
 Misc:
   version                    Print version

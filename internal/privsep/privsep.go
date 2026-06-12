@@ -74,6 +74,25 @@ func LookupState() (State, error) {
 	return lookupState(osLookup)
 }
 
+// LookupDaemonUser resolves the uid/gid of the _byn service account that owns
+// the daemon's system data tree. `byn migrate` chowns the adopted tree to this
+// uid/gid so the provisioned daemon (which runs as _byn) can read its state. It
+// returns [ErrNotProvisioned] when the account is absent — migrate adopts with
+// the correct ownership, it does NOT create the service user (that is `byn
+// setup`'s job), so a missing _byn must tell the user to run setup first.
+func LookupDaemonUser() (uid, gid int, err error) {
+	return lookupDaemonUser(osLookup)
+}
+
+// lookupDaemonUser is the testable core of LookupDaemonUser.
+func lookupDaemonUser(lookup uidLookup) (uid, gid int, err error) {
+	duid, dgid, lerr := lookup(DaemonUser)
+	if lerr != nil {
+		return 0, 0, ErrNotProvisioned
+	}
+	return duid, dgid, nil
+}
+
 // lookupState resolves the provisioning state using the provided uidLookup.
 // It is the testable core of LookupState.
 func lookupState(lookup uidLookup) (State, error) {

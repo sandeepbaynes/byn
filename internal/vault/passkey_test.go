@@ -120,3 +120,57 @@ func TestPasskey_Delete(t *testing.T) {
 		t.Error("second delete should report removed=false")
 	}
 }
+
+func TestPasskey_ClearEnrollments(t *testing.T) {
+	st := newPasskeyStore(t)
+	ctx := context.Background()
+
+	// Enroll two credentials, one of which also has a PRF-unlock record
+	// (the FK requires the passkey row to exist first).
+	for _, id := range [][]byte{{1}, {2}} {
+		if err := st.AddPasskey(ctx, Passkey{CredentialID: id, PublicKey: []byte("k")}); err != nil {
+			t.Fatalf("AddPasskey %v: %v", id, err)
+		}
+	}
+	if err := st.AddPasskeyUnlock(ctx, PasskeyUnlock{
+		CredentialID:    []byte{1},
+		PRFSalt:         bytes.Repeat([]byte{0xAB}, 32),
+		WrappedVaultKey: []byte("wrapped"),
+	}); err != nil {
+		t.Fatalf("AddPasskeyUnlock: %v", err)
+	}
+
+	// Sanity: both tables are non-empty before the clear.
+	pks, err := st.Passkeys(ctx)
+	if err != nil || len(pks) != 2 {
+		t.Fatalf("pre-clear Passkeys: len=%d err=%v", len(pks), err)
+	}
+	unlocks, err := st.PasskeyUnlocks(ctx)
+	if err != nil || len(unlocks) != 1 {
+		t.Fatalf("pre-clear PasskeyUnlocks: len=%d err=%v", len(unlocks), err)
+	}
+
+	if err := st.ClearPasskeyEnrollments(ctx); err != nil {
+		t.Fatalf("ClearPasskeyEnrollments: %v", err)
+	}
+
+	// Both tables are now empty.
+	pks, err = st.Passkeys(ctx)
+	if err != nil || len(pks) != 0 {
+		t.Fatalf("post-clear Passkeys: len=%d err=%v", len(pks), err)
+	}
+	unlocks, err = st.PasskeyUnlocks(ctx)
+	if err != nil || len(unlocks) != 0 {
+		t.Fatalf("post-clear PasskeyUnlocks: len=%d err=%v", len(unlocks), err)
+	}
+
+	// Idempotent: clearing again on empty tables is a no-op success.
+	if err := st.ClearPasskeyEnrollments(ctx); err != nil {
+		t.Fatalf("second ClearPasskeyEnrollments: %v", err)
+	}
+
+	// The vault is otherwise intact: the default project/env still resolve.
+	if _, err := st.ListProjects(ctx); err != nil {
+		t.Fatalf("vault unusable after clear: %v", err)
+	}
+}

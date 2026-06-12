@@ -31,3 +31,16 @@ func OwnerRecordPath() (string, error) {
 	}
 	return OwnerRecordIn(d), nil
 }
+
+// SystemDataDir is the fixed per-OS system data root the daemon uses once an
+// install is provisioned (owned _byn:_byn, 0700). It is the DESTINATION of a
+// `byn migrate` (relocate or import). Unlike DataDir it always returns the
+// system path, never the legacy ~/.byn — migrate writes the provisioned tree.
+// Under the byntest seam it collapses to the test data root (BYN_TEST_DIR).
+func SystemDataDir() string { return systemDataDir() }
+
+// LegacyDataDir is the pre-NU-6 per-user data root (~/.byn). It is the SOURCE of
+// a legacy relocate (`byn migrate` with no --from). The error covers an
+// undiscoverable home dir. Under the byntest seam it collapses to the test data
+// root so a relocate test can run without touching a real home.
+func LegacyDataDir() (string, error) { return legacyDataDir() }

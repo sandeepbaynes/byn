@@ -1457,4 +1457,84 @@ EXIT STATUS
 SEE ALSO
        byn(1), byn-daemon(1)
 `,
+
+	"migrate": `NAME
+       byn-migrate - adopt a byn vault into the system data path
+
+SYNOPSIS
+       sudo byn migrate
+       sudo byn migrate --from <path> [--force]
+
+DESCRIPTION
+       Adopts a byn vault tree into the daemon's fixed per-OS system data
+       path, with the correct structure and ownership (the _byn service
+       account, mode 0700). Before adopting, the vault is verified WITHOUT
+       its password — every vault.db opens as a well-formed, correctly-
+       versioned SQLite vault whose wrapped.key/meta.json fingerprint
+       matches and whose audit chain is intact. A malformed, truncated, or
+       tampered source is rejected and the destination is left untouched.
+       The adopt is atomic (stage + verify + rename); it never half-migrates
+       and is safe to re-run.
+
+       This command MUST be run as root (it writes the _byn-owned system
+       path and chowns the adopted tree). The _byn service account must
+       already exist; if it does not, run "byn setup" first. byn migrate
+       adopts with the correct ownership — it does not create users.
+
+   RELOCATE (no --from)
+       Moves the legacy per-user ~/.byn into the system path — the upgrade
+       path for an install that predates the system data root. Because it is
+       the SAME machine, the trust store and passkey enrollments are KEPT.
+       The old ~/.byn is removed only AFTER the destination is fully adopted
+       (fail-safe: an interrupted relocate never leaves you with no vault).
+
+   IMPORT (--from <path>)
+       Copies an EXTERNAL vault (a backup, a mounted disk, a synced dir)
+       into the system path. The source is NEVER deleted. A non-empty
+       destination is refused unless --force is given.
+
+       An import brings vault DATA only. The trust store and passkey
+       enrollments are DROPPED — trust is never silently carried across a
+       source/machine boundary (.byn trust fingerprints bind the machine
+       and path, so a carried record would fail verification anyway). After
+       an import you MUST re-trust your .byn files (byn trust) and re-enroll
+       passkeys on this machine. The verification above runs on the original
+       artifacts BEFORE the drop, so a hostile import is rejected before
+       anything is dropped or committed.
+
+OPTIONS
+       --from <path>
+           Import an external vault rooted at <path> instead of relocating
+           the legacy ~/.byn. The source directory is left untouched.
+
+       --force
+           Replace a non-empty destination. Without it, a non-empty system
+           data path is refused so a migrate never clobbers an existing
+           vault. The old tree is moved aside and removed only after the new
+           one is in place.
+
+EXAMPLES
+       Upgrade a legacy ~/.byn install to the system path:
+           $ sudo byn migrate
+
+       Import a vault from a backup directory:
+           $ sudo byn migrate --from /mnt/backup/.byn
+           imported /mnt/backup/.byn -> ... (source left untouched)
+
+           Adopted DATA only. Trust grants and passkey enrollments are NOT
+           carried across an import.
+           Re-trust your .byn files (byn trust) and re-enroll passkeys.
+
+       Replace an existing system vault with an import:
+           $ sudo byn migrate --from /mnt/backup/.byn --force
+
+EXIT STATUS
+       0    Migration succeeded.
+       1    Not root, _byn not provisioned (run byn setup), verification
+            failed (malformed/tampered source), or a non-empty destination
+            without --force.
+
+SEE ALSO
+       byn(1), byn-setup(1), byn-trust(1)
+`,
 }
