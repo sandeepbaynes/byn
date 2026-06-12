@@ -20,6 +20,14 @@ type Config struct {
 
 	// Exec holds the resolved _byn-exec uid/gid (from LookupState).
 	Exec State
+
+	// StateDir is byn's data dir (the daemon owner's ~/.byn in NU-5). The Seatbelt
+	// profile denies the exec child ALL access to it. Empty disables the deny.
+	StateDir string
+
+	// SocketPath is the daemon's Unix socket. The Seatbelt profile denies the
+	// exec child file + network access to it. Empty disables the deny.
+	SocketPath string
 }
 
 // SpawnReq describes a single child-process spawn request.
@@ -36,6 +44,10 @@ type SpawnReq struct {
 
 	// Stdin, Stdout, Stderr are the raw fd numbers for the child's stdio.
 	Stdin, Stdout, Stderr int
+
+	// NoNetwork tightens the Seatbelt profile for this one action: deny all
+	// network. Default false (most approved actions need the network).
+	NoNetwork bool
 }
 
 // Spawner spawns exec children via the privileged byn-exec-helper.
@@ -55,9 +67,9 @@ type darwinSpawner struct {
 // NewSpawner returns a Spawner that delegates execution to the privileged
 // helper at cfg.HelperPath.
 //
-// Task 7: sandbox wrapper hook — to add Seatbelt (sandbox-exec -f <profile>),
-// wrap the cfg.HelperPath invocation here: replace the exec.Command target with
-// "sandbox-exec" and prepend ["-f", profilePath, cfg.HelperPath] to helperArgs.
+// Task 7: the helper is wrapped in sandbox-exec (Seatbelt) — see Spawn. The
+// _byn-exec UID boundary remains the load-bearing control; the Seatbelt profile
+// is defense in depth that denies the child byn's own state dir + socket.
 func NewSpawner(cfg Config) Spawner {
 	return &darwinSpawner{cfg: cfg}
 }
@@ -111,9 +123,16 @@ func (s *darwinSpawner) Spawn(req SpawnReq) (int, error) {
 	}()
 
 	// Build the helper invocation: <helperPath> -- <absTarget> [args...]
-	// Task 7: sandbox wrapper hook — insert sandbox-exec preamble here if needed.
+	// Task 7: wrap the helper in sandbox-exec (Seatbelt). The sandbox is inherited
+	// across the helper's drop-privs + exec, so the child runs sandboxed as
+	// _byn-exec. The setuid helper itself runs under the sandbox too.
 	helperArgs := append([]string{"--"}, req.Argv...)
-	cmd := exec.Command(s.cfg.HelperPath, helperArgs...) //nolint:gosec // HelperPath is operator-installed
+	cmd, cleanupProfile, perr := s.sandboxCommand(req, helperArgs)
+	if perr != nil {
+		_ = envR.Close()
+		return -1, perr
+	}
+	defer cleanupProfile()
 
 	// Dup the caller's stdio fds so cmd owns separate fds; the daemon's
 	// req.Stdin/out/err are never closed by the Spawner.
@@ -161,4 +180,76 @@ func (s *darwinSpawner) Spawn(req SpawnReq) (int, error) {
 	// Any other error means the helper itself failed to start or was killed by a
 	// signal without an exit code.
 	return -1, fmt.Errorf("privsep: Spawn: helper failed: %w", runErr)
+}
+
+// sandbox-exec is the macOS Seatbelt entrypoint. Deprecated-but-ubiquitous
+// (Chromium/Bazel use it; works on Sonoma/Sequoia).
+const sandboxExecPath = "/usr/bin/sandbox-exec"
+
+// sandboxCommand builds the *exec.Cmd that runs the helper. When there is
+// something to confine (state dir, socket, or NoNetwork), the helper is wrapped
+// in sandbox-exec with a generated SBPL profile written to a temp file; the
+// returned cleanup removes that file. Otherwise the helper runs directly and
+// cleanup is a no-op.
+//
+// IMPORTANT (Seatbelt path matching): Seatbelt matches the kernel-RESOLVED,
+// symlink-free real path. A deny on e.g. /tmp/x fails to match if /tmp is a
+// symlink (it is, → /private/tmp). We therefore EvalSymlinks the paths before
+// embedding them so the deny actually bites. If a path can't be resolved
+// (doesn't exist yet) we fall back to the raw path — better an over-broad-but-
+// harmless deny than a silently no-op one; the UID boundary still holds either way.
+func (s *darwinSpawner) sandboxCommand(req SpawnReq, helperArgs []string) (*exec.Cmd, func(), error) {
+	noop := func() {}
+
+	stateDir := resolveSymlinks(s.cfg.StateDir)
+	socketPath := resolveSymlinks(s.cfg.SocketPath)
+
+	// Nothing to confine → run the helper directly (skip sandbox-exec). We still
+	// prefer wrapping whenever any deny is requested, for consistency.
+	if stateDir == "" && socketPath == "" && !req.NoNetwork {
+		return exec.Command(s.cfg.HelperPath, helperArgs...), noop, nil //nolint:gosec // HelperPath is operator-installed
+	}
+
+	profile := seatbeltProfile(SandboxOpts{
+		StateDir:   stateDir,
+		SocketPath: socketPath,
+		NoNetwork:  req.NoNetwork,
+	})
+
+	f, err := os.CreateTemp(os.TempDir(), "byn-sb-*.sb")
+	if err != nil {
+		return nil, noop, fmt.Errorf("privsep: Spawn: create sandbox profile: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	if cerr := f.Chmod(0o600); cerr != nil {
+		_ = f.Close()
+		cleanup()
+		return nil, noop, fmt.Errorf("privsep: Spawn: chmod sandbox profile: %w", cerr)
+	}
+	if _, werr := f.WriteString(profile); werr != nil {
+		_ = f.Close()
+		cleanup()
+		return nil, noop, fmt.Errorf("privsep: Spawn: write sandbox profile: %w", werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		cleanup()
+		return nil, noop, fmt.Errorf("privsep: Spawn: close sandbox profile: %w", cerr)
+	}
+
+	// sandbox-exec -f <profile> <helperPath> -- <absTarget> [args...]
+	args := append([]string{"-f", f.Name(), s.cfg.HelperPath}, helperArgs...)
+	return exec.Command(sandboxExecPath, args...), cleanup, nil //nolint:gosec // operator-installed helper, generated profile
+}
+
+// resolveSymlinks returns the symlink-free real path for p, or p unchanged if it
+// is empty or cannot be resolved (e.g. it does not exist yet). See the Seatbelt
+// path-matching note on sandboxCommand for why this matters.
+func resolveSymlinks(p string) string {
+	if p == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }

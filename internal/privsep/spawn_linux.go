@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // Config configures a Spawner.
@@ -20,6 +21,13 @@ type Config struct {
 
 	// Exec holds the resolved _byn-exec uid/gid (from LookupState).
 	Exec State
+
+	// StateDir is byn's data dir and SocketPath the daemon socket. On Linux these
+	// are not consumed yet — child confinement comes via the systemd unit in NU-6.
+	// They are accepted so Config is cross-platform (the daemon sets them
+	// unconditionally).
+	StateDir   string
+	SocketPath string
 }
 
 // SpawnReq describes a single child-process spawn request.
@@ -38,6 +46,12 @@ type SpawnReq struct {
 	// Pass os.Stdin.Fd(), etc. for an interactive child, or pipe ends for
 	// captured output.
 	Stdin, Stdout, Stderr int
+
+	// NoNetwork requests per-action network denial. On Linux this is enforced by
+	// the systemd unit's sandboxing in NU-6 (the field is accepted now so the
+	// SpawnReq shape is cross-platform; see the Darwin Seatbelt path for today's
+	// enforcement). Default false.
+	NoNetwork bool
 }
 
 // Spawner spawns exec children via the privileged byn-exec-helper.
@@ -111,6 +125,15 @@ func (s *linuxSpawner) Spawn(req SpawnReq) (int, error) {
 	// Build the helper invocation: <helperPath> -- <absTarget> [args...]
 	helperArgs := append([]string{"--"}, req.Argv...)
 	cmd := exec.Command(s.cfg.HelperPath, helperArgs...) //nolint:gosec // HelperPath is operator-installed
+
+	// Setsid puts the child in a new session, detaching its controlling terminal
+	// and process group from the daemon — the child can't signal the daemon's
+	// process group or steal its controlling tty.
+	//
+	// Real Linux child confinement (seccomp, ProtectProc=invisible, hidepid) is
+	// applied via the systemd unit's sandboxing directives in NU-6; the
+	// _byn-exec UID boundary is the load-bearing control here.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	// Dup the caller's stdio fds so cmd owns separate fds; the daemon's
 	// req.Stdin/out/err are never closed by the Spawner.

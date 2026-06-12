@@ -250,6 +250,9 @@ func New(cfg Config) (*Daemon, error) {
 		d.spawner = privsep.NewSpawner(privsep.Config{
 			HelperPath: privsep.HelperDestPath(),
 			Exec:       st,
+			// Seatbelt (Darwin) denies the exec child byn's own state dir + socket.
+			StateDir:   d.cfg.Dir,
+			SocketPath: d.SocketPath(),
 		})
 	}
 	return d, nil
