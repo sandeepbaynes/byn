@@ -14,6 +14,19 @@ before:
   hooks:
     - go mod tidy
 
+# macOS memory hardening (NU-6) — HONEST STATUS, read before a release:
+# The strongest macOS posture for the daemon's held vault key is the *hardened
+# runtime* WITHOUT the `com.apple.security.get-task-allow` entitlement — then
+# even root cannot `task_for_pid` the daemon (platform/hardened-runtime binaries
+# are exempt from task-port access). That requires **Developer ID signing +
+# notarization** (a goreleaser `signs:` / notarize step: `codesign --options
+# runtime` on the darwin `byn` binary, then notarize). That identity is NOT
+# configured in this open repo, so the binaries goreleaser produces here are
+# UNSIGNED and do NOT get this guarantee. docs/security.md states this honestly.
+# When a Developer ID is available, add the signing+notarization step and sign
+# the darwin `byn` build with the hardened runtime (no get-task-allow). On Linux
+# the equivalent protection is PR_SET_DUMPABLE=0 (internal/privsep, applied at
+# runtime — no build step needed).
 builds:
   - id: byn
     main: ./cmd/byn

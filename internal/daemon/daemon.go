@@ -327,6 +327,16 @@ func (d *Daemon) Start(ctx context.Context) error {
 		fmt.Fprintln(os.Stderr, "byn daemon: WARNING — running as root with --allow-root; "+
 			"this defeats the _byn privilege separation (least privilege). Do NOT do this in production.")
 	}
+	// Memory hardening (defense-in-depth on top of the _byn UID boundary):
+	// mark the daemon undumpable so a SAME-UID peer cannot read its
+	// /proc/<pid>/{mem,environ,…} (closing the same-UID residual) and so a
+	// crash cannot core-dump the held vault key to disk. Best-effort — this is
+	// hardening, NOT a correctness requirement, and it never defends against
+	// root, so a failure must not block the daemon. No-op off Linux (macOS
+	// uses the hardened runtime at sign time; see .goreleaser.yaml).
+	if err := privsep.SetUndumpable(); err != nil {
+		fmt.Fprintf(os.Stderr, "byn daemon: WARNING — memory hardening (PR_SET_DUMPABLE) failed: %v\n", err)
+	}
 	if err := os.MkdirAll(d.cfg.Dir, 0o700); err != nil {
 		return fmt.Errorf("daemon: mkdir %s: %w", d.cfg.Dir, err)
 	}

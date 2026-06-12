@@ -6,6 +6,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// setUndumpable is the helper's memory-hardening step before execve
+// (PR_SET_DUMPABLE=0 on Linux so a same-UID peer can't read the child's
+// /proc/<pid>/environ; a no-op elsewhere). On every platform it must succeed
+// and return nil — lowering one's own dumpable flag is unprivileged — so the
+// drop sequence only hard-fails on a genuine error.
+func TestSetUndumpableSucceeds(t *testing.T) {
+	assert.NoError(t, setUndumpable())
+}
+
 func TestDropPlanOrder(t *testing.T) {
 	plan := dropPlan(411, 411)
 	assert.Equal(t, []string{
