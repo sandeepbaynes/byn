@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
 #
 # Environment overrides:
-#   BYN_VERSION=0.0.1        pin a specific version
+#   BYN_VERSION=0.2.0        pin a version (default: latest GitHub release)
 #   BYN_DL_BASE=URL          override the download base URL
 #   BYN_INSTALL_DIR=DIR      override the install directory
 #   BYN_NO_MODIFY_PATH=1     don't touch shell rc files
