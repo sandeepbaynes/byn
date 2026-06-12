@@ -15,10 +15,10 @@
 // byn addresses this with an owner-token gate on every /api/* route:
 //
 //   - On daemon start, LoadOrCreateToken writes a 32-byte random hex string to
-//     $BYN_DIR/portal.token at mode 0600. Only the owner UID can read it.
+//     <data-dir>/portal.token at mode 0600. Only the owner UID can read it.
 //   - Every /api/* request must carry the X-Byn-Portal-Token header equal to
 //     that file's value (constant-time compare). Missing or wrong → 401.
-//   - `byn web` reads the token from $BYN_DIR (file-system-gated), opens
+//   - `byn web` reads the token from <data-dir> (file-system-gated), opens
 //     http://localhost:<port>/?auth=<token>, and the SPA stores it in
 //     localStorage so it survives page reloads.
 //   - Static assets and the SPA fallback (index.html) are NOT gated — the HTML
@@ -64,7 +64,7 @@ type Config struct {
 	// Port is the loopback TCP port to bind (default 2967).
 	Port int
 
-	// Token is the owner-token value loaded from $BYN_DIR/portal.token.
+	// Token is the owner-token value loaded from <data-dir>/portal.token.
 	// Every /api/* request must supply this value in the X-Byn-Portal-Token
 	// header. An empty token disables the gate (test builds may pass "").
 	Token string
@@ -131,7 +131,7 @@ func New(disp Dispatcher, cfg Config) *Server {
 // wrapped in sameOrigin (CSRF defense). Both layers are necessary:
 //
 //   - requireToken: stops other-UID local processes that can reach loopback TCP
-//     but cannot read $BYN_DIR/portal.token (mode 0600, owned by daemon UID).
+//     but cannot read <data-dir>/portal.token (mode 0600, owned by daemon UID).
 //   - sameOrigin: stops browser CSRF — a browser always sends Origin on a
 //     cross-site POST, so a malicious page cannot drive the portal even if it
 //     somehow obtained the token via XSS.
@@ -318,7 +318,7 @@ func (s *Server) only(method string, h handlerFunc) handlerFunc {
 
 // requireToken is the portal's owner-token gate. Every /api/* request must
 // carry an X-Byn-Portal-Token header whose value matches the token loaded from
-// $BYN_DIR/portal.token (mode 0600). Reading the file proves same-UID — another
+// <data-dir>/portal.token (mode 0600). Reading the file proves same-UID — another
 // local user account can reach the loopback TCP port but cannot read the file.
 //
 // When s.token is empty (tests that do not configure a token), the gate is

@@ -54,7 +54,7 @@ func runTUI(args []string, scope cliScope) int {
 			boldRed("Error:"),
 			red(fmt.Sprintf("Vault %q is not initialized.", targetVault)))
 		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn --vault "+targetVault+" init"))
-		fmt.Fprintf(os.Stderr, "\n%s\n", dim(fmt.Sprintf("(Vault dir: %s — override with BYN_DIR)", dir)))
+		fmt.Fprintf(os.Stderr, "\n%s\n", dim(fmt.Sprintf("(Vault dir: %s)", dir)))
 		return exitErr
 	}
 	if locked {

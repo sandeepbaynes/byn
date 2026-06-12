@@ -26,11 +26,9 @@ the master password. Each secret value is encrypted with
 XChaCha20\-Poly1305 keyed by the vault key, with the ciphertext bound
 to the entry's identity via AEAD additional data.
 .PP
-Default daemon data directory is
-.IR ~/.byn/ .
-Override with
-.B BYN_DIR
-in the environment.
+The daemon stores its state at a fixed per\-OS system path (the data
+directory) \(em there is no runtime override. To separate credentials,
+use multiple vaults (\fB\-\-vault\fR), not multiple data directories.
 .SH COMMANDS
 .SS Setup and lifecycle
 .TP
@@ -38,14 +36,14 @@ in the environment.
 Create a fresh vault. Prompts for the master password twice. Targets
 the vault named by \fB\-\-vault\fR (or \fIBYN_VAULT\fR), defaulting
 to \fIdefault\fR. Vaults live under
-\fI$BYN_DIR/vaults/<name>/\fR.
+\fI<data-dir>/vaults/<name>/\fR.
 See
 .BR byn-init (1).
 .TP
 .B unlock
 Unlock the vault and start a per\-terminal session.  Prompts for the
 master password.  On success, a session token is saved to
-.I $BYN_DIR/sessions/
+.I <data-dir>/sessions/
 (keyed by the controlling terminal device number) so subsequent
 commands in the same terminal window are authorised without
 re\-prompting.  When stdout is not a terminal the vault is still
@@ -87,7 +85,7 @@ See
 .TP
 .B vault list \fR[\fB\-\-json\fR]
 List every vault present on disk under
-.IR $BYN_DIR/vaults/ .
+.IR <data-dir>/vaults/ .
 .TP
 .B vault delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
 Securely remove a vault from disk (overwrites the wrapped key, then
@@ -607,8 +605,7 @@ still require a session or the master password.
 .B daemon install
 Register the daemon as a user auto-start service (launchd LaunchAgent on
 macOS, a systemd \fB\-\-user\fR unit on Linux) so it starts on login.
-Writes the service file, loads it best-effort, and respects
-.BR BYN_DIR .
+Writes the service file and loads it best-effort.
 No root.
 .TP
 .B daemon uninstall
@@ -693,13 +690,12 @@ user via \fBexecve\fR(2) instead of the daemon spawning it under the
 (direct form) or before the alias \fINAME\fR (alias form); tokens after
 that boundary are the child's argv.
 .SH ENVIRONMENT
-.TP
-.B BYN_DIR
-Override the daemon data directory. Defaults to
-.IR ~/.byn .
-The daemon places its socket, pidfile, logs, auth\-state, and the
+The daemon data directory is a fixed per\-OS system path with no
+environment override. The daemon places its socket, pidfile, logs,
+auth\-state, and the
 .B vaults/
-subtree here.
+subtree there. Use multiple vaults (\fB\-\-vault\fR), not multiple data
+directories, to separate credentials.
 .TP
 .B NO_COLOR
 If set to any non\-empty value, disables ANSI color codes in CLI
@@ -1002,7 +998,7 @@ A session is a short\-lived credential that binds a vault unlock to the
 terminal that performed it.  When \fBbyn unlock\fR succeeds and the
 process has a controlling terminal, the daemon mints a 32\-byte random
 token and returns it; the CLI writes it to
-.IR $BYN_DIR/sessions/ .
+.IR <data-dir>/sessions/ .
 The file name is a SHA\-256\-truncated hash of the terminal device number
 and the vault name, so each terminal\-plus\-vault pair has its own file.
 Subsequent commands from the same terminal send the token automatically;
@@ -1024,7 +1020,7 @@ Sessions expire after the absolute TTL
 \fBbyn status\fR shows the active expiry time.
 .PP
 .B sessions/ directory.
-The files under \fI$BYN_DIR/sessions/\fR are opaque tokens (mode 0600).
+The files under \fI<data-dir>/sessions/\fR are opaque tokens (mode 0600).
 Their names are not meaningful outside the implementation.  Do not edit
 or copy them; a copied token is bound to the terminal device of the
 originating host, so it provides no cross\-machine access.

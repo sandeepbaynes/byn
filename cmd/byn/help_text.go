@@ -47,9 +47,9 @@ DESCRIPTION
        After init, run "byn unlock" to load the vault key into the
        daemon so put/get/list operations work.
 
-       The vault is created at:
-           $BYN_DIR/vaults/default/
-       where $BYN_DIR defaults to ~/.byn. Files written:
+       The vault is created under the data directory at:
+           <data-dir>/vaults/default/
+       Files written:
            - vault.db        SQLite database (mode 0600)
            - wrapped.key     Argon2id-wrapped vault key (mode 0600)
            - meta.json       UUID + wrapped-key fingerprint (mode 0600)
@@ -69,17 +69,14 @@ CHOOSING THE VAULT
            $ byn --vault work   put DB_URL  < /dev/null
            $ byn vault list
 
-       Each vault lives under $BYN_DIR/vaults/<name>/ with its own
+       Each vault lives under <data-dir>/vaults/<name>/ with its own
        wrapped key, SQLite DB, audit log, and meta.json.
 
-CHOOSING THE DATA DIRECTORY
-       The data root is overridden via the BYN_DIR environment
-       variable; a --data-dir flag is planned for a future release.
-       Both the daemon and the CLI must see the same BYN_DIR.
-
-           $ export BYN_DIR=/path/to/data
-           $ byn start
-           $ byn init
+THE DATA DIRECTORY
+       byn's state lives at a fixed per-OS system path (the data
+       directory) — there is no runtime override. To keep credentials
+       separate, use multiple vaults (--vault NAME), not multiple data
+       directories.
 
 EXAMPLES
        Interactive (prompts twice for confirmation):
@@ -88,14 +85,9 @@ EXAMPLES
        Scripted:
            $ echo "$MASTER_PW" | byn init --password-stdin
 
-       In a fresh dev sandbox:
-           $ export BYN_DIR=/tmp/byn-demo
-           $ byn start
-           $ byn init
-
-       Separate vault per org via BYN_DIR (today's multi-vault):
-           $ BYN_DIR=~/.byn-acme byn start
-           $ BYN_DIR=~/.byn-acme byn init
+       Separate vault per org (today's multi-vault):
+           $ byn --vault acme init
+           $ byn --vault acme unlock
 
 EXIT STATUS
        0    Vault created successfully.
@@ -778,9 +770,9 @@ DESCRIPTION
        It enforces same-UID access at the socket via the OS peer-
        credential check.
 
-       The pidfile and socket live in the data directory (see
-       BYN_DIR). Stale pidfiles (PID no longer alive) are detected
-       and replaced on start.
+       The pidfile and socket live in the data directory (a fixed
+       per-OS system path). Stale pidfiles (PID no longer alive) are
+       detected and replaced on start.
 
 SUBCOMMANDS
        start [--foreground]
@@ -821,8 +813,8 @@ SUBCOMMANDS
        install
            Register the daemon as a user auto-start service (launchd
            LaunchAgent on macOS, systemd --user unit on Linux) so it
-           comes up on login. Writes the service file, loads it
-           best-effort, and respects BYN_DIR. No root required.
+           comes up on login. Writes the service file and loads it
+           best-effort. No root required.
 
        uninstall
            Disable and remove the auto-start service.
@@ -1235,7 +1227,7 @@ SYNOPSIS
 
 DESCRIPTION
        Each vault has an append-only HMAC-chained audit log under
-       $BYN_DIR/audit/<vault>/YYYY-MM.log. All subcommands work
+       <data-dir>/audit/<vault>/YYYY-MM.log. All subcommands work
        while the vault is locked (the log is metadata, not values).
 
        Human rows are: timestamp + op + scope + entry + outcome +
@@ -1400,7 +1392,7 @@ SYNOPSIS
 
 DESCRIPTION
        Remove the trust record for PATH (default: ./.byn) from
-       $BYN_DIR/trusted_byn.json. Idempotent — succeeds
+       <data-dir>/trusted_byn.json. Idempotent — succeeds
        silently if the path was not trusted.
 
 SEE ALSO
