@@ -41,9 +41,11 @@ byn safely.
 The memory-hard password-hashing function we use to derive a vault
 key's wrapping key from the master password.
 
-Parameters: time=4, memory=256 MiB, threads=4, key length=32. Upper
-bounds (time ≤ 8, memory ≤ 1 GiB, threads ≤ 8) prevent DoS via
-malicious headers.
+Default parameters (`DefaultArgon2Params`): time=2, memory=64 MiB,
+threads=4, key length=32 — tuned for ~1s on a laptop. Bounds: time ∈
+[1, 16], memory ∈ [8 MiB, 1 GiB], threads ∈ [1, 16] — the upper limits
+prevent DoS via malicious headers, the lower limits reject trivial
+attacker-supplied params.
 
 ### Audit chain
 

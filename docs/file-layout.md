@@ -177,8 +177,8 @@ checkpointed and cleaned by SQLite. Don't back them up; back up
 Argon2id-wrapped vault key. Header carries:
 
 - Version byte
-- Salt (16 bytes)
-- Argon2 time / memory / threads / key_length params
+- Argon2 time / memory / threads params + explicit salt/nonce length fields
+- Salt (32 bytes)
 - Nonce (24 bytes)
 
 The AEAD AAD covers the *full header bytes*, so any byte tampered

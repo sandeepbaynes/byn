@@ -58,7 +58,7 @@ We protect a user's secrets against the following adversaries.
 | Adversary | What they have | What we prevent |
 |---|---|---|
 | **Another local user** on a shared machine | Their own UID's permissions | Reading or modifying our vault, our socket, our audit log. Enforced by file modes (0600) and peer-UID check on the socket. |
-| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret **value**. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with `Argon2id(master password)` — **the password is the only barrier**. The vault file is deliberately **portable** (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id makes each guess expensive (~1s), but a weak password falls. **What the file does NOT hide:** entry/project/env *names*, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see "Audit & forensics" below); and the audit chain's HMAC seed travels in the file, so the *thief's copy* of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). |
+| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret **value**. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with `Argon2id(master password)` — **the password is the only barrier**. The vault file is deliberately **portable** (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id (default 64 MiB / time=2, ~1s on the *defender's* laptop) slows each guess, but it is not a high wall against a funded attacker with GPUs/ASICs, and a weak password falls regardless. **What the file does NOT hide:** entry/project/env *names*, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see "Audit & forensics" below); and the audit chain's HMAC seed travels in the file, so the *thief's copy* of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). |
 | **A shoulder-surfer** of the user's terminal | Visual access to scrollback, history, `ps` | Seeing secret values — they never appear in argv, environment, prompts, history, or scrollback. |
 | **A careless or semi-trusted agent** (coding agent, evil VSCode extension, compromised CI) running as the user | Can run `byn` commands | (a) **Detection over prevention:** a same-UID agent *can* invoke `get`/`exec`, so the guarantee is that **every value access is audited** (`byn audit`) — harness deny rules are best-effort and not relied upon. The primary win is that there is no plaintext `.env` on disk to read accidentally. (b) `byn exec` injects vars only into the child it spawns; the parent shell sees nothing — but the child's own `/proc/<pid>/environ` is readable by a same-UID process, so env values reach the workload (this is an accepted limitation, not concealment from it). (c) Untrusted `.byn` files hard-fail in agent mode (`--json`) so the agent can't be silently redirected. |
 | **IDE code-completion / inline-suggestion models** (Copilot, Cursor Tab, JetBrains AI, …) running as you | A continuous read of your editor buffer + neighbouring tabs, streamed to (usually cloud) inference on every keystroke | A secret typed as a *literal into source* is ingested the instant it lands in the buffer — and with cloud inference it has **already left the machine before you finish the line** (the model suggesting the cred back, or offering to move it, is proof it read it; it may then propagate it into other files/commits). byn's mitigation is structural: secrets live in the vault and are referenced by *name* / injected at runtime via `byn exec`, so there is no literal in the buffer to slurp. byn can't intercept the IDE itself — keeping literals out of source is the control byn makes practical. |
@@ -125,6 +125,77 @@ discipline byn makes practical, not one it can enforce.
 
 ---
 
+## Known weaknesses & how to protect yourself
+
+byn raises the bar against the *agent-era* leak — but it is a user-space
+tool with real, named limits. This is the honest list of where it is weak,
+what each weakness actually costs you, and the concrete thing **you** do
+about it. Nothing here is hypothetical; each item is verified against the
+code. Where there is no real in-product defense, that is stated plainly and
+the workaround is an OS feature or an operating habit, not a byn promise.
+
+| Weakness (plain language) | The realistic risk | What YOU do about it |
+|---|---|---|
+| **A stolen `vault.db` + `wrapped.key` is offline-crackable. The master password is the only barrier.** The vault is *portable by design* (no machine binding) — anyone who copies the files can guess passwords on their own hardware, forever, with no rate limit and no lockout (the failed-unlock backoff only protects the *live daemon*, not an offline copy). Argon2id (default 64 MiB / time=2) slows each guess but is not a high wall against GPUs/ASICs. | A weak or reused master password = full vault compromise once the file is copied. The Argon2 cost buys time, not immunity. | **Use a long, high-entropy passphrase** (a 5+ word diceware phrase, not a word + numbers). **Enable host full-disk encryption** (FileVault / LUKS) so the file can't be copied off a powered-down or stolen machine in the first place. A generated break-glass recovery key that would replace the memorable password as the portability root is **planned (PH-1) but not yet available** — do not rely on it today. |
+| **Entry, project, and env *names*, kinds, timestamps, version counts, and file metadata are plaintext at rest.** Only secret *values* are encrypted. A copy of `vault.db` is a readable map of *what* you keep and *when* you touched it, even though every value stays sealed. (This is a deliberate owner trade-off: names are listable while locked, and investigators see what was accessed without unlocking.) | Names can themselves leak intent or secrets (e.g. `STRIPE_LIVE_KEY_acct_1234`, customer names, internal hostnames). | **Don't encode anything sensitive in names** — keep the secret in the value, give it a boring name. Rely on **host full-disk encryption** to protect the metadata of a file at rest. |
+| **Same-UID processes (coding agents, IDE extensions, scripts) running as you can reach everything you can.** A process under your UID can: invoke `byn` itself; connect to the daemon socket directly (the peer-UID check passes — it's *you*); `ptrace` the unlocked daemon and read the vault key from memory; read injected env from a child it can see via `/proc/<pid>/environ`; and read a session file under `$BYN_DIR/sessions/`. This is **the core threat byn exists for, and the one it cannot fully close in user space.** | Any untrusted code you run as your primary user can, in principle, reach your unlocked secrets. byn makes this *smaller and louder* (every value access is audited, there's no plaintext `.env` to grab, sensitive ops demand fresh proof-of-presence) but does not make it *zero*. | **Run untrusted agents / tooling under a SEPARATE OS user, a sandbox, or a VM — never your primary UID.** This is the only real fix; privilege separation inside byn (NU-5/6) is *planned, not shipped*. Beyond that: **keep the vault locked when not in use** (`byn lock`), and **keep `idle_timeout` short** so a stolen session can't draw on an unlocked vault for long. |
+| **A stolen session token from a *different* terminal is rejected — but the bound is TTY+UID, not per-process.** A CLI session token is bound to the controlling-TTY device number *and* UID (server-resolved at unlock), so copying a session file into a different terminal context fails. **Honest limit:** a malicious same-UID process can acquire your *current* controlling terminal via `TIOCSCTTY` and then present a request that looks correctly TTY-bound; and portal sessions are **UID-only** (no TTY bind at all). | The TTY bind stops casual token reuse across windows, not a determined same-UID attacker on your actual terminal. | Same fix as the row above: **isolate untrusted code to another UID.** Don't treat the session bind as a same-UID boundary — it isn't one. |
+| **The audit log of a *stolen* file can be silently rewritten.** The HMAC chain's seed is stored as **plaintext** in the DB `meta` table (`audit_chain_seed`). Anyone holding the file can read the seed and re-seal a forged chain that passes `byn audit verify`. | A thief can erase their tracks in *their copy* of your log. The HMAC only proves integrity against an attacker who does **not** have the file. | Treat a copied vault file's audit trail as **unverifiable**. Off-box anchoring of the chain head (ST-1) is **planned, not shipped**. For now, the trustworthy audit signal is the one on the live, FDE-protected host — not a copy. |
+| **Trusted `.byn` exec runs an approved command's *interior* unchecked.** byn pins and MAC-binds the command *list* (`[exec] actions`) — exact argv matches run free — but it does **not** inspect what those commands then *do*. A pinned `make build` runs whatever the current `Makefile` contains; a pinned script runs whatever the script now says. byn protects the *action list*, not the *action's behavior*. | A command you pinned can be repurposed by editing the file it executes (Makefile, script, etc.) without ever touching the `.byn`. | **Only pin actions whose scripts/targets you control** and review. **Review `byn trust diff` before re-trusting** a changed `.byn`. Don't pin interpreters or wildcards (`actions = "*"`) in environments where untrusted code can edit the executed files. |
+| **The portal is loopback + an owner token, and any same-UID process can read that token.** `byn web` binds `127.0.0.1` (no network exposure) and gates `/api/*` on a 32-byte token in `$BYN_DIR/portal.token` (mode 0600). Loopback has no kernel UID gate, so the token is what stops *other* UIDs — but the file is readable by **your** UID, so any same-UID process can read it and drive the portal API. | Same same-UID ceiling as everywhere else: the token stops other users, not code running as you. | Same fix: **isolate untrusted code to another UID.** The token is doing its job (blocking other accounts on loopback); it is not, and cannot be, a same-UID boundary. |
+| **Root, live memory, coercion, and a known password are genuine breaks — out of scope by design.** Root can read daemon memory/swap/files. A debugger attached to the unlocked daemon reads the key (`mlock` is best-effort, not a defense against root/ptrace). "Type your password or else" is not a crypto problem. An attacker who *knows* your password owns the vault. | These are not weaknesses byn pretends to cover — they are the perimeter. | **Don't run as root more than necessary**; **physically protect the machine**; **never share or reuse the master password**; **rotate immediately** on any suspicion it leaked. byn is the wrong tool to stop these — name them honestly and defend with the OS and operational discipline. |
+
+**The one-line summary:** byn shrinks and audits the agent-era leak and keeps
+plaintext off disk, but while an adversary runs as your UID — or holds a copy
+of your file with a guessable password — the real boundaries are **a strong
+passphrase, host full-disk encryption, and isolating untrusted code to a
+different OS user.** Those three are not byn features; they are the controls
+byn depends on.
+
+---
+
+## Best practices
+
+A short, ordered checklist. Each line is the practice and why it matters.
+
+1. **Use a long, high-entropy master passphrase** (5+ random words, not a
+   tweaked dictionary word) — it is the *only* barrier on a stolen, portable
+   vault file, and Argon2id alone won't save a weak one.
+2. **Enable host full-disk encryption** (FileVault on macOS, LUKS on Linux) —
+   it's what actually stops the vault file (and its plaintext names/metadata)
+   from being copied off a lost or powered-down machine.
+3. **Run AI agents and untrusted tooling under a separate OS user, sandbox, or
+   VM — never your primary UID** — a same-UID process can ptrace the daemon,
+   read injected env, and read the portal/session tokens; a different UID is
+   the only real boundary today.
+4. **Keep `idle_timeout` sane; don't set `"0s"` unless you accept the
+   trade-off** — `[daemon] idle_timeout` (default 15m) auto-relocks an idle
+   vault; `"0s"` disables relock entirely, so the key stays in memory until you
+   stop the daemon, widening the window for a same-UID or memory attacker.
+5. **Run `byn lock` (or `byn lock --session`) when you step away** — locking
+   zeroes the in-memory key; `--session` drops just this terminal's access
+   without disturbing other surfaces.
+6. **Scope `[exec] env` to the minimum variables a command needs** — `byn exec`
+   injects only the listed vars, and they become readable in the child's
+   `/proc/<pid>/environ`; fewer vars = less to leak.
+7. **Pin only actions whose scripts you control** (`[exec] actions`) — byn
+   verifies the command *list*, not what the command then does, so a pinned
+   target that runs editable code is only as safe as that code.
+8. **Review `byn trust diff` before re-trusting a changed `.byn`** — a changed
+   file is never silently re-trusted; the diff is your chance to catch a
+   planted action or widened allowlist before you re-approve.
+9. **Prefer passkey / Touch ID unlock where available** — it routes unlock
+   approval out-of-band of the terminal an agent can drive (the PRF output
+   never leaves the browser); the master password remains the durable root.
+10. **Don't put secrets — or sensitive intent — in entry names** — names,
+    scopes, and timestamps are plaintext at rest; keep the secret in the value.
+11. **Rotate any credential the moment you suspect exposure** — an IDE
+    completion that suggested a literal back to you, a leaked file copy, or a
+    suspect agent run all mean the secret may already be off the machine;
+    treat it as compromised and rotate.
+
+---
+
 ## Crypto choices
 
 ### 1. Vault key
@@ -138,9 +209,9 @@ locked.
 ```
 wrapping_key = Argon2id(
     password   = bytes(master_password),
-    salt       = random 16 bytes (per-wrap),
-    time       = 4,         // iterations
-    memory     = 256 MiB,
+    salt       = random 32 bytes (per-wrap),
+    time       = 2,         // iterations  (DefaultArgon2Params)
+    memory     = 64 MiB,
     threads    = 4,
     key_length = 32,
 )
@@ -153,8 +224,15 @@ wrapped.key = XChaCha20-Poly1305-Seal(
 )
 ```
 
-**Upper bounds** on Argon2 params: time ≤ 8, memory ≤ 1 GiB, threads ≤ 8.
-Prevents DoS via a malicious header.
+**Upper bounds** on Argon2 params: time ≤ 16, memory ≤ 1 GiB, threads ≤ 16
+(lower bounds: time ≥ 1, memory ≥ 8 MiB, threads ≥ 1). Prevents DoS via a
+malicious header and rejects an attacker swapping in trivial params on disk.
+
+**Cost is modest — this matters for a stolen file.** The default profile is
+tuned for ~1 s on a laptop, but 64 MiB / time=2 is *not* a high wall against a
+funded offline attacker with GPUs/ASICs. It buys time against guessing, not
+immunity. The real defense for a weak password is **a long, high-entropy
+passphrase** — see "Known weaknesses" below.
 
 **Why AAD = full header bytes:** binds every byte of the header
 (version, salt, params, nonce) into the auth tag. Flip one bit of the
@@ -206,9 +284,14 @@ modification.
 
 **Why HMAC, not a digital signature:** verification is self-contained
 (no public-key infra), and we only need to detect tampering by an
-attacker who *doesn't have the seed*. The seed is stored encrypted
-in the vault meta (cannot be read while locked but the chain head can
-still be inspected — `byn audit tail` works locked).
+attacker who *doesn't have the seed*. **Honest limit — the seed is
+plaintext in the DB.** The seed lives in the `meta` table as plain hex
+(`audit_chain_seed`); it is **not** encrypted under the vault key. Anyone
+who can read `vault.db` can read the seed and silently re-seal a rewritten
+chain. The HMAC therefore detects *blind* tampering by an adversary without
+the file — it does **not** protect the audit trail of a copied file. Off-box
+anchoring of the chain head (ST-1) is the planned fix and is not yet shipped;
+until then, treat a stolen file's audit log as unverifiable.
 
 ### 5. Failed-unlock backoff
 

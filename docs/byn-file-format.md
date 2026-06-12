@@ -1,7 +1,8 @@
 # `.byn` file format & discovery
 
 How byn auto-detects the active scope from the current directory,
-and how the TOFU trust model protects you from someone planting one.
+and how the TOFU trust model refuses an unapproved or changed `.byn`
+someone plants in a project dir (its same-UID ceiling is noted below).
 
 ---
 

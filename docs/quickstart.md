@@ -40,6 +40,20 @@ not unlock for other terminals or background scripts. Run `byn unlock` once per
 terminal. Use `byn lock --session` to revoke just this terminal's access without
 affecting other open sessions.
 
+> **Before you store real secrets — three things byn depends on:**
+> 1. **Pick a long, high-entropy master passphrase.** The vault file is portable
+>    by design, so a stolen copy is only as safe as that passphrase.
+> 2. **Turn on host full-disk encryption** (FileVault / LUKS) — it protects the
+>    vault file *and* the entry names/metadata, which are plaintext at rest.
+> 3. **Run AI agents and untrusted tooling under a separate OS user or VM, not
+>    your primary account** — code running as your UID can reach an unlocked
+>    vault.
+>
+> The full, honest list is in
+> [Known weaknesses & how to protect yourself](security.md#known-weaknesses--how-to-protect-yourself)
+> and the [Best practices](security.md#best-practices) checklist. Worth two
+> minutes before this gets your production credentials.
+
 ## 4. Store your first secret
 
 `byn put` reads the value from **stdin**, so it never lands in your shell
@@ -106,5 +120,8 @@ panel reference.
 - **Daily driver:** run `byn` with no arguments for the TUI, and `byn doctor` to
   self-check the daemon, vault, schema, and audit chain.
 
-Your secrets are encrypted at rest, never in plaintext on disk, and never
-exposed to your shell — or to agents that don't go through byn.
+Your secret *values* are encrypted at rest and never written to disk in
+plaintext, never exposed to your shell, and never handed to agents that don't
+go through byn. (Entry *names* and metadata are plaintext at rest, and code
+running as your own UID can still reach an unlocked vault — see
+[Known weaknesses](security.md#known-weaknesses--how-to-protect-yourself).)
