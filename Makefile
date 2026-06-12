@@ -59,8 +59,16 @@ uninstall: uninstall-man
 # The byntest tag compiles the data-root test seam (internal/paths) so tests can
 # isolate a tempdir via BYN_TEST_DIR. It is NEVER in a production build — see
 # internal/paths/paths_testdir.go.
+#
+# The second line runs internal/paths WITHOUT the byntest tag so the production
+# resolver tests (paths_test.go, //go:build !byntest) actually execute — these
+# assert the core §6.5 property that NO env var can repoint the production data
+# root. They are excluded from the byntest run above, so without this they would
+# never run in CI. The paths package is read-only (no real-state writes), so it
+# is safe to run untagged.
 test:
 	$(GO) test $(GOFLAGS) -tags=byntest -race -timeout 15m $(PKG)
+	$(GO) test $(GOFLAGS) -race ./internal/paths/...
 
 test-integration:
 	$(GO) test $(GOFLAGS) -tags='integration byntest' -race -timeout 15m ./tests/integration/...
