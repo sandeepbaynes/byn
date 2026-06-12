@@ -32,12 +32,34 @@ func defaultDir() (string, error) {
 	return paths.DataDir()
 }
 
-// newClient constructs an IPC client targeting the daemon's socket
-// inside the configured data dir. When vault is non-empty (or "default"),
-// a session token for the current TTY + vault is loaded from disk and
-// attached to the client so the daemon can authorize without re-prompting.
+// activeSocketPath resolves the socket the CLI connects to for a data dir,
+// mirroring newClient's resolution (and fallback) so any path printed to the
+// user is exactly the one we dial.
+func activeSocketPath(dir string) string {
+	sock, err := paths.ActiveSocketPath(dir)
+	if err != nil {
+		return filepath.Join(dir, daemon.SocketFilename)
+	}
+	return sock
+}
+
+// newClient constructs an IPC client targeting the daemon's socket. The socket
+// location is resolved by paths.ActiveSocketPath — the SAME helper the daemon
+// binds through — so connect and bind can never disagree: the runtime socket
+// when this install is provisioned (an owner record exists), else the legacy
+// socket inside the data dir (no behavior change for today's installs — spec
+// D3). A resolution error (a filesystem glitch statting the owner record) falls
+// back to the data-dir socket, matching the unprovisioned default.
+//
+// When vault is non-empty (or "default"), a session token for the current TTY +
+// vault is loaded from disk and attached to the client so the daemon can
+// authorize without re-prompting.
 func newClient(dir, vault string) *ipc.Client {
-	c := ipc.NewClient(filepath.Join(dir, daemon.SocketFilename))
+	sock, err := paths.ActiveSocketPath(dir)
+	if err != nil {
+		sock = filepath.Join(dir, daemon.SocketFilename)
+	}
+	c := ipc.NewClient(sock)
 	key := vaultSessionKey(vault)
 	if tok := loadSessionToken(dir, key); len(tok) > 0 {
 		c.Session = tok
