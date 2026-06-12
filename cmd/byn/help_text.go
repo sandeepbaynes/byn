@@ -1434,10 +1434,13 @@ DESCRIPTION
        On Linux, service accounts are created via systemd-sysusers. On macOS,
        sysadminctl is used. On other platforms, byn setup is not supported.
 
-       After setup, the byn daemon automatically uses privilege separation when
-       spawning exec children — no further configuration is required. If setup
-       has not been run, the daemon falls back to running exec children as the
-       calling user (no privilege separation).
+       Setup only provisions privsep; it does not enable it. Privilege
+       separation is opt-in: set "[security] privsep = true" in ~/.byn/config
+       and restart the daemon to engage it. With privsep enabled and
+       provisioned, the daemon spawns trusted-.byn pinned exec children as
+       _byn-exec. If privsep is disabled (the default), setup has not been run,
+       or the command is an ad-hoc exec with no .byn, exec children run
+       in-process as the calling user (no privilege separation).
 
 OPTIONS
        None.

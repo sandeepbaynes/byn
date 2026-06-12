@@ -562,10 +562,19 @@ On Linux, accounts are created via
 On macOS,
 .BR sysadminctl (8)
 is used.
-After setup the daemon uses privilege separation automatically when spawning
-exec children.
-If setup has not been run, the daemon falls back to running exec children as
-the calling user (no privsep).
+Setup only provisions privsep; it does not enable it.
+Privilege separation is opt\-in: set
+.B [security] privsep = true
+in
+.I ~/.byn/config
+and restart the daemon to engage it.
+With privsep enabled and provisioned, the daemon spawns trusted\-.byn pinned
+exec children as
+.IR _byn\-exec .
+If privsep is disabled (the default), or setup has not been run, or the command
+is an ad\-hoc exec with no
+.IR .byn ,
+exec children run in\-process as the calling user (no privsep).
 .SS Daemon control
 .TP
 .B start \fR[\fB\-\-foreground\fR]
