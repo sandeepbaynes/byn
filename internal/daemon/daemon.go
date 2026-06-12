@@ -17,6 +17,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/machineid"
+	"github.com/sandeepbaynes/byn/internal/privsep"
 	"github.com/sandeepbaynes/byn/internal/ui"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
@@ -151,6 +152,15 @@ type Daemon struct {
 	// fp-MAC layer degrades; the vault-key MAC still protects records).
 	fpMACKey []byte
 
+	// spawner runs exec children SERVER-side under privilege separation (NU-5):
+	// the helper drops the child to the _byn-exec service user. It is non-nil
+	// ONLY when privsep is provisioned (`byn setup` created the service users +
+	// installed the helper). When nil, exec.spawn returns a clean
+	// "not provisioned" error so the CLI can fall back to client-side exec —
+	// the daemon NEVER spawns owner-UID from handleExecSpawn. Tests inject a
+	// fake Spawner directly.
+	spawner privsep.Spawner
+
 	// vaults holds every Store the daemon has opened in this process
 	// lifetime. Entries persist until Shutdown — locking a vault zeros
 	// the in-memory key (via vault.Store.Lock) but keeps the *Store so
@@ -230,6 +240,17 @@ func New(cfg Config) (*Daemon, error) {
 		d.fpMACKey = id
 	} else {
 		fmt.Fprintf(os.Stderr, "byn: machine id unavailable (%v); trust-store machine-fingerprint MAC disabled\n", err)
+	}
+
+	// Privsep spawner: built ONLY when the service users + helper are
+	// provisioned (`byn setup`). When unprovisioned (or on an unsupported
+	// platform) d.spawner stays nil and exec.spawn returns a clean fallback
+	// error — the daemon never spawns the exec child at the owner UID.
+	if st, err := privsep.LookupState(); err == nil && st.Provisioned {
+		d.spawner = privsep.NewSpawner(privsep.Config{
+			HelperPath: privsep.HelperDestPath(),
+			Exec:       st,
+		})
 	}
 	return d, nil
 }
