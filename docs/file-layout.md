@@ -3,7 +3,22 @@
 Every file byn writes, where it lives, what it contains, and what
 mode protects it.
 
-The root is `$BYN_DIR` (default: `~/.byn`).
+The **data root** is a single per-machine location. There is **no runtime
+override** — the data-root environment variable that older byn versions honored
+has been removed (a repointable data root was attack surface). Where the root
+lives depends on whether the machine has been
+provisioned for privilege separation:
+
+- **Provisioned** (`byn setup` run, privsep on): a fixed **system path** owned by
+  the `_byn` service account, mode `0700`:
+  - Linux: `/var/lib/byn` (the systemd unit's `StateDirectory=byn`)
+  - macOS: `/Library/Application Support/byn`
+- **Unprovisioned** (default, privsep off): the **legacy** per-user path `~/.byn`,
+  owned by you, mode `0700` — today's behavior, unchanged.
+
+The layout below is identical under both roots; only the location and owning UID
+differ. To keep work and personal credentials apart, use **multiple vaults** in
+the one daemon (`byn init <name>`), **not** multiple data dirs.
 
 ---
 
@@ -41,9 +56,10 @@ The root is `$BYN_DIR` (default: `~/.byn`).
 Unix-domain socket. Every CLI invocation dials it. Peer UID is
 checked on every connect; mismatched UIDs are closed immediately.
 
-**macOS caveat:** `sun_path` is capped at 104 bytes. Keep
-`$BYN_DIR` short — integration tests use `/tmp/byn-it-XXXX` for
-this reason.
+**macOS caveat:** `sun_path` is capped at 104 bytes, so the socket path must stay
+short. The fixed data-root paths are chosen to fit; the test-only data-dir seam
+(`BYN_TEST_DIR`, compiled in only under the `byntest` build tag) uses
+`/tmp/byn-it-XXXX` for this reason.
 
 ### `daemon.pid`
 

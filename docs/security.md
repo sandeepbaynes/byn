@@ -140,11 +140,11 @@ the workaround is an OS feature or an operating habit, not a byn promise.
 |---|---|---|
 | **A stolen `vault.db` + `wrapped.key` is offline-crackable. The master password is the only barrier.** The vault is *portable by design* (no machine binding) — anyone who copies the files can guess passwords on their own hardware, forever, with no rate limit and no lockout (the failed-unlock backoff only protects the *live daemon*, not an offline copy). Argon2id (default 64 MiB / time=2) slows each guess but is not a high wall against GPUs/ASICs. | A weak or reused master password = full vault compromise once the file is copied. The Argon2 cost buys time, not immunity. | **Use a long, high-entropy passphrase** (a 5+ word diceware phrase, not a word + numbers). **Enable host full-disk encryption** (FileVault / LUKS) so the file can't be copied off a powered-down or stolen machine in the first place. A generated break-glass recovery key that would replace the memorable password as the portability root is **planned (PH-1) but not yet available** — do not rely on it today. |
 | **Entry, project, and env *names*, kinds, timestamps, version counts, and file metadata are plaintext at rest.** Only secret *values* are encrypted. A copy of `vault.db` is a readable map of *what* you keep and *when* you touched it, even though every value stays sealed. (This is a deliberate owner trade-off: names are listable while locked, and investigators see what was accessed without unlocking.) | Names can themselves leak intent or secrets (e.g. `STRIPE_LIVE_KEY_acct_1234`, customer names, internal hostnames). | **Don't encode anything sensitive in names** — keep the secret in the value, give it a boring name. Rely on **host full-disk encryption** to protect the metadata of a file at rest. |
-| **Same-UID processes (coding agents, IDE extensions, scripts) running as you can reach everything you can.** A process under your UID can: invoke `byn` itself; connect to the daemon socket directly (the peer-UID check passes — it's *you*); `ptrace` the unlocked daemon and read the vault key from memory; read injected env from a child it can see via `/proc/<pid>/environ` (mitigated for trusted-`.byn` pinned exec when `[security] privsep` is enabled — see below); and read a session file under `$BYN_DIR/sessions/`. This is **the core threat byn exists for, and the one it cannot fully close in user space.** | Any untrusted code you run as your primary user can, in principle, reach your unlocked secrets. byn makes this *smaller and louder* (every value access is audited, there's no plaintext `.env` to grab, sensitive ops demand fresh proof-of-presence) but does not make it *zero*. | **Run untrusted agents / tooling under a SEPARATE OS user, a sandbox, or a VM — never your primary UID.** This is the only complete fix. byn now ships **opt-in privilege separation** (`[security] privsep`, set up via `byn setup`): a trusted-`.byn` pinned `byn exec` runs its child as the `_byn-exec` service user, so a **non-root** same-(owner)-UID process can no longer read that child's injected env via `/proc/<pid>/environ` (root / `CAP_SYS_PTRACE` still can — the documented ceiling). It does **not** isolate the daemon itself or ad-hoc exec, and is off by default this release. Beyond that: **keep the vault locked when not in use** (`byn lock`), and **keep `idle_timeout` short** so a stolen session can't draw on an unlocked vault for long. |
+| **Same-UID processes (coding agents, IDE extensions, scripts) running as you can reach everything you can.** A process under your UID can: invoke `byn` itself; connect to the daemon socket directly (the peer-UID check passes — it's *you*); `ptrace` the unlocked daemon and read the vault key from memory; read injected env from a child it can see via `/proc/<pid>/environ` (mitigated for trusted-`.byn` pinned exec when `[security] privsep` is enabled — see below); and read a session file under the byn data dir (`sessions/`). This is **the core threat byn exists for, and the one it cannot fully close in user space.** | Any untrusted code you run as your primary user can, in principle, reach your unlocked secrets. byn makes this *smaller and louder* (every value access is audited, there's no plaintext `.env` to grab, sensitive ops demand fresh proof-of-presence) but does not make it *zero*. | **Run untrusted agents / tooling under a SEPARATE OS user, a sandbox, or a VM — never your primary UID.** This is the only complete fix. byn now ships **opt-in privilege separation** (`[security] privsep`, set up via `byn setup`): a trusted-`.byn` pinned `byn exec` runs its child as the `_byn-exec` service user, so a **non-root** same-(owner)-UID process can no longer read that child's injected env via `/proc/<pid>/environ` (root / `CAP_SYS_PTRACE` still can — the documented ceiling). It does **not** isolate the daemon itself or ad-hoc exec, and is off by default this release. Beyond that: **keep the vault locked when not in use** (`byn lock`), and **keep `idle_timeout` short** so a stolen session can't draw on an unlocked vault for long. |
 | **A stolen session token from a *different* terminal is rejected — but the bound is TTY+UID, not per-process.** A CLI session token is bound to the controlling-TTY device number *and* UID (server-resolved at unlock), so copying a session file into a different terminal context fails. **Honest limit:** a malicious same-UID process can acquire your *current* controlling terminal via `TIOCSCTTY` and then present a request that looks correctly TTY-bound; and portal sessions are **UID-only** (no TTY bind at all). | The TTY bind stops casual token reuse across windows, not a determined same-UID attacker on your actual terminal. | Same fix as the row above: **isolate untrusted code to another UID.** Don't treat the session bind as a same-UID boundary — it isn't one. |
 | **The audit log of a *stolen* file can be silently rewritten.** The HMAC chain's seed is stored as **plaintext** in the DB `meta` table (`audit_chain_seed`). Anyone holding the file can read the seed and re-seal a forged chain that passes `byn audit verify`. | A thief can erase their tracks in *their copy* of your log. The HMAC only proves integrity against an attacker who does **not** have the file. | Treat a copied vault file's audit trail as **unverifiable**. Off-box anchoring of the chain head (ST-1) is **planned, not shipped**. For now, the trustworthy audit signal is the one on the live, FDE-protected host — not a copy. |
 | **Trusted `.byn` exec runs an approved command's *interior* unchecked.** byn pins and MAC-binds the command *list* (`[exec] actions`) — exact argv matches run free — but it does **not** inspect what those commands then *do*. A pinned `make build` runs whatever the current `Makefile` contains; a pinned script runs whatever the script now says. byn protects the *action list*, not the *action's behavior*. | A command you pinned can be repurposed by editing the file it executes (Makefile, script, etc.) without ever touching the `.byn`. | **Only pin actions whose scripts/targets you control** and review. **Review `byn trust diff` before re-trusting** a changed `.byn`. Don't pin interpreters or wildcards (`actions = "*"`) in environments where untrusted code can edit the executed files. |
-| **The portal is loopback + an owner token, and any same-UID process can read that token.** `byn web` binds `127.0.0.1` (no network exposure) and gates `/api/*` on a 32-byte token in `$BYN_DIR/portal.token` (mode 0600). Loopback has no kernel UID gate, so the token is what stops *other* UIDs — but the file is readable by **your** UID, so any same-UID process can read it and drive the portal API. | Same same-UID ceiling as everywhere else: the token stops other users, not code running as you. | Same fix: **isolate untrusted code to another UID.** The token is doing its job (blocking other accounts on loopback); it is not, and cannot be, a same-UID boundary. |
+| **The portal is loopback + an owner token, and any same-UID process can read that token.** `byn web` binds `127.0.0.1` (no network exposure) and gates `/api/*` on a 32-byte token in the byn data dir (`portal.token`, mode 0600). Loopback has no kernel UID gate, so the token is what stops *other* UIDs — but the file is readable by **your** UID, so any same-UID process can read it and drive the portal API. | Same same-UID ceiling as everywhere else: the token stops other users, not code running as you. | Same fix: **isolate untrusted code to another UID.** The token is doing its job (blocking other accounts on loopback); it is not, and cannot be, a same-UID boundary. |
 | **Root, live memory, coercion, and a known password are genuine breaks — out of scope by design.** Root can read daemon memory/swap/files. A debugger attached to the unlocked daemon reads the key (`mlock` is best-effort, not a defense against root/ptrace). "Type your password or else" is not a crypto problem. An attacker who *knows* your password owns the vault. | These are not weaknesses byn pretends to cover — they are the perimeter. | **Don't run as root more than necessary**; **physically protect the machine**; **never share or reuse the master password**; **rotate immediately** on any suspicion it leaked. byn is the wrong tool to stop these — name them honestly and defend with the OS and operational discipline. |
 
 **The one-line summary:** byn shrinks and audits the agent-era leak and keeps
@@ -380,6 +380,101 @@ immediately — before reading the request.
 **Why:** stops another local user from connecting if file modes were
 accidentally loosened (e.g., a chmod typo).
 
+### Privilege separation: the three-UID model (opt-in, NU-5/6)
+
+By default the byn daemon and any `byn exec` child run as **your own UID** — the
+same identity as the AI agents, IDE extensions, and scripts you run. That is the
+root of the dominant residual threat: a process running as you can `ptrace` the
+unlocked daemon and lift the vault key from memory, or read an exec child's
+injected environment via `/proc/<pid>/environ` (Linux) / `KERN_PROCARGS2`
+(macOS). No user-space gate inside byn closes that, because the attacker *is* you
+as far as the kernel is concerned.
+
+Privilege separation splits those roles onto **three distinct OS identities** so
+the kernel — not byn — enforces the boundary:
+
+| Identity | Runs | Holds |
+|---|---|---|
+| **owner** (your UID, e.g. 501) | the CLI, the browser portal, the TUI, your agents | nothing privileged; talks to the daemon over the peercred-gated socket |
+| **`_byn`** (service account) | the daemon — vault key in memory, portal server, audit writer | the vault key while unlocked |
+| **`_byn-exec`** (service account) | `byn exec` children of a trusted, pinned `.byn` action | only the injected env vars, for the child's lifetime |
+
+The invariant is **`_byn-exec` ≠ `_byn` ≠ owner**. The exec child gets its *own*
+service UID, separate from the daemon's: if it shared the daemon's UID it could
+ptrace the daemon and lift the key, which would make privsep self-defeating
+(exec runs arbitrary project code).
+
+**What it defends.** Once the daemon is `_byn` and an exec child is `_byn-exec`,
+a process at *your* UID is a different UID from both of them. On Linux the
+`ptrace(2)` access-mode check denies a cross-UID `ptrace` / `/proc/<pid>/mem` /
+`/proc/<pid>/environ` read at credential comparison — it requires root or
+`CAP_SYS_PTRACE`. On macOS the XNU kernel returns `EINVAL` on a cross-UID
+args/env read by a non-root caller, and `task_for_pid` across a UID boundary
+requires root. So the env-sniff and the key-from-memory reads that *any*
+same-UID process can do today both become **root-only**. On Linux byn also calls
+`prctl(PR_SET_DUMPABLE, 0)` in the daemon and the exec child after the credential
+switch — this reparents their `/proc/<pid>/*` to `root:root` and disables core
+dumps, closing the same-UID residual (a leftover process that briefly shares the
+service UID still can't read them).
+
+**The honest ceiling — stated loudly.** Privilege separation raises the bar from
+"any code running as you" to "**root**." It does **not** defend against an
+attacker who already has **root**, `CAP_SYS_PTRACE`, or a root `task_for_pid`:
+root reads any process's memory and environ and can assume any UID, on both
+OSes, by the *same* kernel checks that give us the win against non-root. This is
+the documented limit. Privsep is not a root defense — closing the root gap needs
+hardware-rooted isolation or off-box execution, which is out of scope. Root
+refusal (the daemon declines to start as uid 0 unless you pass `--allow-root`) is
+posture hygiene to keep the `_byn` separation coherent; it is **not** a defense
+against an attacker who *has* root.
+
+**Opt-in this release; the holes remain when it is off.** Privsep is **off by
+default** in this release and enabled per-machine with `[security] privsep` in
+the config plus a one-time `byn setup` (which needs sudo once, to create the
+`_byn`/`_byn-exec` service accounts and install the system service). **When
+privsep is off, both holes above are fully open** — the daemon and exec children
+run as your UID, so a same-UID process *can* ptrace the daemon and read exec
+env. We do not pretend otherwise. Privsep also only covers a **trusted, pinned**
+`byn exec` (a `.byn` `[exec] action`); an **ad-hoc** `byn exec` (no `.byn`) still
+runs its child as the owner even with privsep on, and a same-UID process can read
+that child's environ.
+
+**Fail-safe, never silent downgrade.** With privsep opted-in but the machine not
+yet provisioned (`byn setup` not run, or the sudo declined), byn **errors loudly
+and refuses to fall back** to a ptrace-able owner-UID daemon — falling back would
+silently drop the protection you turned on. The only non-privsep paths are
+explicit and documented: an unprovisioned install, or the per-exec
+`--no-privsep` escape. `--no-privsep` (a `byn exec` flag) forces the **legacy
+in-process exec path** for that one invocation even when privsep is enabled — the
+child is run by the calling user via `execve(2)` instead of being spawned under
+`_byn-exec`. It exists for cases where the service-user path can't be used; it is
+**lower-assurance** — that child runs at the owner UID, so a same-UID process can
+read its `/proc/<pid>/environ` (the §"Known weaknesses" env-read hole applies).
+Use it only when you accept that trade-off.
+
+**Why `NoNewPrivileges=no` on the systemd unit (intentional, not an oversight).**
+The Linux unit deliberately sets `NoNewPrivileges=no`. The `_byn` daemon spawns
+exec children as `_byn-exec` through a tiny, file-capability spawn helper that
+holds `cap_setuid`/`cap_setgid` (file caps, root-owned, hardcoded target UID, no
+flags, no env). If the unit set `NoNewPrivileges=yes`, the kernel would **strip
+those file caps** at exec time, and the helper could no longer drop the child to
+`_byn-exec` — breaking the whole privsep chain. This is a conscious trade-off: we
+keep `NoNewPrivileges` off so the *scoped* helper can do its one privileged
+operation, rather than parking ambient `CAP_SETUID` on the long-lived,
+IPC-exposed daemon for its entire life (which would be a far worse blast radius
+on a daemon hijack). The helper takes no untrusted input and lives milliseconds.
+The unit is otherwise hardened: `ProtectSystem=strict`, `ProtectProc=invisible`,
+`ProcSubset=pid`, `RestrictAddressFamilies=AF_UNIX`,
+`SystemCallFilter=@system-service`, `MemoryDenyWriteExecute=yes`.
+
+**macOS: hardened runtime needs Developer ID signing.** The strongest macOS
+posture for the held key is shipping the daemon with the **hardened runtime** and
+*without* the `com.apple.security.get-task-allow` entitlement — then even root
+cannot `task_for_pid` the daemon. **This is only real on signed builds.** It
+requires a Developer ID signature applied at release; **unsigned local/dev builds
+do not get the hardened runtime** and therefore do not get that property. The
+GoReleaser config documents this; do not assume a `go build` of byn has it.
+
 ### Portal loopback + owner-token gate
 
 The embedded browser portal (`byn web`) binds `127.0.0.1:<port>`. Loopback
@@ -389,7 +484,7 @@ reaching the port over TCP — loopback has no kernel UID gate.
 byn closes this gap with an **owner-token gate** using a two-token design that
 keeps the long-lived token out of `ps` output and URLs:
 
-**Persistent portal token** (`$BYN_DIR/portal.token`):
+**Persistent portal token** (`portal.token` in the byn data dir):
 - A 32-byte random hex file created at mode 0600 on daemon start (persisted
   across restarts). Only the owner UID can read it.
 - Every `/api/*` request must carry `X-Byn-Portal-Token: <token>` (constant-
@@ -756,7 +851,7 @@ clears them.
 
 #### Token storage
 
-The CLI writes the token to `$BYN_DIR/sessions/<hash>` (mode 0600). The file
+The CLI writes the token to `sessions/<hash>` (mode 0600) in the byn data dir. The file
 name is a truncated SHA-256 of `"ttyDev\x00vault"`, so each
 terminal-plus-vault pair has one file. Subsequent commands in the same terminal
 automatically load and forward the token without re-prompting.
@@ -921,7 +1016,7 @@ deployment surface grows.
 | `--quiet` flag | `BYN_HINTS=0` + shell redirection works | When users ask for it |
 | Constant-time `wrong_password` vs vault-not-found | Same response today (existence oracle defense) | If we ever change that |
 | **OS deny-read layer** (Seatbelt/Landlock) paired with the shim | A PATH-shim alone is bypassable (abs path, `PATH` rewrite, direct file read); containment needs a kernel deny-read on the cred files. Out of scope pre-public. | Phase 3, when shims land; see internal design notes |
-| **Privilege separation** (NU-5/6) | A same-UID process can still ptrace the daemon or connect to the socket; true isolation needs the daemon on a different UID/sandbox | NU-5/6; kernel-level change |
+| **Privilege separation: default-on** (NU-5/6 shipped opt-in) | The three-UID model (daemon `_byn`, exec child `_byn-exec`, owner) ships **opt-in** this release (`[security] privsep` + `byn setup`) — see ["the three-UID model"](#privilege-separation-the-three-uid-model-opt-in-nu-56). When **off**, a same-UID process can still ptrace the daemon and read exec env. Making it default-on waits until the migration is proven in the field. | Next release, once `byn migrate`/`byn setup` are proven; the root ceiling is permanent |
 | **Fingerprinted exec allowlist** | Only pre-authorized commands get exec rights — strong for sealed tools, defeated for agent-authored interpreters | Phase 3, with shims |
 | **Ephemeral scoped credential broker** | Vend short-lived STS tokens via AWS `credential_process` so the durable key never leaves the daemon (Case B cloud creds) | Post-launch; larger scope (cloud integration) |
 

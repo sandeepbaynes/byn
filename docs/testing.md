@@ -48,10 +48,16 @@ go vet ./...
 
 Builds the binary, exercises the full surface in a throwaway dir.
 
+The user-facing data-root env override has been removed (a production build uses
+the fixed data root only). To run a smoke test against a throwaway dir, build with
+the `byntest` tag — that compiles the test-only data-dir seam, which honors
+`BYN_TEST_DIR`. (This tag is **never** in a release build, so the override is not
+a runtime attack surface.)
+
 ```sh
-make build
-export BYN_DIR=/tmp/byn-smoke-$$
-mkdir -p "$BYN_DIR"
+go build -tags byntest -o bin/byn ./cmd/byn
+export BYN_TEST_DIR=/tmp/byn-smoke-$$
+mkdir -p "$BYN_TEST_DIR"
 
 # 1) Daemon
 bin/byn daemon start
@@ -99,7 +105,7 @@ bin/byn get MY_KEY                        # → s3cr3t-value
 
 # 9) Shutdown
 bin/byn daemon stop
-rm -rf "$BYN_DIR"
+rm -rf "$BYN_TEST_DIR"
 ```
 
 Expected: every command exits 0 except the explicitly-locked `get`,
@@ -207,7 +213,7 @@ If a test breaks:
    the cause.
 2. Run the single failing test with `-v -race` to surface goroutine
    issues.
-3. Check whether `BYN_DIR` was set; integration tests use
-   per-test short dirs to dodge the macOS 104-char `sun_path` limit.
-4. Check daemon logs at `$BYN_DIR/daemon.log` — the detached
-   daemon writes its stdout/stderr there.
+3. Check whether `BYN_TEST_DIR` was set (the `byntest`-tagged seam); integration
+   tests use per-test short dirs to dodge the macOS 104-char `sun_path` limit.
+4. Check daemon logs at `daemon.log` in the data dir — the detached daemon
+   writes its stdout/stderr there.
