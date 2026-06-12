@@ -202,6 +202,8 @@ func run(args []string) int {
 		return runTrust(rest, scope)
 	case "untrust":
 		return runUntrust(rest, scope)
+	case "setup":
+		return runSetup(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "byn: unknown command %q\n", cmd)
 		printUsage(os.Stderr)
@@ -217,7 +219,7 @@ func skipDiscoveryFor(cmd string) bool {
 	switch cmd {
 	case "trust", "untrust", "daemon", "start", "stop", "restart", "reload",
 		"version", "--version", "-v",
-		"help", "--help", "-h", "doctor", "web", "ui":
+		"help", "--help", "-h", "doctor", "web", "ui", "setup":
 		return true
 	}
 	return false

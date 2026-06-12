@@ -526,6 +526,36 @@ first, then password fallback. On success, the daemon issues a single\-use
 presence token consumed by the retry; the token is never stored or reused. Binds loopback only; CSRF is defended by an
 Origin check. Disable with \fB[ui] enabled = false\fR. See
 \fBbyn-web\fR(1).
+.SS System setup (privsep)
+.TP
+.B setup
+Provision the
+.I _byn
+and
+.I _byn\-exec
+service accounts required for privilege separation and install the prebuilt
+privileged spawn helper
+.RI ( byn\-exec\-helper )
+at the system libexec path.
+Also writes the root\-owned, root\-only\-writable UID/GID config that the
+helper reads at runtime to determine which user to drop to.
+.IP
+Must be run as root:
+.BR "sudo byn setup" .
+Idempotent \(em re\-running when the service accounts already exist still
+reinstalls the helper and config, then exits 0.
+Normally run automatically by the byn installer; manual invocation is only
+required when upgrading the helper binary without a full reinstall.
+.IP
+On Linux, accounts are created via
+.BR systemd\-sysusers (8).
+On macOS,
+.BR sysadminctl (8)
+is used.
+After setup the daemon uses privilege separation automatically when spawning
+exec children.
+If setup has not been run, the daemon falls back to running exec children as
+the calling user (no privsep).
 .SS Daemon control
 .TP
 .B start \fR[\fB\-\-foreground\fR]
