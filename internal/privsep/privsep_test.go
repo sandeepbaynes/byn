@@ -40,3 +40,20 @@ func TestLookupServiceUIDs_ExecMustDifferFromOwner(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrInvalidProvisioning)
 }
+
+func TestLookupDaemonUser_PresentReturnsUIDGID(t *testing.T) {
+	uid, gid, err := lookupDaemonUser(func(name string) (int, int, error) {
+		if name == DaemonUser {
+			return 410, 412, nil
+		}
+		return 0, 0, errUserNotFound
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 410, uid)
+	assert.Equal(t, 412, gid)
+}
+
+func TestLookupDaemonUser_AbsentIsNotProvisioned(t *testing.T) {
+	_, _, err := lookupDaemonUser(func(string) (int, int, error) { return 0, 0, errUserNotFound })
+	require.ErrorIs(t, err, ErrNotProvisioned)
+}
