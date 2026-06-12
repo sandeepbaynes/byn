@@ -87,12 +87,17 @@ vet:
 # Cross-compile release binaries (one per platform) + a SHA-256 manifest into
 # dist/. These are the artifacts the npm package, Homebrew formula, and the
 # curl|sh installer download. Upload them to a public release for v$(VERSION).
+# byn-exec-helper is built alongside byn for each platform so release tarballs
+# contain both binaries and `byn setup` can find the helper next to byn.
 dist: clean-dist
 	@mkdir -p $(DIST_DIR)
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; out=$(DIST_DIR)/byn-$$os-$$arch; \
 		echo "  building $$out"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='$(LDFLAGS)' -o $$out ./cmd/byn || exit 1; \
+		helper=$(DIST_DIR)/byn-exec-helper-$$os-$$arch; \
+		echo "  building $$helper"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='-s -w' -o $$helper ./cmd/byn-exec-helper || exit 1; \
 	done
 	@cd $(DIST_DIR) && shasum -a 256 byn-* > byn-$(VERSION).sha256
 	@echo "dist artifacts (v$(VERSION)) in $(DIST_DIR)/:"
