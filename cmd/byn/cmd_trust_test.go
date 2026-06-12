@@ -297,6 +297,180 @@ func TestRunTrustAdd_AllMalformed_NoDaemonCall(t *testing.T) {
 	}
 }
 
+// ---- pre-flight init-state check (skip prompt for uninitialized vaults) ----
+
+// withStatusVaults registers an OpStatus handler that reports the given vault
+// names as INITIALIZED. This drives the bulk-trust pre-flight that partitions
+// groups into initialized (prompted + granted) vs uninitialized (rejected
+// without a prompt). Any vault NOT named here is treated as uninitialized.
+func withStatusVaults(fd *fakeDaemon, names ...string) {
+	summaries := make([]ipc.VaultSummary, 0, len(names))
+	for _, n := range names {
+		summaries = append(summaries, ipc.VaultSummary{Name: n, Initialized: true})
+	}
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{Vaults: summaries})
+}
+
+// The headline polish: a recursive trust where one .byn targets an
+// UNINITIALIZED vault (the default, never inited) and another targets an
+// INITIALIZED named vault must NEVER prompt for the uninitialized vault's
+// password — it is rejected up front with a clear error — while the
+// initialized group is still trusted.
+func TestRunTrustAdd_PreflightSkipsPromptForUninitVault(t *testing.T) {
+	fd := startFakeDaemon(t)
+	withStatusVaults(fd, "acme") // acme initialized; default is NOT
+	fd.on(ipc.OpTrustGrantBulk, func(raw []byte) (any, *ipc.ErrMsg) {
+		var req ipc.TrustGrantBulkReq
+		requireUnmarshal(t, raw, &req)
+		if req.Vault == "" || req.Vault == "default" {
+			t.Errorf("daemon must NOT be asked to grant the uninitialized default group")
+			return nil, &ipc.ErrMsg{Code: ipc.CodeNotInit, Message: "not init"}
+		}
+		return ipc.TrustGrantBulkResp{
+			Results: []ipc.TrustGrantResult{{Path: req.Paths[0], SHA256: strings.Repeat("a", 64)}},
+		}, nil
+	})
+	root := t.TempDir()
+	writeBynTree(t, root, "named", "[scope]\nvault = \"acme\"\n")
+	writeBynTree(t, root, "nodef", "[scope]\nproject = \"p\"\n") // no vault → default
+	prompts := withTrustPromptPassword(t, "s3cret")
+
+	out := captureStderr(t, func() {
+		// One group failed (default uninitialized) → non-zero, but acme trusted.
+		if got := runTrustAdd([]string{"--recursive", root}); got != exitErr {
+			t.Fatalf("got %d, want exitErr (default group rejected)", got)
+		}
+	})
+
+	// The uninitialized default group was NEVER prompted: the only prompt names acme.
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], `"acme"`) {
+		t.Fatalf("prompts = %v, want exactly one acme prompt (default must not be prompted)", *prompts)
+	}
+	// No grant call was made for the default group; exactly one (acme) was.
+	calls := fd.callsFor(ipc.OpTrustGrantBulk)
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly one grant call (acme); got %d", len(calls))
+	}
+	var req ipc.TrustGrantBulkReq
+	requireUnmarshal(t, calls[0].Body, &req)
+	if req.Vault != "acme" {
+		t.Fatalf("the only grant call must be for acme, got %q", req.Vault)
+	}
+	// The default group surfaced the clear, actionable error.
+	if !strings.Contains(out, "default vault, which isn't initialized") {
+		t.Fatalf("missing actionable default-not-init message; stderr:\n%s", out)
+	}
+	if !strings.Contains(out, "byn init") || !strings.Contains(out, `vault = "…"`) {
+		t.Fatalf("hint should suggest setting vault or running byn init; stderr:\n%s", out)
+	}
+}
+
+// A NAMED but uninitialized vault group is also rejected pre-flight (no prompt)
+// with an actionable error naming that vault.
+func TestRunTrustAdd_PreflightSkipsPromptForUninitNamedVault(t *testing.T) {
+	fd := startFakeDaemon(t)
+	withStatusVaults(fd, "acme") // acme initialized; "ghost" is NOT
+	fd.on(ipc.OpTrustGrantBulk, func(raw []byte) (any, *ipc.ErrMsg) {
+		var req ipc.TrustGrantBulkReq
+		requireUnmarshal(t, raw, &req)
+		if req.Vault == "ghost" {
+			t.Errorf("daemon must NOT be asked to grant the uninitialized ghost group")
+		}
+		return ipc.TrustGrantBulkResp{
+			Results: []ipc.TrustGrantResult{{Path: req.Paths[0], SHA256: strings.Repeat("a", 64)}},
+		}, nil
+	})
+	root := t.TempDir()
+	writeBynTree(t, root, "ok", "[scope]\nvault = \"acme\"\n")
+	writeBynTree(t, root, "missing", "[scope]\nvault = \"ghost\"\n")
+	prompts := withTrustPromptPassword(t, "s3cret")
+
+	out := captureStderr(t, func() {
+		if got := runTrustAdd([]string{"--recursive", root}); got != exitErr {
+			t.Fatalf("got %d, want exitErr (ghost group rejected)", got)
+		}
+	})
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], `"acme"`) {
+		t.Fatalf("prompts = %v, want exactly one acme prompt (ghost must not be prompted)", *prompts)
+	}
+	if !strings.Contains(out, "targets vault") || !strings.Contains(out, "ghost") ||
+		!strings.Contains(out, "isn't initialized") {
+		t.Fatalf("expected an actionable ghost-not-init message; stderr:\n%s", out)
+	}
+}
+
+// When EVERY group targets an uninitialized vault, no prompt and no grant call
+// happen at all — only the clear per-group errors.
+func TestRunTrustAdd_PreflightAllUninit_NoPromptNoGrant(t *testing.T) {
+	fd := startFakeDaemon(t)
+	withStatusVaults(fd) // nothing initialized
+	fd.on(ipc.OpTrustGrantBulk, func(raw []byte) (any, *ipc.ErrMsg) {
+		t.Errorf("no grant call should be made when every vault is uninitialized")
+		return ipc.TrustGrantBulkResp{}, nil
+	})
+	root := t.TempDir()
+	writeBynTree(t, root, "a", "[scope]\nvault = \"acme\"\n")
+	writeBynTree(t, root, "nodef", "[scope]\nproject = \"p\"\n") // → default
+	prompts := withTrustPromptPassword(t, "s3cret")
+
+	out := captureStderr(t, func() {
+		if got := runTrustAdd([]string{"--recursive", root}); got != exitErr {
+			t.Fatalf("got %d, want exitErr (all groups uninitialized)", got)
+		}
+	})
+	if len(*prompts) != 0 {
+		t.Fatalf("no prompt should occur when every vault is uninitialized; got %v", *prompts)
+	}
+	if n := len(fd.callsFor(ipc.OpTrustGrantBulk)); n != 0 {
+		t.Fatalf("no grant call should occur; got %d", n)
+	}
+	if !strings.Contains(out, "isn't initialized") {
+		t.Fatalf("expected per-group not-init errors; stderr:\n%s", out)
+	}
+}
+
+// When the pre-flight status call itself fails (and it is NOT daemon-down),
+// trust falls back to today's behavior: the grant is attempted and the daemon
+// decides. Here the fake daemon has NO OpStatus handler (status → unknown-op
+// error), yet the initialized vault is still trusted via the grant path.
+func TestRunTrustAdd_PreflightStatusError_FallsBackToGrant(t *testing.T) {
+	fd := startFakeDaemon(t)
+	// Deliberately register NO OpStatus handler: the pre-flight call errors.
+	fd.onOK(ipc.OpTrustGrantBulk, ipc.TrustGrantBulkResp{
+		Results: []ipc.TrustGrantResult{{Path: "/x/.byn", SHA256: strings.Repeat("a", 64)}},
+	})
+	root := t.TempDir()
+	writeBynTree(t, root, "a", "[scope]\nvault = \"acme\"\n")
+	prompts := withTrustPromptPassword(t, "s3cret")
+
+	if got := runTrustAdd([]string{"--recursive", root}); got != exitOK {
+		t.Fatalf("got %d, want exitOK (fallback path still trusts via grant)", got)
+	}
+	// The grant WAS attempted (fallback), and the vault was prompted as before.
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], `"acme"`) {
+		t.Fatalf("prompts = %v, want one acme prompt in the fallback path", *prompts)
+	}
+	if n := len(fd.callsFor(ipc.OpTrustGrantBulk)); n != 1 {
+		t.Fatalf("expected one grant call in the fallback path; got %d", n)
+	}
+}
+
+// Daemon-down at the pre-flight stage surfaces the standard daemon-down error
+// and exit code — nothing can be trusted against a dead socket.
+func TestRunTrustAdd_PreflightDaemonDown(t *testing.T) {
+	noDaemon(t)
+	root := t.TempDir()
+	writeBynTree(t, root, "a", "[scope]\nvault = \"acme\"\n")
+	prompts := withTrustPromptPassword(t, "s3cret")
+
+	if got := runTrustAdd([]string{"--recursive", root}); got != exitDaemonDown {
+		t.Fatalf("got %d, want exitDaemonDown", got)
+	}
+	if len(*prompts) != 0 {
+		t.Fatalf("daemon down must not prompt; got %v", *prompts)
+	}
+}
+
 // ---- untrust -----------------------------------------------------------
 
 func TestRunUntrust_ViaDaemon(t *testing.T) {
