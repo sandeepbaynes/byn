@@ -30,7 +30,16 @@ When making a change:
 
 ### 1.1 Storage
 
-1.1.1. Each vault is a directory `$BYN_DIR/vaults/<name>/` containing
+1.1.0. **Data root.** All on-disk state lives under a single **data root**. There
+is NO runtime override of this root (the former data-root env override is removed
+— spec §6.5 of the privsep design). The root MUST be: the fixed per-OS **system
+path** when the machine is provisioned for privilege separation — `/var/lib/byn`
+(Linux) or `/Library/Application Support/byn` (macOS), owned by the `_byn`
+service account, mode `0700`; otherwise the legacy per-user path `~/.byn`, owned
+by the owner, mode `0700`. Subsequent clauses write paths relative to this root
+as `<data root>/…`.
+
+1.1.1. Each vault is a directory `<data root>/vaults/<name>/` containing
 exactly:
 - `vault.db` — SQLite STRICT tables, WAL journal, FK enforced
 - `wrapped.key` — Argon2id-wrapped vault key (binary header + nonce + ciphertext + tag)
@@ -144,7 +153,10 @@ MUST return both:
 
 ### 3.1 Transport
 
-3.1.1. Socket: `$BYN_DIR/daemon.sock`, mode `0600`.
+3.1.1. Socket: `daemon.sock` at the daemon's runtime path, mode `0600`. (Under
+privilege separation the socket sits at an owner-traversable runtime path
+distinct from the `0700` state dir, so the owner can reach it; unprovisioned it
+is `<data root>/daemon.sock`.)
 
 3.1.2. Connection model: one envelope per connection. The CLI dials,
 sends one request, reads one response, closes.
@@ -202,8 +214,8 @@ design (the user just told us it does).
 
 ### 4.1 Lifecycle
 
-4.1.1. Single instance per `$BYN_DIR` enforced via
-`$BYN_DIR/daemon.pid`. Stale pidfile detected via signal-0 probe;
+4.1.1. Single instance per data root enforced via
+`<data root>/daemon.pid`. Stale pidfile detected via signal-0 probe;
 the daemon MUST reclaim it on restart, not refuse to start.
 
 4.1.2. Multi-vault: the daemon maintains a map of unlocked vaults.
@@ -211,7 +223,7 @@ Each entry holds its own SQLite store, audit logger, idle timer, and
 last-active timestamp.
 
 4.1.3. Per-vault idle timer locks the vault key after inactivity. The
-timeout is `[daemon] idle_timeout` in `$BYN_DIR/config` (Go duration
+timeout is `[daemon] idle_timeout` in `<data root>/config` (Go duration
 string; default `15m`); `"0s"` disables auto-relock. Reset on every
 successful op. Implemented by the daemon's idle janitor (started at
 `daemon start` when the timeout is positive); the janitor zeroes the
@@ -422,7 +434,7 @@ internal design notes).
 ### 7.1 Format
 
 7.1.1. Per-vault append-only log under
-`$BYN_DIR/audit/<vault>/YYYY-MM.log`. New file each month.
+`<data root>/audit/<vault>/YYYY-MM.log`. New file each month.
 
 7.1.2. Mode `0600`. NDJSON: one JSON object per line.
 
@@ -857,7 +869,7 @@ accordingly.
 ### 12.1 Transport
 
 12.1.1. The daemon hosts an embedded browser portal when `[ui] enabled`
-is true in `$BYN_DIR/config` (default true). It binds **loopback only**
+is true in `<data root>/config` (default true). It binds **loopback only**
 (`127.0.0.1:<port>`), never `0.0.0.0`. The port is `[ui] port` (default
 **2967**).
 

@@ -8,7 +8,9 @@ feature names the relevant source files for future reference.
 ## 1. Secure multi-vault store
 
 - Multiple vaults coexist; each gets its own SQLite database and
-  Argon2id-wrapped key under `$BYN_DIR/vaults/<name>/`.
+  Argon2id-wrapped key under `vaults/<name>/` in the byn data root (see
+  [File layout](file-layout.md)). Keep work and personal credentials apart with
+  multiple **vaults**, not multiple data dirs.
 - Vault key is a random 32 bytes. Wrapped with
   `Argon2id(password, salt) → XChaCha20-Poly1305 AEAD`; the AEAD's AAD
   binds the full header (salt + Argon2 params + version) so any byte
@@ -29,7 +31,7 @@ feature names the relevant source files for future reference.
 
 ## 3. Daemon + IPC
 
-- Unix socket at `$BYN_DIR/daemon.sock`, mode 0600, peer-UID
+- Unix socket (`daemon.sock`) at the daemon's runtime path, mode 0600, peer-UID
   enforced.
 - Length-prefixed JSON envelopes; per-call connection.
 - Multi-vault state map: `map[string]*vaultEntry` with per-vault idle
