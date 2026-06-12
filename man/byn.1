@@ -75,8 +75,12 @@ A forgotten password is unrecoverable by design.
 .B status
 Print daemon and vault state.  Alias for \fBdaemon status\fR.
 Accepts \fB\-\-json\fR for the raw StatusResp payload.
-When a live session is active for the current terminal, each vault row
-includes a \fIsession\fR indicator with the expiry time.
+Vault state has two layers: \fIunlocked\fR means the daemon holds the
+key in memory (trusted exec and shims run); reading values also
+requires a per\-terminal session started with \fBbyn unlock\fR.
+Each vault row shows \fB[session: active, expires in \&...]\fR when the
+current terminal has a live session, or a dim \fB[no session in this
+terminal \(em byn unlock to authorize reads]\fR when it does not.
 See
 .BR byn-status (1).
 .SS Structure (vault / project / env)
@@ -544,7 +548,12 @@ portal (enable/disable/port) \(em without a restart. Open vaults stay unlocked.
 Alias: \fBbyn daemon reload\fR.
 .TP
 .B daemon status
-Print daemon state and uptime.
+Print daemon state, vault lock state, and uptime.
+Each unlocked vault shows the caller's per\-terminal session state:
+\fB[session: active]\fR when a session exists, or a dim
+\fB[no session in this terminal]\fR note otherwise.
+\(lqUnlocked\(rq means the daemon holds the key; value reads
+still require a session or the master password.
 .TP
 .B daemon install
 Register the daemon as a user auto-start service (launchd LaunchAgent on

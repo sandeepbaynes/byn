@@ -847,6 +847,15 @@ DESCRIPTION
        vault lock state (uninitialized / locked / unlocked), and
        daemon uptime.
 
+       Vault state has two independent layers. "unlocked" means the
+       daemon holds the vault key in memory (required for trusted exec
+       / shim injection). Reading values also requires a per-terminal
+       session: a terminal that never ran "byn unlock" will see
+       "unlocked" but still be prompted to authorize on "byn get".
+       Each vault row shows "[session: active, expires in …]" when the
+       current terminal has a live session, or a dim "[no session in
+       this terminal — byn unlock to authorize reads]" when it does not.
+
 EXAMPLES
        Check state:
            $ byn status

@@ -343,6 +343,7 @@ func runDaemonStatus(args []string) int {
 		fmt.Println("vaults:  (none initialized)")
 	} else {
 		fmt.Println("vaults:")
+		sessionlessUnlocked := false
 		for _, v := range resp.Vaults {
 			state := "locked"
 			if !v.Locked {
@@ -353,15 +354,23 @@ func runDaemonStatus(args []string) int {
 				line += fmt.Sprintf("  (last active %s ago)",
 					time.Since(*v.LastActive).Round(time.Second))
 			}
-			if v.SessionActive {
-				if v.SessionExpiresAt != nil {
-					line += fmt.Sprintf("  [session: active, expires in %s]",
-						time.Until(*v.SessionExpiresAt).Round(time.Second))
+			if !v.Locked {
+				if v.SessionActive {
+					if v.SessionExpiresAt != nil {
+						line += fmt.Sprintf("  [session: active, expires in %s]",
+							time.Until(*v.SessionExpiresAt).Round(time.Second))
+					} else {
+						line += "  [session: active]"
+					}
 				} else {
-					line += "  [session: active]"
+					line += dim("  [no session in this terminal — byn unlock to authorize reads]")
+					sessionlessUnlocked = true
 				}
 			}
 			fmt.Println(line)
+		}
+		if sessionlessUnlocked {
+			fmt.Println(dim(`note: "unlocked" = the daemon holds the key (trusted exec runs); reading values still needs this terminal's session or the password.`))
 		}
 	}
 	return exitOK

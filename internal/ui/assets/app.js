@@ -896,7 +896,7 @@ async function renderTree() {
     inner.appendChild(label(v.name, "vault", defaultish(v.name)));
     const actions = [
       v.locked ? nodeAct("lock", "locked", "unlock vault", () => unlockVault(v.name))
-               : nodeAct("unlock", "unlocked", "lock vault", () => lockVault(v.name)),
+               : nodeAct("unlock", "unlocked", "unlocked — the daemon holds the key; revealing values may still ask this browser to authorize", () => lockVault(v.name)),
       nodeAct("key", "passwd", "change password", () => changePassword(v.name)),
       defaultish(v.name) ? null : nodeAct("pencil", "ren", "rename vault", () => renameVault(v.name)),
       defaultish(v.name) ? null : nodeAct("trash", "del", "delete vault", () => deleteVault(v.name)),

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -221,5 +222,65 @@ func TestWaitForSocket_ReturnsFalseOnAbsent(t *testing.T) {
 	dir := t.TempDir()
 	if waitForSocket(dir, 200*time.Millisecond) {
 		t.Fatal("expected false")
+	}
+}
+
+// TestRunDaemonStatus_NoSessionSuffix asserts that an unlocked vault
+// without an active session shows the dim "[no session in this terminal
+// — byn unlock to authorize reads]" suffix and the footnote line.
+func TestRunDaemonStatus_NoSessionSuffix(t *testing.T) {
+	now := time.Now()
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{
+		Version:     "v",
+		ProtocolMin: ipc.ProtocolMin,
+		ProtocolMax: ipc.ProtocolVersion,
+		StartedAt:   now.Add(-time.Hour),
+		Vaults: []ipc.VaultSummary{
+			{Name: "maison", Initialized: true, Locked: false, SessionActive: false},
+		},
+	})
+	var rc int
+	out := captureStdout(t, func() { rc = runDaemonStatus(nil) })
+	if rc != exitOK {
+		t.Fatalf("exit %d", rc)
+	}
+	if !strings.Contains(out, "no session in this terminal") {
+		t.Errorf("expected no-session suffix; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"unlocked" = the daemon holds the key`) {
+		t.Errorf("expected footnote; got:\n%s", out)
+	}
+}
+
+// TestRunDaemonStatus_SessionActiveSuffix asserts that an unlocked vault
+// WITH an active session shows the "[session: active, expires in …]"
+// suffix and does NOT show the no-session copy or footnote.
+func TestRunDaemonStatus_SessionActiveSuffix(t *testing.T) {
+	now := time.Now()
+	exp := now.Add(15 * time.Minute)
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{
+		Version:     "v",
+		ProtocolMin: ipc.ProtocolMin,
+		ProtocolMax: ipc.ProtocolVersion,
+		StartedAt:   now.Add(-time.Hour),
+		Vaults: []ipc.VaultSummary{
+			{Name: "default", Initialized: true, Locked: false, SessionActive: true, SessionExpiresAt: &exp},
+		},
+	})
+	var rc int
+	out := captureStdout(t, func() { rc = runDaemonStatus(nil) })
+	if rc != exitOK {
+		t.Fatalf("exit %d", rc)
+	}
+	if !strings.Contains(out, "session: active, expires in") {
+		t.Errorf("expected active-session suffix; got:\n%s", out)
+	}
+	if strings.Contains(out, "no session in this terminal") {
+		t.Errorf("unexpected no-session suffix; got:\n%s", out)
+	}
+	if strings.Contains(out, `"unlocked" = the daemon holds the key`) {
+		t.Errorf("unexpected footnote when session is active; got:\n%s", out)
 	}
 }
