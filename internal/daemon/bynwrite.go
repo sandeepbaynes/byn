@@ -147,7 +147,13 @@ func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byt
 // WITHOUT a shell (exec.Command, not sh -c), so a project path containing
 // shell metacharacters cannot inject. Combined output is captured and folded
 // into the returned error so the best-effort caller can log a useful warning.
+//
+// When d.testACLRunner is non-nil (set by tests), it is returned directly so
+// the test can record or stub ACL invocations without a real binary.
 func (d *Daemon) aclRunner() func(name string, args ...string) error {
+	if d.testACLRunner != nil {
+		return d.testACLRunner
+	}
 	return func(name string, args ...string) error {
 		// #nosec G204 -- name is a fixed binary ("setfacl"/"chmod") chosen by
 		// the platform ACL code; args come from the trust record's project dir

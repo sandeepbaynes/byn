@@ -44,23 +44,30 @@ func TestACLGrantCommands_Linux_EmptyHome(t *testing.T) {
 	require.Len(t, cmds, 2)
 }
 
-// TestACLRevokeCommands_Linux asserts the two removals mirror the grant: -x on
-// the project (recursive, which also clears the default entry) and -x on home.
+// TestACLRevokeCommands_Linux asserts three removals: -x on the project access
+// ACL (recursive), -x on the project default ACL (recursive, so newly-created
+// files stop inheriting _byn-exec access), and -x on the home traversal entry.
 func TestACLRevokeCommands_Linux(t *testing.T) {
 	cmds := aclRevokeCommands("/home/o/proj", "/home/o", "_byn-exec")
-	require.Len(t, cmds, 2)
+	require.Len(t, cmds, 3)
 	assert.Equal(t,
 		[]string{"setfacl", "-R", "-x", "u:_byn-exec", "/home/o/proj"},
-		cmds[0])
+		cmds[0], "remove access ACL on project")
+	assert.Equal(t,
+		[]string{"setfacl", "-R", "-x", "d:u:_byn-exec", "/home/o/proj"},
+		cmds[1], "remove default ACL on project")
 	assert.Equal(t,
 		[]string{"setfacl", "-x", "u:_byn-exec", "/home/o"},
-		cmds[1])
+		cmds[2], "remove traversal entry on home")
 }
 
-// TestACLRevokeCommands_Linux_HomeEqualsProject drops the home command.
+// TestACLRevokeCommands_Linux_HomeEqualsProject drops the home command when
+// home == project but still emits both project commands (access + default).
 func TestACLRevokeCommands_Linux_HomeEqualsProject(t *testing.T) {
 	cmds := aclRevokeCommands("/srv/p", "/srv/p", "_byn-exec")
-	require.Len(t, cmds, 1)
+	require.Len(t, cmds, 2)
+	assert.Equal(t, "/srv/p", cmds[0][len(cmds[0])-1], "access ACL targets project")
+	assert.Equal(t, "/srv/p", cmds[1][len(cmds[1])-1], "default ACL targets project")
 }
 
 // TestGrantProjectACL_Linux_RunsAllAndUsesExecUser verifies the exported entry
@@ -93,7 +100,8 @@ func TestGrantProjectACL_Linux_StopsAtFirstError(t *testing.T) {
 	assert.Equal(t, 1, calls, "should stop at the first failing command")
 }
 
-// TestRevokeProjectACL_Linux_RunsAll verifies the revoke entry iterates all.
+// TestRevokeProjectACL_Linux_RunsAll verifies the revoke entry iterates all
+// three commands: access ACL removal, default ACL removal, and home removal.
 func TestRevokeProjectACL_Linux_RunsAll(t *testing.T) {
 	var ran [][]string
 	err := RevokeProjectACL(func(name string, args ...string) error {
@@ -101,8 +109,10 @@ func TestRevokeProjectACL_Linux_RunsAll(t *testing.T) {
 		return nil
 	}, "/home/o/proj", "/home/o")
 	require.NoError(t, err)
-	require.Len(t, ran, 2)
-	assert.Contains(t, ran[0], "u:_byn-exec")
+	require.Len(t, ran, 3)
+	assert.Contains(t, ran[0], "u:_byn-exec", "first cmd removes access ACL")
+	assert.Contains(t, ran[1], "d:u:_byn-exec", "second cmd removes default ACL")
+	assert.Contains(t, ran[2], "u:_byn-exec", "third cmd removes home traversal")
 }
 
 // TestRevokeProjectACL_Linux_StopsAtFirstError mirrors the grant short-circuit.

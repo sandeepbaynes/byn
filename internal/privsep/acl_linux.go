@@ -24,11 +24,17 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 }
 
 // aclRevokeCommands returns the setfacl invocations that remove `user`'s entry
-// from the project dir (recursively, which also clears the default ACL entry)
-// and the execute-only entry on the owner's home. Mirrors aclGrantCommands.
+// from the project dir and the execute-only entry on the owner's home.
+// Two commands target the project dir:
+//  1. Remove the access ACL entry (-x u:<user>).
+//  2. Remove the default ACL entry (-x d:u:<user>) that was set by the -d grant
+//     so that newly-created files no longer inherit _byn-exec access.
+//
+// Mirrors aclGrantCommands.
 func aclRevokeCommands(projectDir, homeDir, user string) [][]string {
 	cmds := [][]string{
 		{"setfacl", "-R", "-x", fmt.Sprintf("u:%s", user), projectDir},
+		{"setfacl", "-R", "-x", fmt.Sprintf("d:u:%s", user), projectDir},
 	}
 	if homeDir != "" && homeDir != projectDir {
 		cmds = append(cmds, []string{"setfacl", "-x", fmt.Sprintf("u:%s", user), homeDir})

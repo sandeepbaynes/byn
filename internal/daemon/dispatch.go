@@ -833,6 +833,10 @@ func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *i
 			results = append(results, ipc.TrustGrantResult{Path: p, Error: perr.Error()})
 			continue
 		}
+		// Privsep: best-effort grant the exec service user access to the project
+		// dir the .byn lives in (no-op when privsep is off; never fails the grant).
+		// Mirrors handleTrustGrant.
+		d.grantProjectACL(p)
 		d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK, BynPath: canon})
 		results = append(results, ipc.TrustGrantResult{
 			Path:            canon,

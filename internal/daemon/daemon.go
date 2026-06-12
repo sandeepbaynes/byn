@@ -169,6 +169,12 @@ type Daemon struct {
 	// fake Spawner directly.
 	spawner privsep.Spawner
 
+	// testACLRunner, when non-nil, replaces the real exec.Command-based ACL
+	// runner returned by aclRunner(). Tests inject a recording function here to
+	// verify that grantProjectACL / revokeProjectACL reach the ACL code path
+	// without requiring a real setfacl/chmod binary.
+	testACLRunner func(name string, args ...string) error
+
 	// vaults holds every Store the daemon has opened in this process
 	// lifetime. Entries persist until Shutdown — locking a vault zeros
 	// the in-memory key (via vault.Store.Lock) but keeps the *Store so
