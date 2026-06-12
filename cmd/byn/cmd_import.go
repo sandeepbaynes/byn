@@ -41,7 +41,7 @@ func runImport(args []string, scope cliScope) int {
 	replace := fs.Bool("replace", false, "destructive: wipe every existing key in the scope before importing")
 	yes := fs.Bool("yes", false, "skip the confirmation prompt for --replace")
 	pwStdin := fs.Bool("password-stdin", false,
-		"if [security] per_action_auth is on, read the master password from stdin (non-interactive)")
+		"read the master password from stdin for non-interactive authorization")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -141,10 +141,10 @@ func runImport(args []string, scope cliScope) int {
 	}
 
 	// Shared auth state for both the wipe loop and the put loop.
-	// Both loops are auth-gated (per_action_auth). The password is read from
-	// stdin at most once — whichever loop first hits auth_required acquires it,
-	// and the other loop reuses the already-acquired bytes rather than trying to
-	// drain stdin a second time (which would produce an empty read).
+	// Both loops are auth-gated. The password is read from stdin at most once
+	// — whichever loop first hits auth_required acquires it, and the other
+	// loop reuses the already-acquired bytes rather than trying to drain stdin
+	// a second time (which would produce an empty read).
 	var sharedPw []byte
 	var sharedPwWipeFn func()
 	sharedPwAcquired := false
@@ -152,7 +152,7 @@ func runImport(args []string, scope cliScope) int {
 		if sharedPwAcquired {
 			return nil
 		}
-		leadIn := yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+		leadIn := yellow("Authorization required.") + dim(" Enter the master password to authorize.")
 		var perr error
 		sharedPw, sharedPwWipeFn, perr = authorizingPasswordWithLeadIn(*pwStdin, leadIn)
 		if perr != nil {

@@ -100,12 +100,12 @@ func TestPolicyFor_NoStoreFile(t *testing.T) {
 	}
 }
 
-// ---- test 1: policy get="none" + flag ON → free ----------------------------
+// ---- test 1: policy get="none" → free regardless of session state ----------
 
 // TestPolicyGet_None_FlagOn_FreeGet verifies that a trusted .byn with
-// [auth] get="none" makes get free even when per_action_auth is ON.
+// [auth] get="none" makes get free regardless of session state.
 func TestPolicyGet_None_FlagOn_FreeGet(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -158,12 +158,12 @@ func TestPolicyGet_None_DifferentProject_StillGated(t *testing.T) {
 	}
 }
 
-// ---- test 3: policy delete="always" + flag OFF → gated --------------------
+// ---- test 3: policy delete="always" → gated unconditionally ----------------
 
 // TestPolicyDelete_Always_FlagOff_Gated verifies that delete is gated when
-// [auth] delete="always" even with per_action_auth OFF.
+// [auth] delete="always" regardless of session state.
 func TestPolicyDelete_Always_FlagOff_Gated(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -175,7 +175,7 @@ func TestPolicyDelete_Always_FlagOff_Gated(t *testing.T) {
 		t.Fatalf("grant: %v", err)
 	}
 
-	// Delete without creds → auth_required (policy always, even though flag is off).
+	// Delete without creds → auth_required (policy always, unconditionally).
 	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "KEY"}, &ipc.DeleteResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
 		t.Fatalf("delete flag-off policy-always: code = %v, want auth_required", code)
@@ -376,9 +376,9 @@ func TestPolicyFor_SameSpecificity_StrictestWins(t *testing.T) {
 // ---- test 9: rename maps to "update" --------------------------------------
 
 // TestPolicyRename_Update_None_FlagOn_Free verifies that [auth] update="none"
-// makes rename free even when per_action_auth is ON (rename maps to "update").
+// makes rename free regardless of session state (rename maps to "update").
 func TestPolicyRename_Update_None_FlagOn_Free(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -396,9 +396,9 @@ func TestPolicyRename_Update_None_FlagOn_Free(t *testing.T) {
 // ---- test 10: env.clear maps to "delete" ----------------------------------
 
 // TestPolicyEnvClear_Delete_None_FlagOn_Free verifies that [auth] delete="none"
-// makes env.clear free even when per_action_auth is ON (env.clear maps to "delete").
+// makes env.clear free regardless of session state (env.clear maps to "delete").
 func TestPolicyEnvClear_Delete_None_FlagOn_Free(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -526,12 +526,12 @@ func TestPolicyFor_AlteredVKMACField_Ignored(t *testing.T) {
 	}
 }
 
-// ---- structural ops: vault.delete with policy "delete=always" flag OFF -----
+// ---- structural ops: vault.delete with policy "delete=always" ------------
 
 // TestPolicyVaultDelete_Always_FlagOff_Gated verifies that vault.delete is gated
-// when policy says delete="always" even with per_action_auth OFF.
+// when policy says delete="always" regardless of session state.
 func TestPolicyVaultDelete_Always_FlagOff_Gated(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -579,10 +579,10 @@ func TestPolicyVaultDelete_Always_FlagOff_Gated(t *testing.T) {
 // policyFor is never consulted for ad-hoc exec.
 
 // TestAdHocExec_PolicyNone_GarbagePassword_WrongPassword verifies that when
-// per_action_auth is ON and a trusted .byn in the same scope has exec="none",
-// ad-hoc exec with garbage password returns CodeWrongPassword (NOT free).
+// a trusted .byn in the same scope has exec="none", ad-hoc exec with garbage
+// password returns CodeWrongPassword (NOT free — policy never applies to ad-hoc).
 func TestAdHocExec_PolicyNone_GarbagePassword_WrongPassword(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "SECRET", []byte("s3cret"))
@@ -604,11 +604,11 @@ func TestAdHocExec_PolicyNone_GarbagePassword_WrongPassword(t *testing.T) {
 	}
 }
 
-// TestAdHocExec_PolicyNone_NoCreds_AuthRequired verifies that when per_action_auth
-// is ON and a trusted .byn in the same scope has exec="none", ad-hoc exec with
-// no credentials returns CodeAuthRequired (NOT free).
+// TestAdHocExec_PolicyNone_NoCreds_AuthRequired verifies that when a trusted .byn
+// in the same scope has exec="none", ad-hoc exec with no credentials returns
+// CodeAuthRequired (NOT free — policy never applies to ad-hoc exec).
 func TestAdHocExec_PolicyNone_NoCreds_AuthRequired(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "SECRET", []byte("s3cret"))
@@ -702,9 +702,9 @@ func TestAuthExecNone_EnvAllowlistEnforced(t *testing.T) {
 
 // TestPolicyVaultDelete_Always_FlagOff_RealVaultOp verifies that vault.delete
 // on a named vault is gated by delete="always" in a trusted .byn record on
-// THAT vault, even with per_action_auth OFF.
+// THAT vault, regardless of session state.
 func TestPolicyVaultDelete_Always_FlagOff_RealVaultOp(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -725,10 +725,10 @@ func TestPolicyVaultDelete_Always_FlagOff_RealVaultOp(t *testing.T) {
 		t.Fatalf("grant on acme: %v", err)
 	}
 
-	// vault.delete "acme" without creds → auth_required (policy always, flag off).
+	// vault.delete "acme" without creds → auth_required (policy always, unconditionally).
 	err := c.Call(ipc.OpVaultDelete, ipc.VaultDeleteReq{Name: "acme"}, &ipc.VaultDeleteResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("vault.delete policy-always flag-off no creds: code = %v, want auth_required", code)
+		t.Fatalf("vault.delete policy-always no creds: code = %v, want auth_required", code)
 	}
 
 	// vault.delete "acme" with correct password → succeeds.
@@ -739,9 +739,9 @@ func TestPolicyVaultDelete_Always_FlagOff_RealVaultOp(t *testing.T) {
 
 // TestPolicyVaultRename_Always_FlagOff_RealVaultOp verifies that vault.rename
 // on a named vault is gated by update="always" in a trusted .byn record on
-// THAT vault, even with per_action_auth OFF.
+// THAT vault, regardless of session state.
 func TestPolicyVaultRename_Always_FlagOff_RealVaultOp(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -778,10 +778,10 @@ func TestPolicyVaultRename_Always_FlagOff_RealVaultOp(t *testing.T) {
 // ---- env.delete maps to "delete" key -------------------------------------
 
 // TestPolicyEnvDelete_Delete_None_FlagOn_Free verifies that [auth] delete="none"
-// makes env.delete free even when per_action_auth is ON (env.delete maps to
+// makes env.delete free regardless of session state (env.delete maps to
 // the "delete" action key, same as entry delete and env.clear).
 func TestPolicyEnvDelete_Delete_None_FlagOn_Free(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -808,9 +808,9 @@ func TestPolicyEnvDelete_Delete_None_FlagOn_Free(t *testing.T) {
 }
 
 // TestPolicyEnvDelete_Delete_Always_FlagOff_Gated verifies that [auth]
-// delete="always" gates env.delete even with per_action_auth OFF.
+// delete="always" gates env.delete unconditionally, regardless of session state.
 func TestPolicyEnvDelete_Delete_Always_FlagOff_Gated(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -844,13 +844,13 @@ func TestPolicyEnvDelete_Delete_Always_FlagOff_Gated(t *testing.T) {
 	}
 }
 
-// ---- overwrite-put maps to "update": flag-off enforcement ------------------
+// ---- overwrite-put maps to "update" ----------------------------------------
 
 // TestPolicyPut_Update_Always_FlagOff_NoCreds_AuthRequired verifies that
-// [auth] update="always" gates overwrite-put even with per_action_auth OFF
-// when no credentials are supplied.
+// [auth] update="always" gates overwrite-put unconditionally when no
+// credentials are supplied.
 func TestPolicyPut_Update_Always_FlagOff_NoCreds_AuthRequired(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -862,17 +862,17 @@ func TestPolicyPut_Update_Always_FlagOff_NoCreds_AuthRequired(t *testing.T) {
 		t.Fatalf("grant: %v", err)
 	}
 
-	// Overwrite without creds → auth_required (policy always, even though flag is off).
+	// Overwrite without creds → auth_required (policy always, unconditionally).
 	err := c.Call(ipc.OpPut, ipc.PutReq{Name: "KEY", Value: []byte("v2")}, &ipc.PutResp{})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("overwrite flag-off policy-always no creds: code = %v, want auth_required", code)
+		t.Fatalf("overwrite policy-always no creds: code = %v, want auth_required", code)
 	}
 }
 
 // TestPolicyPut_Update_Always_FlagOff_WrongPassword_Rejected verifies that a
-// wrong password is rejected under update="always" even with per_action_auth OFF.
+// wrong password is rejected under update="always" unconditionally.
 func TestPolicyPut_Update_Always_FlagOff_WrongPassword_Rejected(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -939,12 +939,12 @@ func TestPolicyPut_Update_Always_FlagOff_InsertStaysFree(t *testing.T) {
 	}
 }
 
-// ---- overwrite-put maps to "update" ----------------------------------------
+// ---- overwrite-put update="none" → free regardless of session state --------
 
 // TestPolicyPut_Update_None_FlagOn_Free verifies that [auth] update="none"
-// makes overwrite-put free even when per_action_auth is ON.
+// makes overwrite-put free regardless of session state.
 func TestPolicyPut_Update_None_FlagOn_Free(t *testing.T) {
-	d, c := startPerActionDaemonWithClient(t) // flag ON
+	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 

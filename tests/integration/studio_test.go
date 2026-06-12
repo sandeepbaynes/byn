@@ -422,49 +422,28 @@ func TestStudio_ExecE2E_AuthCase(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// config.set flips per_action_auth live; a gated GET starts prompting
+// config.set with per_action_auth is rejected as unknown key
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestStudio_ConfigSet_FlipsPerActionAuth confirms that config.set with a
-// valid password writes and reloads the config: per_action_auth flips live
-// and a subsequent entry reveal is gated (auth_required).
+// TestStudio_ConfigSet_FlipsPerActionAuth confirms that config.set with
+// per_action_auth = true in the content is rejected (strict TOML parser:
+// per_action_auth is an unknown key now that the field has been removed).
 func TestStudio_ConfigSet_FlipsPerActionAuth(t *testing.T) {
-	s, c := bootstrapStudio(t)
+	_, c := bootstrapStudio(t)
 
-	// Store a secret before enabling per_action_auth.
-	if _, se, code := s.run("hunter2", "put", "SECRET_KEY"); code != 0 {
-		t.Fatalf("put SECRET_KEY: code=%d stderr=%q", code, se)
-	}
-
-	// Enable per_action_auth via config.set.
+	// Attempt to set config with per_action_auth — must fail with a validation error.
 	newContent := "[security]\nper_action_auth = true\n"
 	var setResp ipc.ConfigSetResp
-	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
+	setErr := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
 		Content:  []byte(newContent),
 		Password: []byte(studioPW),
-	}, &setResp); err != nil {
-		t.Fatalf("config.set: %v", err)
+	}, &setResp)
+	if setErr == nil {
+		t.Fatal("config.set with per_action_auth = true: expected error (unknown key), got nil")
 	}
-
-	// config.get should now return the new content.
-	var getResp ipc.ConfigGetResp
-	if err := c.Call(ipc.OpConfigGet, ipc.ConfigGetReq{}, &getResp); err != nil {
-		t.Fatalf("config.get after set: %v", err)
-	}
-	if !strings.Contains(string(getResp.Content), "per_action_auth") {
-		t.Fatalf("config after set missing per_action_auth; got: %q", getResp.Content)
-	}
-
-	// A reveal call without a password or token must now return auth_required
-	// (per_action_auth is live).
-	revealErr := c.Call(ipc.OpGet, ipc.GetReq{
-		Scope: ipc.Scope{Vault: "default"},
-		Name:  "SECRET_KEY",
-	}, &ipc.GetResp{})
-	if revealErr == nil {
-		t.Fatal("expected auth_required after enabling per_action_auth; got success")
-	}
-	if !strings.Contains(revealErr.Error(), string(ipc.CodeAuthRequired)) {
-		t.Fatalf("expected auth_required error; got: %v", revealErr)
+	// The strict TOML parser says "strict mode: fields in the document are
+	// missing in the target struct" — it does not embed the field name.
+	if !strings.Contains(setErr.Error(), "strict mode") && !strings.Contains(setErr.Error(), "unknown") {
+		t.Fatalf("error %q does not indicate a strict/unknown-key parse failure", setErr.Error())
 	}
 }

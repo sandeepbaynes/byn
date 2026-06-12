@@ -89,7 +89,7 @@ func httpStatusForCode(code ipc.ErrCode) int {
 	case ipc.CodeLocked:
 		return http.StatusLocked // 423 — vault locked, re-unlock
 	case ipc.CodeAuthRequired:
-		return http.StatusUnauthorized // 401 — per_action_auth gate: supply password/presence_token
+		return http.StatusUnauthorized // 401 — auth gate: supply password/presence_token or session
 	case ipc.CodeWrongPassword:
 		return http.StatusUnauthorized
 	case ipc.CodeRateLimited:

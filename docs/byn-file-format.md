@@ -25,7 +25,7 @@ actions = [
 ]
 
 [auth]
-get = "none"   # optional: override [security] per_action_auth per-op
+get = "none"   # optional: override the session gate per-op
 
 [aliases]
 deploy  = "kubectl apply -f deploy/"
@@ -51,10 +51,10 @@ migrate = "python manage.py migrate"
   Actions policy is read from the MAC-bound trust record (not the live
   file) — editing the `.byn` post-trust cannot change the effective
   policy without re-trusting.
-- `[auth]` keys (`get`, `update`, `delete`, `exec`) override the global
-  `[security] per_action_auth` flag for this scope. Values: `"always"`
-  (tightens, always requires fresh auth), `"none"` (relaxes, skips the
-  gate), or absent (flag decides). See [CLI reference](cli-reference.md)
+- `[auth]` keys (`get`, `update`, `delete`, `exec`) override the session
+  gate for this scope. Values: `"always"` (tightens, always requires fresh
+  auth even with an active session), `"none"` (relaxes, skips the gate
+  entirely), or absent (session gate decides). See [CLI reference](cli-reference.md)
   for the full policy semantics.
 - **`[aliases]`** is a string-to-string map of named entry points for
   `byn exec NAME [ARGS...]`. See [`[aliases]` section](#aliases-section) below.

@@ -201,7 +201,7 @@ const (
 
 	// Exec / per-action authorization (NU-1).
 	CodeTrustDenied  ErrCode = "trust_denied"  // .byn untrusted/changed/tampered — exec blocked
-	CodeAuthRequired ErrCode = "auth_required" // [security] per_action_auth gate: supply password/presence token
+	CodeAuthRequired ErrCode = "auth_required" // auth gate: supply password/presence token or session
 
 	// Project / env.
 	CodeProjectNotFound ErrCode = "project_not_found"
@@ -480,7 +480,7 @@ type PutReq struct {
 	Name       string `json:"name"`
 	Value      []byte `json:"value"`
 	CreateOnly bool   `json:"create_only,omitempty"`
-	// Password authorizes the write when [security] per_action_auth is on
+	// Password authorizes the write when no session is present
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
 	Password      []byte `json:"password,omitempty"`
@@ -495,7 +495,7 @@ type PutResp struct{}
 type GetReq struct {
 	Scope Scope  `json:"scope,omitempty"`
 	Name  string `json:"name"`
-	// Password authorizes the read when [security] per_action_auth is on
+	// Password authorizes the read when no session is present
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
 	Password      []byte `json:"password,omitempty"`
@@ -536,9 +536,9 @@ type SecretMeta struct {
 	// overhead is deterministic: 1 + 24 + 16 = 41 bytes for empty plaintext),
 	// so no decryption or audit "get" event fires.
 	// Note: the List response (and therefore this field) is always gated by
-	// the portal token; when [security] per_action_auth is on, the daemon
-	// additionally gates individual Get/Update/Delete actions but the listing
-	// of names + empty-indicator is not separately auth-gated.
+	// the portal token; individual Get/Update/Delete actions require a session
+	// or fresh credentials, but the listing of names + empty-indicator is not
+	// separately auth-gated.
 	Empty *bool `json:"empty,omitempty"`
 }
 
@@ -576,7 +576,7 @@ type RenameReq struct {
 	Scope   Scope  `json:"scope,omitempty"`
 	OldName string `json:"old_name"`
 	NewName string `json:"new_name"`
-	// Password authorizes the rename when [security] per_action_auth is on
+	// Password authorizes the rename when no session is present
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
 	Password      []byte `json:"password,omitempty"`
@@ -846,9 +846,9 @@ type TrustVerifyResp struct {
 // scope at a different vault fails verification.
 //
 // Password and PresenceToken are only consulted when Path="" (ad-hoc exec)
-// and [security] per_action_auth is on, OR when Path!="" and the command is
-// not pinned in [exec] actions (NU-2). Trusted-.byn exec with a matched action
-// is credential-free — both the .byn AND the matching pinned command authorize.
+// and no session is present, OR when Path!="" and the command is not pinned
+// in [exec] actions (NU-2). Trusted-.byn exec with a matched action is
+// credential-free — both the .byn AND the matching pinned command authorize.
 //
 // Alias/Argv semantics (NU-2.1):
 //
@@ -873,8 +873,8 @@ type ExecFetchReq struct {
 	// The daemon expands the alias value + Argv into the resolved argv, then
 	// gates that through the normal [exec] actions pattern matrix.
 	Alias string `json:"alias,omitempty"`
-	// Password authorizes ad-hoc exec when [security] per_action_auth is on,
-	// and trusted-path exec when the command is not pinned in [exec] actions
+	// Password authorizes ad-hoc exec when no session is present, and
+	// trusted-path exec when the command is not pinned in [exec] actions
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
 	Password      []byte `json:"password,omitempty"`
@@ -1036,8 +1036,6 @@ type ConfigParsed struct {
 	IdleTimeout string `json:"idle_timeout"`
 	// RevealHideAfter mirrors [ui] reveal_hide_after as a Go duration string ("15s").
 	RevealHideAfter string `json:"reveal_hide_after"`
-	// PerActionAuth mirrors [security] per_action_auth.
-	PerActionAuth bool `json:"per_action_auth"`
 }
 
 // ConfigGetResp returns the raw config file bytes and the path.
@@ -1056,7 +1054,7 @@ type ConfigGetResp struct {
 
 // ConfigSetReq writes new config content and triggers a live reload.
 // Credential-gated (master password or presence token) because config can
-// enable/disable the portal port and per-action auth — daemon-global impact.
+// enable/disable the portal port — daemon-global impact.
 type ConfigSetReq struct {
 	Content       []byte `json:"content"`
 	Password      []byte `json:"password,omitempty"`

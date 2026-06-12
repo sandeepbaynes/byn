@@ -88,18 +88,6 @@ type Daemon struct {
 
 // Security configures the NU-track per-action authorization gates.
 type Security struct {
-	// PerActionAuth is a DEPRECATED flag. The NU-3 session matrix is always
-	// active regardless of this value — sessions (minted by unlock) provide
-	// the per-action ergonomics. The flag is kept as a *bool so the daemon
-	// can detect whether it was explicitly set in the config file (nil =
-	// absent; non-nil = user set true or false) and emit a deprecation
-	// warning in BOTH cases. Operators should remove it from the config.
-	//
-	// Formerly: required fresh auth (password/token) per operation while
-	// unlocked. That semantics now applies unconditionally via the session
-	// gate (session OR fresh credentials); per_action_auth is a no-op.
-	PerActionAuth *bool `toml:"per_action_auth"`
-
 	// SessionTTL is the absolute lifetime of a minted session (from creation
 	// time). 0 disables the absolute-TTL check (sessions are bounded only by
 	// the idle window and explicit lock/end calls). Default: 12h.
@@ -120,9 +108,8 @@ func Default() Config {
 		UI:     UI{Enabled: true, Port: DefaultUIPort, RevealHideAfter: Duration(DefaultRevealHideAfter)},
 		Daemon: Daemon{IdleTimeout: Duration(DefaultIdleTimeout)},
 		Security: Security{
-			PerActionAuth: nil, // absent → no deprecation warning
-			SessionTTL:    Duration(DefaultSessionTTL),
-			SessionIdle:   0, // 0 ⇒ inherit [daemon] idle_timeout at runtime
+			SessionTTL:  Duration(DefaultSessionTTL),
+			SessionIdle: 0, // 0 ⇒ inherit [daemon] idle_timeout at runtime
 		},
 	}
 }

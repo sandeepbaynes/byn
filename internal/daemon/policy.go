@@ -5,13 +5,13 @@ package daemon
 // policyFor resolves the effective [auth] policy map for a given vault + scope
 // by examining every trusted record whose VKMAC verifies under the vault's
 // current key. It is called by authorizeAction (the per-action gate) to allow
-// trusted .byn files to override the global [security] per_action_auth flag:
+// trusted .byn files to override the session gate:
 //
 //   - policy[action] == "always" → call authorizeActionAlways unconditionally
-//     (tightens: forces fresh auth even when the flag is off).
-//   - policy[action] == "none"   → skip the gate (relaxes: free even when flag
-//     is on, but ONLY for the matched scope).
-//   - absent or ok==false        → the global flag decides (existing behavior).
+//     (tightens: forces fresh auth even with an active session).
+//   - policy[action] == "none"   → skip the gate (relaxes: free even when no
+//     session is present, but ONLY for the matched scope).
+//   - absent or ok==false        → the session gate decides (existing behavior).
 //
 // Design notes:
 //

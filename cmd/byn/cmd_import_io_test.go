@@ -166,7 +166,7 @@ func registerAuthRequiredThenPut(fd *fakeDaemon) *sync.Map {
 		if len(req.Password) == 0 {
 			return nil, &ipc.ErrMsg{
 				Code:    ipc.CodeAuthRequired,
-				Message: "per_action_auth: password required",
+				Message: "authorization required",
 			}
 		}
 		seen.Store(req.Name, string(req.Value))
@@ -208,7 +208,7 @@ func TestRunImport_WithSessionNoPrompt(t *testing.T) {
 }
 
 // TestRunImport_PasswordStdinAttachedToEveryPut verifies that when
-// --password-stdin is set and the daemon requires per_action_auth,
+// --password-stdin is set and the daemon returns auth_required,
 // import reads the password once from stdin and attaches it to every
 // subsequent put call (including the retry for the first entry).
 func TestRunImport_PasswordStdinAttachedToEveryPut(t *testing.T) {

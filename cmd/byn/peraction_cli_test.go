@@ -14,7 +14,7 @@ func authRequiredThenOK(okBody any) func([]byte) (any, *ipc.ErrMsg) {
 	return func([]byte) (any, *ipc.ErrMsg) {
 		if first {
 			first = false
-			return nil, &ipc.ErrMsg{Code: ipc.CodeAuthRequired, Message: "per_action_auth: password required"}
+			return nil, &ipc.ErrMsg{Code: ipc.CodeAuthRequired, Message: "authorization required"}
 		}
 		return okBody, nil
 	}
@@ -27,7 +27,7 @@ func authRequiredThenLocked() func([]byte) (any, *ipc.ErrMsg) {
 	return func([]byte) (any, *ipc.ErrMsg) {
 		if first {
 			first = false
-			return nil, &ipc.ErrMsg{Code: ipc.CodeAuthRequired, Message: "per_action_auth: password required"}
+			return nil, &ipc.ErrMsg{Code: ipc.CodeAuthRequired, Message: "authorization required"}
 		}
 		return nil, &ipc.ErrMsg{Code: ipc.CodeLocked, Message: "vault is locked", Recover: "byn unlock"}
 	}
@@ -39,7 +39,7 @@ func authRequiredThenWrongPassword() func([]byte) (any, *ipc.ErrMsg) {
 	return func([]byte) (any, *ipc.ErrMsg) {
 		if first {
 			first = false
-			return nil, &ipc.ErrMsg{Code: ipc.CodeAuthRequired, Message: "per_action_auth: password required"}
+			return nil, &ipc.ErrMsg{Code: ipc.CodeAuthRequired, Message: "authorization required"}
 		}
 		return nil, &ipc.ErrMsg{Code: ipc.CodeWrongPassword, Message: "wrong password"}
 	}
@@ -107,8 +107,8 @@ func TestGetAuthRequiredPasswordStdin(t *testing.T) {
 }
 
 // TestGetAuthRequiredJSONModeHardFails: when --json is set, get must never
-// prompt; it must fail with an actionable message naming per_action_auth and
-// --password-stdin, and return non-zero.
+// prompt; it must fail with an actionable message mentioning authorization
+// and --password-stdin, and return non-zero.
 func TestGetAuthRequiredJSONModeHardFails(t *testing.T) {
 	fd := startFakeDaemon(t)
 	fd.on(ipc.OpGet, authRequiredThenOK(ipc.GetResp{Value: []byte("val")}))
@@ -119,8 +119,8 @@ func TestGetAuthRequiredJSONModeHardFails(t *testing.T) {
 	if rc == exitOK {
 		t.Fatalf("json mode should fail on auth_required, got exitOK")
 	}
-	if !strings.Contains(errOut, "per_action_auth") {
-		t.Errorf("stderr = %q, want per_action_auth mentioned", errOut)
+	if !strings.Contains(errOut, "authorization") {
+		t.Errorf("stderr = %q, want authorization mentioned", errOut)
 	}
 	if !strings.Contains(errOut, "--password-stdin") {
 		t.Errorf("stderr = %q, want --password-stdin mentioned", errOut)
@@ -132,7 +132,7 @@ func TestGetAuthRequiredJSONModeHardFails(t *testing.T) {
 	}
 }
 
-// TestGetAuthRequiredThenLockedRendersUnlockHint: per_action_auth on + vault
+// TestGetAuthRequiredThenLockedRendersUnlockHint: auth_required then vault
 // locked. First call → auth_required; retry (with pw) → locked. The locked
 // error should be rendered with the unlock hint (not an infinite loop).
 func TestGetAuthRequiredThenLockedRendersUnlockHint(t *testing.T) {
@@ -448,9 +448,9 @@ func TestExecAdHocAuthRequired_NonTTY_FailsFast(t *testing.T) {
 	if rc != exitDaemonErr {
 		t.Fatalf("non-TTY auth_required exec = rc %d, want exitDaemonErr (%d)", rc, exitDaemonErr)
 	}
-	// Error message should mention per_action_auth or ad-hoc exec being gated.
-	if !strings.Contains(errOut, "per_action_auth") && !strings.Contains(errOut, "requires authorization") {
-		t.Errorf("stderr = %q, want per_action_auth / requires authorization mentioned", errOut)
+	// Error message should mention authorization or ad-hoc exec being gated.
+	if !strings.Contains(errOut, "authorization") && !strings.Contains(errOut, "requires authorization") {
+		t.Errorf("stderr = %q, want authorization mentioned", errOut)
 	}
 	// Hint must mention .byn as the credential-free alternative.
 	if !strings.Contains(errOut, ".byn") {

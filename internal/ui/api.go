@@ -295,7 +295,7 @@ func (s *Server) handleEnvs(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/project/delete {vault, name, password?, presence_token?}. Password
 // (or presence_token) authorizes the delete when the vault is locked or when
-// [security] per_action_auth is on (one-shot verify, no unlock).
+// when no session is present (one-shot verify, no unlock).
 func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Vault         string `json:"vault"`
@@ -336,7 +336,7 @@ func (s *Server) handleEnvDelete(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/vault/delete {name, password?, presence_token?} — the default
 // vault is protected; a locked vault can be deleted by supplying the password
-// (or presence_token when [security] per_action_auth is on).
+// (or presence_token when no session is present).
 func (s *Server) handleVaultDelete(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Name          string `json:"name"`
@@ -441,7 +441,7 @@ func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/entry/delete {scope, name, password?, presence_token?}. Password
 // (or presence_token) authorizes the delete when the vault is locked or when
-// [security] per_action_auth is on (one-shot verify, no unlock).
+// when no session is present (one-shot verify, no unlock).
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Scope         scopeBody `json:"scope"`
@@ -461,8 +461,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/entry/rename {scope, old_name, new_name, password?, presence_token?}.
-// When [security] per_action_auth is on the daemon requires a master password
-// or presence_token to authorize the rename.
+// The daemon requires a master password or presence_token when no session is present.
 func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Scope         scopeBody `json:"scope"`
@@ -523,7 +522,7 @@ func (s *Server) handleEnvRename(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/vault/rename {old_name, new_name, password?, presence_token?} — Password
 // (or presence_token) authorizes the rename when the vault is locked or when
-// [security] per_action_auth is on (one-shot verify, no unlock). The vault is
+// when no session is present (one-shot verify, no unlock). The vault is
 // left locked after rename.
 func (s *Server) handleVaultRename(w http.ResponseWriter, r *http.Request) {
 	var b struct {

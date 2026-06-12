@@ -29,12 +29,6 @@ func daemonConfigFor(dir string) (daemon.Config, error) {
 	if err != nil {
 		return daemon.Config{}, err
 	}
-	if cfg.Security.PerActionAuth != nil {
-		fmt.Fprintf(os.Stderr,
-			"byn: deprecated config: [security] per_action_auth is always on; "+
-				"sessions provide ergonomics (run `byn unlock`). "+
-				"Remove per_action_auth from your config file.\n")
-	}
 	return daemon.Config{
 		Dir:         dir,
 		Version:     version,

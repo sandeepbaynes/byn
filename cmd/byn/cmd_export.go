@@ -6,15 +6,12 @@
 // the user is responsible for the destination — same caveat as
 // `byn get` writing to stdout.
 //
-// When [security] per_action_auth is on, each get requires a master
-// password. Use --password-stdin to read it once and reuse for every
-// entry. Without --password-stdin, on the first auth_required the CLI
-// prompts once interactively and reuses the same password for all
-// subsequent gets. Each entry re-verifies the password (Argon2id), so
-// NU-3 sessions are now in place: newClient loads the session token from
-// disk and threads it through every Get, so with an active session zero
-// auth prompts fire. The per-entry password path is retained for the
-// sessionless / per_action_auth case.
+// NU-3 sessions: newClient loads the session token from disk and threads
+// it through every Get, so with an active session zero auth prompts fire.
+// Without a session (sessionless path), use --password-stdin to read the
+// master password once and reuse for every entry. Without --password-stdin,
+// on the first auth_required the CLI prompts once interactively and reuses
+// the same password for all subsequent gets.
 package main
 
 import (
@@ -36,7 +33,7 @@ func runExport(args []string, scope cliScope) int {
 	format := fs.String("format", "env", "output format: env|yaml|json")
 	output := fs.String("output", "-", "output path or '-' for stdout")
 	pwStdin := fs.Bool("password-stdin", false,
-		"if [security] per_action_auth is on, read the master password from stdin (non-interactive)")
+		"read the master password from stdin for non-interactive authorization")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -54,7 +51,7 @@ func runExport(args []string, scope cliScope) int {
 		return handleCallError(err)
 	}
 
-	// Fetch each entry's value, handling per_action_auth transparently.
+	// Fetch each entry's value, handling auth gates transparently.
 	// Strategy: try the first get with no password; on auth_required, read the
 	// password once and reuse it for the remainder of the loop.
 	var pw []byte       // nil until first auth_required
@@ -74,7 +71,7 @@ func runExport(args []string, scope cliScope) int {
 		err := client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name, Password: pw}, &got)
 		if err != nil && isAuthRequiredErr(err) && !pwAcquired {
 			// First auth_required: acquire the password once.
-			leadIn := yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+			leadIn := yellow("Authorization required.") + dim(" Enter the master password to authorize.")
 			var perr error
 			pw, wipePw, perr = authorizingPasswordWithLeadIn(*pwStdin, leadIn)
 			if perr != nil {

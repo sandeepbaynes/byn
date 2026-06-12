@@ -10,9 +10,10 @@
 //     changed" → re-trust → exec works again.
 //  3. Content diff e2e: modify .byn → `byn trust diff` exits 1 and prints
 //     ±diff lines → re-trust → exec works.
-//  4. Policy e2e: per_action_auth=true daemon; .byn with [auth] get = "none"
-//     trusted for one scope → `byn get` in that scope succeeds with NO password;
-//     same get in ANOTHER project still fails (non-TTY, no password).
+//  4. Policy e2e: .byn with [auth] get = "none" trusted for one scope →
+//     `byn get` in that scope succeeds with NO password (NU-3 session gate
+//     is always active; policy overrides it); same get in ANOTHER project
+//     still fails (non-TTY, no session, no password).
 //  5. Malformed grant refusal: `byn trust` of an invalid-TOML .byn exits nonzero,
 //     stderr names the parse problem, and the file is NOT in `byn trust list`.
 //  6. v1-migration note check: not automatable with a fresh store (no v1 records);
@@ -212,20 +213,14 @@ func TestNU2_ContentDiff_E2E(t *testing.T) {
 // --------------------------------------------------------------------------
 // Test 4 — Policy e2e
 //
-// per_action_auth=true daemon; .byn with [auth] get = "none" trusted for
-// scope "alpha" → `byn get DB_URL` in that scope succeeds with NO password
-// (non-TTY, no --password-stdin).  A `byn get` targeting a DIFFERENT project
-// still fails (non-TTY, no password supplied).
+// The NU-3 session gate is always active. A .byn with [auth] get = "none"
+// trusted for scope "alpha" → `byn get DB_URL` in that scope succeeds with
+// NO password (non-TTY, no --password-stdin).  A `byn get` in a DIFFERENT
+// project without a session still fails (non-TTY, no password supplied).
 // --------------------------------------------------------------------------
 
 func TestNU2_Policy_GetNone_E2E(t *testing.T) {
 	s := newSession(t)
-
-	// Write per_action_auth = true into the config BEFORE starting the daemon.
-	cfgBody := "[security]\nper_action_auth = true\n"
-	if err := os.WriteFile(filepath.Join(s.dir, "config"), []byte(cfgBody), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
 
 	if _, se, code := s.run("", "daemon", "start"); code != 0 {
 		t.Fatalf("daemon start: code=%d stderr=%q", code, se)
@@ -283,8 +278,7 @@ func TestNU2_Policy_GetNone_E2E(t *testing.T) {
 	// `byn get OTHER_KEY` in the default scope — lock the vault first to clear
 	// all active sessions (NU-3: lock invalidates session tokens). Without a
 	// session and without a password, the NU-3 auth gate returns auth_required
-	// and the command fails.  This verifies the default matrix (session OR
-	// fresh credentials) rather than the deprecated per_action_auth flag.
+	// and the command fails.
 	if _, _, lockCode := s.run("", "lock"); lockCode != 0 {
 		t.Fatalf("lock: code=%d", lockCode)
 	}

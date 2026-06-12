@@ -204,7 +204,7 @@ func (m Model) renderAuthRequired() string {
 	title := m.styles.ModeConfirm.Render("Authorize")
 
 	// Subtitle: render the daemon's cause message. This is already
-	// human-readable (e.g. "[security] per_action_auth is on" or the
+	// human-readable (e.g. the daemon's auth gate message or the
 	// .byn [auth] policy message).
 	cause := ar.Cause
 	if cause == "" {

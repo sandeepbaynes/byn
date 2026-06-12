@@ -1113,9 +1113,9 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	// for a non-default env scope — inserting an override stays free.
 	//
 	// This unconditional flow means the [auth] update="always" policy is
-	// enforced even when the per_action_auth flag is OFF — authorizeAction
-	// consults the policy first and returns nil when flag is off and no policy
-	// is present, preserving today's flag-off default behaviour exactly.
+	// enforced even when a session is active — authorizeAction consults the
+	// policy first and returns nil when no policy is present and a valid
+	// session exists, preserving default session behaviour exactly.
 	//
 	// NU-3 security: when the vault is locked, the daemon must not reveal vault
 	// lock state to unauthenticated callers. Gate inserts behind auth when locked
@@ -1596,8 +1596,7 @@ func mapProviderErr(id string, err error) *ipc.Envelope {
 //     → a VALID SESSION for the target vault (validated via
 //     callerSession(ctx) + callerInfo UID/TTYDev) OR fresh provider auth
 //     (password / presence token).  Neither → CodeAuthRequired.
-//     THIS IS ALWAYS ON — the [security] per_action_auth flag no longer
-//     controls whether this gate fires; it is permanently enabled.
+//     THIS IS ALWAYS ON — the gate is permanently enabled.
 //
 // Operations that are NEVER satisfied by a session (always require fresh
 // credentials): exec.fetch (stays .byn-contract), trust grant,
@@ -1621,9 +1620,8 @@ func mapProviderErr(id string, err error) *ipc.Envelope {
 //     Contrast with trust.grant, which is proof-of-presence gated because
 //     granting trust is an escalation.
 //
-// The deprecated [security] per_action_auth flag is parsed but ignored;
-// it is logged at daemon start (see daemon.go). EE registers providers
-// here (see project rules: pluggability is mandatory); exported in NU-4.
+// EE registers providers here (see project rules: pluggability is mandatory);
+// exported in NU-4.
 func (d *Daemon) authorizeAction(ctx context.Context, id, vaultName string, scope vault.Scope, st *vault.Store, action string, password, presenceToken []byte) *ipc.Envelope {
 	// Step 1: Consult the [auth] policy from any matching, vk-verified trust record.
 	if policy, ok := d.policyFor(vaultName, scope); ok {
@@ -1657,12 +1655,11 @@ func (d *Daemon) authorizeAction(ctx context.Context, id, vaultName string, scop
 		password, presenceToken)
 }
 
-// authorizeActionAlways verifies credentials UNCONDITIONALLY — the global
-// [security] per_action_auth flag is NOT consulted. This is the gate used for
-// the [exec] actions contract on trusted-.byn exec: the .byn carries its own
-// auth policy that is independent of the global flag. An admin who turns
-// per_action_auth on or off must not silently change the effective policy of
-// already-granted .byn files.
+// authorizeActionAlways verifies credentials UNCONDITIONALLY — no session is
+// accepted. This is the gate used for the [exec] actions contract on
+// trusted-.byn exec: the .byn carries its own auth policy that is independent
+// of session state. Session state must not silently change the effective policy
+// of already-granted .byn files.
 //
 // authRequiredMsg and recoverHint are returned in CodeAuthRequired when no
 // credentials are supplied; callers pass context-specific text.

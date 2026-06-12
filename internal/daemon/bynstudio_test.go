@@ -878,9 +878,8 @@ func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 		t.Fatalf("config.get: %v", err)
 	}
 
-	// Set config with per_action_auth = true (deprecated flag — ignored by
-	// the NU-3 matrix but still parseable / storable for user awareness).
-	newContent := "[security]\nper_action_auth = true\n"
+	// Set config with a non-default ui port — exercises the full write+reload cycle.
+	newContent := "[ui]\nenabled = true\nport = 2968\n"
 	var setResp ipc.ConfigSetResp
 	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
 		Content:  []byte(newContent),
@@ -889,13 +888,12 @@ func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 		t.Fatalf("config.set: %v", err)
 	}
 
-	// config.get after set should return the new content (field is stored even
-	// though it is ignored at runtime).
+	// config.get after set should return the new content.
 	if err := c.Call(ipc.OpConfigGet, ipc.ConfigGetReq{}, &getResp); err != nil {
 		t.Fatalf("config.get after set: %v", err)
 	}
-	if !strings.Contains(string(getResp.Content), "per_action_auth") {
-		t.Errorf("config content after set does not contain per_action_auth; got: %s", getResp.Content)
+	if !strings.Contains(string(getResp.Content), "2968") {
+		t.Errorf("config content after set does not contain port 2968; got: %s", getResp.Content)
 	}
 }
 
@@ -1251,9 +1249,6 @@ func TestConfigGet_ParsedDefaults(t *testing.T) {
 	if resp.Parsed.IdleTimeout == "" {
 		t.Error("default IdleTimeout must not be empty")
 	}
-	if resp.Parsed.PerActionAuth {
-		t.Error("default PerActionAuth should be false")
-	}
 }
 
 // TestConfigGet_ParsedValues: when a valid config file is present, Parsed
@@ -1264,7 +1259,7 @@ func TestConfigGet_ParsedValues(t *testing.T) {
 	initUnlocked(t, c, pw)
 
 	// Write a config with non-default values.
-	content := "[ui]\nenabled = false\nport = 3000\n\n[daemon]\nidle_timeout = \"5m\"\n\n[security]\nper_action_auth = true\n"
+	content := "[ui]\nenabled = false\nport = 3000\n\n[daemon]\nidle_timeout = \"5m\"\n"
 	var setResp ipc.ConfigSetResp
 	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
 		Content:  []byte(content),
@@ -1292,9 +1287,6 @@ func TestConfigGet_ParsedValues(t *testing.T) {
 	}
 	if resp.Parsed.IdleTimeout != "5m0s" {
 		t.Errorf("IdleTimeout = %q, want %q", resp.Parsed.IdleTimeout, "5m0s")
-	}
-	if !resp.Parsed.PerActionAuth {
-		t.Error("PerActionAuth should be true after config.set")
 	}
 }
 
@@ -1333,7 +1325,7 @@ func TestConfigValidate_ValidContent(t *testing.T) {
 	_, c := startTestDaemon(t)
 	initUnlocked(t, c, []byte(authzPW))
 
-	content := []byte("[ui]\nenabled = true\nport = 2967\n\n[daemon]\nidle_timeout = \"5m\"\n\n[security]\nper_action_auth = false\n")
+	content := []byte("[ui]\nenabled = true\nport = 2967\n\n[daemon]\nidle_timeout = \"5m\"\n")
 	var resp ipc.ConfigValidateResp
 	if err := c.Call(ipc.OpConfigValidate, ipc.ConfigValidateReq{Content: content}, &resp); err != nil {
 		t.Fatalf("config.validate: %v", err)
@@ -1350,8 +1342,33 @@ func TestConfigValidate_ValidContent(t *testing.T) {
 	if resp.Parsed.IdleTimeout != "5m0s" {
 		t.Errorf("Parsed.IdleTimeout = %q, want \"5m0s\"", resp.Parsed.IdleTimeout)
 	}
-	if resp.Parsed.PerActionAuth {
-		t.Error("Parsed.PerActionAuth should be false")
+}
+
+// TestConfigValidate_PerActionAuthRejected: per_action_auth in config must be
+// rejected as an unknown key — proving the strict parser enforces full removal.
+func TestConfigValidate_PerActionAuthRejected(t *testing.T) {
+	_, c := startTestDaemon(t)
+
+	content := []byte("[security]\nper_action_auth = true\n")
+	var resp ipc.ConfigValidateResp
+	if err := c.Call(ipc.OpConfigValidate, ipc.ConfigValidateReq{Content: content}, &resp); err != nil {
+		t.Fatalf("config.validate: %v", err)
+	}
+	if len(resp.Errors) == 0 {
+		t.Fatal("expected error for per_action_auth (unknown key), got none")
+	}
+	// The strict TOML parser says "strict mode: fields in the document are
+	// missing in the target struct" — it does not embed the field name.
+	// We just need at least one error whose message indicates an unknown-key
+	// (strict mode) failure.
+	found := false
+	for _, e := range resp.Errors {
+		if strings.Contains(e.Message, "strict mode") || strings.Contains(e.Message, "unknown") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors %v do not indicate a strict/unknown-key parse failure", resp.Errors)
 	}
 }
 

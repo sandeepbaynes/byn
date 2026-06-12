@@ -63,7 +63,7 @@ func TestRunVaultRename_BadArgs(t *testing.T) {
 	}
 }
 
-// TestRunVaultRename_AuthRequiredRetries verifies the per_action_auth retry
+// TestRunVaultRename_AuthRequiredRetries verifies the auth-required retry
 // path: first call returns auth_required, retry with password succeeds.
 func TestRunVaultRename_AuthRequiredRetries(t *testing.T) {
 	fd := startFakeDaemon(t)

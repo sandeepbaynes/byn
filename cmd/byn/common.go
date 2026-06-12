@@ -93,7 +93,7 @@ func isLockedErr(err error) bool {
 	return errors.As(err, &er) && er.Code == ipc.CodeLocked
 }
 
-// isAuthRequiredErr reports whether err is the daemon's per_action_auth gate reply.
+// isAuthRequiredErr reports whether err is the daemon's auth gate reply.
 func isAuthRequiredErr(err error) bool {
 	var er *ipc.ErrResponse
 	return errors.As(err, &er) && er.Code == ipc.CodeAuthRequired
@@ -145,7 +145,7 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn unlock"))
 		} else {
 			fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"),
-				red("authorization required ([security] per_action_auth is on)"))
+				red("authorization required"))
 			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Use:"), cyan("--password-stdin"))
 		}
 		return exitErr
@@ -163,7 +163,7 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 	if locked {
 		leadIn = yellow("Vault is locked.") + dim(" Enter the master password to authorize this.")
 	} else {
-		leadIn = yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+		leadIn = yellow("Authorization required.") + dim(" Enter the master password to authorize.")
 	}
 	pw, wipe, perr := authorizingPasswordWithLeadIn(pwStdin, leadIn)
 	if perr != nil {
@@ -184,7 +184,7 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 }
 
 // authorizingPasswordWithLeadIn obtains the master password for a locked-vault
-// or per_action_auth-gated operation. leadIn is printed before the prompt when
+// or auth-gated operation. leadIn is printed before the prompt when
 // stdin is a TTY. The returned wipe func MUST be deferred.
 func authorizingPasswordWithLeadIn(pwStdin bool, leadIn string) (pw []byte, wipe func(), err error) {
 	if pwStdin {

@@ -502,16 +502,11 @@ func (d *Daemon) handleConfigGet(ctx context.Context, env *ipc.Envelope) *ipc.En
 // configParsedFromConfig converts a config.Config into the wire-level
 // ConfigParsed for the portal's visual settings editor.
 func configParsedFromConfig(c config.Config) *ipc.ConfigParsed {
-	perActionAuth := false // absent (nil) → treat as false for the wire format
-	if c.Security.PerActionAuth != nil {
-		perActionAuth = *c.Security.PerActionAuth
-	}
 	return &ipc.ConfigParsed{
 		UIEnabled:       c.UI.Enabled,
 		UIPort:          c.UI.Port,
 		IdleTimeout:     time.Duration(c.Daemon.IdleTimeout).String(),
 		RevealHideAfter: time.Duration(c.UI.RevealHideAfter).String(),
-		PerActionAuth:   perActionAuth,
 	}
 }
 

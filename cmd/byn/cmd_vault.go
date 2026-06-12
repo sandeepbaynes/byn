@@ -231,7 +231,7 @@ func runPut(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("put", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	createOnly := fs.Bool("create-only", false, "fail if name already exists")
-	pwStdin := fs.Bool("password-stdin", false, "if per_action_auth is on, read the authorizing password from stdin")
+	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -319,8 +319,8 @@ func runPut(args []string, scope cliScope) int {
 	if *pwStdin {
 		// Inline retry that uses prereadPw on the auth-required retry instead
 		// of reading from stdin (which now points at the value remainder).
-		// Only retry on CodeAuthRequired (per_action_auth gate) — CodeLocked
-		// is a dead end for put because the vault key must be in memory.
+		// Only retry on CodeAuthRequired — CodeLocked is a dead end for put
+		// because the vault key must be in memory.
 		firstErr := putCall(nil)
 		switch {
 		case firstErr == nil:
@@ -344,7 +344,7 @@ func runGet(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit {name,value} JSON instead of raw")
-	pwStdin := fs.Bool("password-stdin", false, "if per_action_auth is on, read the authorizing password from stdin")
+	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -508,7 +508,7 @@ func runDelete(args []string, scope cliScope) int {
 func runRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	pwStdin := fs.Bool("password-stdin", false, "if per_action_auth is on, read the authorizing password from stdin")
+	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}

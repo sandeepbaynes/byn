@@ -85,7 +85,7 @@ func TestDaemon_RegistryHasPasswordAndPasskeyAfterNew(t *testing.T) {
 // provider's approve decision wins.
 func TestEESeam_FakeApproveProvider(t *testing.T) {
 	dir := shortTempDir(t)
-	// Under NU-3 the authorization gate is always active (no PerActionAuth flag).
+	// The authorization gate is always active under the NU-3 session matrix.
 	d := startBareDaemon(t, Config{Dir: dir})
 	c := ipc.NewClient(d.SocketPath())
 
@@ -132,7 +132,7 @@ func TestEESeam_FakeApproveProvider(t *testing.T) {
 // in denial — proving the registered provider's decision is authoritative.
 func TestEESeam_FakeDenyProvider(t *testing.T) {
 	dir := shortTempDir(t)
-	// Under NU-3 the authorization gate is always active (no PerActionAuth flag).
+	// The authorization gate is always active under the NU-3 session matrix.
 	d := startBareDaemon(t, Config{Dir: dir})
 	c := ipc.NewClient(d.SocketPath())
 

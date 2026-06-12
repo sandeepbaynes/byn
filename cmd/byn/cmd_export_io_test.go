@@ -140,7 +140,7 @@ func registerAuthRequiredThenGet(fd *fakeDaemon, entries map[string]string) {
 		if len(req.Password) == 0 {
 			return nil, &ipc.ErrMsg{
 				Code:    ipc.CodeAuthRequired,
-				Message: "per_action_auth: password required",
+				Message: "authorization required",
 			}
 		}
 		v, ok := entries[req.Name]
@@ -152,7 +152,7 @@ func registerAuthRequiredThenGet(fd *fakeDaemon, entries map[string]string) {
 }
 
 // TestRunExport_PasswordStdinAttachedToEveryGet verifies that when
-// --password-stdin is set and the daemon requires per_action_auth,
+// --password-stdin is set and the daemon returns auth_required,
 // export reads the password once from stdin and attaches it to every
 // subsequent get call.
 func TestRunExport_PasswordStdinAttachedToEveryGet(t *testing.T) {
@@ -220,7 +220,7 @@ func TestRunExport_AuthRequiredWithoutFlag_HardFails(t *testing.T) {
 	// Only one entry; get will auth_required on no-password, but no stdin provided
 	// and no --password-stdin flag. The non-TTY path should surface the error.
 	fd.onOK(ipc.OpList, ipc.ListResp{Secrets: []ipc.SecretMeta{{Name: "X"}}})
-	fd.onErr(ipc.OpGet, ipc.CodeAuthRequired, "per_action_auth: password required")
+	fd.onErr(ipc.OpGet, ipc.CodeAuthRequired, "authorization required")
 	// Without --password-stdin and with piped stdin (not a TTY), the prompt path
 	// will fail with ErrNoTerminal when auth.Prompt detects non-interactive input.
 	withStdin(t, "")

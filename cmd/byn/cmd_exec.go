@@ -115,7 +115,7 @@ func runExec(args []string, scope cliScope) int {
 	// list — NU-1 + NU-2).
 	//
 	// Auth-retry cases (prompt once, then retry with password):
-	//   1. Ad-hoc exec (no .byn) when [security] per_action_auth is on.
+	//   1. Ad-hoc exec (no .byn) when no session is present.
 	//   2. Trusted-.byn exec when the command is NOT pinned in [exec] actions
 	//      (the daemon returns auth_required with the "not pinned" message).
 	// Both cases prompt on TTY; on non-TTY they fail with an actionable hint.
@@ -148,7 +148,7 @@ func runExec(args []string, scope cliScope) int {
 		// success — fall through
 	case isAuthRequiredErr(callErr):
 		// Auth_required fires for two cases:
-		//   (a) ad-hoc exec (Path == "") under per_action_auth
+		//   (a) ad-hoc exec (Path == "") with no session present
 		//   (b) trusted-.byn exec with an unmatched/empty [exec] actions
 		// Both take the same retry path. The daemon's message distinguishes
 		// them for the user; we just need to get the password and retry.
@@ -185,7 +185,7 @@ func runExec(args []string, scope cliScope) int {
 				leadIn = yellow("Authorization required.") + dim(" Command not pinned in [exec] actions.")
 			}
 		} else {
-			leadIn = yellow("Authorization required.") + dim(" [security] per_action_auth is on.")
+			leadIn = yellow("Authorization required.") + dim(" Enter the master password to authorize.")
 		}
 		pw, wipe, perr := authorizingPasswordWithLeadIn(false, leadIn)
 		if perr != nil {

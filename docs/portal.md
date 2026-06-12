@@ -85,16 +85,15 @@ are always visible. The following operations require the vault to be unlocked
 
 | Operation | Auth required |
 |---|---|
-| Reveal an entry value | vault unlocked (or per_action_auth password/token) |
-| Write/delete/rename entries | vault unlocked (or per_action_auth password/token) |
+| Reveal an entry value | vault unlocked (session or password/token required) |
+| Write/delete/rename entries | vault unlocked (session or password/token required) |
 | Write/delete/rename scopes | vault unlocked |
 | Trust a `.byn` file | master password or passkey token |
 | Edit global config | master password or passkey token (always) |
 
-When `[security] per_action_auth` is on, reveal/write/delete actions trigger
-an in-page "Authorize" step-up: passkey (Touch ID) first, then password
-fallback. On success the daemon issues a single-use presence token consumed
-by the retry.
+Reveal/write/delete actions trigger an in-page "Authorize" step-up when no
+session is active: passkey (Touch ID) first, then password fallback. On success
+the daemon issues a single-use presence token consumed by the retry.
 
 Disable the portal entirely with `[ui] enabled = false` in `~/.byn/config`.
 
@@ -136,8 +135,8 @@ The **builder** tab presents a structured form:
   to the env view. You can also **single-click any one value** to reveal/hide
   just that var; **double-click a value** toggles its inject switch (clicking the
   name or switch toggles it too). Reveal goes through the audited reveal path:
-  the vault must be unlocked, and with `per_action_auth` on it prompts for your
-  password or passkey first (reveal-all authorizes once). Values re-mask after
+  the vault must be unlocked and it prompts for your password or passkey when
+  no session is active (reveal-all authorizes once). Values re-mask after
   `[ui] reveal_hide_after` (default 15s) and when you leave the studio.
 - **Actions allowlist** — commands that may run without per-call auth. An
   **allow ALL commands ("\*")** toggle mirrors the env wildcard toggle.
@@ -219,9 +218,8 @@ The **Settings** panel (gear icon, top-right) exposes the global config file
   required — the config contains no secrets).
 - **Write**: click **save config** to validate and atomically write the new
   content, then live-reload the daemon. This always requires the master
-  password or a passkey presence token — even if `per_action_auth` is off —
-  because config controls the daemon's own security settings (e.g. turning
-  `per_action_auth` on or off).
+  password or a passkey presence token because config controls the daemon's
+  own security settings.
 
 The editor shows a live diff of what will change on reload. If the TOML is
 invalid the daemon rejects the write before touching disk; the existing config
@@ -234,7 +232,6 @@ Notable settings visible in the panel:
 | `[ui] port` | `2967` | Portal listen port |
 | `[ui] enabled` | `true` | Disable the portal |
 | `[ui] reveal_hide_after` | `"15s"` | Re-mask revealed values after this long; `"0s"` = never |
-| `[security] per_action_auth` | `false` | Require step-up auth for every value read/write |
 | `[daemon] idle_timeout` | `"15m0s"` | Auto-lock all vaults after inactivity; `"0s"` disables |
 
 Durations use Go syntax (`"15s"`, `"1m30s"`, `"0s"`).

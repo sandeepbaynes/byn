@@ -142,16 +142,16 @@ Rename an env.
 .B put \fINAME\fR \fR[\fB\-\-create\-only\fR] \fR[\fB\-\-password\-stdin\fR]
 Store a secret. The value is read from stdin; piping or redirection
 is required so the value never appears in argv or shell history.
-When \fB[security] per_action_auth\fR is on, overwriting an existing
-secret requires the master password (\fB\-\-password\-stdin\fR for scripts).
+Overwriting an existing secret requires the master password (or an active
+session); use \fB\-\-password\-stdin\fR for scripts.
 See
 .BR byn-put (1).
 .TP
 .B get \fINAME\fR \fR[\fB\-\-json\fR] \fR[\fB\-\-password\-stdin\fR]
 Print a secret's decrypted value to stdout. Alias:
 .BR cat .
-When \fB[security] per_action_auth\fR is on, the master password is
-required on every call (\fB\-\-password\-stdin\fR for scripts).
+The master password (or active session) is required on every call;
+use \fB\-\-password\-stdin\fR for scripts.
 See
 .BR byn-get (1).
 .TP
@@ -171,8 +171,8 @@ See
 .B delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
 Remove a secret from the vault. Alias:
 .BR rm .
-When the vault is locked or \fB[security] per_action_auth\fR is on,
-the master password is required (\fB\-\-password\-stdin\fR for scripts).
+The master password is required (whether the vault is locked or simply
+has no active session); use \fB\-\-password\-stdin\fR for scripts.
 See \fBDELETING WHILE LOCKED\fR below and
 .BR byn-delete (1).
 .TP
@@ -180,8 +180,8 @@ See \fBDELETING WHILE LOCKED\fR below and
 Move a secret to a new name. Re\-encrypts under the new name's AAD,
 so unlock is required. Alias:
 .BR mv .
-When \fB[security] per_action_auth\fR is on, the master password is
-required (\fB\-\-password\-stdin\fR for scripts).
+The master password (or active session) is required;
+use \fB\-\-password\-stdin\fR for scripts.
 See
 .BR byn-rename (1).
 .TP
@@ -267,20 +267,20 @@ auth for every exec (even matched/wildcard); \fB"none"\fR frees all
 commands (wildcard\-equivalent; the warning is shown at \fBbyn trust\fR time).
 Actions policy is read from the MAC\-bound trust record (not the live file)
 so editing the \fB.byn\fR post\-trust cannot change the effective policy.
-Actions enforcement is INDEPENDENT of \fB[security] per_action_auth\fR.
+Actions enforcement is INDEPENDENT of session state.
 The \fB[auth] exec\fR key applies only to trusted\-\fB.byn\fR exec (Path
 present); ad\-hoc exec (no \fB.byn\fR) is governed solely by
-\fB[security] per_action_auth\fR \(em \fB.byn\fR policy is never consulted
+the NU\-3 session gate \(em \fB.byn\fR policy is never consulted
 for ad\-hoc exec.
 .IP
 The \fB.byn\fR is strict TOML: any key outside \fB[scope]\fR / \fB[exec]\fR
 / \fB[auth]\fR / \fB[aliases]\fR is a hard parse error.
 .IP
-When \fB[security] per_action_auth\fR is on, ad\-hoc exec (no \fB.byn\fR)
-is gated: the CLI prompts once for the master password and retries.
-Trusted\-\fB.byn\fR exec with an unmatched command is also gated (same
-retry flow). Trusted\-\fB.byn\fR exec with a pinned command runs free
-regardless of the flag \(em the flag and the actions list are independent.
+Ad\-hoc exec (no \fB.byn\fR) is always gated by the NU\-3 session gate:
+the CLI prompts once for the master password and retries when no session
+is present. Trusted\-\fB.byn\fR exec with an unmatched command is also
+gated (same retry flow). Trusted\-\fB.byn\fR exec with a pinned command
+runs free \(em the session gate and the actions list are independent.
 See
 .BR byn-exec (1).
 .SS Bulk I/O
@@ -316,13 +316,12 @@ Default format is \fBenv\fR. \fB\-\-output\fR writes to disk with
 mode 0600; otherwise output goes to stdout. Keys are sorted
 alphabetically. Dotenv values containing whitespace, "#", "=", or "
 are wrapped in double quotes with standard escapes.
-When \fB[security] per_action_auth\fR is on, each entry requires the
-master password; \fB\-\-password\-stdin\fR is the non\-interactive path
-(reads it once from stdin). Without the flag, the CLI prompts once
-interactively on the first \fBauth_required\fR and reuses the password
-for the rest. CLI export: one password reused per\-entry. Portal export:
-per\-entry step\-up (presence tokens are single\-use) — batch
-authorization lands with sessions/NU\-3.
+With an active session, each entry is authorized by the session token —
+zero password prompts. Without a session, \fB\-\-password\-stdin\fR is the
+non\-interactive path (reads the password once from stdin); the CLI
+prompts once interactively on the first \fBauth_required\fR and reuses it
+for the rest. Running \fBbyn unlock\fR first avoids the per\-entry
+Argon2id overhead on large exports.
 .IP
 .B Caveat:
 this materialises plaintext. Treat the destination as you would a
@@ -386,20 +385,16 @@ and
 .BR exec .
 Values:
 .B "always"
-\(em fresh auth unconditionally, even when
-.B [security] per_action_auth
-is off (tightens);
+\(em fresh auth unconditionally, even with an active session (tightens);
 .B "none"
-\(em gate skipped entirely for the matched scope, even when
-.B per_action_auth
-is on (relaxes).
-Absent \(em flag decides.
+\(em gate skipped entirely for the matched scope (relaxes).
+Absent \(em session gate decides (default NU\-3 semantics).
 The policy is MAC\-bound at grant time (read from the trust record, not the
 live file). A more\-specific scope record (vault+project+env beats vault+project
 beats vault\-only) wins per key; same\-specificity ties go to the strictest
 value (\fBalways\fR beats \fBnone\fR). Lookup requires the vault to be
-unlocked (VKMAC key unavailable while locked \(em falls through to flag
-semantics).
+unlocked (VKMAC key unavailable while locked \(em falls through to session
+gate semantics).
 Vault\-level ops (\fBvault.delete\fR, \fBvault.rename\fR) pass
 \fBScope{}\fR (no project/env) to the policy gate; a vault\-only record
 (no project/env in \fB[scope]\fR) matches and therefore gates those ops.
@@ -499,8 +494,8 @@ and
 locked vault therefore accepts them when you supply the master password:
 the daemon verifies it and proceeds WITHOUT unlocking the vault, so its
 other values are never exposed to a watching process. The same flow
-applies when \fB[security] per_action_auth\fR is on and the vault is
-unlocked: a fresh password authorizes the operation without changing the
+applies when the vault is unlocked but no active session is present:
+a fresh password authorizes the operation without changing the
 vault's lock state. Interactively, the CLI prompts for the password when
 it finds the vault locked or authorization required; for scripts, pass
 .B \-\-password\-stdin
@@ -521,11 +516,10 @@ the same vault as the CLI and TUI. There is no portal login: like
 editing VALUES requires the target vault to be unlocked \(em a per\-vault
 lock/unlock toggle in the UI. Browse vault/project/env, create/delete
 scopes and vaults, view/edit env\-var entries, and reveal values (each
-reveal is audited). When \fB[security] per_action_auth\fR is on,
-write/delete/reveal actions trigger an in\-page "Authorize" step\-up:
-passkey (Touch ID) first, then password fallback. On success, the daemon
-issues a single\-use presence token consumed by the retry; the token is
-never stored or reused. Binds loopback only; CSRF is defended by an
+reveal is audited). Write/delete/reveal actions trigger an in\-page
+"Authorize" step\-up when no active session is present: passkey (Touch ID)
+first, then password fallback. On success, the daemon issues a single\-use
+presence token consumed by the retry; the token is never stored or reused. Binds loopback only; CSRF is defended by an
 Origin check. Disable with \fB[ui] enabled = false\fR. See
 \fBbyn-web\fR(1).
 .SS Daemon control
@@ -545,8 +539,8 @@ instead of stop + start. Picks up a new binary and config. Alias:
 Signal the running daemon (SIGHUP) to re-read
 .I ~/.byn/config
 and apply runtime-changeable settings \(em \fBidle_timeout\fR,
-\fB[security] per_action_auth\fR, and the web portal
-(enable/disable/port) \(em without a restart. Open vaults stay unlocked.
+\fB[security] session_ttl\fR, \fB[security] session_idle\fR, and the web
+portal (enable/disable/port) \(em without a restart. Open vaults stay unlocked.
 Alias: \fBbyn daemon reload\fR.
 .TP
 .B daemon status
@@ -613,8 +607,8 @@ Used by \fBinit\fR, \fBunlock\fR, \fBget\fR, \fBput\fR (overwrite),
 \fBenv clear\fR, \fBenv rename\fR. Read the password from stdin
 instead of prompting at the terminal. Useful for automation; the
 caller is responsible for not leaking the password via shell
-history. Required for \fBget\fR / \fBput\fR / \fBrename\fR when
-\fB[security] per_action_auth\fR is on and stdin is not a TTY.
+history. Required for \fBget\fR / \fBput\fR / \fBrename\fR in non\-interactive
+contexts (no TTY) when no active session is present.
 .IP
 \fBput --password-stdin contract:\fR the first line of stdin is the
 master password; the remainder (after the first newline) is the secret
@@ -707,10 +701,7 @@ Optional TOML configuration (no file extension). Recognised keys:
 absolute lifetime of a minted session; \fB"0s"\fR disables the limit),
 \fB[security] session_idle\fR (Go duration; default \fB"0s"\fR \(em
 sliding idle window; \fB"0s"\fR inherits \fIidle_timeout\fR), and
-\fB[security] per_action_auth\fR (\s-1DEPRECATED\s0 \(em accepted but
-ignored; the NU\-3 session matrix always gates value ops; remove from
-config to silence the startup warning).
-Unknown keys are rejected with an error. A missing file uses the
+Unknown keys (including the removed \fBper_action_auth\fR) are rejected with an error. A missing file uses the
 defaults. Loaded at
 .BR "byn start" ;
 \fB[security] session_ttl\fR, \fB[security] session_idle\fR, and

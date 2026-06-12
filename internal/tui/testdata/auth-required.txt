@@ -8,15 +8,15 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                               ╭────────────────────────────────────╮                               
-                               │  Authorize                         │                               
-                               │                                    │                               
-                               │  [security] per_action_auth is on  │                               
-                               │                                    │                               
-                               │  Password: (enter password)█       │                               
-                               │                                    │                               
-                               │  Enter submit  ESC cancel          │                               
-                               ╰────────────────────────────────────╯                               
+                                 ╭───────────────────────────────╮                                  
+                                 │  Authorize                    │                                  
+                                 │                               │                                  
+                                 │  authorization required       │                                  
+                                 │                               │                                  
+                                 │  Password: (enter password)█  │                                  
+                                 │                               │                                  
+                                 │  Enter submit  ESC cancel     │                                  
+                                 ╰───────────────────────────────╯                                  
                                                                                                     
                                                                                                     
                                                                                                     

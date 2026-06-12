@@ -47,12 +47,11 @@ import (
 //	                                                       (authorizeActionAlways path,
 //	                                                        independent of global flag)
 //
-// Global per_action_auth flag is INDEPENDENT of the .byn contract. The flag
-// governs operations WITHOUT a .byn contract (ad-hoc exec, get, put, delete, …).
-// For trusted-.byn exec, the [exec] actions list IS the contract — it applies
-// regardless of the global flag. The spec requires this independence: an admin
-// who turns on per_action_auth should not silently make every trusted-.byn exec
-// require a password (the .byn already carries its own auth policy).
+// The session gate governs operations WITHOUT a .byn contract (ad-hoc exec,
+// get, put, delete, …). For trusted-.byn exec, the [exec] actions list IS
+// the contract — it applies regardless of session state. The spec requires
+// this independence: the session gate must not silently make every trusted-.byn
+// exec require a password (the .byn already carries its own auth policy).
 //
 // Action matching is PATTERN-based (NU-2.1): each record action is compiled
 // via bynfile.ParseActionPattern and matched against the resolved argv. Parse
@@ -67,8 +66,8 @@ import (
 // set — aliases live in the trusted .byn. The CLI must exec ResolvedArgv
 // (returned in the response) exactly.
 //
-// Ad-hoc exec (Path="") keeps pre-NU semantics: whole-scope injection, gated by
-// [security] per_action_auth as before (no actions concept for ad-hoc).
+// Ad-hoc exec (Path="") uses whole-scope injection, gated by the session gate
+// (no actions concept for ad-hoc).
 func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
 	var req ipc.ExecFetchReq
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
@@ -311,7 +310,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 					// Unmatched (includes empty actions AND empty resolvedArgv): gate.
 					// authorizeActionAlways is used here — the .byn contract
 					// requires credential verification UNCONDITIONALLY, independent
-					// of the global per_action_auth flag.
+					// of session state.
 					msg := "command not pinned in " + canon + " [exec] actions"
 					recoverHint := "add it to [exec] actions and re-trust, or supply the password"
 					if le := d.authorizeActionAlways(ctx, env.ID, vaultName, st, msg, recoverHint,
@@ -326,7 +325,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 			// auth = "always": require fresh auth even for matched/wildcard.
 			// authorizeActionAlways is used here — the [auth] exec="always"
 			// contract requires verification UNCONDITIONALLY, independent of
-			// the global per_action_auth flag.
+			// session state.
 			msg := "[auth] exec = \"always\" requires authorization for every command"
 			recoverHint := "supply the password or presence token"
 			if le := d.authorizeActionAlways(ctx, env.ID, vaultName, st, msg, recoverHint,

@@ -118,14 +118,13 @@ shows name + state (`unlocked`/`locked`/`uninitialized`).
 ### `byn vault delete NAME [--password-stdin]`
 
 Cascade-delete: removes the vault directory and all entries. Refuses
-`default`. Password required when locked or `[security] per_action_auth`
-is on.
+`default`. Password required when locked or when no session is present.
 
 ### `byn vault rename OLD NEW [--password-stdin]`
 
 Rename a vault and its audit trail. Refuses `default` and an existing
 destination. The vault is left **locked** after the rename. Password
-required when locked or `[security] per_action_auth` is on.
+required when locked or when no session is present.
 
 ### `byn vault {init,unlock,lock}`
 
@@ -146,7 +145,7 @@ Create a project. Implicitly creates a `default` env for it.
 
 Cascade-delete: removes the project + every env + every entry +
 every entry_version. Refuses `default`. Password required when locked
-or `[security] per_action_auth` is on.
+or when no session is present.
 
 ### `byn project rename OLD NEW`
 
@@ -164,8 +163,8 @@ Create a non-default env in the active project.
 ### `byn env delete NAME [--password-stdin]`
 
 Delete a non-default env. Refuses `default`. Cascades to its entries
-+ entry versions. Password required when locked or `[security]
-per_action_auth` is on.
++ entry versions. Password required when locked or when no session is
+present.
 
 ### `byn env rename OLD NEW`
 
@@ -184,9 +183,8 @@ Store an env-var entry under `(scope.Project, scope.Env)`.
 - `--create-only` fails with `already_exists` if the name is taken
   (used by `import --skip-existing`).
 - Hint on success: `Stored "NAME" in vault/project/env.`
-- When `[security] per_action_auth` is on, overwriting an existing
-  entry requires the master password. New entries (first put of a name,
-  or `--create-only`) do not.
+- Overwriting an existing entry requires the master password when no session
+  is present. New entries (first put of a name, or `--create-only`) do not.
 - `--password-stdin` contract: the **first line** of stdin is always
   the master password; the **remainder** (after the first `\n`) is the
   secret value. The first line is always consumed when `--password-stdin`
@@ -213,9 +211,9 @@ Print the decrypted value to stdout.
 - Non-TTY: raw bytes, no trailing newline (safe for piping/redirection).
 - `--json` emits `{"name": ..., "value": ...}` — use only in trusted
   harnesses; values land in your agent's context.
-- When `[security] per_action_auth` is on, the master password is
-  required on every call. `--password-stdin` reads the entire stdin as
-  the password (no newline split — contrast with `put`).
+- The master password is required when no session is present.
+  `--password-stdin` reads the entire stdin as the password (no newline
+  split — contrast with `put`).
 - Locked vault: always a hard fail ("byn unlock"); a password cannot
   decrypt a locked vault.
 
@@ -234,17 +232,15 @@ List entry names + per-entry metadata. JSON emits:
 ]
 ```
 
-Allowed while locked (names are not secret). Not gated by
-`per_action_auth`.
+Allowed while locked (names are not secret). Not gated by the session matrix.
 
 ### `byn delete NAME [--password-stdin]` (alias: `byn rm NAME`)
 
 Remove an entry. No inheritance — must exist in `scope.Env`.
 Allowed while locked (names only, no values touched).
 
-- When the vault is locked or `[security] per_action_auth` is on, the
-  master password is required. `--password-stdin` reads entire stdin
-  as the password.
+- When the vault is locked or no session is present, the master password
+  is required. `--password-stdin` reads entire stdin as the password.
 - A locked vault accepts `delete` with the password (unlike `get`/`put`
   which require unlock for value operations).
 
@@ -253,8 +249,8 @@ Allowed while locked (names only, no values touched).
 Move within `scope.Env`. Daemon re-encrypts under the new AAD.
 Requires unlock (re-encryption needs the vault key).
 
-- When `[security] per_action_auth` is on, the master password is
-  required. `--password-stdin` reads entire stdin as the password.
+- The master password is required when no session is present.
+  `--password-stdin` reads entire stdin as the password.
 - Locked vault: hard fail ("byn unlock") — re-encryption requires the
   vault key.
 
@@ -314,12 +310,12 @@ Dump active scope as a flat key→value document.
 - Keys sorted alphabetically.
 - Dotenv quoting: values containing `\s\n#="` get wrapped in
   `"..."` with `\n`/`\\`/`\"` escapes.
-- `--password-stdin`: when `[security] per_action_auth` is on, read
-  the master password once from stdin and reuse it for every get
-  (non-interactive path). Without the flag, the CLI prompts once
-  interactively on the first `auth_required` and reuses the same
-  password for the rest. Each entry re-verifies via Argon2id — large
-  exports are slow under this flag; session tokens (NU-3) will fix this.
+- `--password-stdin`: read the master password once from stdin and
+  reuse it for every get (non-interactive path). Without the flag, the
+  CLI prompts once interactively on the first `auth_required` and reuses
+  the same password for the rest. With an active session, no prompts fire.
+  Each sessionless get re-verifies via Argon2id — run `byn unlock` first
+  for large exports.
 
 **Caveat:** this materializes plaintext. Treat the output like a
 `.env` file — never commit, never share. Same warning as `byn get`.
@@ -385,7 +381,7 @@ byn --vault myv exec deploy                   # globals before subcommand still 
   Actions policy is read from the MAC-bound trust record, not the live
   file — editing the `.byn` post-trust cannot change the effective policy
   without re-trusting (which requires the master password). Actions
-  enforcement is **independent** of `[security] per_action_auth`.
+  enforcement is **independent** of session state.
 - Every exec attempt — allowed or denied, including locked-vault
   failures — is audited with the full command line. Alias execs are
   audited as `alias <name> → <resolved command>`.
@@ -488,21 +484,21 @@ error; the file is not recorded in the trust store.
 
 ### `[auth]` table — per-scope per-action authorization policy
 
-A `.byn` may carry an `[auth]` table that overrides the global
-`[security] per_action_auth` flag for operations in this file's scope:
+A `.byn` may carry an `[auth]` table that overrides the session gate for
+operations in this file's scope:
 
 | Key | Value | Effect |
 |---|---|---|
-| `get` / `update` / `delete` / `exec` | `"always"` | Fresh auth required unconditionally, even when `per_action_auth` is OFF |
-| `get` / `update` / `delete` / `exec` | `"none"` | Gate skipped entirely, even when `per_action_auth` is ON |
-| (absent) | — | Global `per_action_auth` flag decides |
+| `get` / `update` / `delete` / `exec` | `"always"` | Fresh auth required unconditionally, even with an active session |
+| `get` / `update` / `delete` / `exec` | `"none"` | Gate skipped entirely for the matched scope |
+| (absent) | — | Session gate decides |
 
 `update` covers overwrite-put and rename. `delete` covers delete, env
 clear/delete, project delete, vault delete.
 
 **Ad-hoc exec exclusion:** the `[auth] exec` key applies only to
-trusted-`.byn` exec (Path ≠ ""). Ad-hoc exec (no `.byn`) is governed
-solely by `[security] per_action_auth`.
+trusted-`.byn` exec (Path ≠ ""). Ad-hoc exec (no `.byn`) is always
+subject to the session gate.
 
 **Structural-ops note:** vault-level ops (`vault.delete`, `vault.rename`)
 pass an empty Scope (no project/env) to the policy gate. A record scoped
@@ -562,7 +558,8 @@ restart; `[ui]` changes also hot-apply.
 | `[ui] enabled` | `true` | Enable/disable the web portal |
 | `[ui] port` | `2967` | Port for the local admin portal |
 | `[daemon] idle_timeout` | `"15m"` | Auto-relock after inactivity; `"0s"` to disable |
-| `[security] per_action_auth` | `false` | Require a fresh password/presence-token for every sensitive call (get, overwrite-put, delete, rename, env clear/delete, project delete, vault delete, vault rename) even while unlocked |
+| `[security] session_ttl` | `"12h"` | Absolute session lifetime; `"0s"` = no TTL limit |
+| `[security] session_idle` | `"0s"` | Sliding idle window; `"0s"` = inherit `idle_timeout` |
 
 Example:
 
@@ -571,7 +568,8 @@ Example:
 idle_timeout = "30m"
 
 [security]
-per_action_auth = true
+session_ttl  = "12h"
+session_idle = "0s"
 
 [ui]
 port = 2967

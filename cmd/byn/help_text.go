@@ -208,11 +208,10 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
-       When [security] per_action_auth is on in the daemon config,
-       overwriting an existing secret requires the master password.
-       The CLI prompts interactively; scripts should use --password-stdin.
-       New secrets (with --create-only or the first put of a name) do
-       not require per-action auth.
+       Overwriting an existing secret requires the master password when
+       no session is present. The CLI prompts interactively; scripts
+       should use --password-stdin. New secrets (with --create-only or
+       the first put of a name) do not require authorization.
 
 OPTIONS
        --create-only
@@ -220,9 +219,9 @@ OPTIONS
            existing secret with the same name.
 
        --password-stdin
-           If [security] per_action_auth is on and the overwrite requires
-           authorization, read the master password from stdin instead of
-           prompting at the terminal. Useful for scripts and CI.
+           If an overwrite requires authorization and no session is present,
+           read the master password from stdin instead of prompting at the
+           terminal. Useful for scripts and CI.
 
            Contract: the FIRST LINE of stdin is the master password;
            the REMAINDER (after the first newline) is the secret value.
@@ -248,7 +247,7 @@ EXAMPLES
        Refuse to overwrite an existing secret:
            $ echo -n "new" | byn put aws-access-key --create-only
 
-       Authorize an overwrite non-interactively (per_action_auth on):
+       Authorize an overwrite non-interactively (no session, via stdin):
            $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 
 EXIT STATUS
@@ -288,18 +287,16 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
-       When [security] per_action_auth is on in the daemon config,
-       get requires the master password on every call. The CLI prompts
-       interactively; scripts should use --password-stdin.
+       Get requires the master password when no session is present. The
+       CLI prompts interactively; scripts should use --password-stdin.
 
 OPTIONS
        --json
            Emit {"name":"...","value":"..."} JSON instead of the raw value.
 
        --password-stdin
-           If [security] per_action_auth is on, read the master password
-           from stdin instead of prompting at the terminal. Useful for
-           scripts and CI.
+           When no session is present, read the master password from stdin
+           instead of prompting at the terminal. Useful for scripts and CI.
 
 EXAMPLES
        Print the value:
@@ -315,7 +312,7 @@ EXAMPLES
        Inspect non-ASCII byte content:
            $ byn get binary-blob | xxd | head
 
-       Non-interactive get with per_action_auth on:
+       Non-interactive get (sessionless, via stdin):
            $ echo "$MASTER_PW" | byn get my-secret --password-stdin
 
 EXIT STATUS
@@ -385,16 +382,16 @@ DESCRIPTION
        Without versioning enabled, deletion is immediate and
        unrecoverable.
 
-       When the vault is locked or [security] per_action_auth is on,
-       the master password is required to authorize the deletion. The
-       CLI prompts interactively; scripts should use --password-stdin.
+       When the vault is locked or no session is present, the master
+       password is required to authorize the deletion. The CLI prompts
+       interactively; scripts should use --password-stdin.
 
 OPTIONS
        --password-stdin
            The non-interactive way to supply the master password —
            reads it from stdin instead of prompting at the terminal.
            Useful for scripts and CI when the vault is locked or
-           per_action_auth is on.
+           no session is present.
 
 EXAMPLES
        Delete an entry:
@@ -403,7 +400,7 @@ EXAMPLES
        Delete using the alias:
            $ byn rm old-token
 
-       Delete while vault is locked / per_action_auth on:
+       Delete while vault is locked (or sessionless):
            $ echo "$MASTER_PW" | byn delete tls-key --password-stdin
 
 EXIT STATUS
@@ -537,18 +534,17 @@ DESCRIPTION
                     exec time). Treat it as equivalent to actions = "*".
          "trusted"  default — let the actions list decide (see above).
 
-       Actions enforcement is INDEPENDENT of the global
-       [security] per_action_auth flag. The flag governs operations that
-       have no .byn contract (ad-hoc exec, get, put, delete, …). A .byn's
-       [exec] actions list is the contract for trusted-.byn exec, regardless
-       of whether the flag is on or off.
+       Actions enforcement is INDEPENDENT of the session gate.
+       The session gate governs operations that have no .byn contract
+       (ad-hoc exec, get, put, delete, …). A .byn's [exec] actions list
+       is the contract for trusted-.byn exec.
 
-       Per-action auth ([security] per_action_auth): ad-hoc exec (no
-       .byn) is gated — the daemon returns auth_required, the CLI
-       prompts once for the master password and retries. Trusted-.byn
-       exec with an unmatched command is also gated (same retry flow;
-       the daemon message explains that the command is not pinned). To
-       avoid the prompt, pin the command in [exec] actions.
+       Ad-hoc exec (no .byn) is auth-gated when no session is present —
+       the daemon returns auth_required, the CLI prompts once for the
+       master password and retries. Trusted-.byn exec with an unmatched
+       command is also gated (same retry flow; the daemon message explains
+       that the command is not pinned). To avoid the prompt, pin the
+       command in [exec] actions.
 
        Trust: when the scope comes from a discovered .byn, exec verifies
        it is trusted (machine + vault-key MAC, checked by the daemon)
@@ -645,14 +641,13 @@ DESCRIPTION
 
        Refuses if NEW is already taken.
 
-       When [security] per_action_auth is on in the daemon config,
-       rename requires the master password. The CLI prompts interactively;
-       scripts should use --password-stdin.
+       Rename requires the master password when no session is present.
+       The CLI prompts interactively; scripts should use --password-stdin.
 
 OPTIONS
        --password-stdin
-           If [security] per_action_auth is on, read the master password
-           from stdin instead of prompting at the terminal.
+           When no session is present, read the master password from stdin
+           instead of prompting at the terminal.
 
 EXAMPLES
        Rename a credential after rotation:
@@ -661,7 +656,7 @@ EXAMPLES
        Using the alias:
            $ byn mv foo bar
 
-       Non-interactive with per_action_auth on:
+       Non-interactive rename (sessionless, via stdin):
            $ echo "$MASTER_PW" | byn rename old-name new-name --password-stdin
 
 EXIT STATUS
@@ -796,8 +791,7 @@ SUBCOMMANDS
                                          (default 12h; 0 = no limit)
              [security] session_idle   — sliding idle window
                                          (default 0 = inherit idle_timeout)
-             [security] per_action_auth — DEPRECATED; always-on in
-                                          NU-3; remove from config
+             [security] session_ttl / session_idle — tune session lifetime
 
        status
            Print daemon state, socket path, vault lock state, and
@@ -829,8 +823,7 @@ EXAMPLES
        Stop:
            $ byn stop
 
-       Apply config edits live (e.g. after changing idle_timeout or
-       toggling [security] per_action_auth):
+       Apply config edits live (e.g. after changing idle_timeout):
            $ byn reload
 
 EXIT STATUS
@@ -888,12 +881,11 @@ DESCRIPTION
        There is no portal login. Like "byn ls", the scope tree and
        entry names are visible, but reading or editing VALUES requires
        the target vault to be unlocked -- a per-vault lock/unlock toggle
-       in the UI. When [security] per_action_auth is on, write/delete/
-       reveal actions trigger an in-page "Authorize" step-up: passkey
-       (Touch ID) first, then password fallback. On success, the daemon
-       issues a single-use presence token consumed by the retry. The
-       portal binds loopback only (127.0.0.1), never the network; its
-       CSRF defense is an Origin check.
+       in the UI. Write/delete/reveal actions trigger an in-page
+       "Authorize" step-up: passkey (Touch ID) first, then password
+       fallback. On success, the daemon issues a single-use presence
+       token consumed by the retry. The portal binds loopback only
+       (127.0.0.1), never the network; its CSRF defense is an Origin check.
 
        The portal includes a .byn STUDIO (top-left ".byn" button): a
        structured builder form, inline TOML validator, command tester
@@ -902,7 +894,7 @@ DESCRIPTION
        browse to any directory containing a .byn file. The Settings
        panel (top-right gear icon) exposes the global config file as a
        TOML editor -- editing config always requires the master password
-       or a passkey token regardless of per_action_auth.
+       or a passkey token.
 
        Disable the portal entirely with [ui] enabled = false in
        ~/.byn/config (then restart the daemon).
@@ -996,16 +988,14 @@ DESCRIPTION
 
        vault delete NAME [--password-stdin]
            Securely remove a vault from disk. Refuses the "default"
-           vault. When the vault is locked or [security] per_action_auth
-           is on, the master password is required (--password-stdin for
-           scripts).
+           vault. When the vault is locked or no session is present,
+           the master password is required (--password-stdin for scripts).
 
        vault rename OLD NEW [--password-stdin]
            Rename a vault and its audit trail. Refuses the "default"
            vault and an existing destination. The vault is left LOCKED
            afterwards. Requires the master password when locked or when
-           [security] per_action_auth is on (--password-stdin for
-           scripts).
+           no session is present (--password-stdin for scripts).
 
        vault init | unlock | lock
            Aliases for the top-level lifecycle commands.
@@ -1031,8 +1021,8 @@ DESCRIPTION
        project delete NAME [--password-stdin]
            Cascade-delete: removes the project + every env + every
            entry + every entry_version. Refuses "default". When the
-           vault is locked or [security] per_action_auth is on, the
-           master password is required (--password-stdin for scripts).
+           vault is locked or no session is present, the master password
+           is required (--password-stdin for scripts).
 
        project rename OLD NEW
            Rename a project. Refuses to rename "default" (renaming it
@@ -1060,15 +1050,15 @@ DESCRIPTION
 
        env delete NAME [--password-stdin]
            Delete a non-default env and cascade to its entries.
-           Refuses "default". When the vault is locked or [security]
-           per_action_auth is on, the master password is required
-           (--password-stdin for scripts).
+           Refuses "default". When the vault is locked or no session is
+           present, the master password is required (--password-stdin
+           for scripts).
 
        env clear [ENV] --yes [--password-stdin]
            Delete every env-var in ENV (defaults to the active env)
            while keeping the env itself. --yes is required to proceed.
            Treated as a destructive operation: the master password is
-           required when the vault is locked or per_action_auth is on.
+           required when the vault is locked or no session is present.
 
        env rename OLD NEW
            Rename an env. Refuses "default".
@@ -1171,9 +1161,8 @@ OPTIONS
 
        --password-stdin
            The non-interactive way to supply the master password when
-           [security] per_action_auth is on — reads it from stdin
-           instead of prompting at the terminal. Useful for scripts
-           and CI.
+           no session is present — reads it from stdin instead of
+           prompting at the terminal. Useful for scripts and CI.
 
 CAVEATS
        This command MATERIALIZES PLAINTEXT. Treat the destination as
@@ -1290,21 +1279,20 @@ DESCRIPTION
        .byn files exceeding 64KB are refused at grant time and at exec.
 
 [auth] TABLE — per-scope per-action authorization policy
-       A .byn may carry an [auth] table that overrides the global
-       [security] per_action_auth flag for operations in this file's
-       scope. Keys: get, update (overwrite-put, rename), delete
-       (delete, env.clear, env.delete, project.delete, vault.delete),
-       exec. Values:
+       A .byn may carry an [auth] table that overrides the global session
+       gate for operations in this file's scope. Keys: get, update
+       (overwrite-put, rename), delete (delete, env.clear, env.delete,
+       project.delete, vault.delete), exec. Values:
 
          "always"  Fresh authorization required for every matching op,
-                   even when [security] per_action_auth is OFF. Tightens.
+                   even when a session is active. Tightens.
 
          "none"    Gate skipped entirely for the matched scope, even when
-                   [security] per_action_auth is ON. Relaxes. Use only
-                   in environments where ambient access is acceptable
-                   (e.g., a local dev project with no sensitive creds).
+                   no session is present. Relaxes. Use only in environments
+                   where ambient access is acceptable (e.g., a local dev
+                   project with no sensitive creds).
 
-         absent    The global per_action_auth flag decides (default).
+         absent    The session gate decides (default).
 
        Policy is MAC-bound at grant time: the daemon reads the policy
        from the trust record (not the live file) so editing the .byn
@@ -1319,7 +1307,7 @@ DESCRIPTION
 
        Cross-reference: the [auth] exec key and [exec] actions are
        independent. The exec key applies ONLY to trusted-.byn exec; ad-hoc
-       exec (no .byn) is governed solely by [security] per_action_auth.
+       exec (no .byn) is auth-gated when no session is present.
        See 'byn help exec' for the full exec authorization matrix.
 
 OPTIONS

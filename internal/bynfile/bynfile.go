@@ -56,10 +56,11 @@ type File struct {
 	// [aliases] is a top-level collection table, not nested under [exec].
 	Aliases map[string]string `toml:"aliases,omitempty"`
 	// Auth is the per-command policy table (spec §4.5): action name →
-	// "always" (fresh auth even when per_action_auth is off), "none"
-	// (skip the gate even when it is on), or "trusted" (exec only: the
-	// .byn is the authorization — the default). Absent keys ⇒ the global
-	// flag decides. Parsed at TRUST TIME and MAC-bound into the record.
+	// "always" (fresh auth unconditionally, even with an active session),
+	// "none" (skip the gate entirely for the matched scope), or "trusted"
+	// (exec only: the .byn is the authorization — the default). Absent keys
+	// ⇒ the session gate decides. Parsed at TRUST TIME and MAC-bound into
+	// the record.
 	Auth map[string]string `toml:"auth,omitempty"`
 }
 

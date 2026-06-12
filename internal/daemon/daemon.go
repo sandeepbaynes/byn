@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -552,9 +551,9 @@ func (d *Daemon) lockIdleVaults(now time.Time) int {
 // ---- live config reload -------------------------------------------------
 
 // Reload re-reads ~/.byn/config and applies the settings that can change at
-// runtime without dropping daemon state: the idle re-lock timeout, the
-// embedded browser portal (enable / disable / port), and the per-action auth
-// flag. Open vaults stay open and unlocked across a reload. It returns a
+// runtime without dropping daemon state: the idle re-lock timeout and the
+// embedded browser portal (enable / disable / port). Open vaults stay open
+// and unlocked across a reload. It returns a
 // human-readable list of what changed (empty when nothing did). The data dir,
 // owner UID and binary version are fixed at start and are never reloaded —
 // those need a restart.
@@ -576,19 +575,6 @@ func (d *Daemon) Reload() ([]string, error) {
 		if newIdle > 0 {
 			d.ensureJanitor()
 		}
-	}
-
-	// Per-action auth flag: deprecated — the NU-3 session matrix is always
-	// active; sessions provide the ergonomics. Warn whenever the key is
-	// explicitly present in the config file (nil = absent = no warning;
-	// non-nil covers both true AND false, since false means "matrix off"
-	// which is now also ignored and equally deserves the warning).
-	// The flag value is ignored; no change note is emitted (the setting has
-	// no effect and adding a note would confuse operators).
-	if cfg.Security.PerActionAuth != nil {
-		log.Printf("byn: deprecated config: [security] per_action_auth is always on; " +
-			"sessions provide ergonomics (run `byn unlock`). " +
-			"Remove per_action_auth from config.")
 	}
 
 	// Browser portal.

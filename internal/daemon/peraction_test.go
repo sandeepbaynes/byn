@@ -1,12 +1,16 @@
 package daemon
 
-// Tests for [security] per_action_auth gate on get / overwrite-put / delete.
-// Trusted-.byn exec.fetch is credential-free; ad-hoc exec (Path="") is
-// gated. Insert (new name) and list stay free per the agent-autonomy matrix.
+// Tests for the NU-3 per-action authorization gate on get / overwrite-put /
+// delete. The session matrix is always active: a valid session (minted by
+// vault.unlock) or fresh credentials satisfy the gate. Trusted-.byn exec.fetch
+// is credential-free when the action is pinned; ad-hoc exec (Path="") always
+// requires credentials or a session. Insert (new name) and list stay free
+// per the agent-autonomy matrix.
 
 import (
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,9 +18,8 @@ import (
 )
 
 // startPerActionDaemonWithClient starts a daemon and returns both the daemon
-// and a connected client. Under the NU-3 authorization matrix the per-action
-// auth gate is always active (session-or-credentials required for value-
-// touching ops); there is no separate flag to enable.
+// and a connected client. The NU-3 authorization matrix is always active:
+// session-or-credentials required for value-touching ops.
 func startPerActionDaemonWithClient(t *testing.T) (*Daemon, *ipc.Client) {
 	t.Helper()
 	dir := shortTempDir(t)
@@ -26,7 +29,7 @@ func startPerActionDaemonWithClient(t *testing.T) (*Daemon, *ipc.Client) {
 
 // ---- get gate ----------------------------------------------------------
 
-// TestPerActionGetWithoutPasswordAuthRequired: unlocked vault, flag on →
+// TestPerActionGetWithoutPasswordAuthRequired: unlocked vault, no session →
 // get requires auth.
 func TestPerActionGetWithoutPasswordAuthRequired(t *testing.T) {
 	d, c := startPerActionDaemonWithClient(t)
@@ -381,8 +384,8 @@ func TestPerActionCreateOnlyConflictStillExists(t *testing.T) {
 
 // ---- delete gate -------------------------------------------------------
 
-// TestPerActionDeleteRequiresAuthEvenUnlocked: vault unlocked, no password/token
-// → auth_required (not the old "free while unlocked" behaviour); audit event recorded.
+// TestPerActionDeleteRequiresAuthEvenUnlocked: vault unlocked, no session →
+// delete requires auth_required; audit event recorded.
 func TestPerActionDeleteRequiresAuthEvenUnlocked(t *testing.T) {
 	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -391,7 +394,7 @@ func TestPerActionDeleteRequiresAuthEvenUnlocked(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	// Vault is unlocked but flag is on — delete still needs auth.
+	// Vault is unlocked but no session — delete still needs auth.
 	if d.lookupVault("default").store.IsLocked() {
 		t.Fatal("precondition: vault should be unlocked")
 	}
@@ -417,8 +420,8 @@ func TestPerActionDeleteRequiresAuthEvenUnlocked(t *testing.T) {
 	}
 }
 
-// TestPerActionDeleteLockedWithPasswordSucceeds: flag on + locked vault +
-// correct password → delete succeeds WITHOUT unlocking the vault.
+// TestPerActionDeleteLockedWithPasswordSucceeds: locked vault + correct password
+// → delete succeeds WITHOUT unlocking the vault.
 func TestPerActionDeleteLockedWithPasswordSucceeds(t *testing.T) {
 	d, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -495,8 +498,8 @@ func TestPerActionEnvClearRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPerActionEnvClearFlagOffUnchanged: flag off → env.clear works with no
-// creds while the vault is unlocked (today's behaviour unchanged).
+// TestPerActionEnvClearFlagOffUnchanged: with an active session, env.clear works
+// with no explicit password — the session satisfies the gate.
 func TestPerActionEnvClearFlagOffUnchanged(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -575,8 +578,8 @@ func TestPerActionRenameRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPerActionRenameFlagOffUnchanged: flag off → rename works with no creds
-// while the vault is unlocked (today's behaviour unchanged).
+// TestPerActionRenameFlagOffUnchanged: with an active session, rename works
+// with no explicit password — the session satisfies the gate.
 func TestPerActionRenameFlagOffUnchanged(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -612,22 +615,22 @@ func TestPerActionRenameFlagOffUnchanged(t *testing.T) {
 // ---- exec.fetch trusted .byn is unaffected --------------------------------
 
 // TestPerActionExecFetchUnaffected: exec.fetch returns values with NO password
-// while per_action_auth is on. The trusted .byn + pinned action is the
-// authorization. per_action_auth does NOT gate trusted-.byn exec — only the
-// .byn's own [exec] actions contract matters.
+// when the .byn has a pinned action matching the command. The trusted .byn +
+// pinned action is the authorization — trusted-.byn exec is credential-free
+// when the action is pinned; only the .byn's own [exec] actions contract matters.
 func TestPerActionExecFetchUnaffected(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "SECRET", []byte("s3cret"))
 
-	// Pin "myapp" in [exec] actions so it runs free regardless of per_action_auth.
+	// Pin "myapp" in [exec] actions so it runs free.
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"myapp\"]\n")
 	grantBynFile(t, c, byn, pw)
 
 	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "myapp", Argv: []string{"myapp"}})
 	if err != nil {
-		t.Fatalf("exec.fetch with per_action_auth on (pinned action): %v", err)
+		t.Fatalf("exec.fetch with pinned action (no password): %v", err)
 	}
 	m := valueMap(resp.Values)
 	if m["SECRET"] != "s3cret" {
@@ -635,10 +638,9 @@ func TestPerActionExecFetchUnaffected(t *testing.T) {
 	}
 }
 
-// ---- ad-hoc exec gate under per_action_auth --------------------------------
+// ---- ad-hoc exec gate -------------------------------------------------
 
-// TestExecFetchAdHocFlagOnDenied: flag on + Path="" + no creds → auth_required,
-// audited.
+// TestExecFetchAdHocFlagOnDenied: Path="" + no creds → auth_required, audited.
 func TestExecFetchAdHocFlagOnDenied(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -674,8 +676,8 @@ func TestExecFetchAdHocFlagOnDenied(t *testing.T) {
 	}
 }
 
-// TestExecFetchAdHocFlagOnWithPasswordSucceeds: flag on + Path="" + correct
-// password → success, whole scope returned.
+// TestExecFetchAdHocFlagOnWithPasswordSucceeds: Path="" + correct password
+// → success, whole scope returned.
 func TestExecFetchAdHocFlagOnWithPasswordSucceeds(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -703,16 +705,16 @@ func TestExecFetchAdHocFlagOnWithPasswordSucceeds(t *testing.T) {
 // TestExecFetchAdHocPresenceTokenSucceeds.
 
 // TestExecFetchTrustedStillFreeWithFlagOn: trusted .byn exec with a pinned
-// action stays credential-free even with per_action_auth on — the .byn
-// contract (the .byn + the pinned action) is the authorization.
+// action is credential-free — the .byn contract (the .byn + the pinned action)
+// is the authorization; no password or session needed.
 func TestExecFetchTrustedStillFreeWithFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "KEY", []byte("value"))
 
-	// Pin "myapp" in [exec] actions — the per_action_auth flag does NOT gate
-	// trusted-.byn exec; only the .byn's own actions contract matters.
+	// Pin "myapp" in [exec] actions — trusted-.byn exec with a pinned action
+	// is credential-free; only the .byn's own actions contract matters.
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"KEY\"]\nactions = [\"myapp\"]\n")
 	grantBynFile(t, c, byn, pw)
 
@@ -727,12 +729,11 @@ func TestExecFetchTrustedStillFreeWithFlagOn(t *testing.T) {
 	}
 }
 
-// ---- flag off: existing behaviour unchanged ----------------------------
+// ---- session satisfies the gate: ops free with active session --------
 
-// TestPerActionFlagOffUnchanged: with the flag off, get/put-overwrite/delete
-// behave exactly as today — no auth_required anywhere.
+// TestPerActionFlagOffUnchanged: with an active session, get/put-overwrite/
+// delete succeed without a password — the session satisfies the gate.
 func TestPerActionFlagOffUnchanged(t *testing.T) {
-	// startTestDaemon uses Config{} — PerActionAuth defaults to false.
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -800,8 +801,8 @@ func TestPerActionProjectDeleteRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPerActionProjectDeleteFlagOff: flag off → project delete works credential-free
-// while unlocked (today's behaviour unchanged).
+// TestPerActionProjectDeleteFlagOff: with an active session, project delete
+// works credential-free — the session satisfies the gate.
 func TestPerActionProjectDeleteFlagOff(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -853,8 +854,8 @@ func TestPerActionEnvDeleteRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPerActionEnvDeleteFlagOff: flag off → env delete works credential-free
-// while unlocked (today's behaviour unchanged).
+// TestPerActionEnvDeleteFlagOff: with an active session, env delete works
+// credential-free — the session satisfies the gate.
 func TestPerActionEnvDeleteFlagOff(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -909,8 +910,8 @@ func TestPerActionVaultDeleteRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPerActionVaultDeleteFlagOff: flag off → vault delete works credential-free
-// while unlocked (today's behaviour unchanged).
+// TestPerActionVaultDeleteFlagOff: vault delete with password succeeds when
+// the vault is unlocked (password-gated regardless of session).
 func TestPerActionVaultDeleteFlagOff(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -1058,8 +1059,8 @@ func TestPerActionVaultRenameRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPerActionVaultRenameFlagOff: flag off → vault rename works credential-free
-// while unlocked (existing behaviour unchanged).
+// TestPerActionVaultRenameFlagOff: vault rename with password succeeds when the
+// vault is unlocked (password accepted with session).
 func TestPerActionVaultRenameFlagOff(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -1097,68 +1098,25 @@ func TestPerActionVaultRenameFlagOff(t *testing.T) {
 
 // ---- reload test -------------------------------------------------------
 
-// TestPerActionReloadDeprecatedFlagIgnored: the deprecated [security]
-// per_action_auth flag is parsed and a warning is logged, but it does NOT
-// change the authorization behavior — the NU-3 session-based matrix is
-// always active regardless of the flag value. Reload succeeds and returns no
-// change note for the deprecated key.
-func TestPerActionReloadDeprecatedFlagIgnored(t *testing.T) {
+// TestPerActionReloadUnknownKeyRejectsPerActionAuth: writing per_action_auth
+// to the config file must cause Reload to fail with an unknown-key error —
+// proving the flag was fully removed and the strict parser enforces it.
+func TestPerActionReloadUnknownKeyRejectsPerActionAuth(t *testing.T) {
 	dir := shortTempDir(t)
 	d := startBareDaemon(t, Config{Dir: dir})
 	c := ipc.NewClient(d.SocketPath())
 	pw := []byte(authzPW)
-	initUnlocked(t, c, pw) // captures session into c.Session
+	initUnlocked(t, c, pw)
 
-	// Seed an entry.
-	if err := c.Call(ipc.OpPut, ipc.PutReq{Name: "KEY", Value: []byte("v")}, &ipc.PutResp{}); err != nil {
-		t.Fatalf("put: %v", err)
-	}
-
-	// Session is set — get should work (session satisfies the gate).
-	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{}); err != nil {
-		t.Fatalf("get with session: %v", err)
-	}
-
-	// Write per_action_auth = true into config and reload.
-	// The flag is deprecated and ignored; Reload must succeed and NOT emit
-	// a "per_action_auth enabled/disabled" change note.
+	// Write per_action_auth = true into config — must be rejected by Reload.
 	writeConfig(t, dir, "[security]\nper_action_auth = true\n")
-	changes, err := d.Reload()
-	if err != nil {
-		t.Fatalf("Reload with deprecated flag: %v", err)
+	_, err := d.Reload()
+	if err == nil {
+		t.Fatal("Reload with per_action_auth = true: error = nil, want error (unknown key)")
 	}
-	for _, ch := range changes {
-		if ch == "per_action_auth enabled" || ch == "per_action_auth disabled" {
-			t.Errorf("Reload emitted deprecated change note %q; flag is a no-op", ch)
-		}
-	}
-
-	// Session still valid — get must still succeed (flag does not affect behavior).
-	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{}); err != nil {
-		t.Fatalf("get after reload with deprecated flag=true: %v", err)
-	}
-
-	// Get WITHOUT a session → auth_required (matrix always on).
-	freshClient := ipc.NewClient(d.SocketPath()) // no session
-	err = freshClient.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("no-session get: code = %v, want auth_required (matrix always on)", code)
-	}
-
-	// Write per_action_auth = false and reload again — still no change note.
-	writeConfig(t, dir, "[security]\nper_action_auth = false\n")
-	changes, err = d.Reload()
-	if err != nil {
-		t.Fatalf("Reload with flag=false: %v", err)
-	}
-	for _, ch := range changes {
-		if ch == "per_action_auth enabled" || ch == "per_action_auth disabled" {
-			t.Errorf("Reload flag=false emitted deprecated change note %q", ch)
-		}
-	}
-
-	// Session still works after reload with flag=false.
-	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "KEY"}, &ipc.GetResp{}); err != nil {
-		t.Fatalf("get after reload flag=false: %v", err)
+	// The strict TOML parser reports "strict mode: fields in the document are
+	// missing in the target struct" — it does not include the field name.
+	if !strings.Contains(err.Error(), "strict mode") && !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("error %q does not indicate a strict/unknown-key parse failure", err.Error())
 	}
 }

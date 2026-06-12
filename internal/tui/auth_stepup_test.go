@@ -57,7 +57,7 @@ func (c *authFakeClient) Call(op ipc.Op, req, resp any) error {
 	if c.authRequiredOps[op] && c.calledOps[op] == 1 {
 		return &ipc.ErrResponse{
 			Code:    ipc.CodeAuthRequired,
-			Message: "[security] per_action_auth is on",
+			Message: "authorization required",
 		}
 	}
 	// Second+ call: delegate to fakeClient for proper response.
@@ -119,8 +119,8 @@ func TestAuthRequired_RevealOpensOverlay(t *testing.T) {
 	if m.authReq.priorMode != ModeReveal {
 		t.Fatalf("priorMode = %v, want ModeReveal", m.authReq.priorMode)
 	}
-	if !strings.Contains(m.authReq.Cause, "per_action_auth") {
-		t.Fatalf("Cause %q doesn't mention per_action_auth", m.authReq.Cause)
+	if !strings.Contains(m.authReq.Cause, "authorization") {
+		t.Fatalf("Cause %q doesn't mention authorization", m.authReq.Cause)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestAuthRequired_WrongPasswordStaysInOverlay(t *testing.T) {
 
 	// Manually put model into ModeAuthRequired state (simulates prior auth_required).
 	m.authReq = &authReqState{
-		Cause:     "[security] per_action_auth is on",
+		Cause:     "authorization required",
 		kind:      authRetryGet,
 		priorMode: ModeReveal,
 		scope:     scope,
@@ -604,8 +604,8 @@ func TestAuthRequired_Snapshot(t *testing.T) {
 	if !strings.Contains(view, "Authorize") {
 		t.Errorf("snapshot missing 'Authorize':\n%s", body)
 	}
-	if !strings.Contains(view, "per_action_auth") {
-		t.Errorf("snapshot missing cause 'per_action_auth':\n%s", body)
+	if !strings.Contains(view, "authorization") {
+		t.Errorf("snapshot missing cause 'authorization':\n%s", body)
 	}
 	if !strings.Contains(view, "ESC cancel") {
 		t.Errorf("snapshot missing ESC hint:\n%s", body)
@@ -620,7 +620,7 @@ func TestAuthRequired_OverlayShowsRetryErr(t *testing.T) {
 		Width:  100, Height: 30,
 		Layout:  Compute(100, 30),
 		Mode:    ModeAuthRequired,
-		authReq: &authReqState{Cause: "per_action_auth is on", retryErr: "wrong_password: bad"},
+		authReq: &authReqState{Cause: "authorization required", retryErr: "wrong_password: bad"},
 	}
 	view := m.View()
 	stripped := stripANSI(view)
@@ -653,7 +653,7 @@ func TestAuthRequired_EscZeroesValue(t *testing.T) {
 	// Seed value payload directly — simulates a put op that triggered auth_required.
 	payload := []byte("super-secret-value")
 	m.authReq = &authReqState{
-		Cause: "per_action_auth",
+		Cause: "authorization required",
 		kind:  authRetryPut,
 		scope: scope,
 		name:  "DB_PASS",
@@ -702,7 +702,7 @@ func TestAuthRequired_SubmitZeroesValue(t *testing.T) {
 	// and the value was stored in authReq.value for retry).
 	payload := []byte("new-secret-value")
 	m.authReq = &authReqState{
-		Cause:     "per_action_auth",
+		Cause:     "authorization required",
 		kind:      authRetryPut,
 		scope:     scope,
 		name:      "API_KEY",

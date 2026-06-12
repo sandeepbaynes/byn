@@ -10,8 +10,8 @@ package daemon
 //     matched (exact argv)   → free
 //     unmatched / empty      → auth_required
 //
-// Independence: actions enforcement is INDEPENDENT of the global
-// per_action_auth flag. The flag governs ops WITHOUT a .byn contract;
+// Independence: actions enforcement is INDEPENDENT of the session gate.
+// The session gate governs ops WITHOUT a .byn contract;
 // the .byn [exec] actions list governs exec WITH a .byn contract.
 
 import (
@@ -91,8 +91,8 @@ func TestActionsMatchedRunsFree(t *testing.T) {
 	}
 }
 
-// TestActionsMatchedRunsFreeWithFlagOn: pinned action runs free even when
-// per_action_auth is on — the flag is INDEPENDENT of the .byn contract.
+// TestActionsMatchedRunsFreeWithFlagOn: pinned action runs free regardless
+// of session state — the session gate is INDEPENDENT of the .byn contract.
 func TestActionsMatchedRunsFreeWithFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -481,12 +481,11 @@ func TestActionsEmptyArgvFailsClosed(t *testing.T) {
 	}
 }
 
-// ── independence from per_action_auth flag ───────────────────────────────────
+// ── independence from session gate ───────────────────────────────────────────
 
 // TestActionsIndependentOfPerActionAuthFlag: the actions gate applies
-// regardless of the global per_action_auth flag — a pinned command is free
-// even with the flag on; an unmatched command requires auth even with the
-// flag off.
+// regardless of session state — a pinned command is free even when using the
+// credential path; an unmatched command requires auth regardless of session.
 func TestActionsIndependentOfPerActionAuthFlag(t *testing.T) {
 	t.Run("flagOn/matched=free", func(t *testing.T) {
 		_, c := startPerActionDaemonWithClient(t)
@@ -508,8 +507,7 @@ func TestActionsIndependentOfPerActionAuthFlag(t *testing.T) {
 		}
 	})
 
-	t.Run("flagOff/unmatched=auth", func(t *testing.T) {
-		// startTestDaemon has per_action_auth = false.
+	t.Run("sessionless/unmatched=auth", func(t *testing.T) {
 		_, c := startTestDaemon(t)
 		pw := []byte(authzPW)
 		initUnlocked(t, c, pw)
@@ -522,7 +520,7 @@ func TestActionsIndependentOfPerActionAuthFlag(t *testing.T) {
 			Argv:    []string{"other-cmd"},
 		})
 		if code := errCode(t, err); code != ipc.CodeAuthRequired {
-			t.Fatalf("flag off + unmatched: code = %v, want auth_required", code)
+			t.Fatalf("unmatched: code = %v, want auth_required", code)
 		}
 	})
 }
@@ -567,14 +565,13 @@ func TestActionsUnmatchedAuditedAsAuthRequired(t *testing.T) {
 // ── CRITICAL: unconditional credential verification (Finding 1) ─────────────
 //
 // The [exec] actions gate MUST verify credentials UNCONDITIONALLY — independent
-// of the global [security] per_action_auth flag.  All four of these tests are
-// run TWICE: once with the flag OFF (default) and once with it ON to pin that
-// the behavior is identical in both cases.
+// of session state. All four of these tests are run TWICE: once without a
+// session and once with the daemon started via startPerActionDaemonWithClient
+// (which exercises the credential-gated path) to pin that behavior is stable.
 
-// TestActionsUnmatchedWrongPasswordFlagOff: flag=OFF, unmatched command,
+// TestActionsUnmatchedWrongPasswordFlagOff: no session, unmatched command,
 // wrong password → CodeWrongPassword; rate-limiter failure is recorded.
 func TestActionsUnmatchedWrongPasswordFlagOff(t *testing.T) {
-	// startTestDaemon has per_action_auth = false.
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -593,8 +590,8 @@ func TestActionsUnmatchedWrongPasswordFlagOff(t *testing.T) {
 	}
 }
 
-// TestActionsUnmatchedWrongPasswordFlagOn: flag=ON, unmatched command,
-// wrong password → CodeWrongPassword (identical to flag=OFF).
+// TestActionsUnmatchedWrongPasswordFlagOn: credential-gated path, unmatched
+// command, wrong password → CodeWrongPassword.
 func TestActionsUnmatchedWrongPasswordFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -610,11 +607,11 @@ func TestActionsUnmatchedWrongPasswordFlagOn(t *testing.T) {
 		Password: []byte("wrong-password"),
 	})
 	if code := errCode(t, err); code != ipc.CodeWrongPassword {
-		t.Fatalf("flagON + unmatched + wrong pw: code = %v, want wrong_password", code)
+		t.Fatalf("unmatched + wrong pw: code = %v, want wrong_password", code)
 	}
 }
 
-// TestActionsUnmatchedNoCredsFlagOff: flag=OFF, unmatched command, no creds
+// TestActionsUnmatchedNoCredsFlagOff: no session, unmatched command, no creds
 // → CodeAuthRequired with "[exec] actions" in the recover hint.
 func TestActionsUnmatchedNoCredsFlagOff(t *testing.T) {
 	_, c := startTestDaemon(t)
@@ -631,7 +628,7 @@ func TestActionsUnmatchedNoCredsFlagOff(t *testing.T) {
 		// No password or presence token.
 	})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("flagOFF + unmatched + no creds: code = %v, want auth_required", code)
+		t.Fatalf("no session + unmatched + no creds: code = %v, want auth_required", code)
 	}
 	var er *ipc.ErrResponse
 	if errors.As(err, &er) {
@@ -641,8 +638,8 @@ func TestActionsUnmatchedNoCredsFlagOff(t *testing.T) {
 	}
 }
 
-// TestActionsUnmatchedNoCredsFlagOn: flag=ON, unmatched command, no creds
-// → CodeAuthRequired (identical to flag=OFF — independence).
+// TestActionsUnmatchedNoCredsFlagOn: credential-gated path, unmatched command,
+// no creds → CodeAuthRequired (actions gate is independent of session).
 func TestActionsUnmatchedNoCredsFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -657,11 +654,11 @@ func TestActionsUnmatchedNoCredsFlagOn(t *testing.T) {
 		Argv:    []string{"other-cmd"},
 	})
 	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("flagON + unmatched + no creds: code = %v, want auth_required", code)
+		t.Fatalf("unmatched + no creds: code = %v, want auth_required", code)
 	}
 }
 
-// TestActionsUnmatchedCorrectPasswordFlagOff: flag=OFF, unmatched command,
+// TestActionsUnmatchedCorrectPasswordFlagOff: no session, unmatched command,
 // correct password → values flow through.
 func TestActionsUnmatchedCorrectPasswordFlagOff(t *testing.T) {
 	_, c := startTestDaemon(t)
@@ -678,15 +675,15 @@ func TestActionsUnmatchedCorrectPasswordFlagOff(t *testing.T) {
 		Password: pw,
 	})
 	if err != nil {
-		t.Fatalf("flagOFF + unmatched + correct pw: want ok, got: %v", err)
+		t.Fatalf("no session + unmatched + correct pw: want ok, got: %v", err)
 	}
 	if valueMap(resp.Values)["SECRET"] != "s3cret" {
 		t.Errorf("SECRET not injected after authorized unmatched exec")
 	}
 }
 
-// TestActionsUnmatchedCorrectPasswordFlagOn: flag=ON, unmatched command,
-// correct password → values flow (identical to flag=OFF — independence).
+// TestActionsUnmatchedCorrectPasswordFlagOn: credential-gated path, unmatched
+// command, correct password → values flow (independence from session).
 func TestActionsUnmatchedCorrectPasswordFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -702,17 +699,17 @@ func TestActionsUnmatchedCorrectPasswordFlagOn(t *testing.T) {
 		Password: pw,
 	})
 	if err != nil {
-		t.Fatalf("flagON + unmatched + correct pw: want ok, got: %v", err)
+		t.Fatalf("unmatched + correct pw: want ok, got: %v", err)
 	}
 	if valueMap(resp.Values)["SECRET"] != "s3cret" {
-		t.Errorf("SECRET not injected after authorized unmatched exec (flag on)")
+		t.Errorf("SECRET not injected after authorized unmatched exec")
 	}
 }
 
-// TestAuthExecAlwaysWrongPasswordFlagOff: [auth] exec="always", flag=OFF,
-// wrong password → CodeWrongPassword (MUST NOT skip due to flag=OFF).
+// TestAuthExecAlwaysWrongPasswordFlagOff: [auth] exec="always", no session,
+// wrong password → CodeWrongPassword (MUST NOT skip regardless of session).
 func TestAuthExecAlwaysWrongPasswordFlagOff(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 	putVar(t, c, ipc.Scope{}, "SECRET", []byte("s3cret"))
@@ -726,12 +723,12 @@ func TestAuthExecAlwaysWrongPasswordFlagOff(t *testing.T) {
 		Password: []byte("wrong-pw"),
 	})
 	if code := errCode(t, err); code != ipc.CodeWrongPassword {
-		t.Fatalf("exec=always flagOFF wrong pw: code = %v, want wrong_password", code)
+		t.Fatalf("exec=always + wrong pw: code = %v, want wrong_password", code)
 	}
 }
 
-// TestAuthExecAlwaysWrongPasswordFlagOn: [auth] exec="always", flag=ON,
-// wrong password → CodeWrongPassword (identical to flag=OFF).
+// TestAuthExecAlwaysWrongPasswordFlagOn: [auth] exec="always", credential-gated
+// path, wrong password → CodeWrongPassword.
 func TestAuthExecAlwaysWrongPasswordFlagOn(t *testing.T) {
 	_, c := startPerActionDaemonWithClient(t)
 	pw := []byte(authzPW)
@@ -747,7 +744,7 @@ func TestAuthExecAlwaysWrongPasswordFlagOn(t *testing.T) {
 		Password: []byte("wrong-pw"),
 	})
 	if code := errCode(t, err); code != ipc.CodeWrongPassword {
-		t.Fatalf("exec=always flagON wrong pw: code = %v, want wrong_password", code)
+		t.Fatalf("exec=always (gated path) wrong pw: code = %v, want wrong_password", code)
 	}
 }
 
@@ -756,7 +753,7 @@ func TestAuthExecAlwaysWrongPasswordFlagOn(t *testing.T) {
 // backoff (rate_limited). This pins that the rate-limiter is active on the
 // unconditional credential path.
 func TestActionsUnmatchedRateLimiterRecorded(t *testing.T) {
-	_, c := startTestDaemon(t) // flag OFF — unconditional path must still rate-limit
+	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 

@@ -393,16 +393,16 @@ record at grant time. The daemon reads policy from the record, not from the
 live file, so editing the `.byn` after trust is granted cannot change the
 effective actions policy without re-trusting (which requires the password).
 
-**Independence from `per_action_auth`:** the actions gate applies regardless
-of the global `[security] per_action_auth` flag. The flag governs operations
-that have no `.byn` contract (ad-hoc exec, `get`, `put`, `delete`, …). A
-`.byn`'s `[exec] actions` list is the contract for trusted-`.byn` exec.
-Turning on `per_action_auth` does NOT add extra prompts to a trusted-`.byn`
-exec that has a pinned command.
+**Independence from the session gate:** the actions gate applies regardless
+of whether a session is active. The session gate governs value-touching
+operations that have no `.byn` contract (ad-hoc exec, `get`, `put`,
+`delete`, …). A `.byn`'s `[exec] actions` list is the contract for
+trusted-`.byn` exec. Having an active session does NOT add extra prompts
+to a trusted-`.byn` exec that has a pinned command.
 
 **`[auth] exec` scope:** the `exec` key in `[auth]` applies only to
 trusted-`.byn` exec (Path present). Ad-hoc exec (no `.byn`) is governed solely
-by `[security] per_action_auth` — `.byn` policy is never consulted for ad-hoc
+by the NU-3 session gate — `.byn` policy is never consulted for ad-hoc
 exec, because ad-hoc exec injects the whole scope with no env allowlist, and a
 `.byn`'s policy contract is tied to that file's own env allowlist.
 
@@ -427,19 +427,11 @@ but does help against accidental disk swap on memory pressure.
 
 ## CLI-level controls
 
-### Per-action auth (`[security] per_action_auth`) — deprecated
+### NU-3 authorization gate
 
-> **Deprecated in NU-3.** This config key is accepted but **ignored** — a
-> warning is printed at daemon startup. The NU-3 session matrix supersedes it:
-> value operations always require either a live session or fresh credentials,
-> regardless of whether `per_action_auth` was on or off. Remove the key from
-> `~/.byn/config` to eliminate the warning.
-
-The old behaviour (now the default, not opt-in) required fresh authorization —
-master password or a portal presence token — for every sensitive call, **even
-while the vault is already unlocked**. NU-3 preserves this guarantee via the
-session gate and removes the per-call Argon2id overhead by letting a valid
-session satisfy the gate.
+The NU-3 session matrix requires either a live session or fresh credentials
+for every sensitive call, **even while the vault is already unlocked** by
+another terminal. This is the default; it is not opt-in.
 
 **Gated operations:** `get`, overwrite-`put`, `delete`, `rename`,
 `env clear`, `env delete`, `project delete`, `vault delete`,
@@ -450,22 +442,20 @@ hands out the entire scope; running from a directory with a trusted
 `.byn` is the zero-prompt alternative.
 
 **CLI flow:** when the daemon returns `auth_required`, the CLI prompts
-once ("Authorization required. \[security\] per_action_auth is on.")
-and retries with the supplied password. `--password-stdin` is supported
-for non-interactive use. In `--json` (agent) mode no prompt is shown;
-the call fails actionably so the caller can supply `--password-stdin`
-and retry. A wrong password is rejected and rate-limited exactly like
-`byn unlock`.
+once ("Authorization required.") and retries with the supplied password.
+`--password-stdin` is supported for non-interactive use. In `--json`
+(agent) mode no prompt is shown; the call fails actionably so the caller
+can supply `--password-stdin` and retry. A wrong password is rejected
+and rate-limited exactly like `byn unlock`.
 
 **`put --password-stdin` contract:** with `--password-stdin`, the
 **first line** of stdin is always the master password and the
 **remainder** (after the first newline) is the secret value. The first
 line is consumed unconditionally — even when the daemon does not ask
-for authorization (e.g., for a new key where per_action_auth doesn't
-apply). This makes the contract byte-stable regardless of config:
+for authorization (e.g., for a new key being inserted for the first
+time). This makes the contract byte-stable:
 
 ```sh
-# works whether or not per_action_auth is on
 { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 ```
 
@@ -477,11 +467,11 @@ stdin (no newline split) is read as the password.
 | Scenario | Recovery |
 |---|---|
 | `get` / `put` / `rename` on a **locked vault** | Hard fail with "byn unlock" hint — a password alone cannot decrypt a locked vault |
-| `get` / `put` / `rename` with **per_action_auth on** (vault is unlocked) | Prompt / `--password-stdin` once; daemon verifies without changing lock state |
+| `get` / `put` / `rename` with no active session (vault is unlocked) | Prompt / `--password-stdin` once; daemon verifies without changing lock state |
 | `delete`-family on a **locked vault** | Password alone authorizes — vault stays locked, no values exposed |
-| `delete`-family with **per_action_auth on** (vault is unlocked) | Same password flow as above |
+| `delete`-family with no active session (vault is unlocked) | Same password flow as above |
 
-**Portal step-up:** when per_action_auth is on, the web portal shows
+**Portal step-up:** when no active session is present, the web portal shows
 an "Authorize" modal on any write/delete/reveal. Passkey (Touch ID /
 iCloud Keychain) is tried first; password is the fallback. On success,
 the daemon issues a **single-use presence token** (32 random bytes,
@@ -508,24 +498,23 @@ is the path to a stronger UID boundary.
 
 ### `.byn` `[auth]` per-scope policy
 
-The `[auth]` table in a `.byn` file can override the global
-`per_action_auth` flag **per operation, per scope**. This lets a
-team commit a policy alongside the project config and have it take
-effect automatically for anyone who trusts the file — without
-changing the global flag.
+The `[auth]` table in a `.byn` file can override the NU-3 session gate
+**per operation, per scope**. This lets a team commit a policy alongside
+the project config and have it take effect automatically for anyone who
+trusts the file.
 
 **Keys:** `get`, `update` (overwrite-put, rename, vault-rename),
 `delete` (delete, env.clear, env.delete, project.delete, vault.delete),
 `exec`. Values: `always`, `none`. (The `exec` key is enforced
 separately via the `[exec]` actions gate; see the actions section.)
 
-**Values and their effect on the per-action gate:**
+**Values and their effect on the session gate:**
 
 | Value | Effect |
 |---|---|
-| `always` | Fresh auth unconditionally, **even when `per_action_auth` is off**. Tightens. |
-| `none` | Gate skipped entirely for the matched scope, **even when `per_action_auth` is on**. Relaxes. |
-| absent | Flag decides (existing `per_action_auth` semantics). |
+| `always` | Fresh auth unconditionally (even with an active session). Tightens. |
+| `none` | Gate skipped entirely for the matched scope (no auth needed). Relaxes. |
+| absent | Session gate decides (default NU-3 semantics). |
 
 **Policy lookup rules:**
 
@@ -586,7 +575,7 @@ to interactively prompt for anything. Specifically:
 
 - Untrusted `.byn` file → hard error (not a y/N prompt).
 - Tampered `.byn` file → hard error.
-- `auth_required` (per_action_auth) → hard fail; supply
+- `auth_required` (no active session) → hard fail; supply
   `--password-stdin` instead.
 
 Agents and CI can never silently auto-trust a malicious config.
@@ -707,8 +696,8 @@ automatically load and forward the token without re-prompting.
 |---|---|---|
 | `byn unlock` in terminal A, then `byn get KEY` in terminal B | **Worked.** Vault was unlocked for all callers. | **Fails with `auth_required`.** Terminal B has no session. |
 | Script that calls `byn get KEY` without unlocking first | Worked if any terminal had unlocked | Fails with `auth_required`. Script must supply credentials. |
-| `[security] per_action_auth = true` in config | Required per-call password | Config key is **deprecated and ignored** (a startup warning is logged). The NU-3 session matrix always requires a session or fresh credentials for value ops — `per_action_auth` is a no-op. |
-| `byn export` without an active session | Would prompt per-entry (under per_action_auth) | With an active session, zero prompts. Without a session, `auth_required`. Use `--password-stdin` or unlock first. |
+| `[security] per_action_auth = true` in config | Required per-call password | Config key is **removed**. Writing it to `~/.byn/config` causes the daemon to reject the config with an unknown-key error. Remove the key. |
+| `byn export` without an active session | Would prompt per-entry | With an active session, zero prompts. Without a session, `auth_required`. Use `--password-stdin` or unlock first. |
 
 #### What to do
 
@@ -749,15 +738,10 @@ byn get DB_URL       # session file present; no re-auth needed
   run from inside a trusted `.byn` scope.
 - `list` and new-name `put` (insert) are **always free** — no session needed.
 
-**Remove `per_action_auth` from config:**
-
-```toml
-# ~/.byn/config — remove or comment out this line:
-# per_action_auth = true   ← deprecated; remove it
-```
-
-The line is harmless (ignored) but generates a startup warning. Remove it to
-keep the config clean.
+**Config cleanup:** if your `~/.byn/config` contains a `[security]`
+section with `per_action_auth`, remove that key. The strict TOML parser
+will reject any config containing `per_action_auth` as an unknown key,
+preventing the daemon from loading.
 
 ---
 

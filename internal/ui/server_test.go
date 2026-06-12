@@ -133,10 +133,9 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 			Path:    "/home/u/.byn/config",
 			Content: []byte("[ui]\nport = 2967\n"),
 			Parsed: &ipc.ConfigParsed{
-				UIEnabled:     true,
-				UIPort:        2967,
-				IdleTimeout:   "15m0s",
-				PerActionAuth: false,
+				UIEnabled:   true,
+				UIPort:      2967,
+				IdleTimeout: "15m0s",
 			},
 		})
 	case ipc.OpConfigSet:
@@ -159,10 +158,9 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		}
 		return mk(ipc.ConfigValidateResp{
 			Parsed: &ipc.ConfigParsed{
-				UIEnabled:     true,
-				UIPort:        2967,
-				IdleTimeout:   "15m0s",
-				PerActionAuth: false,
+				UIEnabled:   true,
+				UIPort:      2967,
+				IdleTimeout: "15m0s",
 			},
 		})
 	case ipc.OpAuditTail:
@@ -593,14 +591,14 @@ func TestSPAFallback_StaticAsset(t *testing.T) {
 	}
 }
 
-// ---- per_action_auth portal tests ----------------------------------------
+// ---- portal auth_required gate tests ----------------------------------------
 //
 // These tests confirm the portal HTTP surface honours the auth_required gate
-// introduced by [security] per_action_auth. They use a canned dispatcher
-// (perActionDisp) that mimics the daemon gate: it returns auth_required unless
-// the request body carries a non-empty password or a valid single-use
-// presence_token, and supplies a mint() helper the test can use to produce a
-// token — so no real daemon or vault is needed.
+// (NU-3 session matrix). They use a canned dispatcher (perActionDisp) that
+// mimics the daemon gate: it returns auth_required unless the request body
+// carries a non-empty password or a valid single-use presence_token, and
+// supplies a mint() helper the test can use to produce a token — so no real
+// daemon or vault is needed.
 //
 // Coverage:
 //   (a) reveal/get without creds → 401 auth_required
@@ -612,7 +610,7 @@ const testVault = "default"
 const testPassword = "correct-horse"
 
 // perActionDisp is a fakeDisp variant that gates OpGet and OpPut-overwrite
-// behind an auth check, mirrors what the real daemon does for per_action_auth.
+// behind an auth check, mirrors what the real daemon does for the NU-3 gate.
 type perActionDisp struct {
 	fakeDisp
 	// usedTokens tracks consumed presence tokens (single-use enforcement).
@@ -687,7 +685,7 @@ func (d *perActionDisp) checkAuth(id string, password, presenceToken []byte) *ip
 		// Non-empty but wrong password → wrong_password, not auth_required.
 		return ipc.NewError(id, ipc.CodeWrongPassword, "wrong password", "")
 	}
-	return ipc.NewError(id, ipc.CodeAuthRequired, "this action requires authorization ([security] per_action_auth)", "supply password")
+	return ipc.NewError(id, ipc.CodeAuthRequired, "this action requires authorization", "supply password")
 }
 
 // TestReveal_AuthRequired_NoCreds: reveal without password/token → 401.
@@ -841,10 +839,10 @@ func TestReveal_ForwardsPresenceTokenIPC(t *testing.T) {
 	}
 }
 
-// ---- vault rename per_action_auth step-up --------------------------------
+// ---- vault rename auth_required gate --------------------------------
 
 // TestVaultRename_AuthRequired_NoCreds: /api/vault/rename without password or
-// presence_token when [security] per_action_auth is on → 401 auth_required.
+// presence_token → 401 auth_required.
 func TestVaultRename_AuthRequired_NoCreds(t *testing.T) {
 	d := newPerActionDisp("")
 	ts, c := newTestServerWith(t, d)

@@ -585,12 +585,13 @@ async function api(method, path, body) {
   return data;
 }
 
-// ---- per_action_auth step-up --------------------------------------------
+// ---- action step-up -------------------------------------------------------
 
-// authorizeStepUp shows an authorization step-up for an action gated by
-// [security] per_action_auth. Passkey-first (mirrors the trust-grant flow);
-// falls back to the password dialog. Returns { password, presence_token } with
-// exactly one of them set, or null when the user cancels.
+// authorizeStepUp shows an authorization step-up for an action that requires
+// fresh credentials (session expired or absent). Passkey-first (mirrors the
+// trust-grant flow); falls back to the password dialog. Returns
+// { password, presence_token } with exactly one of them set, or null when
+// the user cancels.
 //
 // The returned credential is SINGLE-USE: do not store it; pass it directly
 // into the retried request body and discard it after.
@@ -604,7 +605,7 @@ async function authorizeStepUp(vault) {
     title: "Authorize action",
     okText: "authorize",
     message:
-      "[security] per_action_auth is on — enter the master password to authorize this action.",
+      "Authorization required — enter the master password to authorize this action.",
     fields: [
       { key: "password", label: "master password", type: "password",
         validate: (v) => (v ? null : "password required") },
@@ -1398,8 +1399,7 @@ async function revokeTrust(path) {
 // .byn studio builder/raw pattern. Mode-switching uses openDialog (never
 // browser confirm/alert). Save is credential-gated (apiWithAuth handles the
 // step-up). On success the panel shows the daemon's change_notes so the user
-// knows what took effect vs what needs a restart. A byn modal fires when
-// per_action_auth is toggled so the consequence is stated clearly.
+// knows what took effect vs what needs a restart.
 
 function toggleSettings() {
   if (state.view === "settings") { leaveOverlayView(); return; }
@@ -1417,9 +1417,6 @@ const DEFAULT_CONFIG_TEMPLATE = `# byn global configuration
 
 [daemon]
 # idle_timeout = "0s"   # lock all vaults after inactivity; "0s" disables (hot-apply)
-
-[security]
-# per_action_auth = false  # require password/passkey for every reveal/edit/exec (hot-apply)
 `;
 
 // cfgState holds the mutable state for the settings panel (analogous to
@@ -1473,9 +1470,7 @@ async function cfgReset() {
     cfgState.uiPort        = p.ui_port;
     cfgState.revealHideAfter = p.reveal_hide_after;
     cfgState.idleTimeout   = p.idle_timeout;
-    cfgState.perActionAuth = p.per_action_auth;
     setRevealHideAfter(p.reveal_hide_after);
-    cfgState.basePerActionAuth = p.per_action_auth;
     // Re-render the form to reflect the reset values.
     // renderSettingsView re-creates cfgState and sets cfgBaseline.
     renderSettingsView();
@@ -1519,9 +1514,6 @@ async function renderSettingsView() {
     uiPort:        configParsed ? configParsed.ui_port        : 2967,
     revealHideAfter: configParsed ? configParsed.reveal_hide_after : "15s",
     idleTimeout:   configParsed ? configParsed.idle_timeout   : "15m0s",
-    perActionAuth: configParsed ? configParsed.per_action_auth : false,
-    // The "baseline" per_action_auth: used for the consequence modal on save.
-    basePerActionAuth: configParsed ? configParsed.per_action_auth : false,
     // Raw textarea content, seeded lazily when switching to raw mode.
     rawContent: configContent || DEFAULT_CONFIG_TEMPLATE,
     // DOM refs populated below.
@@ -1584,11 +1576,10 @@ async function renderSettingsView() {
   const refTitle = el("div", "cfg-ref-title", "key reference");
   ref.appendChild(refTitle);
   const refRows = [
-    ["[ui] enabled",               "hot-apply on save"],
-    ["[ui] port",                  "hot-apply on save (needs restart to rebind)"],
-    ["[ui] reveal_hide_after",     "hot-apply on save"],
-    ["[daemon] idle_timeout",      "hot-apply on save"],
-    ["[security] per_action_auth", "hot-apply on save"],
+    ["[ui] enabled",           "hot-apply on save"],
+    ["[ui] port",              "hot-apply on save (needs restart to rebind)"],
+    ["[ui] reveal_hide_after", "hot-apply on save"],
+    ["[daemon] idle_timeout",  "hot-apply on save"],
   ];
   for (const [k, v] of refRows) {
     const row = el("div", "cfg-ref-row");
@@ -1705,28 +1696,6 @@ async function renderSettingsView() {
   idleWrap.appendChild(idleLabel); idleWrap.appendChild(idlePair); idleWrap.appendChild(idleHint);
   daemonCard.appendChild(idleWrap);
   formPanel.appendChild(daemonCard);
-
-  // [security] section
-  const secCard = cfgFormCard("security");
-
-  const paaRow = el("label", "cfg-form-row");
-  const paaCb  = el("input"); paaCb.type = "checkbox"; paaCb.checked = cfgState.perActionAuth;
-  paaCb.onchange = () => { cfgState.perActionAuth = paaCb.checked; };
-  const paaText = el("span", null, "per_action_auth");
-  const paaHint = el("span", "cfg-field-hint", "require password/passkey for every reveal, edit & exec · hot-apply");
-  paaRow.appendChild(paaCb); paaRow.appendChild(paaText);
-  paaRow.appendChild(paaHint);
-  secCard.appendChild(paaRow);
-  // Per-project override hint.
-  const paaSubHint = el("div", "cfg-sec-hint");
-  paaSubHint.appendChild(document.createTextNode("Per-command overrides (get / update / delete / exec) are per-project — edit them in each project's .byn via the "));
-  const studioLink = el("a", null, "studio");
-  studioLink.href = "/studio";
-  studioLink.onclick = (e) => { e.preventDefault(); navigateGuarded("/studio"); };
-  paaSubHint.appendChild(studioLink);
-  paaSubHint.appendChild(document.createTextNode("."));
-  secCard.appendChild(paaSubHint);
-  formPanel.appendChild(secCard);
 
   formPanel.hidden = cfgState.rawMode;
   box.appendChild(formPanel);
@@ -1884,7 +1853,7 @@ function serializeDuration(mins, secs) {
 }
 
 // serializeCfg builds the TOML content from the current cfgState visual-form
-// values. Only the four known keys are emitted — the strict config parser
+// values. Only the known keys are emitted — the strict config parser
 // refuses unknown keys, so valid configs can never contain anything else.
 // Keys that match the compiled-in defaults are still emitted for clarity
 // (the daemon's config.Parse handles them correctly).
@@ -1892,8 +1861,7 @@ function serializeDuration(mins, secs) {
 // DEFAULT FORM VALUES (keep in sync with TestSerializeCfgDefaultForm in
 // internal/config/config_test.go — that test feeds these exact bytes to
 // config.Parse to guard serializer drift):
-//   uiEnabled=true, uiPort=2967, revealHideAfter="15s", idleTimeout="15m0s",
-//   perActionAuth=false
+//   uiEnabled=true, uiPort=2967, revealHideAfter="15s", idleTimeout="15m0s"
 function serializeCfg(st) {
   const lines = [];
   lines.push("[ui]");
@@ -1903,9 +1871,6 @@ function serializeCfg(st) {
   lines.push("");
   lines.push("[daemon]");
   lines.push("idle_timeout = " + tomlStr(st.idleTimeout || "0s"));
-  lines.push("");
-  lines.push("[security]");
-  lines.push("per_action_auth = " + (st.perActionAuth ? "true" : "false"));
   lines.push("");
   return lines.join("\n");
 }
@@ -1956,11 +1921,9 @@ async function toggleCfgMode() {
     // Zero errors — carry the parsed values through to cfgState form fields.
     const p = validateResp && validateResp.parsed;
     if (p) {
-      cfgState.uiEnabled     = p.ui_enabled;
-      cfgState.uiPort        = p.ui_port;
-      cfgState.idleTimeout   = p.idle_timeout;
-      cfgState.perActionAuth = p.per_action_auth;
-      cfgState.basePerActionAuth = p.per_action_auth;
+      cfgState.uiEnabled   = p.ui_enabled;
+      cfgState.uiPort      = p.ui_port;
+      cfgState.idleTimeout = p.idle_timeout;
     }
     cfgState.rawMode = false;
     if (cfgState.rawPanel)  cfgState.rawPanel.hidden  = true;
@@ -1993,28 +1956,11 @@ async function saveCfg() {
     ? (cfgState.rawContent || "")
     : serializeCfg(cfgState);
 
-  // Safety UX: byn modal when per_action_auth changes (form or raw).
-  // In raw mode, ignore commented lines (first non-space char is #).
-  const willEnable = cfgState.rawMode
-    ? newContent.split("\n").some((line) => !/^\s*#/.test(line) && /per_action_auth\s*=\s*true/.test(line))
-    : cfgState.perActionAuth;
-  const wasEnabled = cfgState.basePerActionAuth;
-
-  if (wasEnabled !== willEnable) {
-    const msg = willEnable
-      ? "You are enabling per_action_auth. Every secret reveal, edit, and exec will require your password or passkey from now on."
-      : "You are disabling per_action_auth. Secret reveals, edits, and execs will no longer require extra authorization.";
-    const ok = await openDialog({ title: "Confirm security change", okText: "save", message: msg });
-    if (!ok) return;
-  }
-
   if (notesEl) { notesEl.hidden = true; notesEl.textContent = ""; }
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "saving…"; }
 
   try {
     const resp = await apiWithAuth("POST", "/api/config", { content: newContent }, "");
-    // Update per_action_auth baseline so the consequence modal fires correctly.
-    cfgState.basePerActionAuth = willEnable;
     // Update dirty-tracking baseline so the guard does not fire after a clean save.
     cfgBaseline = newContent;
     // Refresh the cached reveal auto-hide timeout from the authoritative saved
@@ -2429,11 +2375,11 @@ async function copyValue(s) {
 }
 
 // revealManyValues fetches plaintext for a list of { scope, name } requests
-// with ONE up-front authorization when per_action_auth requires it: a password
-// is reused across reads; a single-use passkey token covers one read, so the
-// rest re-prompt (same as the .env export). Calls onValue(req, value) for each
-// success. Returns true when complete, false on cancel / locked / failure
-// (with a toast). Each read is an audited `get`.
+// with ONE up-front authorization: a password is reused across reads; a
+// single-use passkey token covers one read, so the rest re-prompt (same as
+// the .env export). Calls onValue(req, value) for each success. Returns true
+// when complete, false on cancel / locked / failure (with a toast). Each
+// read is an audited `get`.
 async function revealManyValues(reqs, vault, onValue) {
   let creds = null; // reusable password; passkey tokens are single-use
   for (const req of reqs) {
@@ -3916,7 +3862,7 @@ function studioShowValue(name, span, v) {
 }
 
 // studioRevealOne fetches + shows ONE value (single-click). Gated by the
-// audited reveal path: vault unlocked + per_action_auth step-up via apiWithAuth.
+// audited reveal path: vault unlocked + step-up via apiWithAuth.
 async function studioRevealOne(name) {
   if (!studioState || !studioState.revealValueEls[name]) return;
   const scope = studioScopeForReveal();
@@ -3985,10 +3931,10 @@ async function studioToggleRevealAll() {
 }
 
 // studioRevealScopeValues fetches plaintext for `names` in `scope`, authorizing
-// once up front when per_action_auth requires it: a password is reused across
-// reads; single-use passkey tokens cover one read, so the rest re-prompt (same
-// as the .env export). Returns { name → value }, or null on cancel / locked
-// vault / failure (with a toast). Each read is an audited `get`.
+// once up front: a password is reused across reads; single-use passkey tokens
+// cover one read, so the rest re-prompt (same as the .env export). Returns
+// { name → value }, or null on cancel / locked vault / failure (with a toast).
+// Each read is an audited `get`.
 async function studioRevealScopeValues(scope, names) {
   const out = {};
   const ok = await revealManyValues(
@@ -4308,7 +4254,7 @@ function renderBuilderPanel(panel) {
   // -- Auth card --
   const authCard = studioCard("auth overrides");
   const authDesc = el("p", "studio-card-desc",
-    "override per_action_auth per operation (\"none\" = skip auth gate for this scope)");
+    "override the auth gate per operation (\"none\" = skip auth gate for this scope)");
   authCard.appendChild(authDesc);
   // One-column layout: label + select per row (not a 3+1 grid).
   const authCol = el("div", "studio-auth-col");

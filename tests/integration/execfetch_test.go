@@ -1,8 +1,7 @@
 //go:build integration
 
 // NU-1 end-to-end integration tests: exec.fetch trust gate, [exec] env
-// allowlist, per_action_auth config flag, cred-leak assertion, and
-// locked-exec denial.
+// allowlist, NU-3 session auth gate, cred-leak assertion, and locked-exec denial.
 package integration
 
 import (
@@ -155,32 +154,22 @@ func TestE2E_ExecFetch_ChangedBynDenied(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// Test 3 — per_action_auth flag e2e
+// Test 3 — NU-3 session gate e2e
 //
-// Start the daemon with [security] per_action_auth = true in the config.
+// The NU-3 session gate is always active (no flag required).
 // After init+unlock:
 //   - byn get with wrong password via --password-stdin: fails (exit 3)
 //   - byn get with correct password via --password-stdin: succeeds
-//   - trusted byn exec injects WITHOUT any password (unaffected by the flag)
+//   - trusted byn exec injects WITHOUT any password (unaffected by gate)
 //   - byn list works free (no password needed)
 //   - insert of a NEW name needs no password
-//   - daemon reload toggles the flag (SIGHUP path verified)
 // --------------------------------------------------------------------------
 
 func TestE2E_PerActionAuth_E2E(t *testing.T) {
-	// Start daemon with per_action_auth = true in the config from the start,
-	// avoiding rate-limiter interactions that arise from wrong-password probes
-	// during a reload polling loop.
+	// Start daemon with default config — the NU-3 session gate is always active.
 	s := newSession(t)
 
-	// Write per_action_auth = true into the config file BEFORE starting the daemon.
-	cfgPath := filepath.Join(s.dir, "config")
-	cfgBody := "[security]\nper_action_auth = true\n"
-	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	// Start the daemon (reads config at start).
+	// Start the daemon.
 	if _, se, code := s.run("", "daemon", "start"); code != 0 {
 		t.Fatalf("daemon start: code=%d stderr=%q", code, se)
 	}
@@ -252,9 +241,9 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	dotPath := filepath.Join(projDir, ".byn")
-	// Pin /usr/bin/env in [exec] actions — exec must run re-auth-free on a
-	// matched pinned command even while per_action_auth is on. The .byn's own
-	// contract (pinned action = authorization) is independent of the global flag.
+	// Pin /usr/bin/env in [exec] actions — exec must run auth-free on a
+	// matched pinned command. The .byn's own contract (pinned action = authorization)
+	// is independent of the session gate.
 	bynContent := "[scope]\nproject = \"default\"\n[exec]\nenv = [\"DB_URL\"]\nactions = [\"/usr/bin/env\"]\n"
 	if err := os.WriteFile(dotPath, []byte(bynContent), 0o600); err != nil {
 		t.Fatalf("write .byn: %v", err)
@@ -265,10 +254,10 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 	}
 
 	// exec via the trusted .byn injects DB_URL WITHOUT any interactive password
-	// (pinned action = authorization; per_action_auth flag is irrelevant here).
+	// (pinned action = authorization; session gate does not apply here).
 	execOut, execSe, execCode := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
 	if execCode != 0 {
-		t.Fatalf("exec under per_action_auth: code=%d stderr=%q", execCode, execSe)
+		t.Fatalf("exec with trusted .byn: code=%d stderr=%q", execCode, execSe)
 	}
 	if !strings.Contains(execOut, "DB_URL=s3cret-db") {
 		t.Errorf("exec did not inject DB_URL=s3cret-db:\n%s", execOut)
@@ -405,7 +394,7 @@ func TestE2E_ExecFetch_LockedExecDenied(t *testing.T) {
 // exec an UNLISTED command (/usr/bin/true) in a non-TTY context (no password
 // available). The daemon must refuse with nonzero exit and stderr must mention
 // "[exec] actions". This pins the unconditional credential check for unmatched
-// commands, independent of the global per_action_auth flag.
+// commands, independent of session state.
 // --------------------------------------------------------------------------
 
 func TestE2E_ExecFetch_UnlistedCommandNonTTY(t *testing.T) {
