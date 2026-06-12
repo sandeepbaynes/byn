@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -148,11 +148,12 @@ func splitNUL(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
-// execTarget looks up TARGET in PATH and replaces the current process via execve.
+// execTarget replaces the current process via execve. It requires an ABSOLUTE
+// target path and does NO PATH resolution — the daemon resolves PATH itself,
+// unprivileged, removing the PATH-poisoning vector from the privileged helper.
 func execTarget(argv []string, env []string) error {
-	path, err := exec.LookPath(argv[0])
-	if err != nil {
-		return fmt.Errorf("lookpath %s: %w", argv[0], err)
+	if !filepath.IsAbs(argv[0]) {
+		return fmt.Errorf("target %q is not an absolute path", argv[0])
 	}
-	return unix.Exec(path, argv, env)
+	return unix.Exec(argv[0], argv, env)
 }
