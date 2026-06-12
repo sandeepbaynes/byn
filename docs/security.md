@@ -989,14 +989,13 @@ byn exec -- make build      # succeeds
 (re-trust required), **2** when the daemon is not running, or **3** when
 the daemon returns an error (path not trusted, file exceeds 64KB, etc.).
 
-### Provider seam (for Enterprise Edition)
+### Pluggable auth-provider seam
 
-The auth-provider registry introduced in NU-2 exposes a public interface
-(`auth.Provider`) that the EE can use to register additional authentication
-methods (phone approval, SSO, hardware token) without forking this
-repository. The base ships `password` and `passkey` providers. EE registers
-additional providers at startup via the exported registry — this is the
-extension point for NU-4's premium auth surfaces.
+The auth-provider registry introduced in NU-2 exposes an interface
+(`auth.Provider`) so additional authentication methods (phone approval, SSO,
+hardware token) can register without forking byn. byn ships `password` and
+`passkey` providers; additional providers register at startup via the registry.
+This keeps the unlock surface extensible for self-hosted custom integrations.
 
 ---
 

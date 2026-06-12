@@ -401,7 +401,7 @@ Highlights of what's next:
 
 - **Release readiness** — daemon auto-start (launchd/systemd, `byn daemon install`), quickstart guide
 - **Phase 3** — shim engine + `aws`/`gcloud`/etc. credential injection + tamper-evident audit log
-- **Phase 4–7** — ACLs, FUSE, cloud sync, enterprise features
+- **Phase 4–7** — ACLs, FUSE, cloud sync, audit & observability
 
 ---
 
@@ -415,6 +415,7 @@ secrets-management service. Each released version automatically converts to
 **Apache-2.0** four years after its release. See [`LICENSE`](LICENSE) for the
 exact terms, including the Additional Use Grant.
 
-byn is **open-core**: this repository is the free, source-available base. Paid
-enterprise features (multi-user management, team ACLs / sharing, SSO, audit
-export & compliance) live in a separate repository under commercial terms.
+Everything byn does lives in this one repository — there is no separate paid
+edition and no feature gating. Use byn freely, self-host it, and build your own
+hooks; the BSL's only restriction is that you may not resell it as a competing
+hosted service.
