@@ -30,6 +30,18 @@ builds:
     goos: [darwin, linux]
     goarch: [amd64, arm64]
 
+  - id: byn-exec-helper
+    main: ./cmd/byn-exec-helper
+    binary: byn-exec-helper
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
 archives:
   - id: byn
     formats: [tar.gz]
@@ -57,6 +69,8 @@ nfpms:
     formats: [deb, rpm, apk]
     bindir: /usr/bin
     section: utils
+    # GoReleaser automatically places all build binaries at bindir (/usr/bin),
+    # so both byn and byn-exec-helper are included without explicit entries.
     contents:
       - src: man/byn.1
         dst: /usr/share/man/man1/byn.1
