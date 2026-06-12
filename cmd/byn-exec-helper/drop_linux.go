@@ -85,10 +85,10 @@ func verifyDropped(uid, gid int) error {
 		return fmt.Errorf("scanning /proc/self/status: %w", err)
 	}
 	if !uidOK {
-		return fmt.Errorf("Uid line not found in /proc/self/status")
+		return fmt.Errorf("uid line not found in /proc/self/status")
 	}
 	if !gidOK {
-		return fmt.Errorf("Gid line not found in /proc/self/status")
+		return fmt.Errorf("gid line not found in /proc/self/status")
 	}
 	return nil
 }
