@@ -22,7 +22,7 @@ BYN                  default / billing / staging                   unlocked
                                                                            
                      RECENT AUDIT                             view all (ga)
                      ──────────────────────────────────────────────────────
-                       21:48  get          DB_URL            ok            
-                       21:48  put          STRIPE_SK         ok            
-                                                                           
+                       08:41  get          DB_URL            ok            
+                       08:41  put          STRIPE_SK         ok            
+                test                                                       
 INSERT  API_KEY  0/4096 B                    ESC normal  :w save  :q cancel

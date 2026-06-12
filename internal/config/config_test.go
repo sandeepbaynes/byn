@@ -38,6 +38,53 @@ func TestDefault(t *testing.T) {
 	if DefaultIdleTimeout != 15*time.Minute {
 		t.Errorf("DefaultIdleTimeout = %v, want 15m", DefaultIdleTimeout)
 	}
+	if got := time.Duration(d.UI.RevealHideAfter); got != DefaultRevealHideAfter {
+		t.Errorf("Default().UI.RevealHideAfter = %v, want %v", got, DefaultRevealHideAfter)
+	}
+	if DefaultRevealHideAfter != 15*time.Second {
+		t.Errorf("DefaultRevealHideAfter = %v, want 15s", DefaultRevealHideAfter)
+	}
+}
+
+func TestLoad_RevealHideAfter_Set(t *testing.T) {
+	path := writeConfig(t, "[ui]\nreveal_hide_after = \"30s\"\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if d := time.Duration(got.UI.RevealHideAfter); d != 30*time.Second {
+		t.Errorf("UI.RevealHideAfter = %v, want 30s", d)
+	}
+}
+
+func TestLoad_RevealHideAfter_ZeroDisablesAutoHide(t *testing.T) {
+	path := writeConfig(t, "[ui]\nreveal_hide_after = \"0s\"\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if d := time.Duration(got.UI.RevealHideAfter); d != 0 {
+		t.Errorf("UI.RevealHideAfter = %v, want 0 (auto-hide disabled)", d)
+	}
+}
+
+func TestLoad_RevealHideAfter_DefaultPreservedWhenOmitted(t *testing.T) {
+	// A [ui] section with no reveal_hide_after keeps the default.
+	path := writeConfig(t, "[ui]\nport = 4000\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if d := time.Duration(got.UI.RevealHideAfter); d != DefaultRevealHideAfter {
+		t.Errorf("UI.RevealHideAfter = %v, want default %v", d, DefaultRevealHideAfter)
+	}
+}
+
+func TestLoad_RevealHideAfter_Negative_Errors(t *testing.T) {
+	path := writeConfig(t, "[ui]\nreveal_hide_after = \"-5s\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load(negative reveal_hide_after) error = nil, want error")
+	}
 }
 
 func TestLoad_IdleTimeout_Set(t *testing.T) {
@@ -94,7 +141,7 @@ func TestRoundTrip_MarshalThenLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != want {
+	if got.UI != want.UI || got.Daemon != want.Daemon {
 		t.Errorf("round-trip = %+v, want %+v (TOML was:\n%s)", got, want, out)
 	}
 }
@@ -220,6 +267,30 @@ func TestLoad_WrongType_Errors(t *testing.T) {
 	}
 }
 
+func TestLoad_UnknownSecurityKey_Errors(t *testing.T) {
+	path := writeConfig(t, "[security]\nbogus_key = 1\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load(unknown [security] key) error = nil, want error")
+	}
+}
+
+// TestLoad_PerActionAuth_UnknownKey verifies that per_action_auth is now fully
+// removed: writing the key to the config file must be rejected as an unknown
+// key by the strict parser — proving the flag never shipped and cannot be set.
+func TestLoad_PerActionAuth_UnknownKey(t *testing.T) {
+	// per_action_auth was removed; the strict parser must reject it.
+	path := writeConfig(t, "[security]\nper_action_auth = true\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load(per_action_auth = true) error = nil, want error (unknown key)")
+	}
+	// The strict TOML parser returns "strict mode: fields in the document are
+	// missing in the target struct" — it does not embed the field name.
+	if !strings.Contains(err.Error(), "strict mode") && !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("error %q does not indicate a strict/unknown-key parse failure", err.Error())
+	}
+}
+
 func TestLoad_PortRange(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -245,6 +316,91 @@ func TestLoad_PortRange(t *testing.T) {
 				t.Errorf("port %d: error = %v, want nil", tc.port, err)
 			}
 		})
+	}
+}
+
+// TestParse_ValidBytes verifies Parse accepts valid content and returns the
+// parsed config.
+func TestParse_ValidBytes(t *testing.T) {
+	content := []byte("[ui]\nport = 3000\n")
+	got, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse valid: %v", err)
+	}
+	if got.UI.Port != 3000 {
+		t.Errorf("Parse: UI.Port = %d, want 3000", got.UI.Port)
+	}
+	// Defaults are preserved for omitted keys.
+	if !got.UI.Enabled {
+		t.Errorf("Parse: UI.Enabled = false, want true (default preserved)")
+	}
+}
+
+// TestParse_BadTOML verifies Parse rejects bad TOML.
+func TestParse_BadTOML(t *testing.T) {
+	_, err := Parse([]byte("not toml [[["))
+	if err == nil {
+		t.Fatal("Parse(bad TOML) error = nil, want error")
+	}
+}
+
+// TestParse_OutOfRange verifies Parse rejects out-of-range values.
+func TestParse_OutOfRange(t *testing.T) {
+	_, err := Parse([]byte("[ui]\nport = 99999\n"))
+	if err == nil {
+		t.Fatal("Parse(out-of-range port) error = nil, want error")
+	}
+}
+
+// TestParse_UnknownKey verifies Parse rejects unknown keys.
+func TestParse_UnknownKey(t *testing.T) {
+	_, err := Parse([]byte("bogus = 1\n"))
+	if err == nil {
+		t.Fatal("Parse(unknown key) error = nil, want error")
+	}
+}
+
+// TestParse_EmptyBytes returns defaults (same as missing file via Load).
+func TestParse_EmptyBytes(t *testing.T) {
+	got, err := Parse([]byte{})
+	if err != nil {
+		t.Fatalf("Parse(empty): %v", err)
+	}
+	if got != Default() {
+		t.Errorf("Parse(empty) = %+v, want Default() %+v", got, Default())
+	}
+}
+
+// TestSerializeCfgDefaultForm feeds the EXACT string that the JS serializeCfg
+// function produces for the default form values into config.Parse. This guards
+// against serializer drift: if serializeCfg changes its output shape or
+// escaping, the test must be updated in sync.
+//
+// Keep these default values in sync with the comment above serializeCfg in
+// internal/ui/assets/app.js:
+//
+//	uiEnabled=true, uiPort=2967, revealHideAfter="15s", idleTimeout="15m0s"
+func TestSerializeCfgDefaultForm(t *testing.T) {
+	// This is the verbatim output of serializeCfg({
+	//   uiEnabled:true, uiPort:2967, revealHideAfter:"15s", idleTimeout:"15m0s"
+	// }) as of the last sync with app.js.
+	jsSerialized := "[ui]\nenabled = true\nport    = 2967\nreveal_hide_after = \"15s\"\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n"
+
+	got, err := Parse([]byte(jsSerialized))
+	if err != nil {
+		t.Fatalf("Parse(JS default form output): %v\nInput was:\n%s", err, jsSerialized)
+	}
+	if !got.UI.Enabled {
+		t.Errorf("UI.Enabled = false, want true")
+	}
+	if got.UI.Port != DefaultUIPort {
+		t.Errorf("UI.Port = %d, want %d", got.UI.Port, DefaultUIPort)
+	}
+	if time.Duration(got.UI.RevealHideAfter) != DefaultRevealHideAfter {
+		t.Errorf("UI.RevealHideAfter = %v, want %v", time.Duration(got.UI.RevealHideAfter), DefaultRevealHideAfter)
+	}
+	if time.Duration(got.Daemon.IdleTimeout) != DefaultIdleTimeout {
+		t.Errorf("Daemon.IdleTimeout = %v, want %v", time.Duration(got.Daemon.IdleTimeout), DefaultIdleTimeout)
 	}
 }
 

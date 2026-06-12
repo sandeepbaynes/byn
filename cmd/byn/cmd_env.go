@@ -79,7 +79,7 @@ func runEnvCreate(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	if err := newClient(dir).Call(ipc.OpEnvCreate,
+	if err := newClient(dir, scope.Vault).Call(ipc.OpEnvCreate,
 		ipc.EnvCreateReq{Vault: scope.Vault, Project: projectOrDefault(scope.Project), Name: name},
 		&ipc.EnvCreateResp{}); err != nil {
 		return handleCallError(err)
@@ -101,7 +101,7 @@ func runEnvList(args []string, scope cliScope) int {
 		return exitErr
 	}
 	var resp ipc.EnvListResp
-	if err := newClient(dir).Call(ipc.OpEnvList,
+	if err := newClient(dir, scope.Vault).Call(ipc.OpEnvList,
 		ipc.EnvListReq{Vault: scope.Vault, Project: projectOrDefault(scope.Project)},
 		&resp); err != nil {
 		return handleCallError(err)
@@ -152,8 +152,8 @@ func runEnvDelete(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpEnvDelete,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpEnvDelete,
 			ipc.EnvDeleteReq{Vault: scope.Vault, Project: projectOrDefault(scope.Project), Name: name, Password: pw},
 			&ipc.EnvDeleteResp{})
 	})
@@ -198,8 +198,8 @@ func runEnvClear(args []string, scope cliScope) int {
 	clearScope := scope
 	clearScope.Env = target
 	var resp ipc.EnvClearResp
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpEnvClear,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpEnvClear,
 			ipc.EnvClearReq{Scope: clearScope.ToIPC(), Password: pw}, &resp)
 	})
 	if rc == exitOK {
@@ -225,8 +225,8 @@ func runEnvRename(args []string, scope cliScope) int {
 		return exitErr
 	}
 	old, neu := fs.Arg(0), fs.Arg(1)
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpEnvRename,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpEnvRename,
 			ipc.EnvRenameReq{Vault: scope.Vault, Project: projectOrDefault(scope.Project), OldName: old, NewName: neu, Password: pw},
 			&ipc.EnvRenameResp{})
 	})

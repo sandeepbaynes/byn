@@ -4,16 +4,32 @@
 #   curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
 #
 # Environment overrides:
-#   BYN_VERSION=0.0.1        pin a specific version
+#   BYN_VERSION=0.2.0        pin a version (default: latest GitHub release)
 #   BYN_DL_BASE=URL          override the download base URL
 #   BYN_INSTALL_DIR=DIR      override the install directory
+#   BYN_NO_MODIFY_PATH=1     don't touch shell rc files
 set -eu
-
-VERSION="${BYN_VERSION:-0.0.1}"
-BASE="${BYN_DL_BASE:-https://github.com/sandeepbaynes/byn/releases/download/v${VERSION}}"
 
 say() { printf 'byn-install: %s\n' "$*" >&2; }
 die() { say "error: $*"; exit 1; }
+
+fetch() { # fetch URL OUTFILE
+  if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"
+  else die "need curl or wget"; fi
+}
+
+# ---- resolve version (latest release unless pinned) ---------------------
+VERSION="${BYN_VERSION:-}"
+if [ -z "$VERSION" ]; then
+  vf="$(mktemp)"
+  if fetch "https://api.github.com/repos/sandeepbaynes/byn/releases/latest" "$vf" 2>/dev/null; then
+    VERSION="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' "$vf" | head -n1)"
+  fi
+  rm -f "$vf"
+  [ -n "$VERSION" ] || die "could not resolve the latest version — set BYN_VERSION=X.Y.Z"
+fi
+BASE="${BYN_DL_BASE:-https://github.com/sandeepbaynes/byn/releases/download/v${VERSION}}"
 
 # ---- detect platform ----------------------------------------------------
 os="$(uname -s)"
@@ -30,7 +46,7 @@ case "$arch" in
   *) die "unsupported architecture '$arch'" ;;
 esac
 
-asset="byn-${os}-${arch}"
+asset="byn-${os}-${arch}.tar.gz"
 url="${BASE}/${asset}"
 
 # ---- pick an install dir ------------------------------------------------
@@ -39,12 +55,6 @@ if [ -z "$dir" ]; then
   if [ -w /usr/local/bin ]; then dir=/usr/local/bin; else dir="$HOME/.local/bin"; fi
 fi
 mkdir -p "$dir"
-
-fetch() { # fetch URL OUTFILE
-  if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
-  elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"
-  else die "need curl or wget"; fi
-}
 
 # ---- download -----------------------------------------------------------
 tmp="$(mktemp)"
@@ -65,15 +75,34 @@ if fetch "${BASE}/byn-${VERSION}.sha256" "$sums" 2>/dev/null && [ -s "$sums" ]; 
 fi
 rm -f "$sums"
 
-# ---- install ------------------------------------------------------------
-chmod 0755 "$tmp"
-dest="$dir/byn"
-if ! mv "$tmp" "$dest" 2>/dev/null; then
-  say "installing to $dest (needs elevated permissions)"
-  sudo mv "$tmp" "$dest" || die "could not install to $dest"
-fi
+# ---- extract ------------------------------------------------------------
+work="$(mktemp -d)"
+tar -xzf "$tmp" -C "$work" || die "could not extract $asset"
+rm -f "$tmp"
+[ -f "$work/byn" ] || die "archive did not contain the byn binary"
+chmod 0755 "$work/byn"
 
+# ---- install binary -----------------------------------------------------
+dest="$dir/byn"
+SUDO=""
+if ! mv "$work/byn" "$dest" 2>/dev/null; then
+  say "installing to $dest (needs elevated permissions)"
+  SUDO="sudo"
+  $SUDO mv "$work/byn" "$dest" || die "could not install to $dest"
+fi
 say "installed $dest ($VERSION)"
+
+# ---- install man page (best-effort) -------------------------------------
+# $prefix/bin → $prefix/share/man/man1, the path `man` searches by default.
+if [ -f "$work/man/byn.1" ]; then
+  mandir="$(dirname "$dir")/share/man/man1"
+  if $SUDO mkdir -p "$mandir" 2>/dev/null && $SUDO cp "$work/man/byn.1" "$mandir/byn.1" 2>/dev/null; then
+    say "man page → $mandir/byn.1  (try: man byn)"
+  else
+    say "man page skipped (could not write $mandir)"
+  fi
+fi
+rm -rf "$work"
 
 # ---- ensure the install dir is on PATH ----------------------------------
 # Only acts when $dir isn't already on PATH (so /usr/local/bin installs are
@@ -100,4 +129,4 @@ case ":$PATH:" in
     fi
     ;;
 esac
-say "next:  byn daemon start  &&  byn init"
+say "next:  byn start  &&  byn init"

@@ -58,11 +58,11 @@ We protect a user's secrets against the following adversaries.
 | Adversary | What they have | What we prevent |
 |---|---|---|
 | **Another local user** on a shared machine | Their own UID's permissions | Reading or modifying our vault, our socket, our audit log. Enforced by file modes (0600) and peer-UID check on the socket. |
-| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret. Without the password + machine fingerprint, the vault key is unrecoverable. |
+| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret **value**. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with `Argon2id(master password)` — **the password is the only barrier**. The vault file is deliberately **portable** (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id (default 64 MiB / time=2, ~1s on the *defender's* laptop) slows each guess, but it is not a high wall against a funded attacker with GPUs/ASICs, and a weak password falls regardless. **What the file does NOT hide:** entry/project/env *names*, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see "Audit & forensics" below); and the audit chain's HMAC seed travels in the file, so the *thief's copy* of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). |
 | **A shoulder-surfer** of the user's terminal | Visual access to scrollback, history, `ps` | Seeing secret values — they never appear in argv, environment, prompts, history, or scrollback. |
 | **A careless or semi-trusted agent** (coding agent, evil VSCode extension, compromised CI) running as the user | Can run `byn` commands | (a) **Detection over prevention:** a same-UID agent *can* invoke `get`/`exec`, so the guarantee is that **every value access is audited** (`byn audit`) — harness deny rules are best-effort and not relied upon. The primary win is that there is no plaintext `.env` on disk to read accidentally. (b) `byn exec` injects vars only into the child it spawns; the parent shell sees nothing — but the child's own `/proc/<pid>/environ` is readable by a same-UID process, so env values reach the workload (this is an accepted limitation, not concealment from it). (c) Untrusted `.byn` files hard-fail in agent mode (`--json`) so the agent can't be silently redirected. |
 | **IDE code-completion / inline-suggestion models** (Copilot, Cursor Tab, JetBrains AI, …) running as you | A continuous read of your editor buffer + neighbouring tabs, streamed to (usually cloud) inference on every keystroke | A secret typed as a *literal into source* is ingested the instant it lands in the buffer — and with cloud inference it has **already left the machine before you finish the line** (the model suggesting the cred back, or offering to move it, is proof it read it; it may then propagate it into other files/commits). byn's mitigation is structural: secrets live in the vault and are referenced by *name* / injected at runtime via `byn exec`, so there is no literal in the buffer to slurp. byn can't intercept the IDE itself — keeping literals out of source is the control byn makes practical. |
-| **A tampering attacker** with write access to `vault.db` or the audit log | Can modify on-disk state without the key | (a) Tampered ciphertext fails AEAD auth → vault refuses to open / decrypt. (b) Tampered audit log fails HMAC chain → `byn audit verify` flags first bad index → daemon error to user. |
+| **A tampering attacker** with write access to `vault.db` or the audit log | Can modify on-disk state without the key | (a) Tampered ciphertext fails AEAD auth → vault refuses to open / decrypt. (b) Tampered audit log fails HMAC chain → `byn audit verify` flags first bad index → daemon error to user. **Honest limit:** the chain's HMAC seed is stored in the DB `meta` table, so an attacker who can read the file can also re-seal a rewritten chain — the HMAC defends against blind tampering, not against an adversary holding the whole file. Off-box anchoring of the chain head (journald / os_log / remote syslog) is the planned fix (ST-1). |
 | **An attacker with write access to a project directory** | Can plant or modify a `.byn` | TOFU SHA-256 binds trust to specific file contents. A new or changed `.byn` is **refused** — discovery never auto-trusts; approval is a separate, password-gated `byn trust` (proof of presence). A *changed* previously-trusted file is never silently re-trusted. |
 
 ### Out of scope
@@ -125,6 +125,77 @@ discipline byn makes practical, not one it can enforce.
 
 ---
 
+## Known weaknesses & how to protect yourself
+
+byn raises the bar against the *agent-era* leak — but it is a user-space
+tool with real, named limits. This is the honest list of where it is weak,
+what each weakness actually costs you, and the concrete thing **you** do
+about it. Nothing here is hypothetical; each item is verified against the
+code. Where there is no real in-product defense, that is stated plainly and
+the workaround is an OS feature or an operating habit, not a byn promise.
+
+| Weakness (plain language) | The realistic risk | What YOU do about it |
+|---|---|---|
+| **A stolen `vault.db` + `wrapped.key` is offline-crackable. The master password is the only barrier.** The vault is *portable by design* (no machine binding) — anyone who copies the files can guess passwords on their own hardware, forever, with no rate limit and no lockout (the failed-unlock backoff only protects the *live daemon*, not an offline copy). Argon2id (default 64 MiB / time=2) slows each guess but is not a high wall against GPUs/ASICs. | A weak or reused master password = full vault compromise once the file is copied. The Argon2 cost buys time, not immunity. | **Use a long, high-entropy passphrase** (a 5+ word diceware phrase, not a word + numbers). **Enable host full-disk encryption** (FileVault / LUKS) so the file can't be copied off a powered-down or stolen machine in the first place. A generated break-glass recovery key that would replace the memorable password as the portability root is **planned (PH-1) but not yet available** — do not rely on it today. |
+| **Entry, project, and env *names*, kinds, timestamps, version counts, and file metadata are plaintext at rest.** Only secret *values* are encrypted. A copy of `vault.db` is a readable map of *what* you keep and *when* you touched it, even though every value stays sealed. (This is a deliberate owner trade-off: names are listable while locked, and investigators see what was accessed without unlocking.) | Names can themselves leak intent or secrets (e.g. `STRIPE_LIVE_KEY_acct_1234`, customer names, internal hostnames). | **Don't encode anything sensitive in names** — keep the secret in the value, give it a boring name. Rely on **host full-disk encryption** to protect the metadata of a file at rest. |
+| **Same-UID processes (coding agents, IDE extensions, scripts) running as you can reach everything you can.** A process under your UID can: invoke `byn` itself; connect to the daemon socket directly (the peer-UID check passes — it's *you*); `ptrace` the unlocked daemon and read the vault key from memory; read injected env from a child it can see via `/proc/<pid>/environ`; and read a session file under `$BYN_DIR/sessions/`. This is **the core threat byn exists for, and the one it cannot fully close in user space.** | Any untrusted code you run as your primary user can, in principle, reach your unlocked secrets. byn makes this *smaller and louder* (every value access is audited, there's no plaintext `.env` to grab, sensitive ops demand fresh proof-of-presence) but does not make it *zero*. | **Run untrusted agents / tooling under a SEPARATE OS user, a sandbox, or a VM — never your primary UID.** This is the only real fix; privilege separation inside byn (NU-5/6) is *planned, not shipped*. Beyond that: **keep the vault locked when not in use** (`byn lock`), and **keep `idle_timeout` short** so a stolen session can't draw on an unlocked vault for long. |
+| **A stolen session token from a *different* terminal is rejected — but the bound is TTY+UID, not per-process.** A CLI session token is bound to the controlling-TTY device number *and* UID (server-resolved at unlock), so copying a session file into a different terminal context fails. **Honest limit:** a malicious same-UID process can acquire your *current* controlling terminal via `TIOCSCTTY` and then present a request that looks correctly TTY-bound; and portal sessions are **UID-only** (no TTY bind at all). | The TTY bind stops casual token reuse across windows, not a determined same-UID attacker on your actual terminal. | Same fix as the row above: **isolate untrusted code to another UID.** Don't treat the session bind as a same-UID boundary — it isn't one. |
+| **The audit log of a *stolen* file can be silently rewritten.** The HMAC chain's seed is stored as **plaintext** in the DB `meta` table (`audit_chain_seed`). Anyone holding the file can read the seed and re-seal a forged chain that passes `byn audit verify`. | A thief can erase their tracks in *their copy* of your log. The HMAC only proves integrity against an attacker who does **not** have the file. | Treat a copied vault file's audit trail as **unverifiable**. Off-box anchoring of the chain head (ST-1) is **planned, not shipped**. For now, the trustworthy audit signal is the one on the live, FDE-protected host — not a copy. |
+| **Trusted `.byn` exec runs an approved command's *interior* unchecked.** byn pins and MAC-binds the command *list* (`[exec] actions`) — exact argv matches run free — but it does **not** inspect what those commands then *do*. A pinned `make build` runs whatever the current `Makefile` contains; a pinned script runs whatever the script now says. byn protects the *action list*, not the *action's behavior*. | A command you pinned can be repurposed by editing the file it executes (Makefile, script, etc.) without ever touching the `.byn`. | **Only pin actions whose scripts/targets you control** and review. **Review `byn trust diff` before re-trusting** a changed `.byn`. Don't pin interpreters or wildcards (`actions = "*"`) in environments where untrusted code can edit the executed files. |
+| **The portal is loopback + an owner token, and any same-UID process can read that token.** `byn web` binds `127.0.0.1` (no network exposure) and gates `/api/*` on a 32-byte token in `$BYN_DIR/portal.token` (mode 0600). Loopback has no kernel UID gate, so the token is what stops *other* UIDs — but the file is readable by **your** UID, so any same-UID process can read it and drive the portal API. | Same same-UID ceiling as everywhere else: the token stops other users, not code running as you. | Same fix: **isolate untrusted code to another UID.** The token is doing its job (blocking other accounts on loopback); it is not, and cannot be, a same-UID boundary. |
+| **Root, live memory, coercion, and a known password are genuine breaks — out of scope by design.** Root can read daemon memory/swap/files. A debugger attached to the unlocked daemon reads the key (`mlock` is best-effort, not a defense against root/ptrace). "Type your password or else" is not a crypto problem. An attacker who *knows* your password owns the vault. | These are not weaknesses byn pretends to cover — they are the perimeter. | **Don't run as root more than necessary**; **physically protect the machine**; **never share or reuse the master password**; **rotate immediately** on any suspicion it leaked. byn is the wrong tool to stop these — name them honestly and defend with the OS and operational discipline. |
+
+**The one-line summary:** byn shrinks and audits the agent-era leak and keeps
+plaintext off disk, but while an adversary runs as your UID — or holds a copy
+of your file with a guessable password — the real boundaries are **a strong
+passphrase, host full-disk encryption, and isolating untrusted code to a
+different OS user.** Those three are not byn features; they are the controls
+byn depends on.
+
+---
+
+## Best practices
+
+A short, ordered checklist. Each line is the practice and why it matters.
+
+1. **Use a long, high-entropy master passphrase** (5+ random words, not a
+   tweaked dictionary word) — it is the *only* barrier on a stolen, portable
+   vault file, and Argon2id alone won't save a weak one.
+2. **Enable host full-disk encryption** (FileVault on macOS, LUKS on Linux) —
+   it's what actually stops the vault file (and its plaintext names/metadata)
+   from being copied off a lost or powered-down machine.
+3. **Run AI agents and untrusted tooling under a separate OS user, sandbox, or
+   VM — never your primary UID** — a same-UID process can ptrace the daemon,
+   read injected env, and read the portal/session tokens; a different UID is
+   the only real boundary today.
+4. **Keep `idle_timeout` sane; don't set `"0s"` unless you accept the
+   trade-off** — `[daemon] idle_timeout` (default 15m) auto-relocks an idle
+   vault; `"0s"` disables relock entirely, so the key stays in memory until you
+   stop the daemon, widening the window for a same-UID or memory attacker.
+5. **Run `byn lock` (or `byn lock --session`) when you step away** — locking
+   zeroes the in-memory key; `--session` drops just this terminal's access
+   without disturbing other surfaces.
+6. **Scope `[exec] env` to the minimum variables a command needs** — `byn exec`
+   injects only the listed vars, and they become readable in the child's
+   `/proc/<pid>/environ`; fewer vars = less to leak.
+7. **Pin only actions whose scripts you control** (`[exec] actions`) — byn
+   verifies the command *list*, not what the command then does, so a pinned
+   target that runs editable code is only as safe as that code.
+8. **Review `byn trust diff` before re-trusting a changed `.byn`** — a changed
+   file is never silently re-trusted; the diff is your chance to catch a
+   planted action or widened allowlist before you re-approve.
+9. **Prefer passkey / Touch ID unlock where available** — it routes unlock
+   approval out-of-band of the terminal an agent can drive (the PRF output
+   never leaves the browser); the master password remains the durable root.
+10. **Don't put secrets — or sensitive intent — in entry names** — names,
+    scopes, and timestamps are plaintext at rest; keep the secret in the value.
+11. **Rotate any credential the moment you suspect exposure** — an IDE
+    completion that suggested a literal back to you, a leaked file copy, or a
+    suspect agent run all mean the secret may already be off the machine;
+    treat it as compromised and rotate.
+
+---
+
 ## Crypto choices
 
 ### 1. Vault key
@@ -138,9 +209,9 @@ locked.
 ```
 wrapping_key = Argon2id(
     password   = bytes(master_password),
-    salt       = random 16 bytes (per-wrap),
-    time       = 4,         // iterations
-    memory     = 256 MiB,
+    salt       = random 32 bytes (per-wrap),
+    time       = 2,         // iterations  (DefaultArgon2Params)
+    memory     = 64 MiB,
     threads    = 4,
     key_length = 32,
 )
@@ -153,8 +224,15 @@ wrapped.key = XChaCha20-Poly1305-Seal(
 )
 ```
 
-**Upper bounds** on Argon2 params: time ≤ 8, memory ≤ 1 GiB, threads ≤ 8.
-Prevents DoS via a malicious header.
+**Upper bounds** on Argon2 params: time ≤ 16, memory ≤ 1 GiB, threads ≤ 16
+(lower bounds: time ≥ 1, memory ≥ 8 MiB, threads ≥ 1). Prevents DoS via a
+malicious header and rejects an attacker swapping in trivial params on disk.
+
+**Cost is modest — this matters for a stolen file.** The default profile is
+tuned for ~1 s on a laptop, but 64 MiB / time=2 is *not* a high wall against a
+funded offline attacker with GPUs/ASICs. It buys time against guessing, not
+immunity. The real defense for a weak password is **a long, high-entropy
+passphrase** — see "Known weaknesses" below.
 
 **Why AAD = full header bytes:** binds every byte of the header
 (version, salt, params, nonce) into the auth tag. Flip one bit of the
@@ -206,9 +284,14 @@ modification.
 
 **Why HMAC, not a digital signature:** verification is self-contained
 (no public-key infra), and we only need to detect tampering by an
-attacker who *doesn't have the seed*. The seed is stored encrypted
-in the vault meta (cannot be read while locked but the chain head can
-still be inspected — `byn audit tail` works locked).
+attacker who *doesn't have the seed*. **Honest limit — the seed is
+plaintext in the DB.** The seed lives in the `meta` table as plain hex
+(`audit_chain_seed`); it is **not** encrypted under the vault key. Anyone
+who can read `vault.db` can read the seed and silently re-seal a rewritten
+chain. The HMAC therefore detects *blind* tampering by an adversary without
+the file — it does **not** protect the audit trail of a copied file. Off-box
+anchoring of the chain head (ST-1) is the planned fix and is not yet shipped;
+until then, treat a stolen file's audit log as unverifiable.
 
 ### 5. Failed-unlock backoff
 
@@ -292,6 +375,46 @@ immediately — before reading the request.
 **Why:** stops another local user from connecting if file modes were
 accidentally loosened (e.g., a chmod typo).
 
+### Portal loopback + owner-token gate
+
+The embedded browser portal (`byn web`) binds `127.0.0.1:<port>`. Loopback
+prevents network access but does **not** prevent other local user accounts from
+reaching the port over TCP — loopback has no kernel UID gate.
+
+byn closes this gap with an **owner-token gate** using a two-token design that
+keeps the long-lived token out of `ps` output and URLs:
+
+**Persistent portal token** (`$BYN_DIR/portal.token`):
+- A 32-byte random hex file created at mode 0600 on daemon start (persisted
+  across restarts). Only the owner UID can read it.
+- Every `/api/*` request must carry `X-Byn-Portal-Token: <token>` (constant-
+  time compare). Missing or wrong → 401 `portal_token_required`.
+- This token never appears in argv or browser URLs.
+
+**One-time bootstrap token** (in-memory, 60 s TTL):
+- `byn web` calls the UID-gated Unix socket (`web.bootstrap` op) to mint a
+  single-use bootstrap token and opens `?auth=<bootstrap-token>`.
+- The SPA calls `POST /api/session/bootstrap` with the bootstrap token, receives
+  the persistent portal token, stores it in `localStorage`, and strips `?auth=`
+  via `replaceState`. A `ps`-captured bootstrap token is single-use and expires
+  in 60 s.
+- `POST /api/session/bootstrap` is ungated by the owner-token (the caller does
+  not have it yet) but is `sameOrigin`-gated to prevent cross-site replay.
+
+Static assets and the SPA shell (`/`, `/static/`) are ungated — the HTML is
+harmless without a valid token.
+
+A **CSRF defense** (`sameOrigin` Origin check) is applied on top of the token
+gate to all mutating routes. Both layers are necessary and complementary:
+
+| Layer | Attacker stopped |
+|---|---|
+| `requireToken` | Other-UID process that can reach loopback TCP |
+| `sameOrigin` | Browser-based CSRF from a different origin |
+
+The daemon's own code **does not call the HTTP API** — it uses in-process
+`Dispatch` directly, so the token gate never blocks daemon-internal calls.
+
 ### One envelope per connection
 
 CLI dials, sends one envelope, reads one, closes. No multiplexing →
@@ -310,6 +433,66 @@ will open their own connections.
   parent process inheriting the unwrapped values, no shell variable
   with the secret, no ps line showing it.
 
+### Server-side exec allowlist
+
+`byn exec` is authorized in a single IPC round-trip: the daemon reads,
+trust-verifies, and parses the `.byn` itself, then returns **only** the
+entries listed in `[exec] env`. A compromised client process cannot
+widen the allowlist by sending a different request — the daemon owns the
+entire path from trust check to env assembly. Denial messages
+(untrusted / changed / tampered / stale) originate in the daemon.
+Every exec attempt — including locked-vault and trust failures — is
+written to the audit log with the full command line.
+
+`byn exec` on a locked vault is a hard failure ("vault is locked").
+Unlike the delete family, exec cannot proceed with a password alone;
+the vault must be unlocked first. This is intentional: a compromised
+client should not be able to use exec to partially bypass lock state.
+
+### [exec] actions: which commands may run free
+
+The env allowlist (`[exec] env`) controls *which variables* are injected.
+The actions pinlist (`[exec] actions`) controls *which commands* may run
+without fresh per-call authorization. The two are independent — a command
+can be pinned without any env vars flowing, or env vars can flow into a
+command that requires auth each time.
+
+**Three-state semantics (NU-2):**
+
+| State | Behavior |
+|---|---|
+| `actions` absent or empty | **Secure default.** No command runs free — every `byn exec` requires authorization (password or presence token). Existing `.byn` files without `[exec] actions` behave this way after re-trust. |
+| `actions = "*"` or `["*"]` | **Wildcard.** Any command runs without re-authorization. CLI prints a loud warning on every exec. Use only in fully-trusted environments. |
+| `actions = ["cmd arg", ...]` | **Explicit list.** Only exact argv matches (joined with spaces) run free; all others require authorization. |
+
+**[auth] exec policy** (optional, in the `.byn` `[auth]` table):
+- `"always"` — fresh auth for every exec, even pinned/wildcard commands. Strongest.
+- `"none"` — no auth for any command. Equivalent to `actions = "*"` but bypasses
+  the wildcard warning at exec time. The warning is shown at `byn trust` time (Task 3).
+- `"trusted"` — default; let the actions list decide.
+
+**Tamper-evidence:** actions and auth policy are MAC-bound into the trust
+record at grant time. The daemon reads policy from the record, not from the
+live file, so editing the `.byn` after trust is granted cannot change the
+effective actions policy without re-trusting (which requires the password).
+
+**Independence from the session gate:** the actions gate applies regardless
+of whether a session is active. The session gate governs value-touching
+operations that have no `.byn` contract (ad-hoc exec, `get`, `put`,
+`delete`, …). A `.byn`'s `[exec] actions` list is the contract for
+trusted-`.byn` exec. Having an active session does NOT add extra prompts
+to a trusted-`.byn` exec that has a pinned command.
+
+**`[auth] exec` scope:** the `exec` key in `[auth]` applies only to
+trusted-`.byn` exec (Path present). Ad-hoc exec (no `.byn`) is governed solely
+by the NU-3 session gate — `.byn` policy is never consulted for ad-hoc
+exec, because ad-hoc exec injects the whole scope with no env allowlist, and a
+`.byn`'s policy contract is tied to that file's own env allowlist.
+
+**Migration:** existing `.byn` files have no `[exec] actions` after re-trust
+— every exec will prompt for authorization until you add `actions`. This is
+intentional: the secure default is that no command runs free.
+
 ### Secrets are never in the shell
 
 `byn exec -- CMD ARGS` builds the env vector and replaces the
@@ -327,6 +510,147 @@ but does help against accidental disk swap on memory pressure.
 
 ## CLI-level controls
 
+### NU-3 authorization gate
+
+The NU-3 session matrix requires either a live session or fresh credentials
+for every sensitive call, **even while the vault is already unlocked** by
+another terminal. This is the default; it is not opt-in.
+
+**Gated operations:** `get`, overwrite-`put`, `delete`, `rename`,
+`env clear`, `env delete`, `project delete`, `vault delete`,
+`vault rename`, and **ad-hoc `exec`** (no `.byn`). Insert (new name),
+`list`, and trusted-`.byn` `exec` stay free — the `.byn` is the
+authorization for exec. Ad-hoc exec (no `.byn`) is gated because it
+hands out the entire scope; running from a directory with a trusted
+`.byn` is the zero-prompt alternative.
+
+**CLI flow:** when the daemon returns `auth_required`, the CLI prompts
+once ("Authorization required.") and retries with the supplied password.
+`--password-stdin` is supported for non-interactive use. In `--json`
+(agent) mode no prompt is shown; the call fails actionably so the caller
+can supply `--password-stdin` and retry. A wrong password is rejected
+and rate-limited exactly like `byn unlock`.
+
+**`put --password-stdin` contract:** with `--password-stdin`, the
+**first line** of stdin is always the master password and the
+**remainder** (after the first newline) is the secret value. The first
+line is consumed unconditionally — even when the daemon does not ask
+for authorization (e.g., for a new key being inserted for the first
+time). This makes the contract byte-stable:
+
+```sh
+{ echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
+```
+
+For `get` / `rename` / `delete` with `--password-stdin`, the entire
+stdin (no newline split) is read as the password.
+
+**Locked vault vs. auth_required:** the behaviors are different.
+
+| Scenario | Recovery |
+|---|---|
+| `get` / `put` / `rename` on a **locked vault** | Hard fail with "byn unlock" hint — a password alone cannot decrypt a locked vault |
+| `get` / `put` / `rename` with no active session (vault is unlocked) | Prompt / `--password-stdin` once; daemon verifies without changing lock state |
+| `delete`-family on a **locked vault** | Password alone authorizes — vault stays locked, no values exposed |
+| `delete`-family with no active session (vault is unlocked) | Same password flow as above |
+
+**Portal step-up:** when no active session is present, the web portal shows
+an "Authorize" modal on any write/delete/reveal. Passkey (Touch ID /
+iCloud Keychain) is tried first; password is the fallback. On success,
+the daemon issues a **single-use presence token** (32 random bytes,
+consumed on first use, never stored beyond the one request). A wrong
+password or expired/unknown token is rejected and does not change the
+vault's lock state.
+
+**`export` under a session (NU-3):** with an active session in the current
+terminal, `byn export` issues one `get` per entry and every get is authorized
+by the session token — zero password prompts. Without a session, the first
+`get` returns `auth_required` and the CLI prompts once interactively (or reads
+from `--password-stdin`) and reuses the same password for all subsequent gets.
+Each per-password get re-verifies via Argon2id, so large exports without a
+session are slow. Running `byn unlock` first (or using `--password-stdin` on
+`byn export`) avoids this cost.
+
+**Honest ceiling:** the session gate raises the cost for a same-UID
+adversary that does not control the terminal that unlocked — it can no longer
+draw on an ambient unlocked session silently. It does **not** stop a process
+running as you from calling the daemon socket directly (same-UID peer-credential
+check is unchanged), ptracing the daemon while unlocked, or acquiring the TTY
+via `TIOCSCTTY` (see NU-3 session model above). Privilege separation (NU-5/6)
+is the path to a stronger UID boundary.
+
+### `.byn` `[auth]` per-scope policy
+
+The `[auth]` table in a `.byn` file can override the NU-3 session gate
+**per operation, per scope**. This lets a team commit a policy alongside
+the project config and have it take effect automatically for anyone who
+trusts the file.
+
+**Keys:** `get`, `update` (overwrite-put, rename, vault-rename),
+`delete` (delete, env.clear, env.delete, project.delete, vault.delete),
+`exec`. Values: `always`, `none`. (The `exec` key is enforced
+separately via the `[exec]` actions gate; see the actions section.)
+
+**Values and their effect on the session gate:**
+
+| Value | Effect |
+|---|---|
+| `always` | Fresh auth unconditionally (even with an active session). Tightens. |
+| `none` | Gate skipped entirely for the matched scope (no auth needed). Relaxes. |
+| absent | Session gate decides (default NU-3 semantics). |
+
+**Policy lookup rules:**
+
+1. **Vault must be unlocked.** The policy is bound to the trust record
+   by VKMAC (vault-key-derived HMAC). Without the vault key the MAC
+   cannot be verified, so policy is ignored and flag semantics apply.
+   This is intentional — a policy that can't be verified is not
+   trustworthy.
+
+2. **Only v2 records with non-empty `[auth]`.** v1 records (no mtime
+   or snapshot, pre-NU-2 format) are never policy sources.
+
+3. **VKMAC must verify.** A record whose Auth field was edited after
+   grant (breaking the VKMAC) is silently ignored. Re-trust to mint a
+   fresh MAC.
+
+4. **Scope matching with specificity.** A record's `[scope]` is
+   compared to the request's (vault, project, env), with `""`
+   normalizing to `"default"` on both sides. Three specificity levels:
+
+   | Level | Match |
+   |---|---|
+   | 3 (most) | vault + project + env all present and matching |
+   | 2 | vault + project match; env unset on the record |
+   | 1 (least) | vault only; project and env unset on the record |
+
+   The most specific matching record wins per key. A vault-only record
+   (`[scope]` with no project/env) applies to ALL scopes within that
+   vault unless overridden by a more-specific record.
+
+5. **Tie at the same specificity → strictest value wins.** If two
+   records match at the same level and declare the same key, `"always"`
+   beats `"none"` beats absent. This ensures that layering a relaxing
+   policy on top of a tightening one never silently widens access.
+
+6. **No caching.** The trust store is read on every call. This keeps
+   a freshly-granted `.byn` effective immediately without a daemon
+   restart, at the cost of one small JSON read per gated op.
+
+**Structural-ops scope note:** vault-level operations (`vault.delete`,
+`vault.rename`) pass `Scope{}` (no project/env) to the policy gate. A
+vault-only record (project and env both unset in `[scope]`) matches `Scope{}`
+and therefore also gates vault-level ops. A record broadly scoped to an entire
+vault is deliberate: the operator knows they are granting policy for the whole
+vault.
+
+**Security note:** like all `.byn` trust, the policy is MAC-bound at
+grant time. A same-UID process can write `trusted_byn.json` directly
+(mode 0600 keeps others out but not you), which is the same user-space
+ceiling as the trust store itself. Re-signing with a daemon-resident
+key is deferred hardening (see table above); the VKMAC layer is the
+current protection against offline forgery.
+
 ### Agent mode (`--json`)
 
 When `--json` appears anywhere before `--` in argv, byn refuses
@@ -334,6 +658,8 @@ to interactively prompt for anything. Specifically:
 
 - Untrusted `.byn` file → hard error (not a y/N prompt).
 - Tampered `.byn` file → hard error.
+- `auth_required` (no active session) → hard fail; supply
+  `--password-stdin` instead.
 
 Agents and CI can never silently auto-trust a malicious config.
 
@@ -371,12 +697,206 @@ maison-agent/staging.` Never `Stored "DB_URL=…" in …`. Set
 ## Audit & forensics
 
 - Audit chain is HMAC-signed → tampering detectable but not preventable.
-- Plain-text names so investigators see *what* was accessed. The
-  trade-off was debated; we landed on forensic value > marginal
-  hiding (internal design notes).
+  **Caveat:** the HMAC seed lives in the DB itself, so this detects
+  tampering by adversaries who *don't* hold the file; a thief with the
+  whole file can re-seal a rewritten chain. Off-box chain-head anchoring
+  (ST-1) is the planned fix; until it ships, treat a stolen file's audit
+  trail as unverifiable.
+- **At-rest metadata is deliberately visible (owner decision, 2026-06-12).**
+  Entry/project/env names, kinds, timestamps, version counts, and file
+  metadata are readable from `vault.db` without any key — only *values*
+  are encrypted. This is the price of two product promises: names are
+  listable while the vault is locked (the agent workflow), and
+  investigators see *what* was accessed without unlocking. Know that a
+  copy of your vault file is a map of what you keep, even if every value
+  stays sealed. If that exposure matters in your environment, full-disk
+  encryption of the host is the right control today.
 - Caller UID + PID captured per event when the OS surfaces them.
   Helps trace which agent or shim made the call.
 - `byn doctor` runs verify on every vault's chain at any time.
+
+---
+
+## NU-3 session model and no-global-unlock
+
+**This is a behaviour flip. Read before upgrading.**
+
+### What changed
+
+NU-3 replaced the old ambient-unlock model with **per-terminal, per-surface
+sessions**. Under NU-2 and earlier, running `byn unlock` in any terminal
+effectively opened the vault for every process with your UID — a coding agent,
+a background script, or a second shell could all `byn get` freely once any one
+terminal had unlocked. Under NU-3, **an unlocked vault does not grant other
+same-UID callers anything**. Each terminal, portal tab, or TUI session must
+authenticate independently.
+
+#### Session binding
+
+A session token is minted by the daemon when `byn unlock` (or `byn web`
+unlock, or TUI unlock) succeeds. The daemon binds the token to:
+
+- **vault name** — the token is only valid for the vault it was minted for.
+- **effective UID** — always enforced; cross-UID use is impossible.
+- **controlling-TTY device number** — for CLI sessions, the daemon resolves the
+  socket peer's controlling terminal at mint time (Darwin: `Eproc.Tdev` via
+  `kern.proc.pid` sysctl; Linux: `tty_nr` from `/proc/<pid>/stat`). Commands
+  from the same terminal window (and child processes that inherit it) reuse the
+  session; a request from a different terminal is treated as unauthenticated.
+
+Portal sessions use **uid-only binding** (ttyDev = 0) because there is no
+socket peer — the browser portal authenticates through the owner-token gate,
+not through a TTY. Daemon-process reloads preserve portal sessions; `byn lock`
+clears them.
+
+#### Token storage
+
+The CLI writes the token to `$BYN_DIR/sessions/<hash>` (mode 0600). The file
+name is a truncated SHA-256 of `"ttyDev\x00vault"`, so each
+terminal-plus-vault pair has one file. Subsequent commands in the same terminal
+automatically load and forward the token without re-prompting.
+
+#### Honest limits
+
+- **Same-UID TIOCSCTTY residual:** a malicious same-UID process can acquire
+  the current controlling terminal via `TIOCSCTTY` and then construct a request
+  that looks TTY-bound. This is an accepted gap at user-space; privilege
+  separation (agents on their own UID) is the closure.
+- **Root ceiling:** unchanged. Root can read daemon memory, socket, and session
+  files.
+- **TTYDev-0 degradation:** when a socket caller has no controlling terminal
+  (piped script, CI), the session falls back to uid-only binding. A warning is
+  logged. That session accepts any same-UID caller on the socket, which is
+  tolerated because the socket is mode 0600 and already UID-gated.
+
+---
+
+### NU-3 migration guide
+
+#### What breaks
+
+| Scenario | Old behaviour | New behaviour |
+|---|---|---|
+| `byn unlock` in terminal A, then `byn get KEY` in terminal B | **Worked.** Vault was unlocked for all callers. | **Fails with `auth_required`.** Terminal B has no session. |
+| Script that calls `byn get KEY` without unlocking first | Worked if any terminal had unlocked | Fails with `auth_required`. Script must supply credentials. |
+| `[security] per_action_auth = true` in config | Required per-call password | Config key is **removed**. Writing it to `~/.byn/config` causes the daemon to reject the config with an unknown-key error. Remove the key. |
+| `byn export` without an active session | Would prompt per-entry | With an active session, zero prompts. Without a session, `auth_required`. Use `--password-stdin` or unlock first. |
+
+#### What to do
+
+**Interactive use (daily driver):**
+
+```sh
+# Unlock once per terminal window.
+byn unlock
+
+# Work normally — every command in this terminal carries the session token.
+byn get DB_URL
+byn exec -- make migrate
+
+# When done, revoke this terminal's session without locking the vault
+# for other callers (e.g. the portal).
+byn lock --session
+```
+
+**Non-interactive / CI / scripts:**
+
+```sh
+# Option 1: password-stdin on every call.
+echo "$BYN_PW" | byn get DB_URL --password-stdin
+
+# Option 2: unlock once (prints session file), then work.
+echo "$BYN_PW" | byn unlock --password-stdin
+byn get DB_URL       # session file present; no re-auth needed
+
+# Option 3: [auth] none in the .byn (disables the auth gate for
+#             that scope/operation — use sparingly).
+```
+
+**Agents (`--json` / byn exec inside a trusted `.byn`):**
+
+- Trusted `.byn` exec with a pinned `[exec] actions` entry **runs free** —
+  no session or credentials required. This is unchanged.
+- Ad-hoc exec (no `.byn`) **requires auth**. Supply `--password-stdin` or
+  run from inside a trusted `.byn` scope.
+- `list` and new-name `put` (insert) are **always free** — no session needed.
+
+**Config cleanup:** if your `~/.byn/config` contains a `[security]`
+section with `per_action_auth`, remove that key. The strict TOML parser
+will reject any config containing `per_action_auth` as an unknown key,
+preventing the daemon from loading.
+
+---
+
+## NU-2 migration guide
+
+NU-2 (released after v0.1.0) hardened the trust store with per-record
+snapshots, mtime tracking, vault-key MACs, and an `[exec] actions` command
+allowlist. Existing trust records created before NU-2 are classified as
+**stale** and blocked from exec until re-trusted.
+
+### What you will see
+
+```
+Error: /path/to/project/.byn predates tamper-protection — run `byn trust /path/to/project/.byn`
+```
+
+This is expected for every `.byn` you trusted before NU-2. Re-trusting
+upgrades the record to v2 (snapshot + mtime + MACs).
+
+### One-time re-trust
+
+```sh
+# Single file:
+byn trust ./.byn
+
+# Many files at once (one password prompt per vault):
+byn trust --paths "a/.byn,b/.byn,c/.byn"
+
+# Whole monorepo tree:
+byn trust --recursive ~/projects
+```
+
+### Re-trusted .byns without [exec] actions
+
+A `.byn` re-trusted without an `[exec] actions` key will prompt for
+authorization on **every** `byn exec` invocation — this is intentional.
+`[exec] actions` is the mechanism that pre-authorizes a specific command
+list so those commands run password-free; without it, every exec requires
+explicit approval. To avoid repeated prompts, add the commands you want to
+run freely:
+
+```toml
+[exec]
+actions = ["/usr/bin/env", "/usr/local/bin/make"]
+```
+
+### byn trust diff workflow
+
+When exec fails with `CHANGED` or `STALE`, inspect what changed before
+re-trusting:
+
+```sh
+byn exec -- make build      # fails: .byn has CHANGED
+byn trust diff ./.byn       # exits 1; prints unified diff to stdout
+                             # (mtime-only: "content identical; modification time changed")
+byn trust ./.byn            # re-approve (prompts for password)
+byn exec -- make build      # succeeds
+```
+
+`byn trust diff` exits **0** when content and mtime are both unchanged
+(file is still trusted, nothing to do), **1** when either differs
+(re-trust required), **2** when the daemon is not running, or **3** when
+the daemon returns an error (path not trusted, file exceeds 64KB, etc.).
+
+### Provider seam (for Enterprise Edition)
+
+The auth-provider registry introduced in NU-2 exposes a public interface
+(`auth.Provider`) that the EE can use to register additional authentication
+methods (phone approval, SSO, hardware token) without forking this
+repository. The base ships `password` and `passkey` providers. EE registers
+additional providers at startup via the exported registry — this is the
+extension point for NU-4's premium auth surfaces.
 
 ---
 
@@ -396,7 +916,7 @@ deployment surface grows.
 | `--quiet` flag | `BYN_HINTS=0` + shell redirection works | When users ask for it |
 | Constant-time `wrong_password` vs vault-not-found | Same response today (existence oracle defense) | If we ever change that |
 | **OS deny-read layer** (Seatbelt/Landlock) paired with the shim | A PATH-shim alone is bypassable (abs path, `PATH` rewrite, direct file read); containment needs a kernel deny-read on the cred files. Out of scope pre-public. | Phase 3, when shims land; see internal design notes |
-| **Per-operation biometric auth** | Removes the persistent unlock window for value egress, but brutal UX without a biometric tap; revisits the deferred per-read analysis | Post-launch, with Touch ID/WebAuthn; see internal design notes |
+| **Privilege separation** (NU-5/6) | A same-UID process can still ptrace the daemon or connect to the socket; true isolation needs the daemon on a different UID/sandbox | NU-5/6; kernel-level change |
 | **Fingerprinted exec allowlist** | Only pre-authorized commands get exec rights — strong for sealed tools, defeated for agent-authored interpreters | Phase 3, with shims |
 | **Ephemeral scoped credential broker** | Vend short-lived STS tokens via AWS `credential_process` so the durable key never leaves the daemon (Case B cloud creds) | Post-launch; larger scope (cloud integration) |
 

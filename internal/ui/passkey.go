@@ -123,8 +123,10 @@ func (s *Server) handlePasskeyAuthBegin(w http.ResponseWriter, r *http.Request) 
 }
 
 // POST /api/passkey/auth/finish {vault, ceremony_id, response}. On a verified
-// assertion the daemon confirms the credential; the portal then issues a
-// session cookie. (A-auth.2 will also unlock the vault here.)
+// assertion the daemon confirms the credential; the portal issues a session
+// cookie for the passkey layer AND captures any daemon session token minted
+// during a PRF cold-unlock into the portal's in-memory vault token map so
+// subsequent value-touching ops are satisfied without re-prompting.
 func (s *Server) handlePasskeyAuthFinish(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Vault      string          `json:"vault"`
@@ -136,15 +138,31 @@ func (s *Server) handlePasskeyAuthFinish(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	vaultName := defaultVault(body.Vault)
 	var resp ipc.PasskeyAuthFinishResp
-	if !s.run(w, r, ipc.OpPasskeyAuthFinish, ipc.PasskeyAuthFinishReq{
-		Vault: body.Vault, CeremonyID: body.CeremonyID, Response: body.Response, KEK: body.KEK,
-	}, &resp) {
+	// Use callCapture so we see any daemon session token in the response header.
+	ipcErr, daemonTok, err := s.callCapture(r.Context(), s.loadVaultSession(vaultName),
+		ipc.OpPasskeyAuthFinish, ipc.PasskeyAuthFinishReq{
+			Vault: body.Vault, CeremonyID: body.CeremonyID, Response: body.Response, KEK: body.KEK,
+		}, &resp)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	vaultName := defaultVault(body.Vault)
-	tok, err := s.sessions.issue(vaultName, time.Now())
-	if err != nil {
+	if ipcErr != nil {
+		writeIPCErr(w, ipcErr)
+		return
+	}
+	// If the PRF path unlocked the vault, the daemon minted a session token.
+	// Prefer SessionToken in the response body; fall back to the envelope header.
+	if tok := resp.SessionToken; len(tok) > 0 {
+		s.storeVaultSession(vaultName, tok)
+	} else if len(daemonTok) > 0 {
+		s.storeVaultSession(vaultName, daemonTok)
+	}
+	// Issue the passkey-layer portal session cookie (for the SPA passkey UI).
+	pktok, cerr := s.sessions.issue(vaultName, time.Now())
+	if cerr != nil {
 		writeErr(w, http.StatusInternalServerError, "session error")
 		return
 	}
@@ -153,7 +171,7 @@ func (s *Server) handlePasskeyAuthFinish(w http.ResponseWriter, r *http.Request)
 	// loopback-only binding + the Origin CSRF check are the mitigations.
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: loopback HTTP portal, no TLS — see comment
 		Name:     sessionCookie,
-		Value:    tok,
+		Value:    pktok,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,

@@ -11,6 +11,12 @@ agents, bots, and scripts all run under your account, none of them you.
 byn keeps secret *values* out of their reach while transparently delivering
 them to the tools that legitimately need them.
 
+> **Read this before you trust byn with real secrets:** byn is a user-space
+> tool with real, named limits — a stolen vault file is offline-crackable, and
+> code running as your own UID can reach an unlocked vault. See
+> [Known weaknesses & how to protect yourself](docs/security.md#known-weaknesses--how-to-protect-yourself)
+> and the [Best practices](docs/security.md#best-practices) checklist.
+
 ## Install
 
 ```sh

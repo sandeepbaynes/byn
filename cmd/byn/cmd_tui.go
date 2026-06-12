@@ -34,7 +34,7 @@ func runTUI(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return exitErr
 	}
-	client := newClient(dir)
+	client := newClient(dir, scope.Vault)
 
 	// Status check + unlock prompt loop for the *targeted* vault
 	// (defaults to "default" if --vault wasn't passed). This is what
@@ -64,10 +64,35 @@ func runTUI(args []string, scope cliScope) int {
 			return exitErr
 		}
 		defer pwBuf.Wipe()
-		if err := client.Call(ipc.OpVaultUnlock,
+		// Use CallAndCaptureSession so the minted session token is stored on
+		// the client and threaded into every subsequent TUI op.  This gives
+		// the TUI the same "unlock once per terminal" experience as the CLI:
+		// value reads inside the TUI don't re-prompt for a password.
+		//
+		// Because the TUI's ipc.Client is the same object passed to tui.Run,
+		// setting client.Session here propagates to all future data.go commands.
+		// The token is also written to the per-TTY session file so that CLI
+		// commands run in the same terminal after the TUI exits also benefit
+		// (consistent with `byn unlock` saving to the per-TTY file).
+		var unlockResp ipc.VaultUnlockResp
+		tok, cerr := client.CallAndCaptureSession(ipc.OpVaultUnlock,
 			ipc.VaultUnlockReq{Name: targetVault, Password: pwBuf.Bytes()},
-			&ipc.VaultUnlockResp{}); err != nil {
-			return handleCallError(err)
+			&unlockResp, client.Session)
+		if cerr != nil {
+			return handleCallError(cerr)
+		}
+		// Prefer the session token from the envelope header (tok); fall back to
+		// the response body field for daemons that only set one of them.
+		if len(tok) == 0 {
+			tok = unlockResp.SessionToken
+		}
+		if len(tok) > 0 {
+			client.Session = tok
+			vaultKey := vaultSessionKey(targetVault)
+			if serr := saveSessionToken(dir, vaultKey, tok); serr != nil {
+				// Non-fatal: TUI already has the session; file is convenience.
+				fmt.Fprintf(os.Stderr, "warning: could not save session token: %v\n", serr)
+			}
 		}
 	}
 

@@ -42,6 +42,18 @@ var DefaultArgon2Params = Argon2Params{
 	Threads: 4,
 }
 
+// TestArgon2Params is the minimum cost profile that still satisfies
+// validateParams (Time>=1, Memory>=8MiB, Threads>=1). It exists ONLY so
+// tests that perform real vault init/unlock don't pay the ~1s/op
+// production Argon2 cost; under -race on slow CI runners the cumulative
+// production cost blows the package timeout. MUST NEVER be used in
+// production — it provides negligible KDF hardening.
+var TestArgon2Params = Argon2Params{
+	Time:    1,
+	Memory:  8 * 1024,
+	Threads: 1,
+}
+
 // Sentinel errors.
 var (
 	// ErrWrongPassword is returned by Unwrap when the supplied

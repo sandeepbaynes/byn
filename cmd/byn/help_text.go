@@ -119,6 +119,11 @@ DESCRIPTION
        the vault key. On success, future put/get/rename calls succeed
        until "byn lock" or the daemon is stopped.
 
+       A per-terminal session token is saved to disk so subsequent
+       commands in the same terminal window skip re-prompting. Run
+       "byn lock --session" to clear the token for the current
+       terminal without locking the vault for other callers.
+
        Failed unlock attempts trigger exponential backoff. The state is
        persisted across daemon restarts so killing the daemon does not
        reset the rate limit.
@@ -152,7 +157,7 @@ SEE ALSO
        byn-lock - lock the vault by clearing the in-memory key
 
 SYNOPSIS
-       byn lock
+       byn lock [--session]
 
 DESCRIPTION
        Asks the daemon to zero the in-memory vault key. Subsequent
@@ -162,8 +167,22 @@ DESCRIPTION
        Locking does NOT stop the daemon. The metadata index remains
        browseable; only value reads require unlock.
 
+       With --session, only the CLI session token for the current
+       terminal is revoked without locking the vault for other callers
+       (useful when leaving a shared machine while keeping the vault
+       available to other terminals or the portal).
+
+OPTIONS
+       --session
+           Revoke the CLI session for the current terminal only;
+           do not lock the vault.
+
 EXAMPLES
+       Lock vault for all callers:
            $ byn lock
+
+       Revoke only this terminal's session:
+           $ byn lock --session
 
 EXIT STATUS
        0    Vault locked (or was already locked).
@@ -177,7 +196,7 @@ SEE ALSO
        byn-put - store a secret
 
 SYNOPSIS
-       byn put [--create-only] NAME
+       byn put [--create-only] [--password-stdin] NAME
 
 DESCRIPTION
        Stores or updates a secret called NAME. The secret value is
@@ -189,10 +208,27 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
+       Overwriting an existing secret requires the master password when
+       no session is present. The CLI prompts interactively; scripts
+       should use --password-stdin. New secrets (with --create-only or
+       the first put of a name) do not require authorization.
+
 OPTIONS
        --create-only
            Fail with "already exists" instead of overwriting an
            existing secret with the same name.
+
+       --password-stdin
+           If an overwrite requires authorization and no session is present,
+           read the master password from stdin instead of prompting at the
+           terminal. Useful for scripts and CI.
+
+           Contract: the FIRST LINE of stdin is the master password;
+           the REMAINDER (after the first newline) is the secret value.
+           The first line is always consumed when --password-stdin is set,
+           even if the daemon never asks for authorization. Example:
+
+               $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 
 EXAMPLES
        From a pipe:
@@ -210,6 +246,9 @@ EXAMPLES
 
        Refuse to overwrite an existing secret:
            $ echo -n "new" | byn put aws-access-key --create-only
+
+       Authorize an overwrite non-interactively (no session, via stdin):
+           $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 
 EXIT STATUS
        0    Stored.
@@ -233,7 +272,7 @@ SEE ALSO
        byn-get - print a secret's value to stdout
 
 SYNOPSIS
-       byn get NAME
+       byn get [--json] [--password-stdin] NAME
        byn cat NAME
 
 DESCRIPTION
@@ -248,6 +287,17 @@ DESCRIPTION
 
        Requires an unlocked vault.
 
+       Get requires the master password when no session is present. The
+       CLI prompts interactively; scripts should use --password-stdin.
+
+OPTIONS
+       --json
+           Emit {"name":"...","value":"..."} JSON instead of the raw value.
+
+       --password-stdin
+           When no session is present, read the master password from stdin
+           instead of prompting at the terminal. Useful for scripts and CI.
+
 EXAMPLES
        Print the value:
            $ byn get aws-access-key
@@ -261,6 +311,9 @@ EXAMPLES
 
        Inspect non-ASCII byte content:
            $ byn get binary-blob | xxd | head
+
+       Non-interactive get (sessionless, via stdin):
+           $ echo "$MASTER_PW" | byn get my-secret --password-stdin
 
 EXIT STATUS
        0    Value written to stdout.
@@ -318,7 +371,7 @@ SEE ALSO
        byn-delete - remove a secret from the vault
 
 SYNOPSIS
-       byn delete NAME
+       byn delete [--password-stdin] NAME
        byn rm NAME
 
 DESCRIPTION
@@ -329,12 +382,26 @@ DESCRIPTION
        Without versioning enabled, deletion is immediate and
        unrecoverable.
 
+       When the vault is locked or no session is present, the master
+       password is required to authorize the deletion. The CLI prompts
+       interactively; scripts should use --password-stdin.
+
+OPTIONS
+       --password-stdin
+           The non-interactive way to supply the master password —
+           reads it from stdin instead of prompting at the terminal.
+           Useful for scripts and CI when the vault is locked or
+           no session is present.
+
 EXAMPLES
        Delete an entry:
            $ byn delete tls-key
 
        Delete using the alias:
            $ byn rm old-token
+
+       Delete while vault is locked (or sessionless):
+           $ echo "$MASTER_PW" | byn delete tls-key --password-stdin
 
 EXIT STATUS
        0    Deleted.
@@ -350,7 +417,8 @@ SEE ALSO
        byn-exec - run a command with vault env-vars injected
 
 SYNOPSIS
-       byn exec -- COMMAND [ARGS...]
+       byn exec -- COMMAND [ARGS...]       (direct form)
+       byn exec NAME [ARGS...]             (alias form)
 
 DESCRIPTION
        Loads all env-var entries from the active vault scope, sets
@@ -359,23 +427,124 @@ DESCRIPTION
        runs as the same PID as the byn CLI that invoked it; there
        is no byn process left in the tree.
 
+   DIRECT FORM
        The "--" separator is required to disambiguate exec's own
        flags from the child command's flags. Anything after "--" is
        the child argv.
 
-       Values reach the child but never appear in the parent shell's
-       environment, command-line, or shell history. They do appear in
-       the child's environ (visible to anything with same-UID access
-       to /proc/PID/environ, which is the inherent limit of env-var
-       injection — for stronger isolation, future versions will use
-       FUSE materialization).
+           $ byn exec -- python deploy.py
+           $ byn exec -- aws s3 ls --human-readable
 
-       Values stored in the vault override any same-named variable in
-       the parent shell (last-wins per POSIX). A DB_URL stored in
-       byn takes precedence over one already exported in your
-       shell.
+   ALIAS FORM
+       When a trusted .byn is in scope (discovered by walking up from
+       CWD), named entry points from its [aliases] table may be invoked
+       by name:
 
-       Requires an unlocked vault.
+           $ byn exec deploy          # runs whatever "deploy" expands to
+           $ byn exec deploy --watch  # extra args appended (strict passthrough)
+
+       The daemon expands the alias server-side: it looks up the alias
+       value in the trusted record's [aliases] map, splits it on
+       whitespace, and appends any extra args you supplied. The expanded
+       argv is then subject to the same [exec] actions pattern matching
+       as a direct exec. The daemon returns the canonical (expanded)
+       argv to the CLI as ResolvedArgv.
+
+       Example .byn [aliases] section:
+           [aliases]
+           deploy   = "kubectl apply -f deploy/"
+           test     = "cargo test {{args}}"
+           migrate  = "python manage.py migrate"
+
+       Alias shadowing: if both an alias named "test" and a binary named
+       "test" exist, 'byn exec test' runs the alias; 'byn exec -- test'
+       runs the binary. The "--" always forces direct form.
+
+       Alias not found: if the alias is not defined, the daemon returns
+       an error with the available alias names (up to 8).
+
+       Requires a trusted .byn in scope. Running 'byn exec ALIAS' from a
+       directory with no .byn is a usage error.
+
+   ACTIONS PATTERN MATCHING
+       The [exec] actions list supports typed placeholders in addition to
+       exact strings. Patterns let you pin commands while allowing
+       variable arguments:
+
+           actions = [
+               "aws s3 cp {{path}} {{path}}",
+               "kubectl get {{alnum}}",
+               "pytest {{args}}",
+           ]
+
+       Placeholder types:
+           {{uuid}}    UUID (any case, with or without dashes)
+           {{int}}     integer (optional leading minus, digits only)
+           {{alnum}}   alphanumeric string (letters and digits)
+           {{str}}     any single non-empty token
+           {{path}}    any token without a NUL byte (syntactic; no FS check)
+           {{url}}     HTTP(S) URL
+           {{re:…}}    custom regular expression (anchored per token)
+           {{args}}    zero or more remaining tokens (tail wildcard;
+                       must be the last token in the pattern)
+
+       Example: "cargo test {{args}}" matches "cargo test", "cargo test
+       --nocapture", "cargo test my_module::my_test", etc.
+
+       Actions that fail to parse are non-matching (defense in depth:
+       a malformed pattern never widens the allowlist, it only narrows).
+
+       FOOTGUN: tokens like "--flag={{uuid}}" are rejected at 'byn trust'
+       time as malformed patterns (a placeholder must occupy an entire
+       whitespace-delimited token). To pass a flag with a variable value,
+       either pin it literally ("--flag=abc123") or use a separate token
+       pattern if the tool accepts it ("--flag {{uuid}}").
+
+   AUTHORIZATION MODEL
+       Actions pinlist ([exec] actions): controls WHICH commands may run
+       without per-call authorization. Three states:
+
+         empty or absent (DEFAULT — THE SECURE CHOICE)
+             No command runs free. Every 'byn exec' requires
+             authorization (the master password or a presence token).
+             This is the secure default: a .byn with no [exec] actions
+             declares it has not opted into any pinned commands.
+             Migration note: existing .byn files that have been re-trusted
+             after NU-2 will have empty actions — every exec will prompt
+             until you pin commands.
+
+         "*" or ["*"] (wildcard — LOUD WARNING)
+             ALL commands run without re-authorization. The CLI prints a
+             loud warning on every exec. Use only for fully-trusted
+             automation environments.
+
+         ["cmd arg1 arg2", ...] (explicit list with optional placeholders)
+             Matching commands run free; all other commands require
+             authorization. Use placeholders for variable arguments.
+             "aws s3 ls" does NOT match "aws s3 ls --human" (no tail
+             wildcard); use "aws s3 ls {{args}}" to match any trailing
+             arguments. This is the recommended setting for production.
+
+       [auth] exec policy (in the .byn [auth] table):
+         "always"   fresh authorization required for EVERY exec, even
+                    pinned/wildcard. Strongest: turns the .byn into a
+                    scope-gating file only.
+         "none"     no authorization for ANY command — wildcard-equivalent.
+                    The loud warning is shown at 'byn trust' time (not at
+                    exec time). Treat it as equivalent to actions = "*".
+         "trusted"  default — let the actions list decide (see above).
+
+       Actions enforcement is INDEPENDENT of the session gate.
+       The session gate governs operations that have no .byn contract
+       (ad-hoc exec, get, put, delete, …). A .byn's [exec] actions list
+       is the contract for trusted-.byn exec.
+
+       Ad-hoc exec (no .byn) is auth-gated when no session is present —
+       the daemon returns auth_required, the CLI prompts once for the
+       master password and retries. Trusted-.byn exec with an unmatched
+       command is also gated (same retry flow; the daemon message explains
+       that the command is not pinned). To avoid the prompt, pin the
+       command in [exec] actions.
 
        Trust: when the scope comes from a discovered .byn, exec verifies
        it is trusted (machine + vault-key MAC, checked by the daemon)
@@ -388,36 +557,48 @@ DESCRIPTION
        all (with a warning, since later-added secrets auto-inject), and an
        empty or absent list injects nothing. With no .byn (ad-hoc run) the
        whole scope is injected.
-         - [exec] env is ENV-VARS ONLY — it does not restrict WHICH
-           command runs; a trusted .byn runs any command you pass.
-         - The .byn is strict TOML: any key outside [scope] / [exec] env
-           is a hard parse error (no silent fallback).
 
-       v1 limitations (iterating):
-         - uses the implicit default scope (vault=default,
-           project=default, env=default). --vault / --project / --env
-           flags will land in a later iteration.
-         - performs one IPC round-trip per stored entry (a "get all"
-           daemon op will replace this when needed).
-         - shell builtins (cd, source, ulimit, etc.) cannot be exec'd
-           directly — wrap them in "bash -c '...'".
+       Values reach the child but never appear in the parent shell's
+       environment, command-line, or shell history. They do appear in
+       the child's environ (visible to anything with same-UID access
+       to /proc/PID/environ, which is the inherent limit of env-var
+       injection — for stronger isolation, future versions will use
+       FUSE materialization).
+
+       Values stored in the vault override any same-named variable in
+       the parent shell (last-wins per POSIX). A DB_URL stored in
+       byn takes precedence over one already exported in your shell.
+
+       Requires an unlocked vault. Vault locked: exec always fails with
+       "vault is locked". Unlike the delete family, exec cannot proceed
+       with a password alone; run "byn unlock" first.
+
+       Every exec attempt — allowed or denied, including locked-vault
+       denials — is written to the vault's audit log with the full
+       command line. Alias execs are logged as "alias NAME → resolved argv"
+       (capped at 200 chars).
 
 EXAMPLES
-       Run a python script with stored env vars set:
+       Direct form — run a python script with stored env vars set:
            $ byn exec -- python deploy.py
 
-       Inspect what byn sets:
+       Direct form — inspect what byn injects:
            $ byn exec -- env | grep -v '^_'
 
-       Run any binary; values flow into its environ:
-           $ byn exec -- aws s3 ls
+       Direct form — with flag-having commands; "--" makes them unambiguous:
+           $ byn exec -- terraform apply -auto-approve
+
+       Alias form — run the "deploy" alias defined in the .byn:
+           $ byn exec deploy
+
+       Alias form — pass extra args after the alias name:
+           $ byn exec test -- --nocapture
+
+       Alias form — shadow: run the binary named "test", not the alias:
+           $ byn exec -- test
 
        Wrap a shell builtin via bash:
            $ byn exec -- bash -c 'cd $PROJECT_DIR && make build'
-
-       Use with flag-having commands; the "--" makes them
-       unambiguous:
-           $ byn exec -- terraform apply -auto-approve
 
 EXIT STATUS
        The exit code is the exit code of the child command (because
@@ -425,9 +606,11 @@ EXIT STATUS
 
        Exit codes BEFORE successful exec:
        0    (never; execve doesn't return on success)
-       1    Bad usage, missing binary, vault locked, daemon issue.
+       1    Bad usage, missing binary, or alias form without a .byn.
        2    Daemon unreachable.
-       3    Daemon error (vault locked, etc.).
+       3    Daemon error: vault locked (always a hard failure for exec),
+            untrusted/changed/tampered .byn (re-trust with byn trust),
+            alias not found in [aliases].
 
 SECURITY NOTES
        Once a value is in the child's environment, it is visible to
@@ -441,14 +624,14 @@ SECURITY NOTES
        only at the moment of read.
 
 SEE ALSO
-       byn(1), byn-get(1), byn-put(1)
+       byn(1), byn-get(1), byn-put(1), byn-trust(1)
 `,
 
 	"rename": `NAME
        byn-rename - rename a secret
 
 SYNOPSIS
-       byn rename OLD NEW
+       byn rename [--password-stdin] OLD NEW
        byn mv OLD NEW
 
 DESCRIPTION
@@ -458,12 +641,23 @@ DESCRIPTION
 
        Refuses if NEW is already taken.
 
+       Rename requires the master password when no session is present.
+       The CLI prompts interactively; scripts should use --password-stdin.
+
+OPTIONS
+       --password-stdin
+           When no session is present, read the master password from stdin
+           instead of prompting at the terminal.
+
 EXAMPLES
        Rename a credential after rotation:
            $ byn rename aws-access-key-old aws-access-key
 
        Using the alias:
            $ byn mv foo bar
+
+       Non-interactive rename (sessionless, via stdin):
+           $ echo "$MASTER_PW" | byn rename old-name new-name --password-stdin
 
 EXIT STATUS
        0    Renamed.
@@ -584,11 +778,20 @@ SUBCOMMANDS
 
        reload
            Signal the running daemon (SIGHUP) to re-read ~/.byn/config
-           and apply the runtime-changeable settings — idle_timeout
-           and the web portal (enable/disable/port) — WITHOUT a
-           restart. Open vaults stay unlocked. Use this for config
-           tweaks; use restart to pick up a new binary. Applied
-           changes are logged to the daemon log.
+           and apply the runtime-changeable settings — idle_timeout,
+           the web portal (enable/disable/port) — WITHOUT a restart.
+           Open vaults stay unlocked. Use this for config tweaks; use
+           restart to pick up a new binary. Applied changes are logged
+           to the daemon log.
+
+           Runtime-changeable config keys:
+             [daemon]   idle_timeout   — vault auto-relock window
+             [ui]       port, enabled, reveal_hide_after
+             [security] session_ttl    — absolute session lifetime
+                                         (default 12h; 0 = no limit)
+             [security] session_idle   — sliding idle window
+                                         (default 0 = inherit idle_timeout)
+             [security] session_ttl / session_idle — tune session lifetime
 
        status
            Print daemon state, socket path, vault lock state, and
@@ -644,6 +847,15 @@ DESCRIPTION
        vault lock state (uninitialized / locked / unlocked), and
        daemon uptime.
 
+       Vault state has two independent layers. "unlocked" means the
+       daemon holds the vault key in memory (required for trusted exec
+       / shim injection). Reading values also requires a per-terminal
+       session: a terminal that never ran "byn unlock" will see
+       "unlocked" but still be prompted to authorize on "byn get".
+       Each vault row shows "[session: active, expires in …]" when the
+       current terminal has a live session, or a dim "[no session in
+       this terminal — byn unlock to authorize reads]" when it does not.
+
 EXAMPLES
        Check state:
            $ byn status
@@ -678,8 +890,20 @@ DESCRIPTION
        There is no portal login. Like "byn ls", the scope tree and
        entry names are visible, but reading or editing VALUES requires
        the target vault to be unlocked -- a per-vault lock/unlock toggle
-       in the UI. The portal binds loopback only (127.0.0.1), never the
-       network; its CSRF defense is an Origin check.
+       in the UI. Write/delete/reveal actions trigger an in-page
+       "Authorize" step-up: passkey (Touch ID) first, then password
+       fallback. On success, the daemon issues a single-use presence
+       token consumed by the retry. The portal binds loopback only
+       (127.0.0.1), never the network; its CSRF defense is an Origin check.
+
+       The portal includes a .byn STUDIO (top-left ".byn" button): a
+       structured builder form, inline TOML validator, command tester
+       (simulates the exec gate before trust is granted), and one-click
+       save+trust. Open an existing trusted file via "open .byn..." or
+       browse to any directory containing a .byn file. The Settings
+       panel (top-right gear icon) exposes the global config file as a
+       TOML editor -- editing config always requires the master password
+       or a passkey token.
 
        Disable the portal entirely with [ui] enabled = false in
        ~/.byn/config (then restart the daemon).
@@ -695,7 +919,7 @@ EXIT STATUS
        2    Daemon unreachable.
 
 SEE ALSO
-       byn(1), byn-daemon(1)
+       byn(1), byn-daemon(1), byn-trust(1)
 `,
 
 	"version": `NAME
@@ -762,14 +986,28 @@ SEE ALSO
 
 SYNOPSIS
        byn vault list [--json]
-       byn vault delete NAME
+       byn vault delete NAME [--password-stdin]
+       byn vault rename OLD NEW [--password-stdin]
        byn vault init | unlock | lock
 
 DESCRIPTION
        Vaults are top-level containers. The "default" vault is
-       protected — it cannot be deleted. Use --vault NAME (or
-       BYN_VAULT) to target a non-default vault for any other
-       command.
+       protected — it cannot be deleted or renamed. Use --vault NAME
+       (or BYN_VAULT) to target a non-default vault for any command.
+
+       vault delete NAME [--password-stdin]
+           Securely remove a vault from disk. Refuses the "default"
+           vault. When the vault is locked or no session is present,
+           the master password is required (--password-stdin for scripts).
+
+       vault rename OLD NEW [--password-stdin]
+           Rename a vault and its audit trail. Refuses the "default"
+           vault and an existing destination. The vault is left LOCKED
+           afterwards. Requires the master password when locked or when
+           no session is present (--password-stdin for scripts).
+
+       vault init | unlock | lock
+           Aliases for the top-level lifecycle commands.
 
 SEE ALSO
        byn-init(1), byn-unlock(1)
@@ -781,13 +1019,24 @@ SEE ALSO
 SYNOPSIS
        byn project list [--json]
        byn project create NAME
-       byn project delete NAME
+       byn project delete NAME [--password-stdin]
        byn project rename OLD NEW
 
 DESCRIPTION
-       Projects partition env-vars and files inside a vault. Default
-       project is "default" and cannot be deleted. Cascading delete
-       removes all envs and entries under the project.
+       Projects partition env-vars and files inside a vault. The
+       "default" project cannot be deleted or renamed — it is the
+       inheritance base and the implicit scope for every command.
+
+       project delete NAME [--password-stdin]
+           Cascade-delete: removes the project + every env + every
+           entry + every entry_version. Refuses "default". When the
+           vault is locked or no session is present, the master password
+           is required (--password-stdin for scripts).
+
+       project rename OLD NEW
+           Rename a project. Refuses to rename "default" (renaming it
+           would break implicit scope resolution for every command that
+           defaults to "default").
 
 SEE ALSO
        byn-env(1)
@@ -799,13 +1048,29 @@ SEE ALSO
 SYNOPSIS
        byn env list [--json]
        byn env create NAME
-       byn env delete NAME
+       byn env delete NAME [--password-stdin]
+       byn env clear [ENV] --yes [--password-stdin]
        byn env rename OLD NEW
 
 DESCRIPTION
        Envs are the leaf scope (e.g. dev, staging, prod). The
-       project's default env cannot be deleted. Non-default envs fall
-       back to default for missing keys (inheritance).
+       project's "default" env cannot be deleted or renamed. Non-default
+       envs fall back to default for missing keys (inheritance).
+
+       env delete NAME [--password-stdin]
+           Delete a non-default env and cascade to its entries.
+           Refuses "default". When the vault is locked or no session is
+           present, the master password is required (--password-stdin
+           for scripts).
+
+       env clear [ENV] --yes [--password-stdin]
+           Delete every env-var in ENV (defaults to the active env)
+           while keeping the env itself. --yes is required to proceed.
+           Treated as a destructive operation: the master password is
+           required when the vault is locked or no session is present.
+
+       env rename OLD NEW
+           Rename an env. Refuses "default".
 
 SEE ALSO
        byn-project(1)
@@ -880,11 +1145,21 @@ SEE ALSO
 
 SYNOPSIS
        byn export [--format env|yaml|json] [--output PATH]
+                  [--password-stdin]
 
 DESCRIPTION
        Materializes all env-var entries in the active scope as a
        single flat key→value document. Writes to stdout by default,
        or to PATH with --output (mode 0600).
+
+       With an active terminal session (from a prior "byn unlock")
+       every get is authorized by the session token — no password
+       prompts fire. Without a session, the first get returns
+       auth_required; the CLI prompts once interactively (or reads
+       from --password-stdin) and reuses the same password for the
+       remaining entries. Each per-password get re-verifies via
+       Argon2id, so large exports without a session are slow; run
+       "byn unlock" first (or use --password-stdin) to avoid this.
 
 OPTIONS
        --format env|yaml|json
@@ -892,6 +1167,11 @@ OPTIONS
 
        --output PATH | -
            Destination file, or "-" for stdout.
+
+       --password-stdin
+           The non-interactive way to supply the master password when
+           no session is present — reads it from stdin instead of
+           prompting at the terminal. Useful for scripts and CI.
 
 CAVEATS
        This command MATERIALIZES PLAINTEXT. Treat the destination as
@@ -978,6 +1258,7 @@ SEE ALSO
 
 SYNOPSIS
        byn trust [PATH...] [--paths "a,b,c"] [--recursive] [--password-stdin]
+       byn trust diff <PATH>
        byn trust list [--json]
        byn untrust [PATH...] [--paths "a,b,c"] [--recursive]
 
@@ -1004,6 +1285,40 @@ DESCRIPTION
        file is never honored on a y/N, and an agent driving the CLI
        can't approve a file whose password it doesn't have.
 
+       .byn files exceeding 64KB are refused at grant time and at exec.
+
+[auth] TABLE — per-scope per-action authorization policy
+       A .byn may carry an [auth] table that overrides the global session
+       gate for operations in this file's scope. Keys: get, update
+       (overwrite-put, rename), delete (delete, env.clear, env.delete,
+       project.delete, vault.delete), exec. Values:
+
+         "always"  Fresh authorization required for every matching op,
+                   even when a session is active. Tightens.
+
+         "none"    Gate skipped entirely for the matched scope, even when
+                   no session is present. Relaxes. Use only in environments
+                   where ambient access is acceptable (e.g., a local dev
+                   project with no sensitive creds).
+
+         absent    The session gate decides (default).
+
+       Policy is MAC-bound at grant time: the daemon reads the policy
+       from the trust record (not the live file) so editing the .byn
+       after trust cannot change the effective policy without re-trusting
+       (which requires the password). See byn-security(7) for lookup
+       rules: specificity, strictest-tie, and locked-vault fall-through.
+
+       Structural-ops note: vault-level ops (vault.delete, vault.rename)
+       pass Scope{} (no project/env) to the policy gate. A vault-only
+       record (no project/env in [scope]) matches and therefore gates
+       those ops — a record scoped broadly to an entire vault is deliberate.
+
+       Cross-reference: the [auth] exec key and [exec] actions are
+       independent. The exec key applies ONLY to trusted-.byn exec; ad-hoc
+       exec (no .byn) is auth-gated when no session is present.
+       See 'byn help exec' for the full exec authorization matrix.
+
 OPTIONS
        PATH...
            One or more .byn files. A directory resolves to <dir>/.byn.
@@ -1029,11 +1344,28 @@ EXAMPLES
        Approve non-interactively:
            $ printf '%s' "$PW" | byn trust --password-stdin ./.byn
 
+       See what changed since the last approval:
+           $ byn trust diff ./.byn
+
+       Changed → diff → re-trust flow:
+           $ byn exec -- make build   # fails: .byn has CHANGED
+           $ byn trust diff ./.byn    # review unified diff
+           $ byn trust ./.byn         # re-approve (prompts for password)
+           $ byn exec -- make build   # succeeds
+
        List trusted paths:
            $ byn trust list
 
        Revoke trust:
            $ byn untrust ./.byn
+
+EXIT STATUS
+       byn trust diff exits 0 when the file is identical (content and
+       modification time unchanged). It exits 1 when the content
+       differs or the modification time changed without a content change
+       (re-trust required either way). It exits 2 when the daemon is
+       not running and 3 when the daemon returns an error (e.g. path
+       not trusted, file exceeds 64KB).
 
 SEE ALSO
        byn(1) — discovery walk + .byn file format

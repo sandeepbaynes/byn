@@ -21,6 +21,10 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	cmd.Env = append([]string{"BYN_DIR=" + s.dir, "HOME=" + cwd, "USER=tester"}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
+	} else {
+		// Prevent the child from inheriting the test runner's TTY on stdin.
+		// Without this, byn sees a terminal and may attempt an interactive prompt.
+		cmd.Stdin = strings.NewReader("")
 	}
 	var stdoutBuf, stderrBuf strings.Builder
 	cmd.Stdout = &stdoutBuf
@@ -90,7 +94,8 @@ func TestE2E_Discovery_TrustThenList(t *testing.T) {
 	if so, se, code := s.runInDir(projDir, "v1", nil, "put", "K"); code != 0 {
 		t.Fatalf("put in scope failed code=%d\nstdout=%q\nstderr=%q", code, so, se)
 	}
-	stdout, _, code := s.runInDir(projDir, "", nil, "get", "K")
+	// Non-TTY: use --password-stdin for this auth-gated get.
+	stdout, _, code := s.runPWInDir(projDir, nil, "get", "--password-stdin", "K")
 	if code != 0 {
 		t.Fatalf("get exit %d", code)
 	}
@@ -156,7 +161,11 @@ func TestE2E_Exec_TrustedBynRuns(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	dotPath := filepath.Join(projDir, ".byn")
-	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"alpha\"\n"), 0o600); err != nil {
+	// Pin the exact command+args in [exec] actions so exec runs free.
+	// NU-2: actions matching is token-wise, so the full argv must be listed.
+	// Use wildcard "*" here since we just want to verify trusted exec runs.
+	if err := os.WriteFile(dotPath,
+		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nactions = [\"*\"]\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
@@ -183,8 +192,10 @@ func TestE2E_Exec_EnvAllowlist(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	dotPath := filepath.Join(projDir, ".byn")
+	// Use wildcard actions so any command runs free. NU-2: [exec] actions required.
+	// This test is about env allowlist (X vs Y), not the actions gate.
 	if err := os.WriteFile(dotPath,
-		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"X\"]\n"), 0o600); err != nil {
+		[]byte("[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"X\"]\nactions = [\"*\"]\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
@@ -306,7 +317,8 @@ func TestE2E_Discovery_NoDiscoveryFlag(t *testing.T) {
 		t.Fatalf("put with --no-discovery failed")
 	}
 	// And the value should be in the default scope.
-	stdout, _ := s.mustRun("", "get", "K")
+	// Non-TTY: use --password-stdin for this auth-gated get.
+	stdout, _ := s.mustRunPW("", "get", "--password-stdin", "K")
 	if stdout != "v1" {
 		t.Fatalf("get K (default scope, --no-discovery on put) = %q", stdout)
 	}

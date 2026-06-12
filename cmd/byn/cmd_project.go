@@ -62,7 +62,7 @@ func runProjectCreate(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	if err := newClient(dir).Call(ipc.OpProjectCreate,
+	if err := newClient(dir, scope.Vault).Call(ipc.OpProjectCreate,
 		ipc.ProjectCreateReq{Vault: scope.Vault, Name: name},
 		&ipc.ProjectCreateResp{}); err != nil {
 		return handleCallError(err)
@@ -84,7 +84,7 @@ func runProjectList(args []string, scope cliScope) int {
 		return exitErr
 	}
 	var resp ipc.ProjectListResp
-	if err := newClient(dir).Call(ipc.OpProjectList,
+	if err := newClient(dir, scope.Vault).Call(ipc.OpProjectList,
 		ipc.ProjectListReq{Vault: scope.Vault}, &resp); err != nil {
 		return handleCallError(err)
 	}
@@ -130,8 +130,8 @@ func runProjectDelete(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpProjectDelete,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpProjectDelete,
 			ipc.ProjectDeleteReq{Vault: scope.Vault, Name: name, Password: pw},
 			&ipc.ProjectDeleteResp{})
 	})
@@ -158,8 +158,8 @@ func runProjectRename(args []string, scope cliScope) int {
 		return exitErr
 	}
 	old, neu := fs.Arg(0), fs.Arg(1)
-	rc := mutateWithLockRetry(*pwStdin, func(pw []byte) error {
-		return newClient(dir).Call(ipc.OpProjectRename,
+	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
+		return newClient(dir, scope.Vault).Call(ipc.OpProjectRename,
 			ipc.ProjectRenameReq{Vault: scope.Vault, OldName: old, NewName: neu, Password: pw},
 			&ipc.ProjectRenameResp{})
 	})

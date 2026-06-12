@@ -1,17 +1,18 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
 // The [exec] env allowlist parses from .byn as either a bare string or a list.
-func TestDiscoverScope_ExecEnvAllowlist(t *testing.T) {
-	t.Setenv("BYN_NO_DISCOVERY", "")
+// ExecEnv was removed from cliScope (it's now daemon-side only via exec.fetch);
+// test bynfile.Parse directly so the parsing contract is still exercised.
+func TestBynfileExecEnvAllowlist(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
@@ -25,48 +26,69 @@ func TestDiscoverScope_ExecEnvAllowlist(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			start := t.TempDir()
-			if err := os.WriteFile(filepath.Join(start, ".byn"), []byte(tc.body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			sc, _, err := discoverScope(start, t.TempDir(), t.TempDir(), false)
+			parsed, err := bynfile.Parse([]byte(tc.body))
 			if err != nil {
-				t.Fatalf("discover: %v", err)
+				t.Fatalf("parse: %v", err)
 			}
-			if !reflect.DeepEqual(sc.ExecEnv, tc.want) {
-				t.Fatalf("ExecEnv = %#v, want %#v", sc.ExecEnv, tc.want)
+			got := []string(parsed.Exec.Env)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("Exec.Env = %#v, want %#v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestFilterExecEnv(t *testing.T) {
-	all := []ipc.SecretMeta{{Name: "A"}, {Name: "B"}, {Name: "C"}}
-	names := func(ms []ipc.SecretMeta) []string {
-		out := make([]string, len(ms))
-		for i, m := range ms {
-			out[i] = m.Name
-		}
-		return out
+// TestRenderAllowlistNotes_Wildcard checks that the "permits ALL" warning
+// is printed when the daemon signals Wildcard=true.
+func TestRenderAllowlistNotes_Wildcard(t *testing.T) {
+	resp := ipc.ExecFetchResp{
+		Values:   []ipc.ExecFetchValue{{Name: "A", Value: []byte("1")}, {Name: "B", Value: []byte("2")}},
+		Wildcard: true,
 	}
-	cases := []struct {
-		name  string
-		scope cliScope
-		want  []string
-	}{
-		{"no .byn injects all", cliScope{}, []string{"A", "B", "C"}},
-		{"wildcard injects all", cliScope{SourcePath: "/p/.byn", ExecEnv: []string{"*"}}, []string{"A", "B", "C"}},
-		{"list injects subset", cliScope{SourcePath: "/p/.byn", ExecEnv: []string{"A", "C"}}, []string{"A", "C"}},
-		{"empty injects none", cliScope{SourcePath: "/p/.byn", ExecEnv: []string{}}, []string{}},
-		{"absent injects none", cliScope{SourcePath: "/p/.byn"}, []string{}},
-		{"unknown names ignored", cliScope{SourcePath: "/p/.byn", ExecEnv: []string{"A", "NOPE"}}, []string{"A"}},
+	sourcePath := "/proj/.byn"
+	out := captureStderr(t, func() {
+		renderAllowlistNotes(resp, sourcePath)
+	})
+	if !strings.Contains(out, "permits ALL") {
+		t.Errorf("expected 'permits ALL' in stderr, got: %q", out)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := names(filterExecEnv(all, tc.scope))
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("got %v, want %v", got, tc.want)
-			}
-		})
+	if !strings.Contains(out, sourcePath) {
+		t.Errorf("expected path %q in stderr, got: %q", sourcePath, out)
+	}
+	if !strings.Contains(out, "2") { // count of values
+		t.Errorf("expected value count in stderr, got: %q", out)
+	}
+}
+
+// TestRenderAllowlistNotes_NoneDeclared checks that the "declares no [exec]
+// env vars" note is printed when the daemon signals NoneDeclared=true.
+func TestRenderAllowlistNotes_NoneDeclared(t *testing.T) {
+	resp := ipc.ExecFetchResp{
+		NoneDeclared: true,
+	}
+	sourcePath := "/proj/.byn"
+	out := captureStderr(t, func() {
+		renderAllowlistNotes(resp, sourcePath)
+	})
+	if !strings.Contains(out, "declares no [exec] env vars") {
+		t.Errorf("expected note in stderr, got: %q", out)
+	}
+	if !strings.Contains(out, sourcePath) {
+		t.Errorf("expected path %q in stderr, got: %q", sourcePath, out)
+	}
+}
+
+// TestRenderAllowlistNotes_AdHoc checks that no note is printed when
+// sourcePath is empty (ad-hoc exec with no .byn).
+func TestRenderAllowlistNotes_AdHoc(t *testing.T) {
+	resp := ipc.ExecFetchResp{
+		Wildcard:     true,
+		NoneDeclared: true,
+	}
+	out := captureStderr(t, func() {
+		renderAllowlistNotes(resp, "")
+	})
+	if out != "" {
+		t.Errorf("expected no output for ad-hoc exec, got: %q", out)
 	}
 }

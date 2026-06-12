@@ -28,9 +28,6 @@ type cliScope struct {
 	// `byn exec` verifies trust against it before injecting; other commands
 	// ignore it.
 	SourcePath string
-	// ExecEnv is the [exec] env allowlist from the .byn (nil when no .byn).
-	// byn exec injects only these names; "*" = all (loud); empty = none.
-	ExecEnv []string
 }
 
 // envFallbackKeys maps each scope field to its environment-variable
@@ -85,11 +82,19 @@ var globalFlags = map[string]struct{}{
 }
 
 // jsonModeFromArgs reports whether `--json` appears anywhere before the
-// `--` separator. Used to gate `.byn` TOFU prompting — when --json
-// is set we must NEVER prompt (agent mode); we hard-fail instead.
+// `--` separator AND before any exec passthrough boundary. Used to gate
+// `.byn` TOFU prompting — when --json is set we must NEVER prompt (agent
+// mode); we hard-fail instead.
+//
+// Exec passthrough boundary: `byn exec alias --json` — the `--json` after
+// the alias name is meant for the child and must NOT flip agent mode.
 func jsonModeFromArgs(args []string) bool {
-	for _, a := range args {
+	boundary := execPassthroughBoundary(args)
+	for i, a := range args {
 		if a == "--" {
+			return false
+		}
+		if boundary >= 0 && i >= boundary {
 			return false
 		}
 		if a == "--json" || a == "--json=true" {
@@ -101,9 +106,16 @@ func jsonModeFromArgs(args []string) bool {
 
 // noDiscoveryFromArgs reports whether `--no-discovery` is set. Lets a
 // caller opt out of .byn walk without setting an env var.
+//
+// Respects the exec passthrough boundary — `--no-discovery` after an alias
+// name is opaque and must not be intercepted.
 func noDiscoveryFromArgs(args []string) bool {
-	for _, a := range args {
+	boundary := execPassthroughBoundary(args)
+	for i, a := range args {
 		if a == "--" {
+			return false
+		}
+		if boundary >= 0 && i >= boundary {
 			return false
 		}
 		if a == "--no-discovery" {
@@ -127,10 +139,70 @@ func stripFlagToken(args []string, name string) []string {
 	return out
 }
 
+// execPassthroughBoundary returns the index in args at which everything
+// becomes opaque passthrough for `byn exec`. The boundary is the position of
+// the first literal "--" or the position of the alias name token (the first
+// non-flag, non-"--" token after the "exec" subcommand), whichever comes first.
+//
+// Returns -1 when no exec boundary is found (the subcommand is not exec, or
+// exec was not found in the args slice at a subcommand position).
+//
+// Why this helper: preParseGlobals runs on the full raw argv BEFORE subcommand
+// routing, so it sees `byn exec NAME --vault prod` and would otherwise consume
+// `--vault prod` as byn's own global flag, eating it from the child's argv.
+// Similarly wantsHelp would intercept `--help` meant for the alias.
+//
+// Design: we locate the "exec" token (not preceded by another subcommand-
+// shaped token) and then walk forward past any flags to find the alias name.
+// Global flags that appear BEFORE exec (byn --vault x exec name) are consumed
+// normally; flags that appear AFTER the alias name are opaque.
+func execPassthroughBoundary(args []string) int {
+	for i, a := range args {
+		if a == "--" {
+			// Hard boundary (direct form) — everything from here is opaque.
+			return i
+		}
+		if a == "exec" {
+			// Found the exec subcommand.  Walk past any flags that immediately
+			// follow to find the alias name (first non-flag, non-"--" token).
+			for j := i + 1; j < len(args); j++ {
+				t := args[j]
+				if t == "--" {
+					// Direct form: the "--" itself is the boundary.
+					return j
+				}
+				if strings.HasPrefix(t, "-") {
+					// A flag immediately after exec (e.g. `byn exec --help`) —
+					// skip past its value if it's a two-token flag so we don't
+					// mis-classify the value token as the alias name.
+					if _, isGlobal := globalFlags[t]; isGlobal {
+						j++ // skip the value token
+					}
+					continue
+				}
+				// Non-flag, non-"--": this is the alias name.
+				// Everything AFTER this index is opaque passthrough.
+				return j + 1
+			}
+			// exec with no following non-flag token: no alias name found.
+			// No opaque boundary needed.
+			return -1
+		}
+	}
+	return -1
+}
+
 // preParseGlobals scans argv for global flags and returns the
 // resolved scope plus a scrubbed argv with the consumed flags
 // removed. The pre-parser stops at a literal "--" (which is
 // significant for `byn exec -- COMMAND`).
+//
+// Exec-alias passthrough: when the subcommand is `exec` and an alias name
+// follows (not `--`), everything after the alias name is treated as opaque
+// passthrough — the pre-parser stops consuming global flags at that point.
+// This preserves child flags like `--vault` and `--help` from being eaten.
+// Globals BEFORE the exec subcommand (e.g., `byn --vault x exec name`) are
+// consumed normally.
 //
 // Recognized forms:
 //
@@ -143,11 +215,21 @@ func stripFlagToken(args []string, name string) []string {
 func preParseGlobals(args []string) (cliScope, []string, error) {
 	var sc cliScope
 	out := make([]string, 0, len(args))
+
+	// Compute the exec passthrough boundary once up front.
+	boundary := execPassthroughBoundary(args)
+
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
 			// Everything after this is opaque (child argv for exec,
 			// rename's NEW, etc.). Pass through and stop scanning.
+			out = append(out, args[i:]...)
+			break
+		}
+		// If we've reached the exec passthrough boundary, stop consuming
+		// global flags and pass everything through untouched.
+		if boundary >= 0 && i >= boundary {
 			out = append(out, args[i:]...)
 			break
 		}

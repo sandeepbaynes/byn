@@ -244,9 +244,12 @@ func TestPutGetRoundtrip(t *testing.T) {
 	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
+	var unlockResp ipc.VaultUnlockResp
+	tok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &unlockResp, nil)
+	if err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
+	c.Session = tok
 	if err := c.Call(ipc.OpPut, ipc.PutReq{Name: "k", Value: []byte("v")}, &ipc.PutResp{}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -265,11 +268,13 @@ func TestPut_WhileLocked(t *testing.T) {
 	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	// Don't unlock.
+	// Don't unlock. Under NU-3, the auth gate fires before the vault lock
+	// check, so a caller with no session and no password gets auth_required
+	// (the daemon does not reveal vault lock state to unauthenticated callers).
 	err := c.Call(ipc.OpPut, ipc.PutReq{Name: "k", Value: []byte("v")}, &ipc.PutResp{})
 	var ipcErr *ipc.ErrResponse
-	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeLocked {
-		t.Fatalf("locked Put: err = %v, want CodeLocked", err)
+	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeAuthRequired {
+		t.Fatalf("locked Put: err = %v, want CodeAuthRequired", err)
 	}
 }
 
@@ -279,16 +284,22 @@ func TestLock_AfterUnlock(t *testing.T) {
 	if err := c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if err := c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{}); err != nil {
-		t.Fatalf("Unlock: %v", err)
+	var unlockResp2 ipc.VaultUnlockResp
+	tok2, err2 := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &unlockResp2, nil)
+	if err2 != nil {
+		t.Fatalf("Unlock: %v", err2)
 	}
+	c.Session = tok2
 	if err := c.Call(ipc.OpVaultLock, ipc.VaultLockReq{}, &ipc.VaultLockResp{}); err != nil {
 		t.Fatalf("Lock: %v", err)
 	}
+	c.Session = nil
+	// Under NU-3, auth gate fires before lock check: no session + no password
+	// → auth_required (daemon does not reveal vault lock state to unauthenticated callers).
 	err := c.Call(ipc.OpGet, ipc.GetReq{Name: "missing"}, &ipc.GetResp{})
 	var ipcErr *ipc.ErrResponse
-	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeLocked {
-		t.Fatalf("Get after Lock: err = %v, want CodeLocked", err)
+	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeAuthRequired {
+		t.Fatalf("Get after Lock: err = %v, want CodeAuthRequired", err)
 	}
 }
 
@@ -296,7 +307,9 @@ func TestList_AndDelete(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte("p")
 	_ = c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{})
-	_ = c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{})
+	var ulResp ipc.VaultUnlockResp
+	tok, _ := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ulResp, nil)
+	c.Session = tok
 
 	for _, n := range []string{"a", "b", "c"} {
 		if err := c.Call(ipc.OpPut, ipc.PutReq{Name: n, Value: []byte(n)}, &ipc.PutResp{}); err != nil {
@@ -381,24 +394,36 @@ func TestVaultInit_NamedVault(t *testing.T) {
 func TestVaultUnlock_NamedVault_DataIsolated(t *testing.T) {
 	_, c := startTestDaemon(t)
 
-	// Two vaults, two passwords.
-	for _, v := range []string{"acme", "personal"} {
-		if err := c.Call(ipc.OpVaultInit,
-			ipc.VaultInitReq{Name: v, Password: []byte("pw-" + v)}, &ipc.VaultInitResp{}); err != nil {
-			t.Fatalf("Init %s: %v", v, err)
-		}
-		if err := c.Call(ipc.OpVaultUnlock,
-			ipc.VaultUnlockReq{Name: v, Password: []byte("pw-" + v)}, &ipc.VaultUnlockResp{}); err != nil {
-			t.Fatalf("Unlock %s: %v", v, err)
-		}
+	// Two vaults, two passwords — capture sessions for each.
+	if err := c.Call(ipc.OpVaultInit,
+		ipc.VaultInitReq{Name: "acme", Password: []byte("pw-acme")}, &ipc.VaultInitResp{}); err != nil {
+		t.Fatalf("Init acme: %v", err)
+	}
+	var acmeUnlockResp ipc.VaultUnlockResp
+	acmeTok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock,
+		ipc.VaultUnlockReq{Name: "acme", Password: []byte("pw-acme")}, &acmeUnlockResp, nil)
+	if err != nil {
+		t.Fatalf("Unlock acme: %v", err)
+	}
+	if err := c.Call(ipc.OpVaultInit,
+		ipc.VaultInitReq{Name: "personal", Password: []byte("pw-personal")}, &ipc.VaultInitResp{}); err != nil {
+		t.Fatalf("Init personal: %v", err)
+	}
+	var personalUnlockResp ipc.VaultUnlockResp
+	personalTok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock,
+		ipc.VaultUnlockReq{Name: "personal", Password: []byte("pw-personal")}, &personalUnlockResp, nil)
+	if err != nil {
+		t.Fatalf("Unlock personal: %v", err)
 	}
 
 	// Put a distinct value in each vault, scoping via Scope.Vault.
+	c.Session = acmeTok
 	if err := c.Call(ipc.OpPut,
 		ipc.PutReq{Scope: ipc.Scope{Vault: "acme"}, Name: "MARKER", Value: []byte("from-acme")},
 		&ipc.PutResp{}); err != nil {
 		t.Fatalf("Put acme: %v", err)
 	}
+	c.Session = personalTok
 	if err := c.Call(ipc.OpPut,
 		ipc.PutReq{Scope: ipc.Scope{Vault: "personal"}, Name: "MARKER", Value: []byte("from-personal")},
 		&ipc.PutResp{}); err != nil {
@@ -407,6 +432,7 @@ func TestVaultUnlock_NamedVault_DataIsolated(t *testing.T) {
 
 	// Each vault sees only its own value.
 	var got ipc.GetResp
+	c.Session = acmeTok
 	if err := c.Call(ipc.OpGet,
 		ipc.GetReq{Scope: ipc.Scope{Vault: "acme"}, Name: "MARKER"}, &got); err != nil {
 		t.Fatalf("Get acme: %v", err)
@@ -414,6 +440,7 @@ func TestVaultUnlock_NamedVault_DataIsolated(t *testing.T) {
 	if !bytes.Equal(got.Value, []byte("from-acme")) {
 		t.Fatalf("acme MARKER = %q, want from-acme", got.Value)
 	}
+	c.Session = personalTok
 	if err := c.Call(ipc.OpGet,
 		ipc.GetReq{Scope: ipc.Scope{Vault: "personal"}, Name: "MARKER"}, &got); err != nil {
 		t.Fatalf("Get personal: %v", err)
@@ -443,8 +470,7 @@ func TestVaultLock_All(t *testing.T) {
 func TestProjectCRUD_OverIPC(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte("p")
-	_ = c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{})
-	_ = c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{})
+	initUnlocked(t, c, pw)
 
 	if err := c.Call(ipc.OpProjectCreate,
 		ipc.ProjectCreateReq{Name: "billing"}, &ipc.ProjectCreateResp{}); err != nil {
@@ -474,8 +500,7 @@ func TestProjectCRUD_OverIPC(t *testing.T) {
 func TestEnvCRUD_OverIPC(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte("p")
-	_ = c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{})
-	_ = c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{})
+	initUnlocked(t, c, pw)
 
 	if err := c.Call(ipc.OpEnvCreate,
 		ipc.EnvCreateReq{Project: "default", Name: "stg"}, &ipc.EnvCreateResp{}); err != nil {
@@ -506,8 +531,7 @@ func TestPut_InheritanceVisible(t *testing.T) {
 	// Put in default env, Get from non-default env returns Source="default".
 	_, c := startTestDaemon(t)
 	pw := []byte("p")
-	_ = c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{})
-	_ = c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{})
+	initUnlocked(t, c, pw)
 	_ = c.Call(ipc.OpEnvCreate, ipc.EnvCreateReq{Project: "default", Name: "local"}, &ipc.EnvCreateResp{})
 
 	// Put in default env.
@@ -561,8 +585,7 @@ func TestStatus_ExposesProtocolMinMax(t *testing.T) {
 func TestConcurrentClients(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte("p")
-	_ = c.Call(ipc.OpVaultInit, ipc.VaultInitReq{Password: pw}, &ipc.VaultInitResp{})
-	_ = c.Call(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ipc.VaultUnlockResp{})
+	initUnlocked(t, c, pw)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {

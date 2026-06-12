@@ -10,10 +10,12 @@ import (
 )
 
 // trustByn records trust for a .byn the way the daemon would, so discovery
-// (read-only) sees it as trusted.
+// (read-only) sees it as trusted. Uses trust.Put directly (Grant was removed;
+// Status-based discovery only needs the path+hash, not MACs).
 func trustByn(t *testing.T, bynDir, path string, body []byte) {
 	t.Helper()
-	if _, err := trust.Grant(bynDir, trust.Canonicalize(path), trust.Hash(body)); err != nil {
+	rec := trust.Record{Path: trust.Canonicalize(path), SHA256: trust.Hash(body)}
+	if _, err := trust.Put(bynDir, rec); err != nil {
 		t.Fatalf("seed trust: %v", err)
 	}
 }
