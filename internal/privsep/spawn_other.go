@@ -9,6 +9,11 @@ type Config struct {
 
 	// Exec holds the resolved _byn-exec uid/gid (from LookupState).
 	Exec State
+
+	// StateDir / SocketPath: byn's data dir and daemon socket. Unused on
+	// unsupported platforms; present so Config is cross-platform.
+	StateDir   string
+	SocketPath string
 }
 
 // SpawnReq describes a single child-process spawn request.
@@ -21,6 +26,10 @@ type SpawnReq struct {
 
 	// Stdin, Stdout, Stderr are the raw fd numbers for the child's stdio.
 	Stdin, Stdout, Stderr int
+
+	// NoNetwork requests per-action network denial. Unsupported platforms have no
+	// confinement mechanism; the field exists so SpawnReq is cross-platform.
+	NoNetwork bool
 }
 
 // Spawner spawns exec children via the privileged byn-exec-helper.
