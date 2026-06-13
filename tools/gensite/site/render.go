@@ -176,13 +176,26 @@ func footerLinks(p Page) []navItem {
 
 // indentBody re-indents the rendered markdown HTML so it nests cleanly inside
 // <main class="docs-main"> (four spaces), matching the hand-authored pages.
+//
+// Lines inside a <pre> block are left untouched: <pre> preserves whitespace, so
+// any indentation added there would appear literally inside the rendered code
+// block. The opening "<pre>…" line is still indented (the spaces sit before the
+// tag, outside the element), but every line up to and including "</pre>" keeps
+// its exact content.
 func indentBody(htmlBody string) string {
 	lines := strings.Split(htmlBody, "\n")
 	var b strings.Builder
+	inPre := false
 	for i, ln := range lines {
-		if ln != "" {
+		if !inPre && ln != "" {
 			b.WriteString("    ")
-			b.WriteString(ln)
+		}
+		b.WriteString(ln)
+		if strings.Contains(ln, "<pre") {
+			inPre = true
+		}
+		if strings.Contains(ln, "</pre>") {
+			inPre = false
 		}
 		if i < len(lines)-1 {
 			b.WriteByte('\n')
