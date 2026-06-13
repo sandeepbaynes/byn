@@ -1,0 +1,67 @@
+name: Deploy docs site
+
+# Publishes the themed docs site to GitHub Pages. The markdown under docs/ is the
+# single source of truth; tools/gensite renders it to HTML at build time (that
+# HTML is gitignored and never committed), and this workflow deploys the result.
+# Runs on every push to main that touches a site input, and can be run manually.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'assets/**'
+      - 'index.html'
+      - 'tools/gensite/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least privilege: read the repo, write the Pages deployment, and mint the OIDC
+# token actions/deploy-pages needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One publish at a time; never cancel an in-flight deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Render docs/*.md → docs/<page>/index.html via the project generator.
+      - name: Render themed HTML (gensite)
+        run: make site
+
+      # Assemble the servable site root: the hand-authored landing page + assets
+      # plus the generated docs HTML. .nojekyll disables Jekyll so paths are
+      # served verbatim.
+      - name: Assemble site
+        run: |
+          rm -rf _site
+          mkdir -p _site
+          cp index.html _site/
+          cp -r assets _site/assets
+          cp -r docs _site/docs
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
