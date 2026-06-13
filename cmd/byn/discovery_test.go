@@ -176,13 +176,17 @@ func TestMergeDiscoveryScope(t *testing.T) {
 }
 
 func TestBynTargetVault(t *testing.T) {
-	if got := bynTargetVault([]byte("[scope]\nvault = \"acme\"\n")); got != "acme" {
-		t.Fatalf("vault = %q, want acme", got)
+	// Explicit vault name.
+	if got, err := bynTargetVault([]byte("[scope]\nvault = \"acme\"\n")); err != nil || got != "acme" {
+		t.Fatalf("vault = (%q, %v), want (acme, nil)", got, err)
 	}
-	if got := bynTargetVault([]byte("[scope]\nproject = \"p\"\n")); got != "" {
-		t.Fatalf("missing vault should be empty, got %q", got)
+	// No vault specified → empty string + NIL error (resolves to default).
+	if got, err := bynTargetVault([]byte("[scope]\nproject = \"p\"\n")); err != nil || got != "" {
+		t.Fatalf("missing vault = (%q, %v), want (\"\", nil)", got, err)
 	}
-	if got := bynTargetVault([]byte("garbage = =")); got != "" {
-		t.Fatalf("unparseable should be empty, got %q", got)
+	// Parse error → empty string + NON-NIL error (must NOT masquerade as the
+	// default vault — this is the latent trap the fix closes).
+	if got, err := bynTargetVault([]byte("garbage = =")); err == nil || got != "" {
+		t.Fatalf("unparseable = (%q, %v), want (\"\", err)", got, err)
 	}
 }

@@ -18,7 +18,7 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	s.t.Helper()
 	cmd := exec.Command(s.bin, args...) //nolint:gosec // test harness
 	cmd.Dir = cwd
-	cmd.Env = append([]string{"BYN_DIR=" + s.dir, "HOME=" + cwd, "USER=tester"}, env...)
+	cmd.Env = append([]string{"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester"}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {

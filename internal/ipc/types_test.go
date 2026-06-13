@@ -86,6 +86,56 @@ func TestExecFetchRespActionsWildcardOmitEmpty(t *testing.T) {
 	})
 }
 
+// TestExecSpawnOpRegistered verifies the exec.spawn op is registered + pinned.
+func TestExecSpawnOpRegistered(t *testing.T) {
+	assert.Contains(t, AllOps, OpExecSpawn)
+	assert.Equal(t, Op("exec.spawn"), OpExecSpawn)
+}
+
+// TestExecSpawnReqRoundTrip verifies the embedded ExecFetchReq fields plus the
+// spawn-only fields (BaseEnv, AbsTarget) round-trip through JSON intact.
+func TestExecSpawnReqRoundTrip(t *testing.T) {
+	req := ExecSpawnReq{
+		ExecFetchReq: ExecFetchReq{
+			Path:    "/p/.byn",
+			Scope:   Scope{Vault: "v"},
+			Command: "mytool run",
+			Argv:    []string{"mytool", "run"},
+			Alias:   "deploy",
+		},
+		BaseEnv:   []string{"PATH=/usr/bin", "TERM=xterm"},
+		AbsTarget: "/usr/local/bin/mytool",
+	}
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+	var got ExecSpawnReq
+	require.NoError(t, json.Unmarshal(b, &got))
+	assert.Equal(t, req, got)
+	// The embedded fields must serialize at the top level (flattened), not nested.
+	assert.Contains(t, string(b), `"path":"/p/.byn"`)
+	assert.Contains(t, string(b), `"abs_target":"/usr/local/bin/mytool"`)
+	assert.Contains(t, string(b), `"base_env":`)
+}
+
+// TestExecSpawnReqOmitEmpty verifies the spawn-only fields are omitted when
+// unset (version-skew contract).
+func TestExecSpawnReqOmitEmpty(t *testing.T) {
+	b, err := json.Marshal(ExecSpawnReq{ExecFetchReq: ExecFetchReq{Path: "/p/.byn"}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "base_env")
+	assert.NotContains(t, string(b), "abs_target")
+}
+
+// TestExecSpawnRespRoundTrip verifies the exit code round-trips.
+func TestExecSpawnRespRoundTrip(t *testing.T) {
+	resp := ExecSpawnResp{ExitCode: 42}
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+	var got ExecSpawnResp
+	require.NoError(t, json.Unmarshal(b, &got))
+	assert.Equal(t, resp, got)
+}
+
 // TestBynStudioOpsRegistered verifies that all new studio ops are in AllOps.
 func TestBynStudioOpsRegistered(t *testing.T) {
 	for _, op := range []Op{OpBynValidate, OpBynSimulate, OpBynRead, OpConfigGet, OpConfigSet} {

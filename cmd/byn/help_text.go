@@ -47,9 +47,9 @@ DESCRIPTION
        After init, run "byn unlock" to load the vault key into the
        daemon so put/get/list operations work.
 
-       The vault is created at:
-           $BYN_DIR/vaults/default/
-       where $BYN_DIR defaults to ~/.byn. Files written:
+       The vault is created under the data directory at:
+           <data-dir>/vaults/default/
+       Files written:
            - vault.db        SQLite database (mode 0600)
            - wrapped.key     Argon2id-wrapped vault key (mode 0600)
            - meta.json       UUID + wrapped-key fingerprint (mode 0600)
@@ -69,17 +69,14 @@ CHOOSING THE VAULT
            $ byn --vault work   put DB_URL  < /dev/null
            $ byn vault list
 
-       Each vault lives under $BYN_DIR/vaults/<name>/ with its own
+       Each vault lives under <data-dir>/vaults/<name>/ with its own
        wrapped key, SQLite DB, audit log, and meta.json.
 
-CHOOSING THE DATA DIRECTORY
-       The data root is overridden via the BYN_DIR environment
-       variable; a --data-dir flag is planned for a future release.
-       Both the daemon and the CLI must see the same BYN_DIR.
-
-           $ export BYN_DIR=/path/to/data
-           $ byn start
-           $ byn init
+THE DATA DIRECTORY
+       byn's state lives at a fixed per-OS system path (the data
+       directory) — there is no runtime override. To keep credentials
+       separate, use multiple vaults (--vault NAME), not multiple data
+       directories.
 
 EXAMPLES
        Interactive (prompts twice for confirmation):
@@ -88,14 +85,9 @@ EXAMPLES
        Scripted:
            $ echo "$MASTER_PW" | byn init --password-stdin
 
-       In a fresh dev sandbox:
-           $ export BYN_DIR=/tmp/byn-demo
-           $ byn start
-           $ byn init
-
-       Separate vault per org via BYN_DIR (today's multi-vault):
-           $ BYN_DIR=~/.byn-acme byn start
-           $ BYN_DIR=~/.byn-acme byn init
+       Separate vault per org (today's multi-vault):
+           $ byn --vault acme init
+           $ byn --vault acme unlock
 
 EXIT STATUS
        0    Vault created successfully.
@@ -578,6 +570,27 @@ DESCRIPTION
        command line. Alias execs are logged as "alias NAME → resolved argv"
        (capped at 200 chars).
 
+   PRIVILEGE SEPARATION
+       With [security] privsep enabled in ~/.byn/config, a trusted-.byn
+       pinned exec runs its child as the _byn-exec service user (set up
+       via 'byn setup'), so other same-UID processes can't read the
+       injected secrets from the child's environment. --no-privsep
+       forces the in-process path. Ad-hoc exec (no .byn) always runs
+       in-process.
+
+       Privsep is opt-in and off by default. If [security] privsep is on
+       but 'byn setup' has not provisioned the service users, exec fails
+       with an actionable error rather than silently running in-process.
+
+OPTIONS
+       --no-privsep
+           Force the legacy in-process exec path even when [security]
+           privsep is enabled. The child is run by the calling user via
+           execve(2) instead of the daemon spawning it under _byn-exec.
+           Place it before the "--" separator (direct form) or before the
+           alias NAME (alias form); tokens after that boundary are the
+           child's argv.
+
 EXAMPLES
        Direct form — run a python script with stored env vars set:
            $ byn exec -- python deploy.py
@@ -743,9 +756,9 @@ SEE ALSO
        byn-daemon - control the background daemon
 
 SYNOPSIS
-       byn start [--foreground]      (alias: byn daemon start)
+       byn start [--foreground] [--allow-root]  (alias: byn daemon start)
        byn stop                      (alias: byn daemon stop)
-       byn restart [--foreground]    (alias: byn daemon restart)
+       byn restart [--foreground] [--allow-root] (alias: byn daemon restart)
        byn reload                    (alias: byn daemon reload)
        byn status                    (alias: byn daemon status)
        byn daemon install
@@ -757,24 +770,29 @@ DESCRIPTION
        It enforces same-UID access at the socket via the OS peer-
        credential check.
 
-       The pidfile and socket live in the data directory (see
-       BYN_DIR). Stale pidfiles (PID no longer alive) are detected
-       and replaced on start.
+       The pidfile and socket live in the data directory (a fixed
+       per-OS system path). Stale pidfiles (PID no longer alive) are
+       detected and replaced on start.
 
 SUBCOMMANDS
-       start [--foreground]
+       start [--foreground] [--allow-root]
            Start the daemon. Detaches by default; --foreground keeps
            it in the foreground for supervised setups or development.
+           The daemon REFUSES to run as root (uid 0): a root daemon
+           defeats the _byn privilege separation it installs (least
+           privilege). --allow-root overrides this (NOT recommended —
+           posture hygiene only, not a defense against an existing
+           root attacker) and logs a prominent warning.
 
        stop
            SIGTERM the daemon via the pidfile. Waits up to 5s for
            a graceful exit before warning.
 
-       restart [--foreground]
+       restart [--foreground] [--allow-root]
            Stop the running daemon (if any) and start a fresh one —
            one command instead of stop + start. Picks up a NEW
            binary and config. Degrades to a plain start when nothing
-           is running.
+           is running. Forwards --foreground / --allow-root to start.
 
        reload
            Signal the running daemon (SIGHUP) to re-read ~/.byn/config
@@ -800,8 +818,11 @@ SUBCOMMANDS
        install
            Register the daemon as a user auto-start service (launchd
            LaunchAgent on macOS, systemd --user unit on Linux) so it
-           comes up on login. Writes the service file, loads it
-           best-effort, and respects BYN_DIR. No root required.
+           comes up on login. Writes the service file and loads it
+           best-effort. No root required. This is the auto-start path
+           for the default (non-privsep) install; privilege-separated
+           installs use "byn setup" instead (which installs a SYSTEM
+           service running the daemon as the _byn service user).
 
        uninstall
            Disable and remove the auto-start service.
@@ -1214,7 +1235,7 @@ SYNOPSIS
 
 DESCRIPTION
        Each vault has an append-only HMAC-chained audit log under
-       $BYN_DIR/audit/<vault>/YYYY-MM.log. All subcommands work
+       <data-dir>/audit/<vault>/YYYY-MM.log. All subcommands work
        while the vault is locked (the log is metadata, not values).
 
        Human rows are: timestamp + op + scope + entry + outcome +
@@ -1379,10 +1400,170 @@ SYNOPSIS
 
 DESCRIPTION
        Remove the trust record for PATH (default: ./.byn) from
-       $BYN_DIR/trusted_byn.json. Idempotent — succeeds
+       <data-dir>/trusted_byn.json. Idempotent — succeeds
        silently if the path was not trusted.
 
 SEE ALSO
        byn-trust(1)
+`,
+
+	"setup": `NAME
+       byn-setup - provision (or remove) privilege separation for the daemon
+
+SYNOPSIS
+       sudo byn setup
+       sudo byn setup --uninstall [--purge]
+
+DESCRIPTION
+       Provisions the full privilege-separation install in one idempotent,
+       root-required step. byn setup:
+
+         1. Creates the _byn and _byn-exec service accounts and installs the
+            prebuilt privileged spawn helper (byn-exec-helper) plus its
+            root-owned UID/GID config.
+         2. Installs and loads the system service that runs the daemon as the
+            _byn service user (a systemd system unit on Linux, a LaunchDaemon
+            on macOS) — NOT the human owner.
+         3. Relocates any legacy per-user ~/.byn vault into the fixed per-OS
+            system data path, chowned to _byn (trust + passkeys preserved —
+            same machine). Skipped on a fresh install with no legacy vault.
+         4. Records the OWNER UID — the human who ran sudo — as the single UID
+            the daemon allowlists on its peer-credential-gated socket. byn
+            setup reads SUDO_UID for this; running as real root (not via sudo)
+            fails rather than recording root as the owner.
+         5. Verifies the post-conditions (system data dir present + owned by
+            _byn, owner record readable).
+
+       This command MUST be run as root, via sudo so SUDO_UID is set. It is
+       idempotent: re-running on an already-provisioned host (re)installs the
+       helper + service, re-records the owner, and exits 0 — safe on every
+       install and upgrade. The prebuilt byn-exec-helper must sit beside the
+       byn binary; if it is missing, setup fails telling you to reinstall byn.
+       On platforms other than Linux and macOS, byn setup is not supported.
+
+       Setup provisions privsep; it does not enable it. Privilege separation is
+       opt-in: set "[security] privsep = true" in ~/.byn/config and restart the
+       daemon to engage it. With privsep enabled and provisioned, the daemon
+       spawns trusted-.byn pinned exec children as _byn-exec. Enable privsep
+       WITHOUT having run setup and the daemon warns and trusted-.byn exec fails
+       closed (it never silently runs owner-UID).
+
+       --uninstall reverses a previous setup: it uninstalls the system service,
+       removes the spawn helper + its config, and removes the owner record. By
+       default it LEAVES the vault (the system data dir) intact. Add --purge to
+       ALSO delete the system data dir and every secret in it — a destructive
+       action gated behind a typed "yes" confirmation. The vault is NEVER
+       removed without --purge.
+
+OPTIONS
+       --uninstall
+           Reverse a previous setup. Removes the service, spawn helper, and
+           owner record; keeps the vault unless --purge is also given.
+
+       --purge
+           With --uninstall, ALSO remove the system data dir (the vault and all
+           secrets). Destructive and irreversible; requires a typed confirmation.
+
+EXAMPLES
+       Provision privsep on a fresh install:
+           $ sudo byn setup
+           byn provisioned: daemon runs as _byn, owner UID 501 allowlisted
+
+       Re-run after upgrading byn (idempotent):
+           $ sudo byn setup
+
+       Uninstall privsep but keep the vault:
+           $ sudo byn setup --uninstall
+
+       Uninstall AND destroy the vault:
+           $ sudo byn setup --uninstall --purge
+
+EXIT STATUS
+       0    Provisioning / teardown succeeded (or was already complete).
+       1    Not run as root, no SUDO_UID (run via sudo), missing prebuilt
+            helper, a relocate/verify failure, or an aborted purge.
+
+SEE ALSO
+       byn(1), byn-daemon(1), byn-migrate(1)
+`,
+
+	"migrate": `NAME
+       byn-migrate - adopt a byn vault into the system data path
+
+SYNOPSIS
+       sudo byn migrate
+       sudo byn migrate --from <path> [--force]
+
+DESCRIPTION
+       Adopts a byn vault tree into the daemon's fixed per-OS system data
+       path, with the correct structure and ownership (the _byn service
+       account, mode 0700). Before adopting, the vault is verified WITHOUT
+       its password — every vault.db opens as a well-formed, correctly-
+       versioned SQLite vault whose wrapped.key/meta.json fingerprint
+       matches and whose audit chain is intact. A malformed, truncated, or
+       tampered source is rejected and the destination is left untouched.
+       The adopt is atomic (stage + verify + rename); it never half-migrates
+       and is safe to re-run.
+
+       This command MUST be run as root (it writes the _byn-owned system
+       path and chowns the adopted tree). The _byn service account must
+       already exist; if it does not, run "byn setup" first. byn migrate
+       adopts with the correct ownership — it does not create users.
+
+   RELOCATE (no --from)
+       Moves the legacy per-user ~/.byn into the system path — the upgrade
+       path for an install that predates the system data root. Because it is
+       the SAME machine, the trust store and passkey enrollments are KEPT.
+       The old ~/.byn is removed only AFTER the destination is fully adopted
+       (fail-safe: an interrupted relocate never leaves you with no vault).
+
+   IMPORT (--from <path>)
+       Copies an EXTERNAL vault (a backup, a mounted disk, a synced dir)
+       into the system path. The source is NEVER deleted. A non-empty
+       destination is refused unless --force is given.
+
+       An import brings vault DATA only. The trust store and passkey
+       enrollments are DROPPED — trust is never silently carried across a
+       source/machine boundary (.byn trust fingerprints bind the machine
+       and path, so a carried record would fail verification anyway). After
+       an import you MUST re-trust your .byn files (byn trust) and re-enroll
+       passkeys on this machine. The verification above runs on the original
+       artifacts BEFORE the drop, so a hostile import is rejected before
+       anything is dropped or committed.
+
+OPTIONS
+       --from <path>
+           Import an external vault rooted at <path> instead of relocating
+           the legacy ~/.byn. The source directory is left untouched.
+
+       --force
+           Replace a non-empty destination. Without it, a non-empty system
+           data path is refused so a migrate never clobbers an existing
+           vault. The old tree is moved aside and removed only after the new
+           one is in place.
+
+EXAMPLES
+       Upgrade a legacy ~/.byn install to the system path:
+           $ sudo byn migrate
+
+       Import a vault from a backup directory:
+           $ sudo byn migrate --from /mnt/backup/.byn
+           imported /mnt/backup/.byn -> ... (source left untouched)
+
+           Adopted DATA only. Trust grants and passkey enrollments are NOT
+           carried across an import.
+           Re-trust your .byn files (byn trust) and re-enroll passkeys.
+
+       Replace an existing system vault with an import:
+           $ sudo byn migrate --from /mnt/backup/.byn --force
+
+EXIT STATUS
+       0    Migration succeeded.
+       1    Not root, _byn not provisioned (run byn setup), verification
+            failed (malformed/tampered source), or a non-empty destination
+            without --force.
+
+SEE ALSO
+       byn(1), byn-setup(1), byn-trust(1)
 `,
 }

@@ -35,7 +35,7 @@ type recordedCall struct {
 }
 
 // startFakeDaemon spins up a fake daemon listening on $dir/daemon.sock
-// where $dir is a freshly created TempDir. It also sets BYN_DIR for
+// where $dir is a freshly created TempDir. It also sets BYN_TEST_DIR for
 // the test so newClient(defaultDir()) targets the fake.
 func startFakeDaemon(t *testing.T) *fakeDaemon {
 	t.Helper()
@@ -60,7 +60,7 @@ func startFakeDaemon(t *testing.T) *fakeDaemon {
 	}
 	t.Cleanup(func() { _ = l.Close() })
 	go fd.serve()
-	t.Setenv("BYN_DIR", dir)
+	t.Setenv("BYN_TEST_DIR", dir)
 	return fd
 }
 
@@ -144,11 +144,11 @@ func requireUnmarshal(t *testing.T, raw []byte, v any) {
 	}
 }
 
-// noDaemon sets BYN_DIR to a directory without a socket. Used to
+// noDaemon sets BYN_TEST_DIR to a directory without a socket. Used to
 // exercise the daemon-down branch.
 func noDaemon(t *testing.T) {
 	t.Helper()
-	t.Setenv("BYN_DIR", t.TempDir())
+	t.Setenv("BYN_TEST_DIR", t.TempDir())
 }
 
 // captureStderr redirects os.Stderr for the duration of fn and returns

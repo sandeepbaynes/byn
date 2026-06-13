@@ -270,7 +270,7 @@ func TestE2E_PerActionAuth_E2E(t *testing.T) {
 //
 // After a successful exec.fetch injection, verify secret bytes do NOT appear
 // in: parent env, daemon log file, byn command stderr, or any file under
-// BYN_DIR except vault.db (and its WAL/SHM).
+// the data dir except vault.db (and its WAL/SHM).
 // --------------------------------------------------------------------------
 
 func TestE2E_ExecFetch_NoCredLeak(t *testing.T) {
@@ -311,7 +311,7 @@ func TestE2E_ExecFetch_NoCredLeak(t *testing.T) {
 		t.Errorf("byn exec stderr contains secret value:\n%s", childErr)
 	}
 
-	// No file under BYN_DIR (excluding vault.db / wal / shm) may contain the secret.
+	// No file under the data dir (excluding vault.db / wal / shm) may contain the secret.
 	assertNoSecretInDir(t, s.dir, secretValue)
 }
 

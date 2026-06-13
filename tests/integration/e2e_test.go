@@ -29,7 +29,9 @@ func binPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "byn")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/byn")
+	// Build with -tags byntest so the execed binary honors BYN_TEST_DIR (the
+	// test-only data-root seam that replaced the removed data-root override).
+	cmd := exec.Command("go", "build", "-tags", "byntest", "-o", bin, "./cmd/byn")
 	cmd.Dir = repoRoot(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -93,7 +95,7 @@ func (s *session) run(stdin string, args ...string) (string, string, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.bin, args...)
-	cmd.Env = append(os.Environ(), "BYN_DIR="+s.dir)
+	cmd.Env = append(os.Environ(), "BYN_TEST_DIR="+s.dir)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {
@@ -183,7 +185,7 @@ func (s *session) stopDaemon() {
 	s.t.Errorf("daemon (pid %d) survived `daemon stop` for 2s — force-killed; investigate shutdown", pid)
 }
 
-// daemonPID reads this session's daemon pidfile (in BYN_DIR), or 0 when
+// daemonPID reads this session's daemon pidfile (in the data dir), or 0 when
 // absent/unreadable. Used by stopDaemon to verify the process actually died.
 func (s *session) daemonPID() int {
 	b, err := os.ReadFile(filepath.Join(s.dir, "daemon.pid"))

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/sandeepbaynes/byn/internal/fdpass"
 )
 
 // DefaultClientTimeout caps a single round-trip on the client side.
@@ -82,6 +84,73 @@ func (c *Client) CallWithSession(op Op, reqBody, respBody any, session []byte) e
 	if err := WriteFrame(conn, req); err != nil {
 		return fmt.Errorf("ipc: write: %w", err)
 	}
+	resp, err := ReadEnvelope(conn)
+	if err != nil {
+		return fmt.Errorf("ipc: read: %w", err)
+	}
+	if resp.ID != id {
+		return fmt.Errorf("ipc: response id mismatch: got %q, want %q", resp.ID, id)
+	}
+	if resp.Err != nil {
+		return &ErrResponse{Code: resp.Err.Code, Message: resp.Err.Message, Recover: resp.Err.Recover}
+	}
+	if respBody != nil {
+		return DecodeBody(BodyResp, resp, respBody)
+	}
+	return nil
+}
+
+// CallWithFDs sends op with reqBody and ALSO passes fds to the daemon
+// out-of-band over the same connection via SCM_RIGHTS, immediately after the
+// request frame. This is the exec.spawn transport: the CLI sends the request
+// then the child's three stdio fds ([]int{0,1,2}); the daemon's handleConn
+// receives them and stashes them for the spawn. session is attached to the
+// request envelope (Envelope.Session) exactly like Call.
+//
+// The fds passed are the CALLER's own fds (e.g. os.Stdin.Fd()); the kernel
+// dups them into the daemon's table — CallWithFDs does NOT close them.
+//
+// Returns *ErrResponse if the daemon replied with an err envelope, or
+// ErrDaemonDown if the connection couldn't be established.
+func (c *Client) CallWithFDs(op Op, reqBody, respBody any, session []byte, fds []int) error {
+	id, err := newID()
+	if err != nil {
+		return fmt.Errorf("ipc: gen id: %w", err)
+	}
+	req, err := NewRequest(id, op, reqBody)
+	if err != nil {
+		return err
+	}
+	if len(session) > 0 {
+		req.Session = session
+	}
+
+	timeout := c.Timeout
+	if timeout == 0 {
+		timeout = DefaultClientTimeout
+	}
+	conn, err := net.DialTimeout("unix", c.SocketPath, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDaemonDown, err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	// 1. The request frame, then 2. the fds via SCM_RIGHTS over the SAME conn.
+	// Order matters: the daemon ReadEnvelopes first, then (seeing exec.spawn)
+	// RecvFDs. Sending the fds before the frame would race the daemon's read.
+	if err := WriteFrame(conn, req); err != nil {
+		return fmt.Errorf("ipc: write: %w", err)
+	}
+	cfd, err := fdpass.ConnFD(conn)
+	if err != nil {
+		return fmt.Errorf("ipc: conn fd: %w", err)
+	}
+	if err := fdpass.SendFDs(cfd, fds); err != nil {
+		return fmt.Errorf("ipc: send fds: %w", err)
+	}
+
+	// 3. The response frame.
 	resp, err := ReadEnvelope(conn)
 	if err != nil {
 		return fmt.Errorf("ipc: read: %w", err)

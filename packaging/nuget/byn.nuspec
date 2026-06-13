@@ -2,11 +2,11 @@
 <!-- Reservation package for the name `byn` on NuGet. It is NOT a .NET tool
      (no `byn` command is installed), so it cannot shadow the real Go binary.
      Publish:  nuget pack byn.nuspec
-               dotnet nuget push byn.0.0.1.nupkg -s https://api.nuget.org/v3/index.json -k <KEY> -->
+               dotnet nuget push byn.0.3.0.nupkg -s https://api.nuget.org/v3/index.json -k <KEY> -->
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>byn</id>
-    <version>0.0.1</version>
+    <version>0.3.0</version>
     <authors>Sandeep Baynes</authors>
     <owners>Sandeep Baynes</owners>
     <projectUrl>https://github.com/sandeepbaynes/byn</projectUrl>

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 )
 
-// sessionDir returns the sessions subdirectory: $BYN_DIR/sessions/
-func sessionDir(bynDir string) string {
-	return filepath.Join(bynDir, "sessions")
+// sessionDir returns the sessions subdirectory: <data-dir>/sessions/
+func sessionDir(dataDir string) string {
+	return filepath.Join(dataDir, "sessions")
 }
 
 // sessionFileNameFor returns the hex-encoded SHA-256[:16] (32 hex chars) of

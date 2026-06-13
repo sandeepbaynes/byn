@@ -3,32 +3,39 @@ package main
 import (
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/daemon"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
-func TestDefaultDir_EnvOverride(t *testing.T) {
-	t.Setenv("BYN_DIR", "/tmp/explicit")
+// defaultDir returns the fixed per-OS system data root (internal/paths). Under
+// the byntest build tag the test suite runs with, BYN_TEST_DIR repoints it so a
+// test can isolate a tempdir; the old user-facing data-root override is gone.
+func TestDefaultDir_TestSeamOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BYN_TEST_DIR", dir)
 	got, err := defaultDir()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got != "/tmp/explicit" {
-		t.Fatalf("got %q", got)
+	if got != dir {
+		t.Fatalf("got %q, want %q", got, dir)
 	}
 }
 
-func TestDefaultDir_HomeFallback(t *testing.T) {
-	t.Setenv("BYN_DIR", "")
+// The removed user-facing data-root override is no longer honored — only the
+// byntest seam (BYN_TEST_DIR) repoints defaultDir, and it wins.
+func TestDefaultDir_LegacyOverrideNotHonored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BYN_TEST_DIR", dir)
+	t.Setenv("BYN"+"_DIR", "/tmp/should-be-ignored") // the removed override
 	got, err := defaultDir()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if !strings.HasSuffix(got, ".byn") {
-		t.Fatalf("got %q, expected suffix .byn", got)
+	if got != dir {
+		t.Fatalf("legacy override leaked into defaultDir(): got %q, want %q", got, dir)
 	}
 }
 

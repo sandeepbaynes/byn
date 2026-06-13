@@ -17,6 +17,8 @@ import (
 	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/machineid"
+	"github.com/sandeepbaynes/byn/internal/paths"
+	"github.com/sandeepbaynes/byn/internal/privsep"
 	"github.com/sandeepbaynes/byn/internal/ui"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
@@ -63,6 +65,22 @@ type Config struct {
 	// IdleTimeout (the daemon's vault idle timeout). Wired from
 	// config.Security.SessionIdle.
 	SessionIdle time.Duration
+
+	// Privsep, when true, opts the daemon into building the privsep spawner so
+	// trusted-.byn `byn exec` children run SERVER-side under the _byn-exec
+	// service user. Wired from config.Security via config.PrivsepEnabled() —
+	// false (the default) keeps d.spawner nil and exec.spawn fails closed with a
+	// not-provisioned error. The spawner is built ONLY when this is true AND the
+	// service users are actually provisioned (`byn setup`).
+	Privsep bool
+
+	// AllowRoot overrides the start-time refusal to run as root (uid 0). Wired
+	// from the daemon start `--allow-root` flag; default false. A root daemon
+	// defeats the _byn privsep separation (least privilege), so by default the
+	// daemon refuses to start as uid 0 with an actionable error. This escape
+	// hatch is posture hygiene only — NOT a defense against an existing root
+	// attacker — and using it logs a prominent warning.
+	AllowRoot bool
 }
 
 // vaultEntry is the daemon's handle on one open vault.
@@ -151,6 +169,21 @@ type Daemon struct {
 	// fp-MAC layer degrades; the vault-key MAC still protects records).
 	fpMACKey []byte
 
+	// spawner runs exec children SERVER-side under privilege separation (NU-5):
+	// the helper drops the child to the _byn-exec service user. It is non-nil
+	// ONLY when privsep is provisioned (`byn setup` created the service users +
+	// installed the helper). When nil, exec.spawn returns a clean
+	// "not provisioned" error so the CLI can fall back to client-side exec —
+	// the daemon NEVER spawns owner-UID from handleExecSpawn. Tests inject a
+	// fake Spawner directly.
+	spawner privsep.Spawner
+
+	// testACLRunner, when non-nil, replaces the real exec.Command-based ACL
+	// runner returned by aclRunner(). Tests inject a recording function here to
+	// verify that grantProjectACL / revokeProjectACL reach the ACL code path
+	// without requiring a real setfacl/chmod binary.
+	testACLRunner func(name string, args ...string) error
+
 	// vaults holds every Store the daemon has opened in this process
 	// lifetime. Entries persist until Shutdown — locking a vault zeros
 	// the in-memory key (via vault.Store.Lock) but keeps the *Store so
@@ -183,12 +216,31 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.Version == "" {
 		cfg.Version = "dev"
 	}
+	// Resolve the allowlisted owner UID. An explicit cfg.OwnerUID (set by tests
+	// or a caller) always wins. Otherwise: when the install is provisioned (an
+	// owner record exists in the data dir) the daemon allowlists the RECORDED
+	// owner UID — under privsep the daemon runs as _byn, so its own euid is NOT
+	// the human owner and must never be inferred (NU-6 note #1). When
+	// unprovisioned (opt-in privsep off) it keeps geteuid() exactly as today
+	// (spec D3 — no behavior change for current installs).
 	if cfg.OwnerUID == 0 {
 		euid := os.Geteuid()
 		if euid < 0 {
 			return nil, fmt.Errorf("daemon: geteuid returned negative %d", euid)
 		}
-		cfg.OwnerUID = uint32(euid) //nolint:gosec // bounded by check above
+		recordExists, recorded, oerr := resolveOwnerRecord(cfg.Dir)
+		if oerr != nil {
+			return nil, oerr
+		}
+		cfg.OwnerUID = resolveOwnerUID(recordExists, recorded, euid)
+	}
+
+	// Resolve the socket location once, DRY with the CLI: the runtime socket
+	// when provisioned (owner-traversable parent, _byn-owned 0700 state dir
+	// stays private), else the data-dir socket exactly as today.
+	socketPath, serr := paths.ActiveSocketPath(cfg.Dir)
+	if serr != nil {
+		return nil, fmt.Errorf("daemon: resolve socket path: %w", serr)
 	}
 
 	// Resolve the session idle window: 0 ⇒ inherit the vault idle timeout.
@@ -199,7 +251,7 @@ func New(cfg Config) (*Daemon, error) {
 
 	d := &Daemon{
 		cfg:             cfg,
-		socketPath:      filepath.Join(cfg.Dir, SocketFilename),
+		socketPath:      socketPath,
 		pidPath:         filepath.Join(cfg.Dir, PIDFilename),
 		limiterPath:     filepath.Join(cfg.Dir, auth.RateLimiterFile),
 		ownerUID:        cfg.OwnerUID,
@@ -231,6 +283,37 @@ func New(cfg Config) (*Daemon, error) {
 	} else {
 		fmt.Fprintf(os.Stderr, "byn: machine id unavailable (%v); trust-store machine-fingerprint MAC disabled\n", err)
 	}
+
+	// Privsep spawner: built ONLY when the operator OPTED IN (cfg.Privsep, from
+	// [security] privsep = true) AND the service users + helper are provisioned
+	// (`byn setup`). When privsep is off, unprovisioned, or on an unsupported
+	// platform, d.spawner stays nil and exec.spawn returns a clean fallback
+	// error — the daemon never spawns the exec child at the owner UID. Gating on
+	// the config (not just provisioning) lets a provisioned host still run the
+	// legacy in-process exec until the operator turns privsep on.
+	if cfg.Privsep {
+		st, err := privsep.LookupState()
+		switch {
+		case err == nil && st.Provisioned:
+			d.spawner = privsep.NewSpawner(privsep.Config{
+				HelperPath: privsep.HelperDestPath(),
+				Exec:       st,
+				// Seatbelt (Darwin) denies the exec child byn's own state dir + socket.
+				StateDir:   d.cfg.Dir,
+				SocketPath: d.SocketPath(),
+			})
+		default:
+			// privsep is opted-in but the host is NOT provisioned (`byn setup`
+			// never ran / wrong UIDs / unsupported platform). Do NOT silently
+			// fall back to an owner-UID spawn — that drops the protection the
+			// operator turned on. Warn loudly + actionably here (the spawner
+			// stays nil, so exec.spawn fails closed with the same hint). This is
+			// the not-provisioned guard for opt-in privsep (NU-6 decision #3).
+			fmt.Fprintln(os.Stderr, "byn daemon: WARNING — [security] privsep is enabled but this "+
+				"install is not provisioned; run `sudo byn setup` to engage privilege separation "+
+				"(until then trusted-.byn exec fails closed rather than running owner-UID).")
+		}
+	}
 	return d, nil
 }
 
@@ -245,6 +328,27 @@ func New(cfg Config) (*Daemon, error) {
 // first-command latency on a normal install stays low. Other vaults
 // open on first IPC lookup.
 func (d *Daemon) Start(ctx context.Context) error {
+	// Refuse to run as root (uid 0) before any side effects: a root daemon
+	// negates the _byn privsep separation (least privilege). --allow-root
+	// overrides, but loudly — running as root is posture-hostile, not a defense.
+	euid := os.Geteuid()
+	if err := refuseRoot(euid, d.cfg.AllowRoot); err != nil {
+		return err
+	}
+	if euid == 0 && d.cfg.AllowRoot {
+		fmt.Fprintln(os.Stderr, "byn daemon: WARNING — running as root with --allow-root; "+
+			"this defeats the _byn privilege separation (least privilege). Do NOT do this in production.")
+	}
+	// Memory hardening (defense-in-depth on top of the _byn UID boundary):
+	// mark the daemon undumpable so a SAME-UID peer cannot read its
+	// /proc/<pid>/{mem,environ,…} (closing the same-UID residual) and so a
+	// crash cannot core-dump the held vault key to disk. Best-effort — this is
+	// hardening, NOT a correctness requirement, and it never defends against
+	// root, so a failure must not block the daemon. No-op off Linux (macOS
+	// uses the hardened runtime at sign time; see .goreleaser.yaml).
+	if err := privsep.SetUndumpable(); err != nil {
+		fmt.Fprintf(os.Stderr, "byn daemon: WARNING — memory hardening (PR_SET_DUMPABLE) failed: %v\n", err)
+	}
 	if err := os.MkdirAll(d.cfg.Dir, 0o700); err != nil {
 		return fmt.Errorf("daemon: mkdir %s: %w", d.cfg.Dir, err)
 	}
@@ -309,7 +413,7 @@ func (d *Daemon) UIPort() int {
 // goroutine is registered with the waitgroup so Shutdown drains it. A bind
 // error is returned and leaves uiSrv nil.
 //
-// The portal owner-token is loaded (or created) from $BYN_DIR/portal.token
+// The portal owner-token is loaded (or created) from <data-dir>/portal.token
 // (mode 0600). A token-load failure is fatal for the portal: the portal is
 // disabled (same path as a bind failure) and a warning is printed to stderr.
 // The daemon keeps serving the socket. The token is persisted across daemon
@@ -746,6 +850,9 @@ func (d *Daemon) handlePidFile() error {
 }
 
 func (d *Daemon) bind() error {
+	if err := d.ensureSocketDir(); err != nil {
+		return err
+	}
 	if _, err := os.Stat(d.socketPath); err == nil {
 		if c, err := net.Dial("unix", d.socketPath); err == nil {
 			_ = c.Close()
@@ -771,6 +878,43 @@ func (d *Daemon) bind() error {
 	d.listenerMu.Lock()
 	d.listener = l
 	d.listenerMu.Unlock()
+	return nil
+}
+
+// ensureSocketDir makes sure the socket's parent directory exists and is
+// reachable by the owner.
+//
+// Unprovisioned / legacy: the socket lives inside the data dir, which Start
+// already created 0700 — so the parent equals cfg.Dir and this is a no-op, and
+// today's behavior is preserved exactly.
+//
+// Provisioned: the runtime socket lives under a SEPARATE parent (e.g.
+// /run/byn) so the _byn:_byn 0700 state dir can stay unreadable to the human
+// while the socket parent is *traversable* — the human owner (a different UID
+// than the _byn daemon) must be able to reach the socket inode to connect.
+// The parent is created/chmod'd 0755 (owner-traversable); the socket FILE stays
+// 0600 and peercred-gated (bind() chmods it), so traversability of the dir does
+// NOT widen access to the socket. Full ownership/service install is Task 8/9;
+// here we do only what is needed to bind + connect.
+func (d *Daemon) ensureSocketDir() error {
+	dir := filepath.Dir(d.socketPath)
+	if dir == d.cfg.Dir {
+		return nil // legacy/unprovisioned: data dir already created 0700
+	}
+	// 0755 is deliberate and load-bearing: the socket parent MUST be traversable
+	// (o+x) by the human owner UID, which is a DIFFERENT UID than the _byn daemon
+	// that creates it — that cross-UID reach is the entire point of relocating
+	// the socket out of the _byn-private 0700 state dir. The socket FILE stays
+	// 0600 + peercred-gated (bind() chmods it), so a traversable parent does NOT
+	// widen access to the socket itself.
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: owner-traversable socket parent is intentional (see comment)
+		return fmt.Errorf("daemon: mkdir socket dir %s: %w", dir, err)
+	}
+	// MkdirAll honors umask, so force the traversable mode explicitly: the
+	// owner UID needs +x on the path to reach the peercred-gated socket.
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // G302: owner-traversable socket parent is intentional (see comment)
+		return fmt.Errorf("daemon: chmod socket dir %s: %w", dir, err)
+	}
 	return nil
 }
 

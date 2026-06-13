@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/privsep"
 	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
@@ -138,6 +141,76 @@ func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byt
 		ActionsWildcard: parsed.ActionsAllowAll(),
 	}
 	return canon, hash, changed, policy, err
+}
+
+// aclRunner returns a runner that executes an ACL command (setfacl / chmod)
+// WITHOUT a shell (exec.Command, not sh -c), so a project path containing
+// shell metacharacters cannot inject. Combined output is captured and folded
+// into the returned error so the best-effort caller can log a useful warning.
+//
+// When d.testACLRunner is non-nil (set by tests), it is returned directly so
+// the test can record or stub ACL invocations without a real binary.
+func (d *Daemon) aclRunner() func(name string, args ...string) error {
+	if d.testACLRunner != nil {
+		return d.testACLRunner
+	}
+	return func(name string, args ...string) error {
+		// #nosec G204 -- name is a fixed binary ("setfacl"/"chmod") chosen by
+		// the platform ACL code; args come from the trust record's project dir
+		// and os.UserHomeDir(), not arbitrary user input, and run via
+		// exec.Command (no shell) so path metacharacters cannot inject.
+		out, err := exec.Command(name, args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s %v: %w (%s)", name, args, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+}
+
+// ownerHome returns the owner's home directory used as the traversal target for
+// the _byn-exec ACL. In NU-5 the daemon runs as the OWNER, so os.UserHomeDir()
+// is the owner's home — the dir the project lives under that is often 0700 and
+// thus needs an execute-only (search) ACL for the exec child to traverse in.
+//
+// NU-6 will revisit this: once the daemon itself runs as _byn (not the owner),
+// the home must be resolved from the trust record's owner, not the daemon's
+// process environment.
+func ownerHome() string {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
+// grantProjectACL is the best-effort trust-time hook that gives the _byn-exec
+// service user access to the project dir the .byn lives in (rwX + default ACL)
+// plus execute-only traversal on the owner's home. It is a NO-OP unless privsep
+// is enabled (d.cfg.Privsep) — when off, zero ACL commands run and trust
+// grant/untrust behavior is unchanged. Failure is logged but never fails the
+// trust grant: the child simply won't have access and the exec fails clearly
+// later. bynPath is the path to the .byn file (its dir = the project dir).
+func (d *Daemon) grantProjectACL(bynPath string) {
+	if !d.cfg.Privsep {
+		return
+	}
+	projectDir := filepath.Dir(bynPath)
+	if err := privsep.GrantProjectACL(d.aclRunner(), projectDir, ownerHome()); err != nil {
+		log.Printf("byn: privsep ACL grant for %s failed (exec child may lack access): %v", projectDir, err)
+	}
+}
+
+// revokeProjectACL is the untrust-time mirror of grantProjectACL: it removes the
+// _byn-exec ACL entries from the project dir and the owner's home. No-op unless
+// privsep is enabled; best-effort (failure is logged, never fails untrust).
+func (d *Daemon) revokeProjectACL(bynPath string) {
+	if !d.cfg.Privsep {
+		return
+	}
+	projectDir := filepath.Dir(bynPath)
+	if err := privsep.RevokeProjectACL(d.aclRunner(), projectDir, ownerHome()); err != nil {
+		log.Printf("byn: privsep ACL revoke for %s failed: %v", projectDir, err)
+	}
 }
 
 // authorizeTrustGrant is the SINGLE trust-authorization path shared by
@@ -342,6 +415,9 @@ func (d *Daemon) handleBynWrite(ctx context.Context, env *ipc.Envelope) *ipc.Env
 		resp.Aliases = policy.Aliases
 		resp.EnvWildcard = policy.EnvWildcard
 		resp.ActionsWildcard = policy.ActionsWildcard
+		// Privsep: best-effort grant the exec service user access to the
+		// project dir (no-op when privsep is off; never fails the grant).
+		d.grantProjectACL(path)
 		d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK})
 	}
 	d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpBynWrite), Outcome: audit.OutcomeOK})

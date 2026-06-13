@@ -19,7 +19,7 @@
 //	env     = "dev"
 //
 // TOFU: trust is recorded as {canonical path, SHA-256 of content} in the
-// daemon-owned store (<BYN_DIR>/trusted_byn.json, package internal/trust).
+// daemon-owned store (<data-dir>/trusted_byn.json, package internal/trust).
 // Discovery is READ-ONLY: it recomputes the hash and looks the path up.
 //
 //   - trusted   → apply the scope

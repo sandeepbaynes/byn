@@ -5,7 +5,7 @@
 # confinement makes awkward — so `classic` confinement (manual Snapcraft
 # review) is the likely path. Treat `grade`/`confinement` below as TBD.
 name: byn
-version: '0.0.1'
+version: '0.3.0'
 summary: Local-first secure secrets vault and credential manager
 description: |
   byn keeps your secrets in a local, encrypted, daemon-backed vault. Agents
@@ -19,7 +19,7 @@ confinement: classic
 parts:
   byn:
     plugin: dump
-    source: https://github.com/sandeepbaynes/byn/releases/download/v0.0.1/byn-linux-amd64
+    source: https://github.com/sandeepbaynes/byn/releases/download/v0.3.0/byn-linux-amd64
     source-type: file
     organize:
       byn-linux-amd64: bin/byn

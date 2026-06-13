@@ -39,8 +39,8 @@ byn addresses this with an **owner-token gate** on every `/api/*` route, using
 a two-token design that keeps the long-lived token out of `ps` output and URLs:
 
 - On daemon start, a 32-byte random hex **persistent portal token** is written
-  to `$BYN_DIR/portal.token` (mode 0600, created once and persisted across
-  restarts). Only the owner UID can read it.
+  to `portal.token` in the byn data dir (mode 0600, created once and persisted
+  across restarts). Only the owner UID can read it.
 - Every `/api/*` request must carry an `X-Byn-Portal-Token` header equal to
   that value (constant-time compare). Missing or wrong → 401.
 - `byn web` calls the UID-gated Unix socket to mint a **one-time bootstrap

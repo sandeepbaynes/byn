@@ -43,7 +43,7 @@ func TestRunWeb_DaemonDown(t *testing.T) {
 func TestRunWeb_UIDisabled(t *testing.T) {
 	stubBrowser(t)
 	dir := t.TempDir()
-	t.Setenv("BYN_DIR", dir)
+	t.Setenv("BYN_TEST_DIR", dir)
 	// Write a config with UI disabled.
 	if err := os.WriteFile(filepath.Join(dir, "config"),
 		[]byte("[ui]\nenabled = false\nport = 2967\n"), 0o600); err != nil {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestLaunchdPlist(t *testing.T) {
-	p := launchdPlist("/usr/local/bin/byn", "")
+	p := launchdPlist("/usr/local/bin/byn")
 	for _, want := range []string{
 		"<string>" + launchdLabel + "</string>",
 		"<string>/usr/local/bin/byn</string>",
@@ -22,18 +22,15 @@ func TestLaunchdPlist(t *testing.T) {
 			t.Fatalf("plist missing %q:\n%s", want, p)
 		}
 	}
-	if strings.Contains(p, "BYN_DIR") {
-		t.Fatalf("no BYN_DIR should appear when bynDir is empty:\n%s", p)
-	}
-
-	p2 := launchdPlist("/usr/local/bin/byn", "/tmp/byndir")
-	if !strings.Contains(p2, "<key>BYN_DIR</key>") || !strings.Contains(p2, "<string>/tmp/byndir</string>") {
-		t.Fatalf("plist should carry a custom BYN_DIR:\n%s", p2)
+	// The data root is the fixed system path — the plist must not inject any
+	// EnvironmentVariables data-dir override.
+	if strings.Contains(p, "EnvironmentVariables") {
+		t.Fatalf("plist must not carry a data-dir env override:\n%s", p)
 	}
 }
 
 func TestSystemdUnit(t *testing.T) {
-	u := systemdUnit("/usr/local/bin/byn", "")
+	u := systemdUnit("/usr/local/bin/byn")
 	for _, want := range []string{
 		"ExecStart=/usr/local/bin/byn start --foreground",
 		"Restart=on-failure",
@@ -43,13 +40,10 @@ func TestSystemdUnit(t *testing.T) {
 			t.Fatalf("unit missing %q:\n%s", want, u)
 		}
 	}
-	if strings.Contains(u, "BYN_DIR") {
-		t.Fatalf("no BYN_DIR should appear when bynDir is empty:\n%s", u)
-	}
-
-	u2 := systemdUnit("/usr/local/bin/byn", "/tmp/byndir")
-	if !strings.Contains(u2, "Environment=BYN_DIR=/tmp/byndir") {
-		t.Fatalf("unit should carry a custom BYN_DIR:\n%s", u2)
+	// The data root is the fixed system path — the unit must not inject any
+	// Environment= data-dir override.
+	if strings.Contains(u, "Environment=") {
+		t.Fatalf("unit must not carry a data-dir env override:\n%s", u)
 	}
 }
 
@@ -59,7 +53,7 @@ func TestLaunchdPlist_PlutilLint(t *testing.T) {
 		t.Skip("plutil unavailable (non-macOS)")
 	}
 	f := filepath.Join(t.TempDir(), "byn.plist")
-	if err := os.WriteFile(f, []byte(launchdPlist("/usr/local/bin/byn", "/tmp/byndir")), 0o600); err != nil {
+	if err := os.WriteFile(f, []byte(launchdPlist("/usr/local/bin/byn")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command("plutil", "-lint", f).CombinedOutput(); err != nil { // #nosec G204 -- fixed argv + temp path

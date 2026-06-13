@@ -32,8 +32,9 @@ byn daemon start
   `ps -p <PID>`. The daemon detects stale pidfiles automatically
   (signal-0 probe), but if `daemon.sock` is a stranded file from a
   crash, `rm ~/.byn/daemon.sock` and retry.
-- On macOS, `sun_path` is 104 bytes — if `$BYN_DIR` is long, the
-  socket can't bind. Use a shorter path.
+- On macOS, `sun_path` is 104 bytes — the daemon's socket path must fit within
+  it. byn's fixed data-root paths are chosen to fit; this only bites if you point
+  a test build at a long directory via the `BYN_TEST_DIR` seam.
 
 ---
 

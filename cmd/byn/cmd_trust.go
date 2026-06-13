@@ -13,6 +13,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -75,22 +76,32 @@ func runTrustAdd(args []string) int {
 		return exitErr
 	}
 
-	// Group paths by each file's target vault; count changed files for one warning.
+	// Group paths by each file's TARGET vault — resolving strictly by each
+	// .byn's own [scope]. A file with no `vault =` resolves to the default
+	// vault and is grouped under the empty key "" (NOT relabeled to "default"
+	// here): the daemon owns default-resolution, and keeping it empty lets us
+	// give a precise "targets the default vault, which isn't initialized" error
+	// for that group without conflating it with a file that names "default"
+	// explicitly. A .byn that fails to PARSE is reported as a failure for THAT
+	// file — never silently swept into the default group (the old trap).
 	byVault := map[string][]string{}
 	var vaultOrder []string
-	changed := 0
+	changed, failed := 0, 0
 	for _, p := range paths {
 		body, rerr := os.ReadFile(p) // #nosec G304 -- user-named
 		if rerr != nil {
-			fmt.Fprintf(os.Stderr, "  %s %s: %v\n", red("skip"), p, rerr)
+			fmt.Fprintf(os.Stderr, "  %s %s: %v\n", red("x"), p, rerr)
+			failed++
+			continue
+		}
+		v, perr := bynTargetVault(body)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "  %s %s: malformed .byn: %v\n", red("x"), p, perr)
+			failed++
 			continue
 		}
 		if st, _ := trust.Status(dir, trust.Canonicalize(p), trust.Hash(body)); st == trust.StatusChanged {
 			changed++
-		}
-		v := bynTargetVault(body)
-		if v == "" {
-			v = "default"
 		}
 		if _, ok := byVault[v]; !ok {
 			vaultOrder = append(vaultOrder, v)
@@ -98,6 +109,9 @@ func runTrustAdd(args []string) int {
 		byVault[v] = append(byVault[v], p)
 	}
 	if len(vaultOrder) == 0 {
+		if failed > 0 {
+			fmt.Fprintf(os.Stderr, "%s no .byn files could be trusted (%d failed).\n", boldRed("Error:"), failed)
+		}
 		return exitErr
 	}
 	if *pwStdin && len(vaultOrder) > 1 {
@@ -111,9 +125,40 @@ func runTrustAdd(args []string) int {
 			boldYellow("Warning:"), changed)
 	}
 
-	multi := len(paths) > 1 || len(vaultOrder) > 1
-	trusted, failed := 0, 0
+	// Pre-flight: ask the daemon once which vaults are initialized so we can
+	// REJECT an uninitialized-vault group up front — WITHOUT prompting for its
+	// password (the owner's complaint: "it asked for the default vault
+	// password"). The daemon owns vault-existence; we just consume its report.
+	// initSet == nil means "couldn't determine" (a non-fatal status error): we
+	// then fall back to today's behavior and let the daemon reject the grant.
+	initSet, derr := fetchInitializedVaults(dir)
+	if errors.Is(derr, ipc.ErrDaemonDown) {
+		// Daemon down: nothing can be trusted — surface the standard error.
+		return handleCallError(derr)
+	}
+	// Partition the vault groups: any group whose target vault is NOT in the
+	// initialized set is rejected here (no prompt). When initSet is nil we
+	// treat every group as "initialized" so the grant is attempted as before.
+	var initVaults []string
+	preflightRejected := false
 	for _, v := range vaultOrder {
+		if initSet != nil && !initSet[resolveVaultName(v)] {
+			failed += len(byVault[v])
+			preflightRejected = true
+			reportTrustGroupError(v, byVault[v],
+				&ipc.ErrResponse{Code: ipc.CodeNotInit, Message: fmt.Sprintf("vault %q is not initialized", resolveVaultName(v))})
+			continue
+		}
+		initVaults = append(initVaults, v)
+	}
+	if len(initVaults) == 0 {
+		// Every group targeted an uninitialized vault — errors already printed.
+		return exitErr
+	}
+
+	multi := len(paths) > 1 || len(vaultOrder) > 1
+	trusted := 0
+	for _, v := range initVaults {
 		pw, wipe, perr := trustGrantPassword(*pwStdin, v)
 		if perr != nil {
 			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
@@ -124,7 +169,26 @@ func runTrustAdd(args []string) int {
 			ipc.TrustGrantBulkReq{Paths: byVault[v], Vault: v, Password: pw}, &resp)
 		wipe()
 		if cerr != nil {
-			return handleCallError(cerr)
+			// Single vault group with no pre-flight rejection: keep the original
+			// exit-code semantics — a daemon error (wrong password, not-init,
+			// down) maps straight through handleCallError so scripts see the
+			// precise code. There is nothing else to process, so there is no
+			// batch to protect. (A pre-flight rejection already printed an error
+			// and bumped `failed`; short-circuiting here would discard it.)
+			if len(initVaults) == 1 && !preflightRejected {
+				return handleCallError(cerr)
+			}
+			// Daemon down mid-batch: nothing more can be trusted — stop and
+			// report it (don't keep prompting against a dead socket).
+			if errors.Is(cerr, ipc.ErrDaemonDown) {
+				return handleCallError(cerr)
+			}
+			// A per-vault failure (e.g. the empty-vault group resolving to an
+			// UNINITIALIZED default, or a wrong password for ONE vault) must NOT
+			// block the other, valid vault groups. Report this group, keep going.
+			failed += len(byVault[v])
+			reportTrustGroupError(v, byVault[v], cerr)
+			continue
 		}
 		for _, r := range resp.Results {
 			if r.Error != "" {
@@ -146,7 +210,7 @@ func runTrustAdd(args []string) int {
 			if r.Changed {
 				tag = "re-trusted (changed)"
 			}
-			fmt.Fprintf(os.Stderr, "  %s %s [%s] %s\n", cyan("+"), r.Path, v, tag)
+			fmt.Fprintf(os.Stderr, "  %s %s [%s] %s\n", cyan("+"), r.Path, trustVaultLabel(v), tag)
 			renderTrustPolicy(r)
 		}
 	}
@@ -155,12 +219,51 @@ func runTrustAdd(args []string) int {
 		if failed > 0 {
 			extra = fmt.Sprintf(" (%d failed)", failed)
 		}
-		hintf("Trusted %d .byn file(s) across %d vault(s)%s.", trusted, len(vaultOrder), extra)
+		hintf("Trusted %d .byn file(s) across %d vault(s)%s.", trusted, len(initVaults), extra)
 	}
 	if failed > 0 {
 		return exitErr
 	}
 	return exitOK
+}
+
+// resolveVaultName maps a target-vault GROUP KEY to the real vault name the
+// daemon would use. The empty key means "no vault in [scope]" → the default
+// vault, whose on-disk name is "default" (the same literal the rest of the
+// thin client uses — see cmd_tui.go's defaultVaultState). A non-empty key is
+// already the real name. This is what the pre-flight init-state lookup keys
+// on, since the status report names vaults by their real name.
+func resolveVaultName(v string) string {
+	if v == "" {
+		return "default"
+	}
+	return v
+}
+
+// fetchInitializedVaults asks the daemon ONCE (via OpStatus) which vaults are
+// initialized and returns the set of their names. It is the pre-flight that
+// lets bulk trust REJECT an uninitialized-vault group up front without ever
+// prompting for that vault's password.
+//
+// Return contract:
+//   - (set, nil)              — authoritative: a name is initialized iff present.
+//   - (nil, ipc.ErrDaemonDown) — daemon down; the caller surfaces it (nothing
+//     can be trusted against a dead socket).
+//   - (nil, otherErr)          — status failed for some other reason; the caller
+//     treats this as "unknown" and falls back to attempting the grant (the
+//     daemon then rejects an uninitialized vault as before).
+func fetchInitializedVaults(dir string) (map[string]bool, error) {
+	var resp ipc.StatusResp
+	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(resp.Vaults))
+	for _, v := range resp.Vaults {
+		if v.Initialized {
+			set[v.Name] = true
+		}
+	}
+	return set, nil
 }
 
 // absForDaemon makes a path absolute against the CLIENT's working directory
@@ -470,15 +573,72 @@ func renderTrustPolicy(r ipc.TrustGrantResult) {
 	}
 }
 
-// bynTargetVault returns the vault named in a .byn's [scope] (empty when
-// unspecified or unparseable — the daemon then gates on the default vault).
-// The target vault's master password is what authorizes trusting the file.
-func bynTargetVault(body []byte) string {
+// bynTargetVault returns the vault named in a .byn's [scope]. An empty string
+// with a nil error means the file specifies NO vault — it resolves to the
+// default vault. A parse error is returned as-is so the caller can surface a
+// malformed .byn rather than silently grouping it under the default vault
+// (the old "return empty on error" behavior was a latent trap: a parse hiccup
+// looked identical to "no vault", and the default group then demanded the —
+// possibly uninitialized — default vault's password). The target vault's
+// master password is what authorizes trusting the file.
+func bynTargetVault(body []byte) (string, error) {
 	parsed, err := bynfile.Parse(body)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return parsed.Scope.Vault
+	return parsed.Scope.Vault, nil
+}
+
+// trustVaultLabel is the human-facing name for a target-vault group key. An
+// empty key means "no vault in [scope]" — it resolves to the default vault, so
+// we display "default" while keeping the key empty internally (the daemon owns
+// the default-resolution).
+func trustVaultLabel(v string) string {
+	if v == "" {
+		return "default"
+	}
+	return v
+}
+
+// reportTrustGroupError prints a per-group failure that did NOT abort the batch
+// (the other vault groups still get processed). When the group's target vault
+// isn't initialized — whether that's the empty-key default group or a named
+// vault — the message is made actionable per the owner rule "default is not
+// mandatory": set `vault = "…"` in the .byn's [scope], or run `byn init`.
+func reportTrustGroupError(v string, paths []string, cerr error) {
+	var er *ipc.ErrResponse
+	if errors.As(cerr, &er) && er.Code == ipc.CodeNotInit {
+		if v == "" {
+			for _, p := range paths {
+				fmt.Fprintf(os.Stderr, "  %s %s targets the default vault, which isn't initialized\n", red("x"), p)
+			}
+		} else {
+			for _, p := range paths {
+				fmt.Fprintf(os.Stderr, "  %s %s targets vault %s, which isn't initialized\n", red("x"), p, cyan(v))
+			}
+		}
+		fmt.Fprintf(os.Stderr, "%s set %s in its [scope] to target an initialized vault, or run %s\n",
+			yellow("Hint:"), cyan(`vault = "…"`), cyan("byn init"))
+		return
+	}
+	msg := cerr.Error()
+	if errors.As(cerr, &er) {
+		msg = er.Message
+	}
+	for _, p := range paths {
+		fmt.Fprintf(os.Stderr, "  %s %s [%s]: %s\n", red("x"), p, trustVaultLabel(v), msg)
+	}
+}
+
+// promptTrustSecure reads the master password from the terminal. It is a
+// package var so tests can drive the interactive, per-vault-group path (which
+// otherwise requires a real TTY) — production always uses the real prompt.
+var promptTrustSecure = func(prompt string) ([]byte, func(), error) {
+	buf, err := auth.PromptStdinSecure(prompt)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return buf.Bytes(), buf.Wipe, nil
 }
 
 // trustGrantPassword obtains the master password that authorizes a trust grant.
@@ -492,17 +652,9 @@ func trustGrantPassword(pwStdin bool, vaultName string) (pw []byte, wipe func(),
 		}
 		return pw, func() { zero(pw) }, nil
 	}
-	target := vaultName
-	if target == "" {
-		target = "default"
-	}
 	fmt.Fprintln(os.Stderr, yellow("Granting trust requires the master password")+
 		dim(" — proof you're present, even if the vault is unlocked."))
-	buf, err := auth.PromptStdinSecure(fmt.Sprintf("Master password for vault %q: ", target))
-	if err != nil {
-		return nil, func() {}, err
-	}
-	return buf.Bytes(), buf.Wipe, nil
+	return promptTrustSecure(fmt.Sprintf("Master password for vault %q: ", trustVaultLabel(vaultName)))
 }
 
 func defaultBynPath(fs *flag.FlagSet) string {

@@ -26,11 +26,9 @@ the master password. Each secret value is encrypted with
 XChaCha20\-Poly1305 keyed by the vault key, with the ciphertext bound
 to the entry's identity via AEAD additional data.
 .PP
-Default daemon data directory is
-.IR ~/.byn/ .
-Override with
-.B BYN_DIR
-in the environment.
+The daemon stores its state at a fixed per\-OS system path (the data
+directory) \(em there is no runtime override. To separate credentials,
+use multiple vaults (\fB\-\-vault\fR), not multiple data directories.
 .SH COMMANDS
 .SS Setup and lifecycle
 .TP
@@ -38,14 +36,14 @@ in the environment.
 Create a fresh vault. Prompts for the master password twice. Targets
 the vault named by \fB\-\-vault\fR (or \fIBYN_VAULT\fR), defaulting
 to \fIdefault\fR. Vaults live under
-\fI$BYN_DIR/vaults/<name>/\fR.
+\fI<data-dir>/vaults/<name>/\fR.
 See
 .BR byn-init (1).
 .TP
 .B unlock
 Unlock the vault and start a per\-terminal session.  Prompts for the
 master password.  On success, a session token is saved to
-.I $BYN_DIR/sessions/
+.I <data-dir>/sessions/
 (keyed by the controlling terminal device number) so subsequent
 commands in the same terminal window are authorised without
 re\-prompting.  When stdout is not a terminal the vault is still
@@ -87,7 +85,7 @@ See
 .TP
 .B vault list \fR[\fB\-\-json\fR]
 List every vault present on disk under
-.IR $BYN_DIR/vaults/ .
+.IR <data-dir>/vaults/ .
 .TP
 .B vault delete \fINAME\fR \fR[\fB\-\-password\-stdin\fR]
 Securely remove a vault from disk (overwrites the wrapped key, then
@@ -285,6 +283,16 @@ the CLI prompts once for the master password and retries when no session
 is present. Trusted\-\fB.byn\fR exec with an unmatched command is also
 gated (same retry flow). Trusted\-\fB.byn\fR exec with a pinned command
 runs free \(em the session gate and the actions list are independent.
+.IP
+\fBPrivilege separation:\fR with \fB[security] privsep\fR enabled in
+\fI~/.byn/config\fR, a trusted\-\fB.byn\fR pinned exec runs its child as
+the \fB_byn\-exec\fR service user (set up via \fBbyn setup\fR), so other
+same\-UID processes cannot read the injected secrets from the child's
+environment. \fB\-\-no\-privsep\fR forces the in\-process path. Ad\-hoc
+exec (no \fB.byn\fR) always runs in\-process. Privsep is opt\-in and off
+by default; if it is enabled but \fBbyn setup\fR has not provisioned the
+service users, exec fails with an actionable error rather than silently
+running in\-process.
 See
 .BR byn-exec (1).
 .SS Bulk I/O
@@ -526,17 +534,136 @@ first, then password fallback. On success, the daemon issues a single\-use
 presence token consumed by the retry; the token is never stored or reused. Binds loopback only; CSRF is defended by an
 Origin check. Disable with \fB[ui] enabled = false\fR. See
 \fBbyn-web\fR(1).
+.SS System setup (privsep)
+.TP
+.B setup \fR[\fB\-\-uninstall \fR[\fB\-\-purge\fR]]
+Provision the full privilege\-separation install in one idempotent,
+root\-required step. With no flags,
+.B byn setup
+(1) creates the
+.I _byn
+and
+.I _byn\-exec
+service accounts and installs the prebuilt privileged spawn helper
+.RI ( byn\-exec\-helper )
+plus its root\-owned UID/GID config; (2) installs and loads the system service
+that runs the daemon as the
+.I _byn
+service user (a systemd system unit on Linux, a LaunchDaemon on macOS) \(em NOT
+the human owner; (3) relocates any legacy per\-user
+.I ~/.byn
+vault into the fixed per\-OS system data path, chowned to
+.I _byn
+(trust + passkeys preserved \(em same machine), skipping this on a fresh
+install; (4) records the OWNER UID \(em the human who ran sudo, read from
+.IR SUDO_UID
+\(em as the single UID the daemon allowlists on its peer\-credential\-gated
+socket; and (5) verifies the post\-conditions.
+.IP
+Must be run as root, via sudo so
+.I SUDO_UID
+is set:
+.BR "sudo byn setup" .
+Running as real root (not via sudo) fails rather than recording root as the
+owner. Idempotent \(em re\-running on an already\-provisioned host reinstalls
+the helper + service, re\-records the owner, and exits 0 (safe on every install
+and upgrade). The prebuilt
+.I byn\-exec\-helper
+must sit beside the byn binary.
+.IP
+On Linux, accounts are created via
+.BR systemd\-sysusers (8).
+On macOS,
+.BR sysadminctl (8)
+is used. Other platforms are unsupported.
+Setup provisions privsep; it does not enable it.
+Privilege separation is opt\-in: set
+.B [security] privsep = true
+in
+.I ~/.byn/config
+and restart the daemon to engage it.
+With privsep enabled and provisioned, the daemon spawns trusted\-.byn pinned
+exec children as
+.IR _byn\-exec .
+Enable privsep without having run setup and the daemon warns; trusted\-.byn
+exec then fails closed (it never silently runs owner\-UID).
+.IP
+.B \-\-uninstall
+reverses a previous setup: it uninstalls the system service, removes the spawn
+helper + config, and removes the owner record. It LEAVES the vault (the system
+data dir) intact by default. Add
+.B \-\-purge
+to ALSO delete the system data dir and every secret in it \(em a destructive,
+irreversible action gated behind a typed
+.B yes
+confirmation. The vault is NEVER removed without
+.BR \-\-purge .
+.TP
+.B migrate \fR[\fB\-\-from \fIpath\fR] \fR[\fB\-\-force\fR]
+Adopt a byn vault tree into the fixed per\-OS system data path with the
+correct structure and ownership (the
+.I _byn
+service account, mode 0700).
+The source is verified WITHOUT its password \(em every
+.I vault.db
+must open as a well\-formed, correctly\-versioned vault whose
+.I wrapped.key/meta.json
+fingerprint matches and whose audit chain is intact \(em before anything is
+adopted; a malformed, truncated, or tampered source is rejected and the
+destination is left untouched. The adopt is atomic and re\-runnable; it never
+half\-migrates.
+.IP
+Must be run as root (it writes the
+.I _byn\-owned
+system path and chowns the tree). The
+.I _byn
+account must already exist; if it does not, run
+.B byn setup
+first \(em migrate adopts with the correct ownership, it does not create users.
+.IP
+With no
+.BR \-\-from ,
+.B migrate
+RELOCATES the legacy
+.I ~/.byn
+into the system path (the upgrade path). Same machine: the trust store and
+passkey enrollments are KEPT, and the old
+.I ~/.byn
+is removed only AFTER the destination is fully adopted.
+.IP
+With
+.BI \-\-from " path"
+,
+.B migrate
+IMPORTS an external vault (a backup, a mounted disk, a synced dir): it COPIES
+the tree in and NEVER deletes the source. An import brings vault DATA only \(em
+the trust store and passkey enrollments are DROPPED (trust is never silently
+carried across a machine boundary), so afterwards you MUST re\-trust your
+.I .byn
+files with
+.B byn trust
+and re\-enroll passkeys on this machine. A non\-empty destination is refused
+unless
+.B \-\-force
+is given.
+See
+.BR byn-setup (1),
+.BR byn-trust (1).
 .SS Daemon control
 .TP
-.B start \fR[\fB\-\-foreground\fR]
-Start the daemon (detached by default). Alias: \fBbyn daemon start\fR.
+.B start \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
+Start the daemon (detached by default). The daemon refuses to run as root
+(uid 0) \(em a root daemon defeats the \fB_byn\fR privilege separation it
+installs; pass \fB\-\-allow\-root\fR to override (NOT recommended). Alias:
+\fBbyn daemon start\fR.
 .TP
 .B stop
 SIGTERM the daemon via its pidfile. Alias: \fBbyn daemon stop\fR.
 .TP
-.B restart \fR[\fB\-\-foreground\fR]
+.B restart \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
 Stop the running daemon (if any) and start a fresh one \- one command
-instead of stop + start. Picks up a new binary and config. Alias:
+instead of stop + start. Picks up a new binary and config. Forwards
+\fB\-\-foreground\fR / \fB\-\-allow\-root\fR to start. Alias:
 \fBbyn daemon restart\fR.
 .TP
 .B reload
@@ -558,9 +685,13 @@ still require a session or the master password.
 .B daemon install
 Register the daemon as a user auto-start service (launchd LaunchAgent on
 macOS, a systemd \fB\-\-user\fR unit on Linux) so it starts on login.
-Writes the service file, loads it best-effort, and respects
-.BR BYN_DIR .
+Writes the service file and loads it best-effort.
 No root.
+This is the auto-start path for the default (non-privsep) install;
+privilege-separated installs use
+.B byn setup
+instead (which installs a SYSTEM service running the daemon as
+.IR _byn ).
 .TP
 .B daemon uninstall
 Disable and remove the auto-start service.
@@ -635,14 +766,29 @@ name.
 .B \-\-foreground
 Used by \fBdaemon start\fR. Run in the foreground instead of
 detaching. Useful for development and supervised\-service setups.
-.SH ENVIRONMENT
 .TP
-.B BYN_DIR
-Override the daemon data directory. Defaults to
-.IR ~/.byn .
-The daemon places its socket, pidfile, logs, auth\-state, and the
+.B \-\-allow\-root
+Used by \fBdaemon start\fR / \fBdaemon restart\fR. Override the refusal to
+run the daemon as root (uid 0). A root daemon defeats the \fB_byn\fR
+privilege separation it installs (least privilege), so the daemon refuses to
+start as root by default. This override is posture hygiene only \(em it is NOT
+a defense against an attacker who already has root \(em and using it logs a
+prominent warning. NOT recommended.
+.TP
+.B \-\-no\-privsep
+Used by \fBexec\fR. Force the legacy in\-process exec path even when
+\fB[security] privsep\fR is enabled \(em the child is run by the calling
+user via \fBexecve\fR(2) instead of the daemon spawning it under the
+\fB_byn\-exec\fR service user. Place it before the "\fB\-\-\fR" separator
+(direct form) or before the alias \fINAME\fR (alias form); tokens after
+that boundary are the child's argv.
+.SH ENVIRONMENT
+The daemon data directory is a fixed per\-OS system path with no
+environment override. The daemon places its socket, pidfile, logs,
+auth\-state, and the
 .B vaults/
-subtree here.
+subtree there. Use multiple vaults (\fB\-\-vault\fR), not multiple data
+directories, to separate credentials.
 .TP
 .B NO_COLOR
 If set to any non\-empty value, disables ANSI color codes in CLI
@@ -710,6 +856,9 @@ Optional TOML configuration (no file extension). Recognised keys:
 absolute lifetime of a minted session; \fB"0s"\fR disables the limit),
 \fB[security] session_idle\fR (Go duration; default \fB"0s"\fR \(em
 sliding idle window; \fB"0s"\fR inherits \fIidle_timeout\fR), and
+\fB[security] privsep\fR (boolean; default OFF when the key is absent \(em
+opt the daemon into running trusted\-\fB.byn\fR exec children under the
+\fB_byn\-exec\fR service user; requires \fBbyn setup\fR).
 Unknown keys (including the removed \fBper_action_auth\fR) are rejected with an error. A missing file uses the
 defaults. Loaded at
 .BR "byn start" ;
@@ -942,7 +1091,7 @@ A session is a short\-lived credential that binds a vault unlock to the
 terminal that performed it.  When \fBbyn unlock\fR succeeds and the
 process has a controlling terminal, the daemon mints a 32\-byte random
 token and returns it; the CLI writes it to
-.IR $BYN_DIR/sessions/ .
+.IR <data-dir>/sessions/ .
 The file name is a SHA\-256\-truncated hash of the terminal device number
 and the vault name, so each terminal\-plus\-vault pair has its own file.
 Subsequent commands from the same terminal send the token automatically;
@@ -964,7 +1113,7 @@ Sessions expire after the absolute TTL
 \fBbyn status\fR shows the active expiry time.
 .PP
 .B sessions/ directory.
-The files under \fI$BYN_DIR/sessions/\fR are opaque tokens (mode 0600).
+The files under \fI<data-dir>/sessions/\fR are opaque tokens (mode 0600).
 Their names are not meaningful outside the implementation.  Do not edit
 or copy them; a copied token is bound to the terminal device of the
 originating host, so it provides no cross\-machine access.

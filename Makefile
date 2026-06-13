@@ -11,6 +11,10 @@ GOFLAGS     ?=
 PKG         := ./...
 BIN_DIR     := bin
 BIN         := $(BIN_DIR)/byn
+# Privileged spawn helper for NU-5 exec-child privsep. Installed root-owned
+# with file caps by `byn setup`, which resolves it BESIDE the byn binary —
+# so it ships next to byn and is built alongside it here.
+HELPER      := $(BIN_DIR)/byn-exec-helper
 
 # Cross-compile targets for release artifacts (pure-Go, CGO disabled).
 DIST_DIR  := dist
@@ -21,13 +25,25 @@ BINDIR  ?= $(PREFIX)/bin
 MANDIR  ?= $(PREFIX)/share/man/man1
 MANFILE := man/byn.1
 
-.PHONY: all build test test-integration lint cover clean clean-dist tidy fmt vet man install-man uninstall-man install uninstall dist
+.PHONY: all build test test-integration lint cover clean clean-dist tidy fmt vet man install-man uninstall-man install uninstall dist site site-check
 
 all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(BIN) ./cmd/byn
+	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(HELPER) ./cmd/byn-exec-helper
+
+# Render the docs site: docs/*.md (the single source of truth) -> themed
+# docs/<name>/index.html via the committed generator. The generated HTML is a
+# build artifact (gitignored) and is published to gh-pages separately.
+site:
+	$(GO) run ./tools/gensite
+
+# CI guard: fail if the committed markdown would produce different HTML than
+# what is on disk (i.e. someone edited a doc but didn't re-run `make site`).
+site-check:
+	$(GO) run ./tools/gensite -check
 
 man: $(MANFILE)
 	@echo "Preview: man $(MANFILE)"
@@ -45,16 +61,28 @@ uninstall-man:
 install: build install-man
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
-	@echo "Installed $(BINDIR)/byn ($(VERSION))"
+	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
+	@echo "Installed $(BINDIR)/byn (+ byn-exec-helper) ($(VERSION))"
 
 uninstall: uninstall-man
-	rm -f $(DESTDIR)$(BINDIR)/byn
+	rm -f $(DESTDIR)$(BINDIR)/byn $(DESTDIR)$(BINDIR)/byn-exec-helper
 
+# The byntest tag compiles the data-root test seam (internal/paths) so tests can
+# isolate a tempdir via BYN_TEST_DIR. It is NEVER in a production build — see
+# internal/paths/paths_testdir.go.
+#
+# The second line runs internal/paths WITHOUT the byntest tag so the production
+# resolver tests (paths_test.go, //go:build !byntest) actually execute — these
+# assert the core §6.5 property that NO env var can repoint the production data
+# root. They are excluded from the byntest run above, so without this they would
+# never run in CI. The paths package is read-only (no real-state writes), so it
+# is safe to run untagged.
 test:
-	$(GO) test $(GOFLAGS) -race -timeout 15m $(PKG)
+	$(GO) test $(GOFLAGS) -tags=byntest -race -timeout 15m $(PKG)
+	$(GO) test $(GOFLAGS) -race ./internal/paths/...
 
 test-integration:
-	$(GO) test $(GOFLAGS) -tags=integration -race -timeout 15m ./tests/integration/...
+	$(GO) test $(GOFLAGS) -tags='integration byntest' -race -timeout 15m ./tests/integration/...
 
 lint:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
@@ -64,7 +92,7 @@ lint:
 	golangci-lint run
 
 cover:
-	$(GO) test $(GOFLAGS) -race -coverprofile=coverage.out -covermode=atomic $(PKG)
+	$(GO) test $(GOFLAGS) -tags=byntest -race -coverprofile=coverage.out -covermode=atomic $(PKG)
 	$(GO) tool cover -func=coverage.out | tail -1
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
@@ -81,12 +109,17 @@ vet:
 # Cross-compile release binaries (one per platform) + a SHA-256 manifest into
 # dist/. These are the artifacts the npm package, Homebrew formula, and the
 # curl|sh installer download. Upload them to a public release for v$(VERSION).
+# byn-exec-helper is built alongside byn for each platform so release tarballs
+# contain both binaries and `byn setup` can find the helper next to byn.
 dist: clean-dist
 	@mkdir -p $(DIST_DIR)
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; out=$(DIST_DIR)/byn-$$os-$$arch; \
 		echo "  building $$out"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='$(LDFLAGS)' -o $$out ./cmd/byn || exit 1; \
+		helper=$(DIST_DIR)/byn-exec-helper-$$os-$$arch; \
+		echo "  building $$helper"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='-s -w' -o $$helper ./cmd/byn-exec-helper || exit 1; \
 	done
 	@cd $(DIST_DIR) && shasum -a 256 byn-* > byn-$(VERSION).sha256
 	@echo "dist artifacts (v$(VERSION)) in $(DIST_DIR)/:"
