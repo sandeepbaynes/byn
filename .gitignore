@@ -21,3 +21,12 @@ node_modules/
 
 # local dev project docs
 internaldocs
+
+# Generated docs site (build artifacts of `make site` / tools/gensite).
+# docs/*.md is the source of truth; the themed HTML is published to gh-pages
+# separately and never committed on this branch. These patterns match ONLY the
+# generated index.html under docs/ — NOT the hand-authored landing /index.html
+# at the repo root, nor any .md source.
+/docs/index.html
+/docs/*/index.html
+/docs/*/*/index.html
