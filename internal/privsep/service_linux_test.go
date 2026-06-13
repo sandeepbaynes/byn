@@ -33,9 +33,12 @@ func TestSystemdUnitContents(t *testing.T) {
 	assert.Contains(t, unit, "StateDirectory=byn")
 	assert.Contains(t, unit, "Restart=on-failure")
 
-	// The load-bearing NoNewPrivileges gotcha.
-	assert.Contains(t, unit, "NoNewPrivileges=no")
-	assert.NotContains(t, unit, "NoNewPrivileges=yes")
+	// The load-bearing NoNewPrivileges gotcha. Anchor the active directive with
+	// newlines — the explanatory comment legitimately contains the string
+	// "NoNewPrivileges=yes" while documenting why the directive must stay off, so a
+	// bare substring check would falsely trip on the comment.
+	assert.Contains(t, unit, "\nNoNewPrivileges=no\n")
+	assert.NotContains(t, unit, "\nNoNewPrivileges=yes\n")
 	// And it must explain WHY (the cap_setuid strip), not just set it.
 	assert.Contains(t, unit, "cap_setuid",
 		"unit must document why NoNewPrivileges stays off")

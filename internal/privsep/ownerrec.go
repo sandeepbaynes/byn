@@ -74,10 +74,14 @@ func ReadOwnerRecord(path string) (int, error) {
 	if s == "" {
 		return 0, fmt.Errorf("privsep: owner record %s is empty", path)
 	}
-	uid, err := strconv.Atoi(s)
+	// Parse with an explicit 32-bit bound so the value is provably within the
+	// kernel UID range (uint32) before any downstream uint32 conversion — Atoi
+	// would admit an out-of-range int that silently wraps when narrowed.
+	uid64, err := strconv.ParseUint(s, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("privsep: owner record %s has bad content %q: %w", path, s, err)
 	}
+	uid := int(uid64) // bounded to [0, math.MaxUint32] by ParseUint bitSize=32
 	if uid <= 0 {
 		return 0, fmt.Errorf("privsep: owner record %s has invalid uid %d (must be > 0)", path, uid)
 	}
