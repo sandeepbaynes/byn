@@ -46,13 +46,22 @@ affecting other open sessions.
 > 2. **Turn on host full-disk encryption** (FileVault / LUKS) — it protects the
 >    vault file *and* the entry names/metadata, which are plaintext at rest.
 > 3. **Run AI agents and untrusted tooling under a separate OS user or VM, not
->    your primary account** — code running as your UID can reach an unlocked
->    vault.
+>    your primary account** — by default, code running as your UID can reach an
+>    unlocked vault.
 >
 > The full, honest list is in
 > [Known weaknesses & how to protect yourself](security.md#known-weaknesses--how-to-protect-yourself)
 > and the [Best practices](security.md#best-practices) checklist. Worth two
 > minutes before this gets your production credentials.
+
+> **Optional: harden with privilege separation.** byn can run the daemon as a
+> dedicated `_byn` service user and run trusted-pinned `byn exec` children as
+> `_byn-exec`, so a same-(owner)-UID **non-root** process can't ptrace the daemon
+> or read an exec child's injected env. It is **opt-in and off by default** — run
+> `sudo byn setup` once, then set `[security] privsep = true` and restart the
+> daemon. It raises the bar to root (it does **not** defend against root /
+> `CAP_SYS_PTRACE`). See [Migration & setup](migration.md) and the
+> [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56).
 
 ## 4. Store your first secret
 
@@ -122,6 +131,7 @@ panel reference.
 
 Your secret *values* are encrypted at rest and never written to disk in
 plaintext, never exposed to your shell, and never handed to agents that don't
-go through byn. (Entry *names* and metadata are plaintext at rest, and code
-running as your own UID can still reach an unlocked vault — see
-[Known weaknesses](security.md#known-weaknesses--how-to-protect-yourself).)
+go through byn. (Entry *names* and metadata are plaintext at rest, and — unless
+you enable privilege separation — code running as your own UID can still reach
+an unlocked vault. Even with privsep on, root / `CAP_SYS_PTRACE` remains the
+ceiling. See [Known weaknesses](security.md#known-weaknesses--how-to-protect-yourself).)

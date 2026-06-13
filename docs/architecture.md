@@ -41,6 +41,14 @@ machine can't talk to your daemon.
 **Connection model:** one envelope per connection. CLI dials, sends,
 reads, closes. No multiplexing yet; not needed.
 
+**Who the daemon runs as.** By default (privsep off) the daemon runs at *your*
+UID. When you opt into privilege separation (`[security] privsep = true`, after
+`byn setup`), the daemon runs as the dedicated **`_byn`** service account instead
+— a different UID from you — so a same-(owner)-UID process can no longer ptrace
+the daemon and lift the vault key. See [Privilege separation](#privilege-separation-three-uid-opt-in)
+below and the [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56)
+for the threat reasoning and the honest ceiling.
+
 ---
 
 ## Scope hierarchy
@@ -109,14 +117,19 @@ being locked doesn't affect vault B.
 
 ## On-disk layout
 
-See [File layout](file-layout.md) for the full reference. Summary:
+See [File layout](file-layout.md) for the full reference. The data root is a
+fixed per-machine location — `~/.byn` by default, or a system path
+(`/var/lib/byn` // `/Library/Application Support/byn`, owned by `_byn`) once
+provisioned for privilege separation. There is **no** runtime data-root env
+override. Summary:
 
 ```
-~/.byn/
-├── daemon.sock          # IPC socket (0600)
+<data root>/
+├── daemon.sock          # IPC socket (0600; runtime path when provisioned)
 ├── daemon.pid           # single-instance guard
 ├── daemon.log           # detached daemon's combined stdout/stderr
 ├── auth-state.json      # failed-unlock backoff (0600)
+├── owner                # owner-UID record (provisioned only; "privsep on" marker)
 ├── trusted_byn.json  # TOFU records
 ├── audit/
 │   └── <vault>/
@@ -127,6 +140,48 @@ See [File layout](file-layout.md) for the full reference. Summary:
         ├── wrapped.key  # Argon2id-wrapped vault key (0600)
         └── meta.json    # UUID + fingerprint of wrapped key (0600)
 ```
+
+---
+
+## Privilege separation (three-UID, opt-in)
+
+byn can run under a **three-UID model** that separates the human, the daemon, and
+exec children. It is **opt-in and off by default this release** (`[security]
+privsep = true`, provisioned by `byn setup`). When off, byn behaves exactly as
+before — the daemon and exec children run at your UID, and the same-UID env-sniff
+/ daemon-ptrace holes remain open. The full threat reasoning, the off-state holes,
+and the honest ceiling are in the [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56);
+this section is the architecture sketch.
+
+The three identities, all distinct (`owner ≠ _byn ≠ _byn-exec`):
+
+| UID | Runs | Sees |
+|---|---|---|
+| **owner** (you) | the CLI, your shell, your agents | what your UID can already reach |
+| **`_byn`** (service account) | the daemon (vault key in memory) | the vault key — but not the exec child's env |
+| **`_byn-exec`** (service account) | `byn exec` children of a trusted, *pinned* `.byn` action | only the injected env vars, for the child's lifetime |
+
+**Server-side exec spawn.** With privsep on, a trusted-`.byn` pinned `byn exec`
+no longer runs the child in-process at your UID. The `_byn` daemon spawns it as
+`_byn-exec` through a small, root-owned, file-capability **spawn helper**
+(`byn-exec-helper`) that does exactly one privileged thing — `setuid` to
+`_byn-exec` — then execs the pinned command with only the injected vars. A
+same-(owner)-UID **non-root** process then can't read that child's
+`/proc/<pid>/environ` (the kernel's ptrace-mode check denies the cross-UID read).
+Linux additionally sets `PR_SET_DUMPABLE=0` on the daemon and child; the systemd
+unit keeps `NoNewPrivileges=no` **on purpose** so the scoped helper retains its
+`cap_setuid`.
+
+**Honest ceiling.** Privsep raises the bar to **root**. It does **not** defend
+against root, `CAP_SYS_PTRACE`, or a root `task_for_pid` — those can still read
+the daemon's or the child's memory/environ. macOS hardened-runtime protections
+only take effect for a **Developer ID-signed** build (unsigned local builds don't
+get them). Ad-hoc `byn exec` (no pinned `.byn`) still runs at your UID even with
+privsep on.
+
+**Fail-closed.** Privsep enabled but **not** provisioned errors out ("run `sudo
+byn setup`") — it never silently downgrades to running the daemon or exec child at
+the owner UID.
 
 ---
 
@@ -373,7 +428,9 @@ time cost), AAD-binding rationale, and threat model.
 | `cmd_vault_crud.go` | `vault {list,delete,init,unlock,lock}` (top-level aliases) |
 | `cmd_project.go` | `project {create,list,delete,rename}` |
 | `cmd_env.go` | `env {create,list,delete,rename}` |
-| `cmd_exec.go` | `exec -- COMMAND` (syscall.Exec env injection) |
+| `cmd_exec.go` | `exec -- COMMAND` (in-process `syscall.Exec` env injection; with privsep on, a trusted-pinned exec is spawned daemon-side as `_byn-exec`) |
+| `cmd_setup.go` | `setup [--uninstall [--purge]]` — one-sudo privsep provisioning |
+| `cmd_migrate.go` | `migrate [--from PATH] [--force]` — relocate vs import |
 | `cmd_import.go` | `import` from .env/.yaml/.json |
 | `cmd_export.go` | `export` to .env/.yaml/.json |
 | `cmd_audit.go` | `audit {tail,verify}` |
@@ -412,8 +469,14 @@ time cost), AAD-binding rationale, and threat model.
 | `internal/hwkey` | macOS SE / Linux TPM2 / software fallback (provider interface) |
 | `internal/passkey` | WebAuthn relying party — register/assert ceremonies + PRF→KEK derivation for portal passkey unlock |
 | `internal/ui` | daemon-embedded browser portal (loopback HTTP; scope tree, entries, passkey unlock) |
-| `internal/shim` | (reserved; Phase 3) |
-| `internal/acl` | (reserved; Phase 4) |
+| `internal/paths` | resolves the active data root + socket path (legacy `~/.byn` vs provisioned system path); owner-record lookup |
+| `internal/privsep` | three-UID model: owner-record read/write, service-user resolution, the `_byn-exec` spawn path |
+| `internal/setup` | `byn setup` provisioning + teardown (service users, system service, spawn helper, owner record) |
+| `internal/migrate` | `byn migrate` relocate vs import (verify-without-password, atomic adopt) |
+| `internal/trust` | `.byn` TOFU store + fp-MAC (machine) / vk-MAC (vault-key) record verification |
+| `internal/machineid` | stable per-machine identifier keying the trust fp-MAC (never touches the vault key) |
+| `internal/shim` | (reserved; planned — see roadmap) |
+| `internal/acl` | (reserved; planned) |
 
 ---
 

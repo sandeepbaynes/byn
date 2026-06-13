@@ -67,9 +67,9 @@
 </section>
 
 <div class="stats-bar">
-  <div><div class="stat-n"><em>0</em></div><div class="stat-l">bytes in plaintext on disk</div></div>
+  <div><div class="stat-n"><em>0</em></div><div class="stat-l">secret values in plaintext on disk</div></div>
   <div><div class="stat-n">3</div><div class="stat-l">interfaces: CLI · TUI · Portal</div></div>
-  <div><div class="stat-n">12+</div><div class="stat-l">CLI shims (aws, gh, gcloud…)</div></div>
+  <div><div class="stat-n">3</div><div class="stat-l">UIDs separated: you · _byn · _byn-exec</div></div>
   <div><div class="stat-n"><em>∞</em></div><div class="stat-l">vaults, projects, environments</div></div>
 </div>
 
@@ -114,6 +114,12 @@
       <h3>Bulk import / export</h3>
       <p>Import from <code>.env</code>, YAML, or JSON. Export in any format. Three merge modes: default, skip-existing, replace.</p>
       <span class="feat-tag">byn import / export</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">🧱</div>
+      <h3>Privilege separation</h3>
+      <p>Opt in to run the daemon as <code>_byn</code> and pinned <code>byn exec</code> children as <code>_byn-exec</code> — a same-UID non-root process can't ptrace the daemon or read the child's env. Off by default; raises the bar to root (not past it).</p>
+      <span class="feat-tag">byn setup · [security] privsep</span>
     </div>
   </div>
 </div>
@@ -216,11 +222,12 @@
     <div>
       <div class="eyebrow">Security model</div>
       <h2 class="section-h2" style="font-size:clamp(1.5rem,3vw,2rem);">Honest about what <em>it protects</em></h2>
-      <p style="font-size:.87rem;color:var(--dim);line-height:1.72;margin-bottom:1.2rem;">byn stops credential leaks that happen through normal developer workflows. It does not protect against a determined same-UID attacker — that's documented.</p>
+      <p style="font-size:.87rem;color:var(--dim);line-height:1.72;margin-bottom:1.2rem;">byn stops credential leaks that happen through normal developer workflows. By default it does not protect against a same-UID attacker; opt-in privilege separation raises the bar to root — but not past it. All of this is documented.</p>
       <ul style="list-style:none;display:flex;flex-direction:column;gap:.7rem;">
         <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Shell history / scrollback</strong> — values read from stdin, injected via <code>syscall.Exec</code>, never in argv</span></li>
         <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Background script inheritance</strong> — sessions are TTY-bound, not process-group inherited</span></li>
-        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Vault at rest</strong> — XChaCha20-Poly1305 per row; vault key only ever in daemon RAM</span></li>
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Vault at rest</strong> — XChaCha20-Poly1305 per row; vault key only ever in daemon RAM (entry names + metadata are plaintext at rest)</span></li>
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Same-UID env-sniff (opt-in)</strong> — with privilege separation on, a pinned <code>byn exec</code> child runs as <code>_byn-exec</code>; only root / <code>CAP_SYS_PTRACE</code> can read its env</span></li>
         <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Audit tampering</strong> — HMAC chain verified on startup; any gap flagged immediately</span></li>
       </ul>
       <a href="docs/security/" style="display:inline-flex;align-items:center;gap:.38rem;font-size:.8rem;font-weight:600;color:var(--green-text);text-decoration:none;margin-top:1.4rem;">Read the full security model →</a>

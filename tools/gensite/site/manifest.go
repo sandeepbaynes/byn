@@ -20,6 +20,10 @@ func Manifest() []Page {
 
 	docsHome := Crumb{Label: "Docs", Href: "../"}
 	fieldNotesParent := Crumb{Label: "Field notes", Href: "../"}
+	// Depth-3 pages (docs/integrations/<tool>/) reach the docs home two levels up
+	// and the integrations index one level up.
+	docsHomeDeep := Crumb{Label: "Docs", Href: "../../"}
+	integrationsParent := Crumb{Label: "Integrations", Href: "../"}
 
 	return []Page{
 		// ---- Docs home (listing of all docs) ----
@@ -32,7 +36,20 @@ func Manifest() []Page {
 			GitHubPath:     "docs/README.md",
 			IsSectionIndex: true,
 			NoTOC:          true,
-			Next:           &NavLink{Label: "Next →", Title: "CLI Reference", Href: "./cli-reference/"},
+			Next:           &NavLink{Label: "Next →", Title: "Quickstart", Href: "./quickstart/"},
+		},
+
+		// ---- Quickstart ----
+		{
+			SourceRel:    "quickstart.md",
+			OutDir:       "docs/quickstart",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Quickstart", Current: true}},
+			SidebarTitle: "Quickstart",
+			SidebarBadge: "5 min",
+			GitHubPath:   "docs/quickstart.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Docs home", Href: "../"},
+			Next:         &NavLink{Label: "Next →", Title: "CLI Reference", Href: "../cli-reference/"},
 		},
 
 		// ---- CLI reference ----
@@ -43,7 +60,7 @@ func Manifest() []Page {
 			Crumbs:       []Crumb{docsHome, {Label: "CLI Reference", Current: true}},
 			SidebarTitle: "CLI reference",
 			GitHubPath:   "docs/cli-reference.md",
-			Prev:         &NavLink{Label: "← Previous", Title: "Quickstart", Href: "../"},
+			Prev:         &NavLink{Label: "← Previous", Title: "Quickstart", Href: "../quickstart/"},
 			Next:         &NavLink{Label: "Next →", Title: "Security model", Href: "../security/"},
 		},
 
@@ -59,6 +76,78 @@ func Manifest() []Page {
 			StampNote:    "Updated with each release — items marked in progress are actively being addressed",
 			GitHubPath:   "docs/security.md",
 			Prev:         &NavLink{Label: "← Previous", Title: "CLI Reference", Href: "../cli-reference/"},
+			Next:         &NavLink{Label: "Next →", Title: "Migration & setup", Href: "../migration/"},
+		},
+
+		// ---- Migration & setup (privilege separation) ----
+		{
+			SourceRel:    "migration.md",
+			OutDir:       "docs/migration",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Migration & setup", Current: true}},
+			SidebarTitle: "Migration & setup",
+			GitHubPath:   "docs/migration.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Security model", Href: "../security/"},
+			Next:         &NavLink{Label: "Next →", Title: "Architecture", Href: "../architecture/"},
+		},
+
+		// ---- Architecture ----
+		{
+			SourceRel:    "architecture.md",
+			OutDir:       "docs/architecture",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Architecture", Current: true}},
+			SidebarTitle: "Architecture",
+			GitHubPath:   "docs/architecture.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Migration & setup", Href: "../migration/"},
+			Next:         &NavLink{Label: "Next →", Title: "File layout", Href: "../file-layout/"},
+		},
+
+		// ---- File layout ----
+		{
+			SourceRel:    "file-layout.md",
+			OutDir:       "docs/file-layout",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "File layout", Current: true}},
+			SidebarTitle: "File layout",
+			GitHubPath:   "docs/file-layout.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Architecture", Href: "../architecture/"},
+			Next:         &NavLink{Label: "Next →", Title: "`.byn` file format", Href: "../byn-file-format/"},
+		},
+
+		// ---- .byn file format + discovery ----
+		{
+			SourceRel:    "byn-file-format.md",
+			OutDir:       "docs/byn-file-format",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "`.byn` file format", Current: true}},
+			SidebarTitle: "`.byn` file format",
+			GitHubPath:   "docs/byn-file-format.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "File layout", Href: "../file-layout/"},
+			Next:         &NavLink{Label: "Next →", Title: "Glossary", Href: "../glossary/"},
+		},
+
+		// ---- Glossary ----
+		{
+			SourceRel:    "glossary.md",
+			OutDir:       "docs/glossary",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Glossary", Current: true}},
+			SidebarTitle: "Glossary",
+			GitHubPath:   "docs/glossary.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "`.byn` file format", Href: "../byn-file-format/"},
+			Next:         &NavLink{Label: "Next →", Title: "Troubleshooting", Href: "../troubleshooting/"},
+		},
+
+		// ---- Troubleshooting ----
+		{
+			SourceRel:    "troubleshooting.md",
+			OutDir:       "docs/troubleshooting",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Troubleshooting", Current: true}},
+			SidebarTitle: "Troubleshooting",
+			GitHubPath:   "docs/troubleshooting.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Glossary", Href: "../glossary/"},
 			Next:         &NavLink{Label: "Next →", Title: "Why not containers?", Href: "../why-not-containers/"},
 		},
 
@@ -70,8 +159,63 @@ func Manifest() []Page {
 			Crumbs:       []Crumb{docsHome, {Label: "Why not containers?", Current: true}},
 			SidebarTitle: "Why not containers?",
 			GitHubPath:   "docs/why-not-containers.md",
-			Prev:         &NavLink{Label: "← Previous", Title: "Security model", Href: "../security/"},
+			Prev:         &NavLink{Label: "← Previous", Title: "Troubleshooting", Href: "../troubleshooting/"},
 			Next:         &NavLink{Label: "Next →", Title: "Field notes", Href: "../field-notes/"},
+		},
+
+		// ---- Specification (reference; reachable from docs home) ----
+		{
+			SourceRel:    "spec.md",
+			OutDir:       "docs/spec",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Specification", Current: true}},
+			SidebarTitle: "Specification",
+			GitHubPath:   "docs/spec.md",
+		},
+
+		// ---- Integrations index (reference; reachable from docs home) ----
+		{
+			SourceRel:      "integrations/README.md",
+			OutDir:         "docs/integrations",
+			Nav:            NavDocs,
+			Crumbs:         []Crumb{docsHome, {Label: "Integrations", Current: true}},
+			SidebarTitle:   "Integrations",
+			GitHubPath:     "docs/integrations",
+			IsSectionIndex: true,
+			NoTOC:          true,
+		},
+		// Integration sub-pages (so the integrations index links resolve).
+		{
+			SourceRel:    "integrations/vscode.md",
+			OutDir:       "docs/integrations/vscode",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHomeDeep, integrationsParent, {Label: "VS Code", Current: true}},
+			SidebarTitle: "VS Code",
+			GitHubPath:   "docs/integrations/vscode.md",
+		},
+		{
+			SourceRel:    "integrations/jetbrains.md",
+			OutDir:       "docs/integrations/jetbrains",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHomeDeep, integrationsParent, {Label: "JetBrains", Current: true}},
+			SidebarTitle: "JetBrains",
+			GitHubPath:   "docs/integrations/jetbrains.md",
+		},
+		{
+			SourceRel:    "integrations/eclipse.md",
+			OutDir:       "docs/integrations/eclipse",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHomeDeep, integrationsParent, {Label: "Eclipse", Current: true}},
+			SidebarTitle: "Eclipse",
+			GitHubPath:   "docs/integrations/eclipse.md",
+		},
+		{
+			SourceRel:    "integrations/ai-agents.md",
+			OutDir:       "docs/integrations/ai-agents",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHomeDeep, integrationsParent, {Label: "AI coding agents", Current: true}},
+			SidebarTitle: "AI coding agents",
+			GitHubPath:   "docs/integrations/ai-agents.md",
 		},
 
 		// ---- Field notes index (listing) ----

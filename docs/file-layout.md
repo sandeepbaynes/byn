@@ -23,11 +23,12 @@ the one daemon (`byn init <name>`), **not** multiple data dirs.
 ---
 
 ```
-~/.byn/
-├── daemon.sock                    # Unix socket; IPC
+<data root>/                       # ~/.byn (legacy) or the system path (provisioned)
+├── daemon.sock                    # Unix socket; IPC (legacy root only — see note)
 ├── daemon.pid                     # Single-instance pidfile
 ├── daemon.log                     # Detached daemon's stdout+stderr
 ├── auth-state.json                # Persistent failed-unlock backoff
+├── owner                          # Owner-UID record (provisioned only; the "privsep on" marker)
 ├── trusted_byn.json            # TOFU records for .byn files
 ├── audit/
 │   └── <vault>/
@@ -56,10 +57,33 @@ the one daemon (`byn init <name>`), **not** multiple data dirs.
 Unix-domain socket. Every CLI invocation dials it. Peer UID is
 checked on every connect; mismatched UIDs are closed immediately.
 
+**Where it lives.** On the **legacy** `~/.byn` root the socket sits inside the
+data dir (shown above). When the machine is **provisioned** for privilege
+separation, the daemon runs as `_byn` and the data root is `_byn`-owned `0700`,
+so the socket can't live inside it (you'd be unable to connect). It binds instead
+to an **owner-traversable runtime path**; the daemon's bind side and the CLI's
+connect side resolve the same location, so they can never disagree. The peer-UID
+check still allowlists exactly the owner.
+
 **macOS caveat:** `sun_path` is capped at 104 bytes, so the socket path must stay
 short. The fixed data-root paths are chosen to fit; the test-only data-dir seam
-(`BYN_TEST_DIR`, compiled in only under the `byntest` build tag) uses
-`/tmp/byn-it-XXXX` for this reason.
+(compiled in only under the `byntest` build tag) uses `/tmp/byn-it-XXXX` for this
+reason.
+
+### `owner`
+
+| | |
+|---|---|
+| Mode | `0600` |
+| Owner | `_byn` (provisioned root only) |
+| Format | JSON: the allowlisted owner UID recorded by `byn setup` from `SUDO_UID` |
+| Created by | `byn setup` (`internal/privsep:WriteOwnerRecord`) |
+
+Present only in a **provisioned** system root. Its existence is the
+authoritative "this machine is provisioned for privsep" marker, and it names the
+single UID the daemon allowlists on its peercred-gated socket. `sudo byn setup
+--uninstall` removes it; the vault stays intact. See
+[Migration & setup](migration.md).
 
 ### `daemon.pid`
 
@@ -170,11 +194,16 @@ schema.
 - **Values** are XChaCha20-Poly1305 AEAD ciphertext blobs:
   `nonce(24) || ct || tag(16)`. AAD = `vault_id ‖ 0x1F ‖ kind ‖ 0x1F ‖ name`.
 
-The DB is portable — copy `vault.db + wrapped.key + meta.json` and
-the same password unlocks on another machine **once we ship cloud
-sync** (Phase 6, which strips the machine-fingerprint binding). For
-now, the wrapped key is fingerprint-bound, so a copy by itself doesn't
-unlock elsewhere.
+The DB is **portable by design**: copy `vault.db + wrapped.key +
+meta.json` and the same master password unlocks them on another machine.
+The vault key is wrapped with `Argon2id(password)` **only** — no machine
+binding — so forensics and recovery work on different hardware (owner
+decision, 2026-06-11). The machine fingerprint touches only the trust
+store's fp-MAC, never the vault key. The trade-off: the password wrap is
+the at-rest security floor of the file, so a stolen copy is offline-crackable
+down to your passphrase strength — pick a long, high-entropy one. (The
+`wrapped_key_fingerprint` in `meta.json` is a SHA-256 of `wrapped.key` for
+swap/tamper detection, **not** a hardware binding.)
 
 ### `vault.db-wal`, `vault.db-shm`
 
@@ -271,9 +300,11 @@ Plus, if you care about audit forensics:
 
 ### Caveats
 
-- A restore on **another machine** will fail today: the wrapped key
-  is bound to the original machine's fingerprint. (This becomes
-  portable in Phase 6 with the cloud-sync key-wrap variant.)
+- A restore on **another machine** works: the wrapped key is bound to your
+  master password only, not to any hardware. The same password unlocks the
+  restored vault anywhere. (The trust store and passkey enrollments do **not**
+  carry across a machine boundary — see [Migration & setup](migration.md) for
+  why `byn migrate --from` drops them and you must re-trust + re-enroll.)
 - Don't restore stale `daemon.sock` / `daemon.pid` — let the daemon
   recreate them.
 - `vault.db-wal` and `vault.db-shm` are transient. Don't restore.
