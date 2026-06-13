@@ -280,7 +280,10 @@ func assertFailClosedUnprovisioned(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		stdout, stderr, code = s.runInDir(projDir, "", nil, "exec", "--", "sleep", "5")
+		// runInDir builds a minimal env without PATH; give the CLI a real PATH so it
+		// can resolve `sleep` to an absolute target and actually reach the daemon's
+		// fail-closed (not-provisioned) path, rather than erroring at LookPath first.
+		stdout, stderr, code = s.runInDir(projDir, "", []string{"PATH=" + os.Getenv("PATH")}, "exec", "--", "sleep", "5")
 	}()
 
 	// Fail-closed must NOT produce a root-owned `sleep` child. Poll briefly; the
@@ -379,7 +382,8 @@ func assertExecChildDropsAndNoLeak(t *testing.T, execu, daemonu int) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		execStdout, execStderr, execCode = s.runInDir(projDir, "", nil, "exec", "--", "sleep", "5")
+		// PATH so the CLI can resolve `sleep` (runInDir's env omits it by default).
+		execStdout, execStderr, execCode = s.runInDir(projDir, "", []string{"PATH=" + os.Getenv("PATH")}, "exec", "--", "sleep", "5")
 	}()
 
 	childPID := waitForChild(execu, time.Now().Add(4*time.Second))
