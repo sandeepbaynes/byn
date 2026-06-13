@@ -108,6 +108,74 @@ Print:
 
 ---
 
+## System setup (privilege separation)
+
+These commands provision and migrate the **opt-in** [three-UID privilege
+separation](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56)
+(daemon as `_byn`, exec children as `_byn-exec`, you as the owner). Both require
+root. Privsep is off by default; enable it with `[security] privsep = true` in
+the config and restart the daemon. See the [migration guide](migration.md).
+
+### `byn setup [--uninstall [--purge]]`
+
+Provision the full privsep install in one idempotent, root-required step. With no
+flags, `byn setup`:
+
+1. Creates the `_byn` and `_byn-exec` service accounts and installs the prebuilt
+   privileged spawn helper (`byn-exec-helper`) + its root-owned UID/GID config.
+2. Installs and loads the system service that runs the daemon as `_byn` (a
+   systemd system unit on Linux, a LaunchDaemon on macOS) — **not** the human
+   owner.
+3. Relocates any legacy `~/.byn` vault into the fixed system data path, chowned
+   to `_byn` (trust + passkeys preserved — same machine); skipped on a fresh
+   install.
+4. Records the **owner UID** (the human who ran sudo, read from `SUDO_UID`) as
+   the single UID the daemon allowlists on its peercred-gated socket.
+5. Verifies the post-conditions.
+
+- Must run via **sudo** (`sudo byn setup`) so `SUDO_UID` is set. Running as real
+  root (not via sudo) fails rather than recording root as the owner.
+- **Idempotent** — re-running on a provisioned host reinstalls the helper +
+  service, re-records the owner, and exits 0 (safe on every install and upgrade).
+- The prebuilt `byn-exec-helper` must sit beside the `byn` binary.
+- Linux uses `systemd-sysusers(8)`; macOS uses `sysadminctl(8)`. Other platforms
+  are unsupported.
+- Setup **provisions** privsep; it does not **enable** it. Engage it with
+  `[security] privsep = true` in the config + a daemon restart. With privsep
+  enabled but **not** provisioned, the daemon warns and trusted-`.byn` exec
+  **fails closed** — it never silently runs as the owner UID.
+- `--uninstall` reverses a previous setup (uninstall the service, remove the
+  helper + config + owner record). It **leaves the vault intact** by default. Add
+  `--purge` to also delete the system data dir and every secret in it — a
+  destructive, irreversible action gated behind a typed `yes` confirmation. The
+  vault is **never** removed without `--purge`.
+
+### `byn migrate [--from PATH] [--force]`
+
+Adopt a byn vault tree into the fixed system data path with the correct structure
+and ownership (`_byn`, mode 0700). The source is verified **without its
+password** — every `vault.db` must open as a well-formed, correctly-versioned
+vault whose `wrapped.key`/`meta.json` fingerprint matches and whose audit chain
+is intact — before anything is adopted; a malformed, truncated, or tampered
+source is rejected and the destination is left untouched. The adopt is atomic and
+re-runnable; it never half-migrates.
+
+- Must run as root (it writes the `_byn`-owned system path and chowns the tree).
+  The `_byn` account must already exist; if not, run `byn setup` first — migrate
+  adopts with the correct ownership, it does not create users.
+- **No `--from` (relocate / upgrade path):** moves the legacy `~/.byn` into the
+  system path. Same machine, so the trust store and passkey enrollments are
+  **kept**, and the old `~/.byn` is removed only **after** the destination is
+  fully adopted.
+- **`--from PATH` (import):** copies an external vault in (a backup, a mounted
+  disk, a synced dir) and **never deletes the source**. An import brings vault
+  **data only** — the trust store and passkey enrollments are **dropped** (trust
+  is never silently carried across a machine boundary), so afterwards you **must**
+  re-trust your `.byn` files with `byn trust` and re-enroll passkeys on this
+  machine. A non-empty destination is refused unless `--force` is given.
+
+---
+
 ## Structure CRUD
 
 ### `byn vault list [--json]`
@@ -560,6 +628,7 @@ restart; `[ui]` changes also hot-apply.
 | `[daemon] idle_timeout` | `"15m"` | Auto-relock after inactivity; `"0s"` to disable |
 | `[security] session_ttl` | `"12h"` | Absolute session lifetime; `"0s"` = no TTL limit |
 | `[security] session_idle` | `"0s"` | Sliding idle window; `"0s"` = inherit `idle_timeout` |
+| `[security] privsep` | (absent → `false`) | Opt into privilege separation (run trusted-`.byn` exec children as `_byn-exec`). Requires `byn setup` first and a **daemon restart** to engage — see [migration guide](migration.md). When enabled but unprovisioned, trusted-`.byn` exec fails closed. |
 
 Example:
 
@@ -594,11 +663,11 @@ enabled = true
 |---|---|
 | `BYN_NO_DISCOVERY=1` | Skip the `.byn` walk entirely |
 
-### Daemon
-
-| Var | Effect |
-|---|---|
-| `BYN_DIR` | Override `~/.byn` (used heavily in tests and `make test-integration`) |
+> **No data-root override.** There is no environment variable to repoint byn's
+> data root. It is a fixed system path once provisioned (`byn setup`), or
+> `~/.byn` when unprovisioned — see [File layout](file-layout.md). (Tests use a
+> `byntest`-build-tag-only `BYN_TEST_DIR` seam that is never compiled into a
+> release binary.)
 
 ### Pager and hint env vars
 

@@ -81,6 +81,11 @@ tar -xzf "$tmp" -C "$work" || die "could not extract $asset"
 rm -f "$tmp"
 [ -f "$work/byn" ] || die "archive did not contain the byn binary"
 chmod 0755 "$work/byn"
+# byn-exec-helper ships in the same archive for privsep; `byn setup` locates
+# it next to the byn binary, so it must land in the same directory.
+if [ -f "$work/byn-exec-helper" ]; then
+  chmod 0755 "$work/byn-exec-helper"
+fi
 
 # ---- install binary -----------------------------------------------------
 dest="$dir/byn"
@@ -91,6 +96,16 @@ if ! mv "$work/byn" "$dest" 2>/dev/null; then
   $SUDO mv "$work/byn" "$dest" || die "could not install to $dest"
 fi
 say "installed $dest ($VERSION)"
+
+# ---- install privsep helper (alongside byn) -----------------------------
+# SUDO is already set correctly from the byn install step above (either "" or
+# "sudo"). Install the helper to the same $dir so `byn setup` finds it next
+# to byn via os.Executable()→dir→"byn-exec-helper".
+if [ -f "$work/byn-exec-helper" ]; then
+  helper_dest="$dir/byn-exec-helper"
+  $SUDO mv "$work/byn-exec-helper" "$helper_dest" || say "warning: could not install byn-exec-helper to $helper_dest"
+  say "installed $helper_dest (privsep helper; run: sudo byn setup)"
+fi
 
 # ---- install man page (best-effort) -------------------------------------
 # $prefix/bin → $prefix/share/man/man1, the path `man` searches by default.

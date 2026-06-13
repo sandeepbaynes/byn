@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn — Local-first secrets vault</title>
+<meta name="description" content="Encrypted local vault with transparent credential injection. Your AI agents and scripts never see secret values — only the commands that need them do.">
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="assets/site.js" defer></script>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0c0f'/><path d='M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z' fill='%2334d8a0'/></svg>">
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="docs/">Docs</a>
+    <a href="docs/cli-reference/">CLI reference</a>
+    <a href="docs/security/">Security</a>
+    <a href="docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-badge"><div class="badge-dot"></div>v0.3.0 — macOS &amp; Linux</div>
+  <h1>Secrets that stay <em>yours</em>.</h1>
+  <p class="hero-sub">Local-first encrypted vault with transparent credential injection. Your AI agents and scripts never see the values — only the commands that need them do.</p>
+  <div class="hero-actions">
+    <a href="#install" class="btn-primary">↓ brew install byn</a>
+    <a href="docs/" class="btn-outline">Read the quickstart →</a>
+  </div>
+  <p class="hero-note">Free · source-available (BUSL-1.1) · macOS + Linux</p>
+
+  <div class="term-outer">
+    <div class="term-wrap">
+      <div class="term-bar"><div class="dot dr"></div><div class="dot dy"></div><div class="dot dg"></div><span class="term-path">~/projects/myapp</span></div>
+      <div class="term-body">
+        <div class="tl"><span class="tp">$</span><span class="tc"> byn exec -- aws s3 ls</span></div>
+        <span class="to tco"># AWS_ACCESS_KEY_ID injected — never exposed to your shell</span>
+        <span class="to">2024-01-15  <span class="tv">production-backups</span></span>
+        <span class="to">2024-03-08  <span class="tv">staging-assets</span></span>
+        <div class="tg"></div>
+        <div class="tl"><span class="tp">$</span><span class="tc"> byn ls</span></div>
+        <span class="to"><span class="tk">AWS_ACCESS_KEY_ID</span>     <span class="tco">work/api/default</span></span>
+        <span class="to"><span class="tk">AWS_SECRET_ACCESS_KEY</span>  <span class="tco">work/api/default</span></span>
+        <div class="tg"></div>
+        <div class="tl"><span class="tp">$</span><span class="tc"> byn status</span></div>
+        <span class="to"><span class="tv">daemon: running</span>  ·  vault: unlocked  ·  session: tty3</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="stats-bar">
+  <div><div class="stat-n"><em>0</em></div><div class="stat-l">secret values in plaintext on disk</div></div>
+  <div><div class="stat-n">3</div><div class="stat-l">interfaces: CLI · TUI · Portal</div></div>
+  <div><div class="stat-n">3</div><div class="stat-l">UIDs separated: you · _byn · _byn-exec</div></div>
+  <div><div class="stat-n"><em>∞</em></div><div class="stat-l">vaults, projects, environments</div></div>
+</div>
+
+<!-- FEATURES -->
+<div class="section">
+  <div class="eyebrow">Features</div>
+  <h2 class="section-h2">Everything you need to keep <em>secrets secret</em></h2>
+  <p class="section-sub">Built for developers who use AI coding agents, run automation scripts, and need credentials to flow transparently.</p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-icon">🔒</div>
+      <h3>Per-terminal sessions</h3>
+      <p>Unlocking in one terminal doesn't unlock for other shells or background scripts. Sessions are bound to the TTY device.</p>
+      <span class="feat-tag">byn unlock</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">💉</div>
+      <h3>Transparent injection</h3>
+      <p><code>byn exec</code> uses <code>syscall.Exec</code> to replace itself. Values never appear in shell history, argv, or scrollback.</p>
+      <span class="feat-tag">byn exec -- CMD</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">🗂️</div>
+      <h3>Scope hierarchy</h3>
+      <p>vault → project → env with inheritance. Override per-environment without duplicating secrets.</p>
+      <span class="feat-tag">--vault --project --env</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">🪪</div>
+      <h3>Passkey / Touch ID</h3>
+      <p>Enroll from the browser portal. Touch ID for daily unlocks. Your master password stays the recovery root.</p>
+      <span class="feat-tag">localhost:2967</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">📋</div>
+      <h3>Tamper-evident audit</h3>
+      <p>Every read, write, exec, and reveal logged in an HMAC chain. <code>byn doctor</code> verifies integrity on startup.</p>
+      <span class="feat-tag">byn audit tail</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">📦</div>
+      <h3>Bulk import / export</h3>
+      <p>Import from <code>.env</code>, YAML, or JSON. Export in any format. Three merge modes: default, skip-existing, replace.</p>
+      <span class="feat-tag">byn import / export</span>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon">🧱</div>
+      <h3>Privilege separation</h3>
+      <p>Opt in to run the daemon as <code>_byn</code> and pinned <code>byn exec</code> children as <code>_byn-exec</code> — a same-UID non-root process can't ptrace the daemon or read the child's env. Off by default; raises the bar to root (not past it).</p>
+      <span class="feat-tag">byn setup · [security] privsep</span>
+    </div>
+  </div>
+</div>
+
+<!-- INTERFACES -->
+<section class="ifaces">
+  <div class="ifaces-inner">
+    <div class="eyebrow">Interfaces</div>
+    <h2 class="section-h2">Three ways to <em>manage secrets</em></h2>
+    <p class="section-sub" style="margin-bottom:0;">CLI for scripts and CI. TUI for interactive editing. Portal for visual management and passkey enrollment.</p>
+    <div class="iface-grid">
+
+      <div class="iface-card">
+        <div class="iface-screen" style="background:#0b0c0f;padding:.85rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.59rem;line-height:1.9;">
+          <div><span style="color:#34d8a0">$</span><span style="color:#e7eaf0"> byn put DB_URL</span></div>
+          <div style="color:#9aa1b1;padding-left:.4rem">Value: <span style="color:#454e66">(hidden)</span></div>
+          <div style="color:#34d8a0;padding-left:.4rem">✓ Stored in work/api/default</div>
+          <div style="height:.3rem"></div>
+          <div><span style="color:#34d8a0">$</span><span style="color:#e7eaf0"> byn exec -- go test ./...</span></div>
+          <div style="color:#9aa1b1;padding-left:.4rem">ok  github.com/org/api  1.23s</div>
+          <div style="height:.3rem"></div>
+          <div><span style="color:#34d8a0">$</span><span style="color:#e7eaf0"> byn status</span></div>
+          <div style="color:#34d8a0;padding-left:.4rem">daemon: running · vault: unlocked</div>
+        </div>
+        <div class="iface-body">
+          <div class="iface-chip">Command line</div>
+          <h3>CLI — scriptable &amp; composable</h3>
+          <p>Thin IPC client. <code>--json</code> everywhere for agent mode. Scope flags work before or after any subcommand.</p>
+        </div>
+      </div>
+
+      <div class="iface-card">
+        <div class="iface-screen" style="background:#0b0c0f;display:flex;font-family:'JetBrains Mono',monospace;font-size:.57rem;line-height:1.65;">
+          <div style="width:38%;border-right:1px solid #232730;padding:.65rem .45rem;">
+            <div style="color:#4a5060;font-size:.48rem;letter-spacing:.06em;margin-bottom:.32rem;">VAULTS</div>
+            <div style="color:#34d8a0;background:rgba(52,216,160,.12);padding:.09rem .24rem;border-radius:2px;margin-bottom:.14rem;">▸ work</div>
+            <div style="color:#8a92a6;padding:.09rem .34rem;margin-bottom:.34rem">  personal</div>
+            <div style="color:#4a5060;font-size:.48rem;letter-spacing:.06em;margin-bottom:.32rem;">PROJECTS</div>
+            <div style="color:#34d8a0;background:rgba(52,216,160,.12);padding:.09rem .24rem;border-radius:2px;margin-bottom:.14rem;">▸ api</div>
+            <div style="color:#8a92a6;padding:.09rem .34rem">  infra</div>
+          </div>
+          <div style="flex:1;padding:.65rem .5rem;">
+            <div style="color:#4a5060;font-size:.48rem;letter-spacing:.06em;margin-bottom:.32rem;">work/api/default</div>
+            <div style="display:flex;justify-content:space-between;color:#e7eaf0;margin-bottom:.14rem;"><span>DB_URL</span><span style="color:#f0b541;font-size:.45rem;">↓</span></div>
+            <div style="display:flex;justify-content:space-between;background:rgba(52,216,160,.1);color:#34d8a0;padding:.09rem .18rem;border-radius:2px;margin-bottom:.14rem;"><span>API_KEY</span><span style="font-size:.45rem;">✦ selected</span></div>
+            <div style="border-top:1px solid #232730;padding-top:.3rem;margin-top:.36rem;color:#4a5060;font-size:.46rem;">r reveal · e edit · u undo · ? help</div>
+          </div>
+        </div>
+        <div class="iface-body">
+          <div class="iface-chip">Terminal UI</div>
+          <h3>TUI — vi-style navigation</h3>
+          <p>Left-rail scope tree, modal editing, undo/redo, inheritance badges. Launch with <code>byn</code>.</p>
+        </div>
+      </div>
+
+      <div class="iface-card">
+        <div class="iface-screen" style="overflow:hidden;">
+          <div style="background:#f7f8fa;border-bottom:1px solid #e2e4ec;padding:.32rem .62rem;display:flex;align-items:center;gap:.32rem;font-size:.51rem;font-family:'JetBrains Mono',monospace;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#ff5f57"></div>
+            <div style="width:6px;height:6px;border-radius:50%;background:#febc2e"></div>
+            <div style="width:6px;height:6px;border-radius:50%;background:#28c840"></div>
+            <div style="flex:1;background:#fff;border:1px solid #e2e4ec;border-radius:3px;padding:.12rem .38rem;color:#9aa0b2;margin:0 .28rem;">localhost:2967</div>
+            <span style="color:#0d7a52;font-size:.49rem;background:rgba(29,184,126,.08);border:1px solid rgba(29,184,126,.22);padding:.07rem .28rem;border-radius:3px;font-weight:600;">● unlocked</span>
+          </div>
+          <div style="display:flex;height:138px;font-size:.53rem;font-family:'Inter',sans-serif;">
+            <div style="width:38%;border-right:1px solid #e2e4ec;background:#f7f8fa;padding:.42rem .35rem;overflow:hidden;">
+              <div style="color:#9aa0b2;font-size:.45rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.26rem;">Scope</div>
+              <div style="color:#0d7a52;font-weight:600;margin-bottom:.08rem;">▾ work</div>
+              <div style="background:#fff;border:1px solid #cdd0db;border-radius:3px;padding:.12rem .26rem;color:#1c1f2a;font-weight:600;margin-bottom:.08rem;margin-left:.35rem;">▸ api</div>
+              <div style="color:#5c6478;margin-left:.35rem;padding-left:.1rem;">  infra</div>
+            </div>
+            <div style="flex:1;padding:.42rem .48rem;background:#fff;overflow:hidden;">
+              <div style="color:#9aa0b2;font-size:.45rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;">work / api / default</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:.16rem .22rem;border:1px solid #e2e4ec;border-radius:3px;margin-bottom:.12rem;">
+                <span style="color:#1c1f2a;font-size:.53rem;">DB_URL</span><span style="font-size:.44rem;color:#9aa0b2;background:#f7f8fa;padding:.06rem .22rem;border-radius:2px;border:1px solid #e2e4ec;">Reveal</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:.16rem .22rem;background:rgba(29,184,126,.08);border:1px solid rgba(29,184,126,.22);border-radius:3px;margin-bottom:.12rem;">
+                <span style="color:#0d7a52;font-size:.53rem;font-weight:600;">API_KEY ✦</span><span style="font-size:.44rem;color:#9aa0b2;background:#fff;padding:.06rem .22rem;border-radius:2px;border:1px solid #e2e4ec;">Reveal</span>
+              </div>
+              <div style="margin-top:.3rem;padding-top:.26rem;border-top:1px solid #e2e4ec;">
+                <span style="font-size:.44rem;background:rgba(29,184,126,.08);color:#0d7a52;border:1px solid rgba(29,184,126,.22);padding:.06rem .26rem;border-radius:3px;font-weight:600;">Touch ID enrolled ✓</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="iface-body">
+          <div class="iface-chip">Browser</div>
+          <h3>Portal — localhost:2967</h3>
+          <p>Passkey / Touch ID unlock, scope tree, reveal + audit trail, and the <code>.byn</code> file studio.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY SNAPSHOT -->
+<div class="section" style="max-width:1080px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:start;">
+    <div>
+      <div class="eyebrow">Security model</div>
+      <h2 class="section-h2" style="font-size:clamp(1.5rem,3vw,2rem);">Honest about what <em>it protects</em></h2>
+      <p style="font-size:.87rem;color:var(--dim);line-height:1.72;margin-bottom:1.2rem;">byn stops credential leaks that happen through normal developer workflows. By default it does not protect against a same-UID attacker; opt-in privilege separation raises the bar to root — but not past it. All of this is documented.</p>
+      <ul style="list-style:none;display:flex;flex-direction:column;gap:.7rem;">
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Shell history / scrollback</strong> — values read from stdin, injected via <code>syscall.Exec</code>, never in argv</span></li>
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Background script inheritance</strong> — sessions are TTY-bound, not process-group inherited</span></li>
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Vault at rest</strong> — XChaCha20-Poly1305 per row; vault key only ever in daemon RAM (entry names + metadata are plaintext at rest)</span></li>
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Same-UID env-sniff (opt-in)</strong> — with privilege separation on, a pinned <code>byn exec</code> child runs as <code>_byn-exec</code>; only root / <code>CAP_SYS_PTRACE</code> can read its env</span></li>
+        <li style="display:flex;gap:.6rem;font-size:.83rem;color:var(--dim);line-height:1.55;"><span style="color:var(--green);font-weight:700;flex-shrink:0;">✓</span><span><strong style="color:var(--text);">Audit tampering</strong> — HMAC chain verified on startup; any gap flagged immediately</span></li>
+      </ul>
+      <a href="docs/security/" style="display:inline-flex;align-items:center;gap:.38rem;font-size:.8rem;font-weight:600;color:var(--green-text);text-decoration:none;margin-top:1.4rem;">Read the full security model →</a>
+    </div>
+    <div style="background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:1.5rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;line-height:1.9;color:var(--code-text);position:relative;overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,#34d8a0 0%,transparent 65%);"></div>
+      <span style="color:#4a5060;"># vault key wrapping</span><br>
+      <span style="color:#f0b541;">Argon2id</span>(password, salt, t=2, m=64MiB, p=4)<br>
+      <span style="color:#4a5060;">  → wrapping_key (256-bit)</span><br>
+      <br>
+      <span style="color:#f0b541;">XChaCha20-Poly1305</span>.Seal(<br>
+      <span style="color:#4a5060;">  key   = wrapping_key,</span><br>
+      <span style="color:#4a5060;">  nonce = random_24_bytes,</span><br>
+      <span style="color:#4a5060;">  aad   = header_bytes,</span><br>
+      <span style="color:#4a5060;">  plain = vault_key,</span><br>
+      )<br>
+      <br>
+      <span style="color:#4a5060;"># per-row value encryption</span><br>
+      <span style="color:#4a5060;"># vault key never leaves daemon RAM</span>
+    </div>
+  </div>
+</div>
+
+<!-- INSTALL -->
+<section class="install-section" id="install">
+  <div class="install-card">
+    <h2>Start in 60 seconds</h2>
+    <p>macOS and Linux. Pure-Go binary, no runtime dependencies. Auto-starts on login.</p>
+    <div class="cmd-block"><span>brew install sandeepbaynes/tap/byn</span><span class="cmd-copy" title="Copy">⎘ Copy</span></div>
+    <p class="alt-links">Also: <a href="docs/#install-script">curl install</a> · <a href="docs/#go-install">go install</a> · <a href="https://github.com/sandeepbaynes/byn/releases">download binary</a></p>
+    <div class="install-btns">
+      <a href="docs/" class="btn-primary">Read the 5-minute quickstart →</a>
+      <a href="https://github.com/sandeepbaynes/byn" class="btn-outline">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn — Sandeep Baynes · BUSL-1.1</span>
+  </div>
+  <div>
+    <a href="https://github.com/sandeepbaynes/byn">GitHub</a>
+    <a href="docs/">Docs</a>
+    <a href="docs/security/">Security</a>
+    <a href="https://github.com/sandeepbaynes/byn/blob/main/LICENSE">License</a>
+  </div>
+</footer>
+
+</body>
+</html>

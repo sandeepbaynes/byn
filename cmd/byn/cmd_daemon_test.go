@@ -81,7 +81,7 @@ func TestRunDaemonStatus_DaemonDown(t *testing.T) {
 
 func TestRunDaemonStop_NoPidFile(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	if got := runDaemonStop(nil); got != exitOK {
 		t.Fatalf("got %d (no pidfile should be exitOK)", got)
 	}
@@ -89,7 +89,7 @@ func TestRunDaemonStop_NoPidFile(t *testing.T) {
 
 func TestRunDaemonStop_BadPidContent(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	if err := os.WriteFile(filepath.Join(td, daemon.PIDFilename), []byte("notanumber"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -118,11 +118,23 @@ func TestRunDaemonStart_DetachedTriggersAlreadyRunning(t *testing.T) {
 	}
 }
 
+// --allow-root is a recognized daemon-start flag (it threads into
+// daemon.Config.AllowRoot). With a fake daemon already responding, start
+// short-circuits to "already running" — proving the flag parses cleanly rather
+// than erroring as unknown.
+func TestRunDaemonStart_AllowRootFlagAccepted(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	if got := runDaemonStart([]string{"--allow-root"}); got != exitOK {
+		t.Fatalf("got %d, want exitOK (flag accepted, daemon already running)", got)
+	}
+}
+
 // ---- reload -------------------------------------------------------------
 
 func TestRunDaemonReload_NotRunning(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	if got := runDaemonReload(nil); got != exitErr {
 		t.Fatalf("got %d, want exitErr (no daemon to reload)", got)
 	}
@@ -130,7 +142,7 @@ func TestRunDaemonReload_NotRunning(t *testing.T) {
 
 func TestRunDaemonReload_BadPidContent(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	if err := os.WriteFile(filepath.Join(td, daemon.PIDFilename), []byte("notanumber"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -153,7 +165,7 @@ func TestRunDaemonReload_SendsSignal(t *testing.T) {
 	defer signal.Stop(ch)
 
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	if err := os.WriteFile(filepath.Join(td, daemon.PIDFilename),
 		[]byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -180,7 +192,7 @@ func TestRunDaemon_ReloadDispatch(t *testing.T) {
 
 func TestRunDaemonRestart_StopFailsAborts(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	// A malformed pidfile makes the stop leg fail, which must abort the
 	// restart rather than fall through to start.
 	if err := os.WriteFile(filepath.Join(td, daemon.PIDFilename), []byte("notanumber"), 0o600); err != nil {
@@ -193,7 +205,7 @@ func TestRunDaemonRestart_StopFailsAborts(t *testing.T) {
 
 func TestRunDaemonRestart_DegradesToStart(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	// Nothing running: stop is a no-op (exitOK) and restart forwards to
 	// start, which here fails on the bad flag — proving the stop→start
 	// handoff without spawning a real daemon.
@@ -204,7 +216,7 @@ func TestRunDaemonRestart_DegradesToStart(t *testing.T) {
 
 func TestRunDaemon_RestartDispatch(t *testing.T) {
 	td := t.TempDir()
-	t.Setenv("BYN_DIR", td)
+	t.Setenv("BYN_TEST_DIR", td)
 	if got := runDaemon([]string{"restart", "--zzz"}); got != exitErr {
 		t.Fatalf("got %d, want exitErr", got)
 	}

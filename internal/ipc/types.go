@@ -87,6 +87,7 @@ const (
 	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
 	OpExecFetch Op = "exec.fetch"
+	OpExecSpawn Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5)
 
 	// Daemon lifecycle (portal-facing). Reload applies a live config reload and
 	// returns what changed; Restart performs a graceful shutdown so the OS
@@ -132,7 +133,7 @@ var AllOps = []Op{
 	OpAuditTail, OpAuditVerify, OpDoctor,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
-	OpExecFetch,
+	OpExecFetch, OpExecSpawn,
 	OpDaemonReload, OpDaemonRestart,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
@@ -907,6 +908,26 @@ type ExecFetchResp struct {
 	// (alias base + extra args). The CLI executes exactly this, ignoring the
 	// locally-constructed argv — single source of truth.
 	ResolvedArgv []string `json:"resolved_argv,omitempty"`
+}
+
+// ExecSpawnReq runs a byn exec child SERVER-side under privsep (NU-5). It
+// carries the same fields as ExecFetchReq for authorization (via the embedded
+// ExecFetchReq), PLUS the caller's base environment and the resolved absolute
+// target. The 3 stdio fds travel out-of-band via SCM_RIGHTS (the CLI sends them
+// with the request; the daemon's handleConn stashes them in the request context
+// — Task 8). The authorization gate is shared with exec.fetch: the daemon
+// authorizes ExecFetchReq, builds the child env (BaseEnv + injected values), and
+// spawns the resolved AbsTarget under the _byn-exec service user via the helper.
+type ExecSpawnReq struct {
+	ExecFetchReq          // embed: Path, Scope, Command, Argv, Alias, Password, PresenceToken
+	BaseEnv      []string `json:"base_env,omitempty"`   // the CLI's environment (owner terminal env, minus sensitive), KEY=VALUE
+	AbsTarget    string   `json:"abs_target,omitempty"` // CLI-resolved ABSOLUTE path of the command (argv[0])
+}
+
+// ExecSpawnResp returns the child's exit code. A non-zero code is NOT an IPC
+// error — the CLI propagates it as its own exit status.
+type ExecSpawnResp struct {
+	ExitCode int `json:"exit_code"`
 }
 
 // ---- byn.validate ----------------------------------------------------------

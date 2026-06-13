@@ -12,5 +12,5 @@ Install the real byn:
 Homepage: https://github.com/sandeepbaynes/byn
 """
 
-__version__ = "0.0.1"
+__version__ = "0.3.0"
 HOMEPAGE = "https://github.com/sandeepbaynes/byn"

@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
+	"github.com/sandeepbaynes/byn/internal/fdpass"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
@@ -67,8 +69,75 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	if err == nil {
 		root = withCaller(root, socketCaller(uid, pid, env.Session))
 	}
+
+	// exec.spawn carries its child's three stdio fds out-of-band: right after
+	// the request frame the CLI SendFDs([]int{0,1,2}) over this same connection.
+	// Receive them HERE (before dispatch), stash them in the request context for
+	// handleExecSpawn, and close the daemon's copies after dispatch returns. The
+	// spawner dups what it needs (privsep dupStdio), so closing our originals
+	// post-dispatch frees them without affecting the running child. Every other
+	// op is untouched — only exec.spawn does the fd dance.
+	if err == nil && env.Op == ipc.OpExecSpawn {
+		fds, rcvErr := recvExecSpawnFDs(conn)
+		if rcvErr != nil {
+			_ = ipc.WriteFrame(conn, ipc.NewError(env.ID, ipc.CodeBadRequest,
+				fmt.Sprintf("exec.spawn: receive stdio fds: %v", rcvErr), ""))
+			return
+		}
+		defer fdpass.CloseAll(fds)
+		root = withExecSpawnFDs(root, fds[0], fds[1], fds[2])
+	}
+
 	resp := d.dispatch(root, env)
 	_ = ipc.WriteFrame(conn, resp)
+}
+
+// execSpawnFDTimeout bounds how long the daemon waits for the client's
+// SCM_RIGHTS control message after the exec.spawn request frame. A client that
+// sends a frame but never the fds must not wedge the handler — the deadline
+// surfaces as a non-EAGAIN error from rc.Read and we fail cleanly.
+const execSpawnFDTimeout = 5 * time.Second
+
+// recvExecSpawnFDs receives EXACTLY the three stdio fds the CLI sent via
+// SCM_RIGHTS right after the request frame. The returned fds are the daemon's
+// own copies (the kernel dup'd them into our table); the caller closes them
+// after dispatch.
+//
+// The receive is driven through the conn's SyscallConn().Read so it is
+// netpoller-aware. The request frame's bytes can wake ReadEnvelope before the
+// separate control message lands; a raw Recvmsg on the runtime's non-blocking
+// fd would then return EAGAIN and spuriously fail a valid exec (~1-in-10 under
+// load). rc.Read parks on the netpoller until the fd is readable and retries
+// the callback, so we WAIT for the control message instead of racing it. The
+// callback returns false on EAGAIN to keep waiting; any other outcome (success
+// or a real error) completes the read. A fresh read deadline bounds the wait
+// (the handler cleared the long-op deadline earlier), so a client that sends a
+// frame but never the fds times out cleanly rather than hanging.
+func recvExecSpawnFDs(conn net.Conn) ([]int, error) {
+	sc, ok := conn.(syscall.Conn)
+	if !ok {
+		return nil, fmt.Errorf("conn does not support fd passing")
+	}
+	rc, err := sc.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(execSpawnFDTimeout))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	var fds []int
+	var opErr error
+	rerr := rc.Read(func(fd uintptr) bool {
+		fds, opErr = fdpass.RecvFDs(int(fd), 3)
+		// Returning false keeps waiting when the control message hasn't arrived
+		// yet; the netpoller re-invokes us when the fd becomes readable (or the
+		// deadline fires, which surfaces as a non-EAGAIN error from rc.Read).
+		return !errors.Is(opErr, syscall.EAGAIN)
+	})
+	if rerr != nil {
+		return nil, rerr // deadline/timeout or runtime error
+	}
+	return fds, opErr
 }
 
 // Dispatch routes one IPC envelope in-process and returns the response.
@@ -137,6 +206,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 
 	case ipc.OpExecFetch:
 		return d.handleExecFetch(ctx, env)
+	case ipc.OpExecSpawn:
+		return d.handleExecSpawn(ctx, env)
 
 	case ipc.OpAuditTail:
 		return d.handleAuditTail(ctx, env)
@@ -635,6 +706,12 @@ func (d *Daemon) handleTrustRemove(env *ipc.Envelope) *ipc.Envelope {
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
+	// Privsep: best-effort revoke the exec service user's ACL on the project dir
+	// when a record was actually removed (no-op when privsep is off; never fails
+	// untrust). Mirrors grantProjectACL at trust time.
+	if removed {
+		d.revokeProjectACL(req.Path)
+	}
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustRemoveResp{Removed: removed})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -688,6 +765,9 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 			fmt.Sprintf("trust refused: %v", gerr),
 			"fix the .byn before trusting it")
 	}
+	// Privsep: best-effort grant the exec service user access to the project
+	// dir the .byn lives in (no-op when privsep is off; never fails the grant).
+	d.grantProjectACL(req.Path)
 	d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK})
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustGrantResp{
 		Path:            canon,
@@ -753,6 +833,10 @@ func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *i
 			results = append(results, ipc.TrustGrantResult{Path: p, Error: perr.Error()})
 			continue
 		}
+		// Privsep: best-effort grant the exec service user access to the project
+		// dir the .byn lives in (no-op when privsep is off; never fails the grant).
+		// Mirrors handleTrustGrant.
+		d.grantProjectACL(p)
 		d.auditEmit(ctx, name, audit.Event{Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeOK, BynPath: canon})
 		results = append(results, ipc.TrustGrantResult{
 			Path:            canon,

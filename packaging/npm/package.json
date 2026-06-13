@@ -1,6 +1,6 @@
 {
   "name": "@byn/cli",
-  "version": "0.0.1",
+  "version": "0.3.0",
   "description": "Reserved scope for byn — a local-first secure secrets vault & credential manager (a Go CLI). Install the real CLI via `go install github.com/sandeepbaynes/byn/cmd/byn@latest`, Homebrew, or https://github.com/sandeepbaynes/byn. This package installs no executable.",
   "license": "BUSL-1.1",
   "homepage": "https://github.com/sandeepbaynes/byn",

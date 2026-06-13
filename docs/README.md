@@ -13,8 +13,11 @@ you need; everything cross-links.
 - **[CLI reference](cli-reference.md)** — every command, flag, env var, and exit code.
 - **[`.byn` file + discovery](byn-file-format.md)** — auto-scope from the
   current directory + TOFU trust.
-- **[File layout](file-layout.md)** — what `~/.byn/` contains, modes,
+- **[File layout](file-layout.md)** — what the byn data root contains, modes,
   semantics.
+- **[Migration & setup](migration.md)** — `byn setup`, `byn migrate` (relocate
+  vs import), privilege separation, and the data-root override removal upgrade
+  note.
 - **[Troubleshooting](troubleshooting.md)** — daemon down, vault locked,
   rate-limited, audit chain broken, etc.
 - **[Glossary](glossary.md)** — vault, scope, AAD, TOFU, wrapping, fingerprint,
@@ -39,7 +42,11 @@ you need; everything cross-links.
 
 - A `[scope]` in this doc means `vault → project → env`, the four-level
   hierarchy explained in [Architecture](architecture.md) and the [Glossary](glossary.md).
-- "Daemon" means the long-running background process at
-  `~/.byn/daemon.sock`. "CLI" means the `byn` binary that connects to it.
+- "Daemon" means the long-running background process listening on the byn
+  daemon socket. "CLI" means the `byn` binary that connects to it.
 - File modes are written in octal (`0600` = owner read+write, no group/other).
-- All on-disk paths assume `$BYN_DIR` defaults to `~/.byn`.
+- On-disk paths are shown relative to the **byn data root**. That root is a
+  fixed system path (`/var/lib/byn` on Linux, `/Library/Application Support/byn`
+  on macOS) once the machine is provisioned for privilege separation
+  (`byn setup`), or the legacy per-user `~/.byn` when unprovisioned (the default).
+  See [File layout](file-layout.md). There is no data-root env override.

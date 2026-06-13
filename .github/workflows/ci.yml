@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Least-privilege default for every job: read-only access to repo contents is
+# all CI needs (checkout). Clears the CodeQL actions/missing-workflow-permissions
+# warnings. Any job needing more must opt in explicitly with its own permissions.
+permissions:
+  contents: read
+
 env:
   # Run JS-based actions on Node 24 (Node 20 is deprecated on GH runners).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -47,3 +53,49 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
+
+  # Root-gated privilege-separation integration tests. Two proofs run here as
+  # root (they t.Skip cleanly on the non-root `test` jobs above):
+  #   - NU-5 TestPrivsep_CredLeakProof: `byn setup` creates the _byn-exec service
+  #     user + setcaps the spawn helper, the exec child drops to that uid, and a
+  #     non-root process proves it cannot read the child's /proc/<pid>/environ.
+  #   - NU-6 TestPrivsep_DaemonPosture: provisions via internal/setup.Provision
+  #     (real service users + setcap'd helper + owner record), proves the owner
+  #     record allowlists the recorded owner UID (a root client is rejected), the
+  #     exec child runs as _byn-exec (≠ daemon ≠ owner), and the fail-closed
+  #     posture (privsep on but unprovisioned ⇒ `byn exec` errors with the
+  #     `sudo byn setup` hint, never an owner-UID run). It does NOT depend on
+  #     systemd supervising the unit (unreliable in a container); see the test's
+  #     header for the honest ceiling.
+  # GitHub's ubuntu runner user is sudo-capable.
+  privsep-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # systemd-sysusers, setcap, setfacl, setpriv — the privsep setup +
+      # cross-uid /proc read prerequisites. systemd + libcap2-bin ship on the
+      # ubuntu runner; acl + util-linux provide setfacl/setpriv.
+      - name: Install privsep prerequisites
+        run: sudo apt-get update && sudo apt-get install -y acl libcap2-bin util-linux systemd
+
+      # Build byn + the prebuilt byn-exec-helper (the test resolves the helper
+      # beside the test byn, but `make build` proves the shipping build works).
+      - name: Build
+        run: make build
+
+      # Run ONLY the privsep integration tests as root. -E preserves the env and
+      # PATH so `go` and the Go build cache resolve; the tests rebuild byn + the
+      # helper into a tempdir and drive a real daemon. The `byntest` tag makes the
+      # test process's paths.SystemDataDir() use the same test-data seam the
+      # rebuilt byntest CLI uses (matching `make test-integration`), so the NU-6
+      # posture test and the daemon agree on the data dir. `-run TestPrivsep`
+      # selects both TestPrivsep_CredLeakProof (NU-5) and TestPrivsep_DaemonPosture
+      # (NU-6).
+      - name: Privsep integration tests (root)
+        run: sudo -E env "PATH=$PATH" "HOME=$HOME" go test -tags='integration byntest' -timeout 15m -run TestPrivsep ./tests/integration/...

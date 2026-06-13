@@ -112,6 +112,43 @@ func (s *Store) DeletePasskey(ctx context.Context, credID []byte) (bool, error) 
 	return n > 0, err
 }
 
+// ClearPasskeyEnrollments removes every passkey credential and its PRF-unlock
+// record from the vault, in a single transaction. It is the "drop passkeys"
+// operation a cross-source `byn migrate --from` import performs (spec §6.2 D1):
+// an imported vault brings DATA only, never the previous machine's enrolled
+// authenticators — the owner must re-enroll passkeys on this machine.
+//
+// Passkey enrollments are NOT separate files; they live in this vault's
+// `passkey` and `passkey_unlock` tables, so dropping them is a DELETE, not a
+// file removal. The vault key is never touched (the password wrap is the floor)
+// and no entries/audit data are affected — only the two passkey tables. Safe on
+// a locked Store (these tables hold no plaintext). Idempotent: clearing an
+// already-empty pair of tables is a no-op success.
+//
+// Order matters: passkey_unlock has a foreign key into passkey, so it is
+// emptied first (the FK would also cascade, but deleting the child explicitly
+// keeps the statement order obvious and FK-pragma-independent).
+func (s *Store) ClearPasskeyEnrollments(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("vault: clear passkeys (begin): %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, stmt := range []string{
+		`DELETE FROM passkey_unlock`,
+		`DELETE FROM passkey`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("vault: clear passkeys: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("vault: clear passkeys (commit): %w", err)
+	}
+	return nil
+}
+
 // scanPasskey reads one row into a Passkey. Works for both *sql.Row and
 // *sql.Rows (both satisfy the Scan signature).
 func scanPasskey(sc interface{ Scan(...any) error }) (Passkey, error) {
