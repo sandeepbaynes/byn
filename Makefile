@@ -25,7 +25,7 @@ BINDIR  ?= $(PREFIX)/bin
 MANDIR  ?= $(PREFIX)/share/man/man1
 MANFILE := man/byn.1
 
-.PHONY: all build test test-integration lint cover clean clean-dist tidy fmt vet man install-man uninstall-man install uninstall dist
+.PHONY: all build test test-integration lint cover clean clean-dist tidy fmt vet man install-man uninstall-man install uninstall dist site site-check
 
 all: build
 
@@ -33,6 +33,17 @@ build:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(BIN) ./cmd/byn
 	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(HELPER) ./cmd/byn-exec-helper
+
+# Render the docs site: docs/*.md (the single source of truth) -> themed
+# docs/<name>/index.html via the committed generator. The generated HTML is a
+# build artifact (gitignored) and is published to gh-pages separately.
+site:
+	$(GO) run ./tools/gensite
+
+# CI guard: fail if the committed markdown would produce different HTML than
+# what is on disk (i.e. someone edited a doc but didn't re-run `make site`).
+site-check:
+	$(GO) run ./tools/gensite -check
 
 man: $(MANFILE)
 	@echo "Preview: man $(MANFILE)"
