@@ -1,12 +1,12 @@
 # Real-world incidents byn is built for
 
-*Field note · coverage: v0.2.0 · updated with each release*
+*Field note · coverage: v0.3.0 · updated with each release*
 
 Every incident below is real, verified, and linked to primary or
 reputable secondary sources. For each one we answer three questions
 **honestly**:
 
-1. **Would byn (v0.2.0) have changed the outcome?**
+1. **Would byn (v0.3.0) have changed the outcome?**
 2. **Would another credential manager have helped too?** If yes, we say
    so — several good tools remove plaintext files, and pretending
    otherwise would be marketing, not security.
@@ -40,7 +40,7 @@ wave that flipped victims' private repos public.
   vault yields ciphertext, and a value read from the malware's shell has
   no session → `auth_required`. ◐ overall: the attempted reads land in
   the **audit log**, turning a silent harvest into a loud one. Honest
-  gap: byn v0.2.0 does not hide `~/.ssh` keys or other tools' token
+  gap: byn v0.3.0 does not hide `~/.ssh` keys or other tools' token
   files (the `ssh` shim and file-gating are roadmap) — those slices of
   the loot were reachable regardless of which env-secret manager you
   used.

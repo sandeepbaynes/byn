@@ -1,6 +1,6 @@
 # The AWS credentials file that cost me my account
 
-*Field note · from the author · coverage: v0.2.0*
+*Field note · from the author · coverage: v0.3.0*
 
 This one isn't from a vendor write-up. It happened to me, on my own
 infrastructure, and it is part of why byn exists.

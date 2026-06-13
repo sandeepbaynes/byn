@@ -5,7 +5,7 @@
 # swap `license = ...` for `license-file = "LICENSE"`.
 [package]
 name = "byn"
-version = "0.0.1"
+version = "0.3.0"
 edition = "2021"
 description = "Name reserved for byn — a local-first secure secrets vault & credential manager (a Go CLI). Install via `go install github.com/sandeepbaynes/byn/cmd/byn@latest`, Homebrew, or https://github.com/sandeepbaynes/byn."
 authors = ["Sandeep Baynes"]
