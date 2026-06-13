@@ -69,7 +69,8 @@ byn ls             # names are always listable; values stay encrypted
 > [architecture](docs/architecture.md) · [security model](docs/security.md) ·
 > [CLI reference](docs/cli-reference.md) ·
 > [`.byn` format](docs/byn-file-format.md) ·
-> [file layout](docs/file-layout.md) · [glossary](docs/glossary.md) ·
+> [file layout](docs/file-layout.md) · [migration & setup](docs/migration.md) ·
+> [glossary](docs/glossary.md) ·
 > [troubleshooting](docs/troubleshooting.md) ·
 > [TUI design](docs/tui-design.md) ·
 > [integrations](docs/integrations/)
@@ -91,13 +92,17 @@ supports the WebAuthn PRF the portal unlock uses, so that part would come along.
 
 ## Status
 
-What works today (post Phase 1–6 overnight push, 2026-06-02):
+What works today:
 
-- Encrypted multi-vault store under `~/.byn/vaults/<name>/` (per-vault SQLite + Argon2id-wrapped key)
+- Encrypted multi-vault store under `vaults/<name>/` in the byn data root (per-vault SQLite + Argon2id-wrapped key)
+- **Portable vaults by design** — the vault key is wrapped with `Argon2id(password)` only, no machine binding, so a copy unlocks on other hardware with the same password (the trade-off: the passphrase is the at-rest floor)
 - Multi-vault daemon model: many vaults can be unlocked simultaneously, each with its own idle timer
 - Per-vault `vault → project → env` scope hierarchy with inheritance (non-default env falls back to default)
-- Daemon over Unix socket (`~/.byn/daemon.sock`, mode `0600`, peer-UID enforced)
+- **Opt-in privilege separation (off by default):** the daemon can run as a dedicated `_byn` service user and trusted-pinned `byn exec` children as `_byn-exec` (a three-UID model: owner ≠ `_byn` ≠ `_byn-exec`). Provisioned with `sudo byn setup`, engaged with `[security] privsep = true`. It raises the bar to root — it does **not** defend against root / `CAP_SYS_PTRACE`. When off, byn runs as today and the same-UID env-sniff / daemon-ptrace holes remain.
+- **Fixed data root, no override:** `~/.byn` by default, or a system path (`/var/lib/byn` // `/Library/Application Support/byn`) once provisioned. The old data-root env var has been removed.
+- Daemon over Unix socket (mode `0600`, peer-UID enforced)
 - CLI lifecycle: `init`, `unlock`, `lock`, `daemon {start,stop,status}`, `status [--json]`
+- Provisioning & migration: `byn setup` (one-sudo privsep install, idempotent, `--uninstall`/`--purge`), `byn migrate` (relocate legacy `~/.byn` → system path keeping trust+passkeys, or `--from PATH` import that drops trust+passkeys)
 - CLI structure CRUD: `vault {list,delete,init,unlock,lock}`, `project {list,create,delete,rename}`, `env {list,create,delete,rename}` — all `list`s accept `--json`
 - CLI env-var ops (per active scope): `put`, `get [--json]`, `list [--json]`, `delete`, `rename`, `cat`/`ls`/`rm`/`mv` aliases
 - Bulk I/O: `import` from `.env`/`.yaml`/`.json` (file path, stdin, or `--format`-forced), `export` to same formats (stdout or `--output PATH`)
@@ -114,12 +119,12 @@ What works today (post Phase 1–6 overnight push, 2026-06-02):
 - Persistent failed-unlock rate limiter (survives daemon restart)
 - IDE integration docs: see [`docs/integrations/`](docs/integrations/) for VS Code, JetBrains, Eclipse, and AI coding agents
 
-Not yet:
+Not yet (planned — see [Roadmap](#roadmap)):
 
 - macOS Secure Enclave / Linux TPM2 wrapping (skeletons in place; tests skip without entitlements)
-- launchd/systemd auto-install
-- Idle re-lock UI polish
-- FUSE-mounted file secrets, shims, ACLs, cloud sync
+- Audit & Observability v2 (immutable per-instance log groups, CLI+web search/export, OTLP export)
+- `.byn` behavioral anomaly detection
+- FUSE-mounted file secrets, shims, ACLs, cloud sync, mobile approval app
 - Neovim-style TUI redesign with left rail navigation across vault/project/env/files (the existing modal TUI is env-var-only for the default scope)
 
 ---
@@ -233,12 +238,12 @@ Single test:
 go test -race -run TestPutGetRoundtrip ./internal/daemon/...
 ```
 
-A short manual smoke covering the golden path:
+A short manual smoke covering the golden path (uses your real `~/.byn` data root
+— there is no data-root override; the test suite isolates a tempdir via a
+`byntest`-build-tag seam that never ships in a release binary):
 
 ```sh
 make build
-
-export BYN_DIR=/tmp/byn-smoke
 
 bin/byn start
 bin/byn status                           # → uninitialized
@@ -284,9 +289,18 @@ are a hard error. Env-var fallbacks shown in `( )`.
 | `byn start [--foreground]` | Start the daemon (detached by default) |
 | `byn stop` | Stop the daemon (SIGTERM via pidfile) |
 | `byn restart [--foreground]` | Restart the daemon |
-| `byn reload` | Re-read `~/.byn/config` without a restart |
+| `byn reload` | Re-read the daemon `config` without a restart |
 | `byn status [--json]` | Daemon + vault state |
 | `byn daemon install\|uninstall` | Auto-start the daemon on login |
+
+### Provisioning & migration (privilege separation)
+
+| Command | Action |
+|---|---|
+| `sudo byn setup [--uninstall [--purge]]` | One-sudo privsep provisioning: `_byn`/`_byn-exec` accounts, system service, spawn helper, owner record. Idempotent. `--uninstall` reverses it (vault kept); `--purge` also deletes the data dir |
+| `sudo byn migrate [--from PATH] [--force]` | Relocate legacy `~/.byn` → system path (keeps trust+passkeys), or import an external vault tree with `--from` (drops trust+passkeys → re-trust + re-enroll). Source verified without its password; adopt is atomic |
+
+See [`docs/migration.md`](docs/migration.md).
 
 ### Structure (vault → project → env)
 
@@ -373,35 +387,40 @@ Try: byn unlock
 
 ## Configuration
 
-Environment:
+The **data root** is a fixed per-machine location: `~/.byn` by default, or a
+system path (`/var/lib/byn` on Linux, `/Library/Application Support/byn` on
+macOS, owned by `_byn`) once provisioned for privilege separation with
+`byn setup`. There is **no** runtime data-root override — the environment
+variable older versions honored has been removed. Daemon and security config
+live in a TOML `config` file in that root (`byn daemon reload` hot-applies most
+keys); see [`docs/cli-reference.md`](docs/cli-reference.md#configuration).
 
-| Var | Default | Purpose |
-|---|---|---|
-| `BYN_DIR` | `~/.byn` | Daemon data directory |
-
-Files inside `BYN_DIR`:
+Files inside the data root:
 
 | File | Description |
 |---|---|
-| `vault.db` | SQLite database, mode `0600` |
-| `wrapped.key` | Argon2id-wrapped vault key blob, mode `0600` |
-| `daemon.sock` | Unix domain socket, mode `0600`, peer-UID enforced |
+| `vaults/<name>/vault.db` | SQLite database, mode `0600` |
+| `vaults/<name>/wrapped.key` | Argon2id-wrapped vault key blob, mode `0600` |
+| `daemon.sock` | Unix domain socket, mode `0600`, peer-UID enforced (runtime path when provisioned) |
 | `daemon.pid` | Pidfile (single-instance guard) |
 | `daemon.log` | Daemon's combined stdout/stderr when started detached |
 | `auth-state.json` | Failed-unlock backoff state, mode `0600` |
+| `owner` | Owner-UID record (provisioned only; the "privsep on" marker) |
 
-The daemon binds the socket at `<BYN_DIR>/daemon.sock`. On macOS,
-`sun_path` is capped at 104 bytes — keep `BYN_DIR` short.
+Full reference: [`docs/file-layout.md`](docs/file-layout.md). On macOS the socket
+path stays within the 104-byte `sun_path` cap because the data-root locations are
+fixed.
 
 ---
 
 ## Roadmap
 
-Highlights of what's next:
+Planned, **not yet built** — listed honestly, not as current capability:
 
-- **Release readiness** — daemon auto-start (launchd/systemd, `byn daemon install`), quickstart guide
-- **Phase 3** — shim engine + `aws`/`gcloud`/etc. credential injection + tamper-evident audit log
-- **Phase 4–7** — ACLs, FUSE, cloud sync, audit & observability
+- **Audit & Observability v2** — immutable per-vault-instance log groups (never deletable except by removing the DB); CLI + web list / filter / search / export; **OTLP export** for metrics and logs; daemon debug logs to journald + OTLP.
+- **`.byn` behavioral anomaly detection** — baseline an action's normal action/env patterns and warn on drift, especially for wildcard grants.
+- **Shims** — PATH-interception shims for `aws` / `gcloud` / `gh` / `ssh` / etc. that inject credentials transparently per command.
+- **FUSE-mounted file secrets**, **ACLs / per-user sharing**, **cloud sync** (password-only encryption + delta push + TTL/lease revocation), and a **mobile approval app** (phone-as-2FA approver, recovery codes).
 
 ---
 

@@ -1,7 +1,9 @@
-# byn — Features (2026-06-02)
+# byn — Features
 
 What is shippable today, organized by user-facing capability. Each
-feature names the relevant source files for future reference.
+feature names the relevant source files for future reference. Planned,
+not-yet-built capabilities are listed under [Roadmap](#roadmap-planned-not-yet-built),
+clearly marked.
 
 ---
 
@@ -50,7 +52,12 @@ feature names the relevant source files for future reference.
   `export` (same formats, stdout or `--output`).
 - Execution: `byn exec -- COMMAND` injects vault env-vars into the
   child via `syscall.Exec` (no parent process, no inheritance of CLI
-  PID).
+  PID). With privsep enabled, a trusted-pinned exec is instead spawned
+  daemon-side as `_byn-exec` (see §13).
+- Provisioning & migration: `byn setup` (one-sudo privsep install,
+  idempotent, `--uninstall`/`--purge`) and `byn migrate` (relocate the
+  legacy `~/.byn` into the system path, or import a vault tree with
+  `--from`) — see §14 and [Migration & setup](migration.md).
 - Modal TUI: `byn`, `byn edit`, `byn view` open the vi-style
   TUI for the default scope.
 - AWS-CLI style help: `byn <cmd> {help,--help,-h}` and
@@ -203,7 +210,49 @@ feature names the relevant source files for future reference.
   root. Revoke is password-gated and cascades to a hard lockout. macOS Touch ID
   / iCloud Keychain only; non-PRF authenticators degrade to session-only.
 
-## 13. Tests
+## 13. Privilege separation (opt-in, off by default)
+
+- **Three-UID model:** owner (you) ≠ `_byn` (the daemon) ≠ `_byn-exec`
+  (exec children of a trusted, *pinned* `.byn` action). The daemon holds
+  the vault key as `_byn`, so a same-(owner)-UID **non-root** process can't
+  ptrace it; a pinned exec child runs as `_byn-exec`, so that process can't
+  read its `/proc/<pid>/environ`.
+- **Opt-in this release, off by default** (`[security] privsep = true`,
+  provisioned by `byn setup`). When off, byn behaves exactly as before —
+  the daemon and exec children run at your UID and the same-UID env-sniff /
+  daemon-ptrace holes remain open. Stated plainly so there's no false
+  assurance.
+- **Honest ceiling:** privsep raises the bar to **root** — it does **not**
+  defend against root, `CAP_SYS_PTRACE`, or a root `task_for_pid`. Linux
+  adds `PR_SET_DUMPABLE=0`; macOS hardened-runtime only takes effect for a
+  Developer ID-signed build. Ad-hoc exec (no pinned `.byn`) still runs at
+  your UID even with privsep on.
+- **Fail-closed:** privsep enabled but unprovisioned errors ("run `sudo byn
+  setup`") — it never silently downgrades to the owner UID.
+- Packages: `internal/privsep`, `internal/setup`, `internal/paths`. See
+  [Security model → privilege separation](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56).
+
+## 14. Provisioning & migration
+
+- **`byn setup`** — one-sudo provisioning: creates the `_byn` / `_byn-exec`
+  service accounts, installs the system service (systemd unit on Linux,
+  LaunchDaemon on macOS) + the privileged spawn helper, relocates a legacy
+  `~/.byn` into the system data path, and records the owner UID (from
+  `SUDO_UID`). Idempotent; `--uninstall` reverses it (vault preserved),
+  `--purge` also deletes the data dir.
+- **`byn migrate`** — two modes: **relocate** (no `--from`; moves the legacy
+  `~/.byn` into the system path on the same machine, **keeps** trust +
+  passkeys) and **import** (`--from PATH`; copies an external vault tree,
+  never deletes the source, and **drops** the trust store + passkey
+  enrollments so you re-trust + re-enroll). The source is verified **without
+  its password** and adoption is atomic.
+- **Fixed data root, no override:** state lives at `~/.byn` (default) or the
+  system path once provisioned. The old data-root environment variable has
+  been **removed** — there is no runtime data-root override.
+- Packages: `internal/setup`, `internal/migrate`, `internal/paths`. See
+  [Migration & setup](migration.md).
+
+## 15. Tests
 
 - Unit tests under `internal/*`. All pass with `-race`.
 - Integration suite under `tests/integration/`, gated by build tag
@@ -212,23 +261,30 @@ feature names the relevant source files for future reference.
 
 ---
 
-## Backlog (deferred, with rationale)
+## Roadmap (planned, not yet built)
 
-- **FUSE-mounted file secrets** — schema + IPC shaped already; Phase 5.
-- **`.byn` workspace manifest** — per-command env allowlists +
-  file materialization. Gated on `byn exec` field-testing. Memory:
-  `project_byn_file_workspace.md`.
-- **Entry versioning CLI** — `byn history` / `revert` / `diff`.
-  Schema + `entry_versions` table shipped in Slice 2; IPC ops + CLI
-  surface deferred.
-- **Trust-file HMAC hardening** — `~/.byn/trusted_byn.json`
-  integrity-signed with a daemon-resident key. Design ready, deferred
-  per internal design notes.
-- **mlock wiring** — `internal/secmem` package shipped but not yet
-  used for master password / Argon2 workspace. Security audit
-  flagged the docs-vs-reality gap.
-- **TOTP per-read / push-approval / leases** — analysis concluded
-  the design didn't fit the core goal (see
-  internal design notes).
-- **Web UI / shims / ACLs / cloud sync** — Phases 2/3/4/6 of original
-  plan.
+Everything below is **planned, not shipped** — listed for honesty, not as a
+current capability.
+
+- **Audit & Observability v2** — immutable per-vault-instance log groups (never
+  deletable except by removing the DB itself); CLI + web list / filter / search /
+  export; **OTLP export** for metrics and logs; daemon debug logs to journald +
+  OTLP. Design backlog.
+- **`.byn` behavioral anomaly detection** — baseline an action's normal
+  action/env patterns and warn on drift, especially for wildcard grants. Design
+  backlog.
+- **Shims** — PATH-interception shims for `aws` / `gcloud` / `gh` / `ssh` / etc.
+  that inject credentials transparently per command. Not built.
+- **FUSE-mounted file secrets** — schema + IPC shaped already; not built.
+- **Cloud sync** — password-only encryption, delta push to the local daemon, plus
+  TTL/lease offline revocation. Not built.
+- **Mobile approval app** — phone-as-2FA approver, multi-device, recovery codes.
+  Not built.
+- **`.byn` workspace manifest** — per-command env allowlists + file
+  materialization. Gated on `byn exec` field-testing.
+- **Entry versioning CLI** — `byn history` / `revert` / `diff`. Schema +
+  `entry_versions` table shipped; IPC ops + CLI surface deferred.
+- **Trust-file HMAC hardening** — `trusted_byn.json` integrity-signed with a
+  daemon-resident key (the trust store already carries fp-MAC + vk-MAC record
+  MACs; this is the additional whole-file hardening).
+- **ACLs / per-user sharing** — not built.
