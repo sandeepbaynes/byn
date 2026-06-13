@@ -16,8 +16,8 @@ func samplePage() Page {
 		Nav:          NavSecurity,
 		Crumbs:       []Crumb{{Label: "Docs", Href: "../"}, {Label: "Security model", Current: true}},
 		SidebarTitle: "Security",
-		SidebarBadge: "v0.2.0",
-		VersionStamp: "v0.2.0",
+		SidebarBadge: "v0.3.0",
+		VersionStamp: "v0.3.0",
 		StampNote:    "Updated each release",
 		GitHubPath:   "docs/security.md",
 		Prev:         &NavLink{Label: "← Previous", Title: "CLI Reference", Href: "../cli-reference/"},
@@ -59,7 +59,7 @@ func TestRenderPage_Landmarks(t *testing.T) {
 	assert.Contains(t, html, `Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/security.md">docs/security.md</a>`)
 	assert.Contains(t, html, `href="https://github.com/sandeepbaynes/byn/edit/main/docs/security.md"`)
 	assert.Contains(t, html, `<div class="version-stamp">`)
-	assert.Contains(t, html, "<strong>v0.2.0</strong>")
+	assert.Contains(t, html, "<strong>v0.3.0</strong>")
 }
 
 func TestRenderPage_AutoSidebarFromH2(t *testing.T) {
@@ -68,7 +68,7 @@ func TestRenderPage_AutoSidebarFromH2(t *testing.T) {
 
 	// Sidebar self-link with badge, then one entry per H2 (not H3).
 	assert.Contains(t, html, `<div class="sb-title">Security</div>`)
-	assert.Contains(t, html, `<a href="./" class="sb-item active">Security model <span class="sb-badge">v0.2.0</span></a>`)
+	assert.Contains(t, html, `<a href="./" class="sb-item active">Security model <span class="sb-badge">v0.3.0</span></a>`)
 	assert.Contains(t, html, `<a href="#threat-model" class="sb-item">Threat model</a>`)
 	assert.Contains(t, html, `<a href="#crypto-stack" class="sb-item">Crypto stack</a>`)
 	assert.NotContains(t, html, `<a href="#in-scope" class="sb-item">`, "H3 must not appear in the sidebar")

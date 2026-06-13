@@ -58,10 +58,10 @@ type Page struct {
 	// section (e.g. "Security", "Field notes"). Defaults to the page title.
 	SidebarTitle string
 	// SidebarBadge is an optional small badge on the sidebar's self-link
-	// (e.g. "v0.2.0", "5 min"). Empty renders no badge.
+	// (e.g. "v0.3.0", "5 min"). Empty renders no badge.
 	SidebarBadge string
 	// VersionStamp, when non-empty, renders the coverage version-stamp banner
-	// under the title (e.g. "v0.2.0") with StampNote as its trailing text.
+	// under the title (e.g. "v0.3.0") with StampNote as its trailing text.
 	VersionStamp string
 	StampNote    string
 	// Prev/Next render the bottom pager. Nil entries are omitted.

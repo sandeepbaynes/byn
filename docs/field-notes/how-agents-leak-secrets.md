@@ -1,6 +1,6 @@
 # How agents and bots leak your secrets
 
-*Field note · coverage: v0.2.0 · updated with each release*
+*Field note · coverage: v0.3.0 · updated with each release*
 
 Most credential leaks in agentic development are not attacks. They are
 **accidents with your permissions**: an agent debugging a build reads the
@@ -12,7 +12,7 @@ running as you can read** — and your machine is now operated by a crowd
 of such processes.
 
 This field note catalogs the leak vectors one by one. For each: how the
-leak happens, what byn does about it **today (v0.2.0)**, where byn
+leak happens, what byn does about it **today (v0.3.0)**, where byn
 **cannot** protect, and what is **coming** that will close more of the
 gap. It is updated every release. For verified incidents in the wild,
 see [Real-world incidents](real-world-incidents.md); for the author's
@@ -131,17 +131,20 @@ incidents](real-world-incidents.md)).
   values require a session or the master password, the daemon socket
   rejects requests without authorization for value reads, and every
   attempt lands in the audit log — the attack becomes **loud**.
-- **Where byn can't protect:** the full same-UID ceiling (v0.2.0): a
+- **Where byn can't protect (with privsep off — the default):** the full
+  same-UID ceiling: a
   code-executing process as your UID can ptrace the *unlocked* daemon,
   read an injected child's environ, or keylog a password prompt in a
   terminal it controls. It can also simply wait inside a terminal that
   holds a live session.
-- **Coming:** privilege separation (next release) removes the ptrace /
-  environ / socket paths for non-root same-UID code — exactly this
-  vector's strongest moves. Off-box audit anchoring (planned) makes the
-  trail tamper-proof even against an attacker who later gets the file;
-  a machine-bound key wrap (planned) makes a *copied* vault useless off
-  the machine.
+- **Now opt-in / planned:** privilege separation (shipped opt-in in v0.3.0 —
+  enable with `[security] privsep` + `sudo byn setup`) removes the ptrace /
+  environ / socket paths for non-root same-UID code — exactly this vector's
+  strongest moves. Off-box audit anchoring (planned) makes the trail
+  tamper-proof even against an attacker who later gets the file. Vaults are
+  **portable by design** — a *copied* vault is protected by the password wrap,
+  not machine binding; a stronger break-glass recovery wrap is planned so a
+  memorable password isn't the at-rest floor.
 
 ## Vector 6 — Prompt injection turns a good agent rogue
 
@@ -191,15 +194,15 @@ account](aws-credential-file-takeover.md).
 
 ---
 
-## The honest summary: now vs next
+## The honest summary: default vs opt-in privsep
 
-| Vector | v0.2.0 | Next release (privsep) | Planned |
+| Vector | v0.3.0 (default) | v0.3.0 + privsep (opt-in) | Planned |
 |---|---|---|---|
 | 1. Agent reads secret file | ✓ no plaintext file; reads gated + audited | ✓ + daemon/child on own UIDs | Shims, FUSE file gating |
 | 2. Secret enters agent context | ◐ reduced + audited; child output not controllable | — | Audit leak-pattern scan |
 | 3. IDE completion ingestion | ◐ structural (no literal to read) | — | — (editor is out of reach) |
 | 4. Committed to git | ✓ names in repo, values in vault | — | — |
-| 5. Same-UID harvesting malware | ◐ nothing to harvest; ptrace/environ residual | ✓ ptrace/environ/socket need root | Off-box audit anchor, machine-bound wrap |
+| 5. Same-UID harvesting malware | ◐ nothing to harvest; ptrace/environ residual | ✓ ptrace/environ/socket need root | Off-box audit anchor, break-glass recovery wrap |
 | 6. Prompt-injected agent | ◐ gated actions, pinned exec, no interactive bypass | ✓ tighter daemon surface | Out-of-band approval channel |
 | 7. Creds on dev VMs | ◐ encrypted + authorized + audited | ✓ | Scoped short-lived broker, leases |
 

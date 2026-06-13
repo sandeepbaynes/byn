@@ -16,7 +16,7 @@ package site
 // Reference-only docs (spec, architecture, glossary, …) remain plain markdown
 // on GitHub, exactly as the existing gh-pages tree had them.
 func Manifest() []Page {
-	const v = "v0.2.0"
+	const v = "v0.3.0"
 
 	docsHome := Crumb{Label: "Docs", Href: "../"}
 	fieldNotesParent := Crumb{Label: "Field notes", Href: "../"}
