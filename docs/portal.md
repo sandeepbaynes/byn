@@ -17,6 +17,8 @@ byn web            # opens the portal in your browser
 
 The portal binds loopback only (`127.0.0.1`), never the network.
 
+---
+
 ## The env-vars view
 
 Values are masked by default. **Single-click** a value to reveal it (it re-masks
@@ -27,6 +29,8 @@ after `[ui] reveal_hide_after`, default 15s); double-click to edit. **Reveal all
 For a non-default env (one that inherits `default`), **reset to default** removes
 every override and added var in that env — leaving it inheriting `default`
 entirely — after a confirm dialog. The `default` env and other envs are untouched.
+
+---
 
 ## Trust boundary: loopback + owner-token
 

@@ -53,6 +53,8 @@ wave that flipped victims' private repos public.
   none, and every attempted access is audited. Most injection tools
   have no per-access audit trail at all.
 
+---
+
 ## 2. Shai-Hulud — the self-replicating npm worm running TruffleHog on your disk — **byn: ✓/◐**
 
 **September 2025** (resurgence Nov 2025). A worm compromised 500+ npm
@@ -76,6 +78,8 @@ and propagate.
   disk to authenticate (ironically, an `.npmrc`-style file) re-creates
   the problem. byn's daemon holds keys in memory, gated per action,
   with nothing reusable on disk.
+
+---
 
 ## 3. Amazon Q extension shipped with a wiper prompt aimed at local AWS credentials — **byn: ◐**
 
@@ -104,6 +108,8 @@ v1.85.0.
   separates "agent runs the build" from "agent nukes the account." Plus
   the audit trail of what was attempted.
 
+---
+
 ## 4. The pattern of agents reading `.env` despite deny rules — **byn: ✓**
 
 **2025–2026.** Multiple reports document coding agents reading `.env`
@@ -131,6 +137,8 @@ security boundary.**
   the agent runs inside it — sees the secrets, and no per-access log
   exists locally. byn logs every value access with caller context, so
   "did the agent touch the prod key?" has an answer.
+
+---
 
 ## 5. GitGuardian's secret-sprawl numbers — the background radiation — **byn: ◐**
 

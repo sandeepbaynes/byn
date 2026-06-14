@@ -6,6 +6,8 @@ development, what byn covers **now**, where it can't, and what's coming.
 coverage line at the top of each page tells you which version its claims
 were verified against.
 
+---
+
 ## Field notes
 
 - **[The AWS credentials file that cost me my account](aws-credential-file-takeover.md)**
@@ -28,6 +30,8 @@ were verified against.
 - **[Why byn doesn't use containers](../why-not-containers.md)**
   — design rationale: a container's boundary points the wrong way for
   this threat; sandbox the agent, not the secret.
+
+---
 
 ## Ground rules for these pages
 

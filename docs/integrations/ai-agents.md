@@ -5,6 +5,8 @@ and consume vault secrets safely — agents can see **key names** and
 **structure**, but values only land in the child process spawned via
 `byn exec`, not in agent context or scrollback.
 
+---
+
 ## Why byn for agents
 
 A code agent often has the following problem:
@@ -28,6 +30,8 @@ byn addresses all three:
 | Run a command with secrets injected      | `byn exec -- CMD ARGS`              | child's stdout; values never sent back to agent |
 | Bulk-write keys (from .env / .json / yaml) | `byn import [PATH \| -]`            | yes (counts only) |
 | Export entire scope (dangerous)          | `byn export --format env`           | **NO** — block this in your harness |
+
+---
 
 ## Recommended agent harness rules
 
@@ -58,6 +62,8 @@ byn export …             # bulk leak
 
 (Deny `cat NAME` and `byn cat NAME` similarly — `cat` is an alias
 for `get`.)
+
+---
 
 ## Example agent flow: bootstrap a project
 
@@ -98,6 +104,8 @@ for `get`.)
 
 The agent never sees `DATABASE_URL=postgres://…` — only `DATABASE_URL`.
 The test runner gets the URL via environ from `byn exec`.
+
+---
 
 ## Example: harness allow/deny rules
 
@@ -141,6 +149,8 @@ output is not piped anywhere the user wouldn't otherwise see.)
 > audited** (`byn audit`), so a leak is *detectable* even when a deny
 > rule fails. Prevention is best-effort; detection is the guarantee.
 
+---
+
 ## Patterns to know
 
 ### Pin a per-project scope
@@ -172,6 +182,8 @@ When you ssh a long-running agent into a dev VM:
 Every `byn` op writes an HMAC-chained entry to the vault's audit
 log. The agent's actions are reviewable with `byn audit`
 (`tail`, `view`, `verify`).
+
+---
 
 ## Scoping what an agent can do
 
