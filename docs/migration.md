@@ -63,10 +63,11 @@ What `byn setup` does, in order:
 It **provisions** privsep; it does not **enable** it. Engage it with
 `[security] privsep = true` in the config and a **daemon restart**. With privsep
 enabled but **not** provisioned, the daemon warns and trusted-`.byn` exec **fails
-closed** — it never silently falls back to running as your UID. (A
-lower-assurance `--no-privsep` opt-out exists for environments where you cannot
-create system accounts; it runs the daemon and exec children at your UID, so the
-same-UID ptrace / env-read weaknesses apply — use it only when you accept that.)
+closed** — it never silently falls back to running as your UID. (`byn exec
+--no-privsep` is a per-call escape hatch — not a setup-time opt-out — that forces
+the legacy in-process path for a single exec, running that child at your UID
+instead of `_byn-exec`, so the same-UID ptrace / env-read weaknesses apply for
+that command.)
 
 To reverse setup: `sudo byn setup --uninstall` removes the service, helper, and
 owner record but **leaves your vault intact**. Add `--purge` to also delete the

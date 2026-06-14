@@ -185,7 +185,7 @@ the owner UID.
 
 ---
 
-## SQLite schema (v3, STRICT)
+## SQLite schema (v4, STRICT)
 
 ```sql
 -- Meta key-value table; schema_version, audit_chain_seed,
@@ -216,24 +216,30 @@ envs(
 -- require_2fa is reserved for the future TOTP gate.
 entries(
     id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     env_id INTEGER NOT NULL REFERENCES envs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('env_var','file')),
     name TEXT NOT NULL,
-    kind TEXT NOT NULL,
     value BLOB NOT NULL,
+    aad_version INTEGER NOT NULL DEFAULT 1,
     deleted_at TEXT,
     require_2fa INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (env_id, name)
+    UNIQUE (project_id, env_id, name)
 ) STRICT
 
--- Historical revisions for entry_versioning. Append-only.
+-- Historical revisions for entry versioning. Append-only.
 entry_versions(
     id INTEGER PRIMARY KEY,
     entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    version_no INTEGER NOT NULL,
     value BLOB NOT NULL,
-    deleted INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    aad_version INTEGER NOT NULL,
+    op TEXT NOT NULL CHECK (op IN ('put','rename','delete')),
+    op_meta TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (entry_id, version_no)
 ) STRICT
 
 -- Portal passkey credentials (WebAuthn). All columns are non-secret.
@@ -452,7 +458,7 @@ time cost), AAD-binding rationale, and threat model.
 | `daemon.go` | Lifecycle: listener bind, pidfile, vault map, peer-UID enforcement |
 | `dispatch.go` | Op routing + status/vault/project/env/data-plane handlers |
 | `dispatch_audit_doctor.go` | `audit.tail`, `audit.verify`, `doctor` handlers |
-| `peercred*.go` | `SO_PEERCRED` (Linux) / `LOCAL_PEEREPID` (macOS, partial) |
+| `peercred*.go` | `SO_PEERCRED` (Linux) / `LOCAL_PEERCRED` (macOS) |
 
 ---
 

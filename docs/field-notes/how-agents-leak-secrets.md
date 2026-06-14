@@ -42,11 +42,12 @@ the linked reports and the honest caveats.
   still sits next to the vault, byn protects nothing about it. And an
   agent running in a terminal *you unlocked* can use that session
   (see Vector 6).
-- **Coming:** privilege separation (next release) puts the daemon and
+- **Now (opt-in) + coming:** privilege separation — shipped opt-in in
+  v0.3.0 (`[security] privsep` + `sudo byn setup`) — puts the daemon and
   exec children on their own service UIDs, so a same-UID agent can't
   ptrace the daemon or read an injected child's `/proc/<pid>/environ`.
-  Phase 3 shims (`aws`, `ssh`, …) remove still more plaintext files;
-  FUSE-gated crown-jewel files are on the roadmap behind them.
+  Still on the roadmap: Phase 3 shims (`aws`, `ssh`, …) to remove more
+  plaintext files, and FUSE-gated crown-jewel files behind them.
 
 ## Vector 2 — The secret ends up in the agent's context anyway
 
@@ -164,11 +165,11 @@ been demonstrated repeatedly against real agent stacks.
   terminal with a live session can use that session for gated reads
   until it expires or you `byn lock --session`. The TTY binding is not
   a same-UID boundary (a determined process can acquire your terminal).
-- **Coming:** privilege separation tightens the daemon surface;
-  per-command `[auth]` policy already lets you force `always` auth for
-  sensitive scopes; out-of-band approval surfaces (a channel the agent
-  can't drive) are the planned strong form via the pluggable auth
-  provider interface.
+- **Now (opt-in) + coming:** privilege separation (opt-in in v0.3.0)
+  tightens the daemon surface; per-command `[auth]` policy already lets
+  you force `always` auth for sensitive scopes; out-of-band approval
+  surfaces (a channel the agent can't drive) are the planned strong form
+  via the pluggable auth provider interface.
 
 ## Vector 7 — Long-lived credentials on dev VMs and remote boxes
 

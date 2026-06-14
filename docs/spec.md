@@ -43,12 +43,13 @@ as `<data root>/…`.
 exactly:
 - `vault.db` — SQLite STRICT tables, WAL journal, FK enforced
 - `wrapped.key` — Argon2id-wrapped vault key (binary header + nonce + ciphertext + tag)
-- `meta.json` — `{schema_version, vault_id (UUIDv4), wrapped_key_fingerprint_sha256, created_at}`
+- `meta.json` — `{schema_version, name, vault_id (UUIDv4), created_at, fingerprint, fingerprint_alg}`
 
 1.1.2. File modes MUST be `0600`. Directory mode MUST be `0700`.
 
-1.1.3. `meta.json.wrapped_key_fingerprint_sha256` MUST be the SHA-256
-of the actual `wrapped.key` file bytes. Mismatch → vault refuses to
+1.1.3. `meta.json.fingerprint` MUST be the SHA-256 of the actual
+`wrapped.key` file bytes (the hash function is labelled by
+`fingerprint_alg`, currently `sha256-v1`). Mismatch → vault refuses to
 open.
 
 1.1.4. Vault names MUST match `^[a-z][a-z0-9_-]{0,62}$`. Uppercase
@@ -84,7 +85,7 @@ nonces are forbidden.
 
 ### 1.3 Schema
 
-1.3.1. Current schema version: **3**.
+1.3.1. Current schema version: **4**.
 
 1.3.2. Schema includes the tables `meta`, `projects`, `envs`,
 `entries`, `entry_versions`, `passkey`, `passkey_unlock`, and

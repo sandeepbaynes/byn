@@ -100,7 +100,8 @@ without the container runtime around it:
   secret values are AEAD-encrypted at rest and never written to disk in
   plaintext. The process boundary (separate address space) is the same
   kernel primitive containers are built on.
-- **Privilege separation** (in progress, next release): the daemon runs
+- **Privilege separation** (shipped opt-in in v0.3.0; enable with
+  `[security] privsep` + `sudo byn setup`): the daemon runs
   as its own `_byn` service UID and `byn exec` spawns the child as a
   `_byn-exec` UID — so a same-UID agent can no longer connect to the
   daemon socket, ptrace the daemon, or read the child's
@@ -159,9 +160,10 @@ the box — **put the untrusted code in the box**:
 Used this way, the container's boundary finally points the right
 direction: host (and byn) protected *from* the workload. This is also
 the standing recommendation in the
-[Security model](security.md) best practices — until privilege
-separation ships, a separate UID/sandbox/VM for untrusted code is the
-real same-UID boundary, and it remains good defense-in-depth after.
+[Security model](security.md) best practices — with privilege
+separation off (the default), a separate UID/sandbox/VM for untrusted
+code is the real same-UID boundary, and it remains good
+defense-in-depth even with privsep enabled.
 
 ---
 

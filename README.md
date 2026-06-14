@@ -393,7 +393,7 @@ macOS, owned by `_byn`) once provisioned for privilege separation with
 `byn setup`. There is **no** runtime data-root override — the environment
 variable older versions honored has been removed. Daemon and security config
 live in a TOML `config` file in that root (`byn daemon reload` hot-applies most
-keys); see [`docs/cli-reference.md`](docs/cli-reference.md#configuration).
+keys); see [`docs/cli-reference.md`](docs/cli-reference.md#config-file-bynconfig).
 
 Files inside the data root:
 

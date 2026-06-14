@@ -80,7 +80,9 @@ Unwrap the vault key into the daemon's memory.
 
 ### `byn lock`
 
-Zero the in-memory vault key for `--vault` (or `*` to lock all).
+Zero the in-memory vault key for `--vault` (or `--all` to lock every
+unlocked vault). `--session` ends only this terminal's session and
+leaves the vault unlocked.
 
 ### `byn daemon start [--foreground]`
 
@@ -467,8 +469,8 @@ byn --vault myv exec deploy                   # globals before subcommand still 
 
 ### `byn edit` / `byn view` / `byn` (no args)
 
-Open the modal vi-style TUI. Currently env-vars in the default scope
-only — the left-rail multi-scope redesign is Slice 7.
+Open the modal vi-style TUI, with a left rail to navigate the
+vault → project → env tree.
 
 ---
 
@@ -488,10 +490,11 @@ Run a battery of self-checks against every vault on disk:
 Severity is `ok` / `warn` / `fail`. Exit code is non-zero if any
 `fail`. `--json` emits `[]DoctorCheck{Name, Severity, Detail}`.
 
-### `byn audit tail [--lines N] [--json]`
+### `byn audit tail [-n N] [-f] [--json]`
 
-Print the most recent N events from the active vault's audit log.
-Default N = 50; `--lines 0` returns everything.
+Print the most recent N events from the active vault's audit log
+(like `tail(1)`). Default N = 10 (`--lines` is an alias for `-n`);
+`-f` follows the log.
 
 Allowed while locked — audit metadata is not secret. See
 [security.md](security.md) for what's captured per event.
