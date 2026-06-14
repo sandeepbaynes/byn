@@ -56,6 +56,9 @@ func RenderPage(p Page, source string) (string, error) {
 	}
 	d.LandingHref = d.AssetPrefix + "index.html"
 	d.InstallHref = d.LandingHref + "#install"
+	d.Version = Version
+	d.ReleaseNotesHref = d.AssetPrefix + "docs/releases/"
+	d.ReleasesURL = ReleasesURL
 
 	d.NavItems = buildNav(p)
 	d.Crumbs = buildCrumbs(p, d.LandingHref)
