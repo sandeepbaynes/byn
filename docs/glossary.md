@@ -84,11 +84,11 @@ falls back to `DEFAULT.DB_URL`.
 ### Fingerprint (machine fingerprint)
 
 A SHA-256 of stable hardware identifiers (CPU ID, board serial,
-primary MAC). Used to bind the wrapped vault key to the local
-machine — a copy of `wrapped.key` won't unwrap elsewhere.
-
-Made portable in Phase 6 for cloud sync (the cloud variant strips the
-fingerprint binding).
+primary MAC). It keys the **trust-store fp-MAC** (tamper-evidence for
+`.byn` trust records) and does **not** touch the vault key. The vault
+is **portable by design**: `wrapped.key` is wrapped with the master
+password only — no machine binding — so a copy unwraps on other
+hardware with the same password.
 
 ### Fingerprint (wrapped-key fingerprint, in `meta.json`)
 

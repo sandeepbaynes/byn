@@ -20,7 +20,7 @@ clearly marked.
 - Per-row encryption: `XChaCha20-Poly1305` with random 24-byte nonce,
   AAD = `vault_id || 0x1F || kind || 0x1F || name`. Names are
   plaintext (forensics-friendly); values are ciphertext.
-- Schema v3, SQLite STRICT tables, FK enforced. Versioned migrations
+- Schema v4, SQLite STRICT tables, FK enforced. Versioned migrations
   in `internal/vault/schema.go`.
 
 ## 2. Project / env scopes inside each vault

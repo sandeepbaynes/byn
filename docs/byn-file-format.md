@@ -315,23 +315,23 @@ from locking you out of fixing it):
 ### Per-project pinning
 
 ```
-~/projects/example-project/
-├── .byn             # [scope] project = "example-project"
+~/projects/myapp/
+├── .byn             # [scope] project = "myapp"
 ├── ...
 └── src/
 ```
 
-Inside `~/projects/example-project/` and any subdir: `byn list` →
-`example-project/default`.
+Inside `~/projects/myapp/` and any subdir: `byn list` →
+`myapp/default`.
 
 ### Per-env pinning via env-var
 
 `.byn` pins project; the engineer pins env per shell:
 
 ```sh
-cd ~/projects/example-project
+cd ~/projects/myapp
 export BYN_ENV=dev      # or staging, etc.
-byn list                # example-project/dev
+byn list                # myapp/dev
 ```
 
 ### Shielding a subproject
@@ -368,12 +368,12 @@ Keep secrets in byn; expose only the scope selection in the shell:
 
 ```sh
 # .envrc
-export BYN_PROJECT=example-project
+export BYN_PROJECT=myapp
 export BYN_ENV=dev
 ```
 
 Now every `byn` invocation in the directory uses
-`example-project/dev` — no `.byn` file at all, no TOFU.
+`myapp/dev` — no `.byn` file at all, no TOFU.
 
 ---
 
