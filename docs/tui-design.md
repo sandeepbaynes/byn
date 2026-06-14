@@ -303,6 +303,8 @@ Centered modal. The selected entry name appears in the title. Press
 `d` again to confirm, `ESC` to cancel. Two-key gesture matches vim
 `dd`.
 
+---
+
 ## Draft / save semantics (vi-style; no auto-save)
 
 Added 2026-06-02 in response to "all values get saved by default as
@@ -347,6 +349,8 @@ Enter key behavior (corrects an earlier auto-commit bug):
 - RENAME → ignored (names are single-line).
 - Enter NEVER commits. `:w` is the only commit path.
 
+---
+
 ## Undo / redo / clipboard
 
 Added 2026-06-02. All three operate on the draft buffer; none touch
@@ -378,6 +382,8 @@ the daemon directly (except `y` which fires an audited `OpGet`).
 - `clipboardWrite` is a package-level var so tests stub it (CI
   runners have no clipboard).
 
+---
+
 ## Inheritance badges (non-default envs)
 
 Added 2026-06-02. When the active env is not `default`, every entry
@@ -404,6 +410,8 @@ Implementation:
 - When active env IS `default`, the badge column is hidden entirely
   (nothing to compare against).
 
+---
+
 ## Scope picker cascade
 
 Added 2026-06-02. The 3-column scope-picker modal (`s`) now keeps
@@ -417,6 +425,8 @@ the env column populated as the vault cursor moves:
   exists in the new project.
 - This avoids the previous "vault change → env empty → Tab Tab
   Enter lands on nothing" footgun on narrow screens.
+
+---
 
 ## Focus + tree navigation
 
@@ -437,6 +447,8 @@ Added 2026-06-02:
   (env > project > vault); the targeted vault's password is prompted
   on bootstrap; the entries list shows that scope.
 
+---
+
 ## Locked-vault UX
 
 Added 2026-06-02:
@@ -450,6 +462,8 @@ Added 2026-06-02:
     Run `byn --vault NAME unlock` from a shell, then return.
   ```
   …instead of the misleading `(no env-vars)`.
+
+---
 
 ## Filter visibility
 

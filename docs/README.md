@@ -8,6 +8,8 @@ you need; everything cross-links.
 > byn behavior. The files in this directory **explain** that
 > behavior — they don't override it.
 
+---
+
 ## For users
 
 - **[CLI reference](cli-reference.md)** — every command, flag, env var, and exit code.
@@ -24,6 +26,8 @@ you need; everything cross-links.
   audit chain.
 - **[Integrations](integrations/)** — VS Code, JetBrains, Eclipse, AI coding agents.
 
+---
+
 ## For contributors / curious users
 
 - **[Architecture](architecture.md)** — daemon ↔ CLI IPC, multi-vault state,
@@ -31,12 +35,16 @@ you need; everything cross-links.
 - **[Security model](security.md)** — threat model, crypto primitives,
   key lifecycle, known weaknesses, deferred hardening.
 
+---
+
 ## See also
 
 - **`README.md`** (repo root) — quickstart + status.
 - **`features.md`** — feature inventory at the last release.
 - **`testing.md`** — how the test suite is structured + manual smoke.
 - **`man/byn.1`** — install with `make install-man`, read with `man byn`.
+
+---
 
 ## Conventions
 

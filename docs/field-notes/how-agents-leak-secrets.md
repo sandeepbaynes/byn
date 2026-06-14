@@ -49,6 +49,8 @@ the linked reports and the honest caveats.
   Still on the roadmap: Phase 3 shims (`aws`, `ssh`, …) to remove more
   plaintext files, and FUSE-gated crown-jewel files behind them.
 
+---
+
 ## Vector 2 — The secret ends up in the agent's context anyway
 
 **How it happens.** A test prints the connection string on failure; a
@@ -67,6 +69,8 @@ faithfully reads the output — and now the secret is in the transcript.
 - **Coming:** leak-pattern scanning over the audit log (risky command
   shapes, secrets piped to terminals) is under exploration as a
   rule-based, pluggable detector.
+
+---
 
 ## Vector 3 — IDE inline completion ingests the secret as you type it
 
@@ -102,6 +106,8 @@ can, with no technical way for you to verify what it read or sent.
 - **Coming:** nothing can intercept the editor from user space without
   becoming the IDE; this vector stays a discipline byn enables.
 
+---
+
 ## Vector 4 — The secret gets committed and pushed
 
 **How it happens.** A `.env` slips past `.gitignore`; a config with an
@@ -117,6 +123,8 @@ incidents](real-world-incidents.md)).
   pre-byn history. Scrub history and rotate; byn prevents the next one,
   not the last one.
 - **Coming:** —
+
+---
 
 ## Vector 5 — Supply-chain malware wearing your UID harvests credentials
 
@@ -147,6 +155,8 @@ incidents](real-world-incidents.md)).
   not machine binding; a stronger break-glass recovery wrap is planned so a
   memorable password isn't the at-rest floor.
 
+---
+
 ## Vector 6 — Prompt injection turns a good agent rogue
 
 **How it happens.** The agent itself is fine; its *input* is hostile. A
@@ -170,6 +180,8 @@ been demonstrated repeatedly against real agent stacks.
   you force `always` auth for sensitive scopes; out-of-band approval
   surfaces (a channel the agent can't drive) are the planned strong form
   via the pluggable auth provider interface.
+
+---
 
 ## Vector 7 — Long-lived credentials on dev VMs and remote boxes
 

@@ -5,6 +5,8 @@
 This one isn't from a vendor write-up. It happened to me, on my own
 infrastructure, and it is part of why byn exists.
 
+---
+
 ## What happened
 
 I ran development workloads on a VM. Like every machine the AWS CLI has
@@ -23,6 +25,8 @@ file was read at 03:14." The first signal was the consequences in the
 AWS account itself — which means the first signal came *after* the
 takeover, not before it.
 
+---
+
 ## "You should have used restrictive IAM policies"
 
 Correct — and incomplete. Least-privilege IAM absolutely would have
@@ -39,6 +43,8 @@ So the realistic dev-box posture was: broad-ish credentials, in a
 plaintext file, on a machine operated by processes I don't individually
 supervise. That posture is the industry default. It is also exactly
 what the attacker needed.
+
+---
 
 ## The research: what I looked at before building anything
 
@@ -77,6 +83,8 @@ be safe at all. That's the tool I couldn't find, so it's the tool byn
 is. The full strengths-and-weaknesses comparison — byn's own weaknesses
 included — is in [byn vs the other tools, honestly](tool-comparison.md).
 
+---
+
 ## What byn changes about this story
 
 Replay the incident with the credentials in byn instead of in
@@ -108,6 +116,8 @@ resolution of the IAM tension — **authorization on the dev box, per
 command, instead of permission-starving the cloud role the agents
 depend on.**
 
+---
+
 ## Honest limits — what byn would *not* have fixed
 
 - If the attacker had gotten **root** on the VM, or had obtained my
@@ -125,6 +135,8 @@ depend on.**
 - And least-privilege IAM is still worth doing. byn is a layer, not a
   replacement for cloud-side hygiene — short-lived, scoped credentials
   (a planned byn broker integration) are where the two layers meet.
+
+---
 
 ## The lesson I actually took
 
