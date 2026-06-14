@@ -116,8 +116,9 @@ depend on.**
 - An attacker patient enough to squat inside a terminal holding a
   **live session** could use that session until it expired or was
   locked — per-terminal sessions narrow this drastically, but the
-  same-UID ceiling is real until privilege separation ships (next
-  release).
+  same-UID ceiling is real with privilege separation off (the default).
+  Privsep shipped opt-in in v0.3.0 (`[security] privsep` + `sudo byn
+  setup`) raises that bar to root.
 - The on-box audit trail of a fully compromised machine can be tampered
   with by an attacker holding the vault file; **off-box anchoring** of
   the chain head is planned to close exactly that.

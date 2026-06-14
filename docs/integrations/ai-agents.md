@@ -66,8 +66,8 @@ for `get`.)
    ```sh
    byn status --json
    byn project list --json
-   byn --project maison-agent env list --json
-   byn --project maison-agent list --json
+   byn --project myapp-agent env list --json
+   byn --project myapp-agent list --json
    ```
 
 2. **User (before the agent is active)**: import any existing `.env`
@@ -75,7 +75,7 @@ for `get`.)
    plaintext file to read in the first place:
 
    ```sh
-   byn --project maison-agent import .env.local
+   byn --project myapp-agent import .env.local
    rm .env.local   # values now live in the vault only
    ```
 
@@ -87,7 +87,7 @@ for `get`.)
 
    ```sh
    #!/usr/bin/env bash
-   exec byn --project maison-agent exec -- "$@"
+   exec byn --project myapp-agent exec -- "$@"
    ```
 
 4. **Agent**: now runs the user's tests via that wrapper:
@@ -148,7 +148,7 @@ output is not piped anywhere the user wouldn't otherwise see.)
 Add to your project's `.envrc` (direnv) or shell init:
 
 ```sh
-export BYN_PROJECT=maison-agent
+export BYN_PROJECT=myapp-agent
 export BYN_ENV=dev
 ```
 
@@ -163,17 +163,28 @@ When you ssh a long-running agent into a dev VM:
 2. The vault unlock password lives on YOUR laptop only.
 3. Agent runs `byn exec -- whatever` — values are injected only
    when you're connected and have unlocked the vault from your client.
-4. On disconnect, the vault auto-locks (Phase 2+ feature).
+4. An idle vault auto-relocks after `[daemon] idle_timeout` (default
+   15m); run `byn lock` (or `byn lock --session`) to drop access
+   immediately.
 
 ### Audit trail
 
 Every `byn` op writes an HMAC-chained entry to the vault's audit
-log. The agent's actions are reviewable later via `byn audit`
-(when that command lands; Slice 4).
+log. The agent's actions are reviewable with `byn audit`
+(`tail`, `view`, `verify`).
 
-## Future agent features (not yet shipped)
+## Scoping what an agent can do
 
-- `byn exec --command-key` to inject only specific keys (per-command
-  allowlists from a `.byn` manifest — planned).
-- Push-based unlock approval (laptop receives notification when agent
-  on remote VM tries to read; user taps to allow). Currently deferred.
+Per-command secret scoping is shipped via the `.byn` manifest:
+
+- `[exec] env` lists exactly which vars `byn exec` injects — the agent
+  never sees the rest of the scope.
+- `[exec] actions` pins which commands run without per-call
+  authorization; everything else is gated.
+
+See the [`.byn` file format](../byn-file-format.md).
+
+### Not yet shipped
+
+- Push-based unlock approval (laptop receives a notification when an
+  agent on a remote VM tries to read; user taps to allow). Deferred.

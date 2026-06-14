@@ -74,9 +74,9 @@ reason.
 
 | | |
 |---|---|
-| Mode | `0600` |
+| Mode | `0444` (world-readable on purpose, so the `_byn` daemon can read the owner UID it must allowlist) |
 | Owner | `_byn` (provisioned root only) |
-| Format | JSON: the allowlisted owner UID recorded by `byn setup` from `SUDO_UID` |
+| Format | Plain decimal text: the allowlisted owner UID recorded by `byn setup` from `SUDO_UID` |
 | Created by | `byn setup` (`internal/privsep:WriteOwnerRecord`) |
 
 Present only in a **provisioned** system root. Its existence is the
@@ -133,9 +133,9 @@ to `~/.byn` can reset the counter. Deferred — see
 | | |
 |---|---|
 | Mode | `0600` |
-| Owner | user (created by the CLI on first `byn trust`) |
+| Owner | the daemon's UID (the daemon owns the trust store) |
 | Format | JSON: `{"records": [{"path": "...", "sha256": "..."}, ...]}` |
-| Created by | `cmd/byn/discovery.go:saveTrustStore` |
+| Created by | the daemon via `internal/trust` (`trust.Put`) on `byn trust` |
 
 TOFU records for `.byn` files. See
 [`.byn` file format](byn-file-format.md) for the lookup
@@ -187,7 +187,7 @@ Path: `~/.byn/vaults/<vault_name>/`. The default vault lives at
 
 Tables: `meta`, `projects`, `envs`, `entries`, `entry_versions`,
 `file_meta` (reserved). See
-[architecture.md](architecture.md#sqlite-schema-v3-strict) for the
+[architecture.md](architecture.md#sqlite-schema-v4-strict) for the
 schema.
 
 - **Names** (project, env, entry) are plaintext strings.
@@ -243,7 +243,7 @@ for parameter values.
 - `wrapped_key_fingerprint` — SHA-256 of `wrapped.key`. Detects an
   attacker who swaps the wrapped key with a known one (e.g., from
   another vault they control).
-- `schema_version` — current `3`.
+- `schema_version` — current `4`.
 
 The daemon checks the fingerprint against the actual file on every
 open. Mismatch → vault refuses to open.
@@ -264,6 +264,7 @@ open. Mismatch → vault refuses to open.
 | `vault.db` (+ WAL/SHM) | `0600` | Encrypted but mode still tightens |
 | `wrapped.key` | `0600` | Useless without password, but still |
 | `meta.json` | `0600` | Vault UUID + fingerprint |
+| `owner` | `0444` | World-readable on purpose: the `_byn` daemon must read the owner UID to allowlist it (provisioned root only) |
 
 The CLI never widens permissions. If `~/.byn` ever ends up
 group-readable, run `chmod -R go-rwx ~/.byn` and audit how that

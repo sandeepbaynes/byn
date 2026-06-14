@@ -371,8 +371,8 @@ Socket file is created mode 0600 in `~/.byn/`. Every connection
 goes through `internal/daemon/peercred_{darwin,linux}.go`:
 
 - Linux: `SO_PEERCRED` returns UID of peer.
-- macOS: `LOCAL_PEEREPID` (effective PID) + getppid lookup; UID
-  derived. (peerPID is partial today; documented in PLAN.)
+- macOS: `LOCAL_PEERCRED` (Xucred) returns the peer UID; `LOCAL_PEERPID`
+  returns the PID (best-effort).
 
 If peer UID ≠ daemon owner UID, the connection is closed
 immediately — before reading the request.
@@ -789,7 +789,7 @@ isn't fully stopped without OS isolation.
 ### Hints redaction
 
 `hintf` writes scope path but not values: `Stored "DB_URL" in
-maison-agent/staging.` Never `Stored "DB_URL=…" in …`. Set
+myapp-agent/staging.` Never `Stored "DB_URL=…" in …`. Set
 `BYN_HINTS=0` to suppress even those.
 
 ---
@@ -1008,7 +1008,6 @@ deployment surface grows.
 |---|---|---|
 | Trust-file HMAC | Realistic attacker who can write `~` already owns more dangerous surfaces | After Slice 7; ~80 LoC; see internal design notes |
 | Auth-state signing | Same threat model as trust-file | Together with the trust-file hardening |
-| LOCAL_PEEREPID on macOS | Multi-user attacks are out of scope for solo dev box; the existing peer-UID check is sufficient | When byn ships to multi-user servers |
 | Constant-time rate-limit responses | Timing oracle on failed-unlock counts is low value (attacker already has the encrypted DB if they can time you) | When byn ships to multi-user servers |
 | macOS SE wrapping | Needs dev signing + entitlements + a Mac CI runner | Slice 1.3 (was on the PLAN; deferred for delivery) |
 | Linux TPM2 wrapping | Same as SE, plus tpm2-tss is a heavy dep for casual users | Slice 1.3 |
