@@ -33,6 +33,8 @@ them.**
   habit. Every incident on the
   [real-world incidents](real-world-incidents.md) page begins here.
 
+---
+
 ## direnv
 
 - **Strengths:** beloved, battle-tested developer experience —
@@ -45,6 +47,8 @@ them.**
   the shell's ambient environment, where every child process inherits
   them.
 
+---
+
 ## mise-en-place (mise)
 
 - **Strengths:** excellent modern toolchain + task + env manager; fast;
@@ -54,6 +58,8 @@ them.**
   and decrypted values land in the ambient environment of whatever runs
   in the directory — agents included. No per-access gating or audit on
   the dev box; security is an add-on, not the design center.
+
+---
 
 ## Doppler
 
@@ -69,6 +75,8 @@ them.**
   operation. Your secrets also live with a third party — fine for many
   orgs, a real dependency nonetheless.
 
+---
+
 ## Infisical
 
 - **Strengths:** open-source and self-hostable (a real differentiator
@@ -79,6 +87,8 @@ them.**
   session is ambient to your UID; machine-identity/auth tokens persist
   locally; per-access visibility lives server-side, not on the machine
   where the agent runs; no per-command gating.
+
+---
 
 ## HashiCorp Vault
 
@@ -93,6 +103,8 @@ them.**
   distinguish you from the agent using your token. (Also BUSL-licensed
   since 2023, for those comparing licenses.)
 
+---
+
 ## 1Password CLI (`op run`)
 
 - **Strengths:** superb UX; biometric unlock via the desktop app with
@@ -105,6 +117,8 @@ them.**
   per-access audit trail you can query on the box. Closed source,
   subscription, cloud-account dependency.
 
+---
+
 ## aws-vault
 
 - **Strengths:** free, open source, stores AWS keys in the OS keychain,
@@ -115,6 +129,8 @@ them.**
   gets a working environment; no audit log; keychain access is ambient
   once the login session is unlocked; injected session creds are still
   readable in the child's environ.
+
+---
 
 ## byn
 
@@ -176,6 +192,8 @@ them.**
 
 ✓ = yes · ◐ = partial/conditional · ✗ = no. Last two rows are where the
 *other* tools win — kept in the table for exactly that reason.
+
+---
 
 ## How to read this table
 

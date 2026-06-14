@@ -3,12 +3,16 @@
 Inject vault env-vars into the process VS Code launches without
 plaintext leaking into `launch.json`, the terminal, or scrollback.
 
+---
+
 ## Prerequisites
 
 - `byn` on `$PATH`
 - Daemon running: `byn daemon start`
 - Vault unlocked: `byn unlock`
 - The vault has the env-vars you need: `echo s3cr3t | byn put DB_URL`
+
+---
 
 ## Approach 1: launch.json (debug)
 
@@ -83,6 +87,8 @@ universal fallback).
 For `mode: "debug"` (delve attaches by source), Go's launch.json runs
 `go build` itself — `byn exec` doesn't fit there. Use Approach 2.
 
+---
+
 ## Approach 2: tasks.json (universal)
 
 Generic launcher that works for any language without quirks. Define a
@@ -107,6 +113,8 @@ task that runs `byn exec`, then bind it to a keyboard shortcut.
 }
 ```
 
+---
+
 ## Approach 3: integrated terminal
 
 Open a VS Code integrated terminal and run:
@@ -119,6 +127,8 @@ byn exec -- ./bin/server
 
 Values appear in the child process; nothing is written to history or
 shell variables.
+
+---
 
 ## Per-project scope
 
@@ -141,6 +151,8 @@ secrets without flags:
 
 Then `byn exec -- ...` inside the terminal scopes to that project
 and env automatically.
+
+---
 
 ## Gotchas
 

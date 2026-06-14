@@ -4,6 +4,8 @@ Inject vault env-vars into Run/Debug configurations without typing
 plaintext into the IDE's "Environment variables" field (which gets
 saved into `workspace.xml` and accidentally committed).
 
+---
+
 ## Prerequisites
 
 - `byn` on `$PATH` and resolvable from the IDE's launcher
@@ -12,6 +14,8 @@ saved into `workspace.xml` and accidentally committed).
   `Path Variables` (Settings → Appearance & Behavior → Path Variables)
   to include the directory containing `byn`.
 - Daemon running, vault unlocked.
+
+---
 
 ## Approach 1: wrap the interpreter / executable
 
@@ -46,6 +50,8 @@ path to a script that calls `byn exec -- ./bin/myapp`.
 Similarly: set **Node interpreter** to `byn` and **Node parameters**
 to `exec -- node`.
 
+---
+
 ## Approach 2: External Tools
 
 `Settings → Tools → External Tools → +`:
@@ -59,6 +65,8 @@ Bind a shortcut to it (`Keymap → External Tools → Run via byn`).
 Triggering it opens a prompt for the command, then runs it with vault
 env-vars injected.
 
+---
+
 ## Approach 3: terminal
 
 The simplest: `Alt+F12` (or **View → Tool Windows → Terminal**), then:
@@ -67,6 +75,8 @@ The simplest: `Alt+F12` (or **View → Tool Windows → Terminal**), then:
 byn exec -- npm test
 byn exec -- ./gradlew bootRun
 ```
+
+---
 
 ## Per-project scope
 
@@ -79,6 +89,8 @@ BYN_ENV=dev
 
 Now the terminal scope is pinned, and so is anything you launch from
 the IDE's terminal.
+
+---
 
 ## Storing env vars in the run config — DON'T
 

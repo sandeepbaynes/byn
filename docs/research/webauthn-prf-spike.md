@@ -7,6 +7,8 @@ This is a research artifact (web sources, early-2026). It informs the
 A-auth design. It is NOT a contract — the
 SPEC §12 contract is written when A-auth ships.
 
+---
+
 ## Verdict
 
 Feasible **today** for the primary target — macOS Touch ID / iCloud
@@ -17,6 +19,8 @@ carve-out). Build it, but **only as a secondary unlock path** — the master
 password stays the durable root/recovery credential. Linux is materially
 weaker (no platform authenticator with PRF; needs a roaming `hmac-secret`
 hardware key on Chromium, or password fallback).
+
+---
 
 ## Browser / OS support matrix
 
@@ -37,6 +41,8 @@ IDs) and NOT `localhost:2967` (the port is not part of the RP ID). Pick the
 RP ID once and keep it stable: passkeys are bound to it, so moving the
 portal off `localhost` later would orphan every enrolled passkey.
 
+---
+
 ## Go library support
 
 `github.com/go-webauthn/webauthn` (maintained Duo fork) does **not** type
@@ -51,6 +57,8 @@ map[string]any`; only `appid`/`appidExclude` are named. So byn must:
   `ValidateLogin` for the *authentication* decision; do the key-recovery
   (unwrap) as a logically separate step. Treat any server-visible
   `prf.enabled` as an untrusted hint, not an auth signal.
+
+---
 
 ## Recommended implementation pattern
 
@@ -87,6 +95,8 @@ Either the browser unwraps and POSTs `VK` over the loopback socket, or it
 sends `prfOut`/`KEK` and the daemon unwraps in Go (preferred — keeps crypto
 in one place). The PRF secret never leaves the local machine.
 
+---
+
 ## Fallback when PRF absent
 
 1. **Capability probe** with `PublicKeyCredential.getClientCapabilities()`
@@ -100,6 +110,8 @@ in one place). The PRF secret never leaves the local machine.
 4. **Degrade to passkey-as-session-only:** if PRF is absent, a passkey may
    still authorize a session *after* a password unlock (2FA / MFA step-up
    for sensitive shims), but does not itself recover `VK`.
+
+---
 
 ## Gotchas
 
@@ -116,6 +128,8 @@ in one place). The PRF secret never leaves the local machine.
    salt (a random salt per unlock would change the KEK and fail to unwrap);
    fold PRF output through HKDF with a fixed `info` string, never use it as
    the key directly. Expect a possible double Touch-ID prompt at enrollment.
+
+---
 
 ## Sources
 

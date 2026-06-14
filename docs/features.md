@@ -23,6 +23,8 @@ clearly marked.
 - Schema v4, SQLite STRICT tables, FK enforced. Versioned migrations
   in `internal/vault/schema.go`.
 
+---
+
 ## 2. Project / env scopes inside each vault
 
 - `vault → project → env → entry` four-level path.
@@ -30,6 +32,8 @@ clearly marked.
 - Non-default envs fall back to default for missing keys
   (inheritance).
 - CRUD via `byn {project,env} {list,create,delete,rename}`.
+
+---
 
 ## 3. Daemon + IPC
 
@@ -39,6 +43,8 @@ clearly marked.
 - Multi-vault state map: `map[string]*vaultEntry` with per-vault idle
   timer and rate limiter.
 - Status / version negotiation (protocol min/max).
+
+---
 
 ## 4. CLI surface
 
@@ -63,6 +69,8 @@ clearly marked.
 - AWS-CLI style help: `byn <cmd> {help,--help,-h}` and
   `byn help <cmd>`; man page at `man/byn.1`.
 
+---
+
 ## 5. Agent / JSON mode
 
 - `--json` is accepted by:
@@ -72,6 +80,8 @@ clearly marked.
   - `byn vault list`, `byn project list`, `byn env list`
 - Output: arrays/objects keyed exactly to the matching IPC response
   types — agent harnesses can `JSON.parse` directly.
+
+---
 
 ## 6. Bulk import/export
 
@@ -90,6 +100,8 @@ clearly marked.
 - Export emits a sorted dotenv-style document by default; YAML and
   JSON also available. `--output PATH` writes 0600.
 
+---
+
 ## 7. IDE integration docs
 
 - `docs/integrations/vscode.md` — Node/Python/Go launch.json
@@ -101,6 +113,8 @@ clearly marked.
 - `docs/integrations/ai-agents.md` — agent-safe usage patterns:
   what to allow, what to deny, example permission rules, per-project
   scope pinning via `direnv`.
+
+---
 
 ## 8. Audit log (HMAC-chained)
 
@@ -114,6 +128,8 @@ clearly marked.
 - HMAC seed + head persisted in vault meta; daemon resumes cleanly
   across restarts.
 
+---
+
 ## 9. Diagnostics
 
 - `byn doctor [--json]` — daemon-side battery: daemon liveness,
@@ -123,6 +139,8 @@ clearly marked.
   fail.
 - Mutating-op hints to stderr (`Stored "K" in default/billing/staging.`)
   gated by `BYN_HINTS=0` and non-TTY stderr.
+
+---
 
 ## 10. `.byn` discovery + TOFU trust
 
@@ -148,6 +166,8 @@ clearly marked.
 - **Deferred (separate slice):** HMAC-signing the trust store so a direct
   write to `trusted_byn.json` (which the password gate can't stop) is
   detected; and a portal "approve" action as an out-of-band channel.
+
+---
 
 ## 11. Responsive bubbletea TUI
 
@@ -195,6 +215,8 @@ clearly marked.
 - Snapshot tests guard each tier: TestSnapshots_PerTier,
   TestRender_Tiny_NoRail, etc. ~14 TUI tests total.
 
+---
+
 ## 12. Security primitives
 
 - `internal/secmem`: mlock'd byte buffers for unwrap workspace and
@@ -209,6 +231,8 @@ clearly marked.
   §7). Per-vault, never passkey-only; the master password stays the recovery
   root. Revoke is password-gated and cascades to a hard lockout. macOS Touch ID
   / iCloud Keychain only; non-PRF authenticators degrade to session-only.
+
+---
 
 ## 13. Privilege separation (opt-in, off by default)
 
@@ -232,6 +256,8 @@ clearly marked.
 - Packages: `internal/privsep`, `internal/setup`, `internal/paths`. See
   [Security model → privilege separation](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56).
 
+---
+
 ## 14. Provisioning & migration
 
 - **`byn setup`** — one-sudo provisioning: creates the `_byn` / `_byn-exec`
@@ -251,6 +277,8 @@ clearly marked.
   been **removed** — there is no runtime data-root override.
 - Packages: `internal/setup`, `internal/migrate`, `internal/paths`. See
   [Migration & setup](migration.md).
+
+---
 
 ## 15. Tests
 

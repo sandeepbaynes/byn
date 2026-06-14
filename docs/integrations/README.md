@@ -4,6 +4,8 @@ How to make byn play with your editor, debugger, and agent.
 
 For the rest of the docs, see [`../`](../).
 
+---
+
 ## TL;DR
 
 `byn exec -- COMMAND ARGS` is the universal way to inject vault
@@ -19,6 +21,8 @@ shell/tasks automatically pick up the right scope — see the
 - [Eclipse / STS](eclipse.md) — External Tools + shell wrappers
 - [AI coding agents](ai-agents.md) — agent-safe usage patterns
 
+---
+
 ## What's in scope per IDE
 
 | IDE       | Launch.json/run config | Terminal | Pre-launch task |
@@ -26,6 +30,8 @@ shell/tasks automatically pick up the right scope — see the
 | VS Code   | yes (Node, Python, Go) | yes      | yes             |
 | JetBrains | partial (script-based) | yes      | yes (External Tools) |
 | Eclipse   | via External Tools     | yes (TM Terminal addon) | yes |
+
+---
 
 ## Common pitfalls
 
