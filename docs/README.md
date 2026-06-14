@@ -39,6 +39,8 @@ you need; everything cross-links.
 
 ## See also
 
+- **[Release notes](releases.md)** — what changed in each release, with
+  upgrade / migration notes and specific instructions.
 - **`README.md`** (repo root) — quickstart + status.
 - **`features.md`** — feature inventory at the last release.
 - **`testing.md`** — how the test suite is structured + manual smoke.

@@ -19,30 +19,33 @@ type navItem struct {
 // All hrefs are pre-computed relative to the page's output directory so the
 // template stays logic-free.
 type templateData struct {
-	Lang         string
-	Title        string // <title> and H1
-	PageTitle    string // browser <title> ("X — byn docs")
-	Description  string
-	AssetPrefix  string // "../../" etc.
-	LandingHref  string // AssetPrefix + "index.html"
-	InstallHref  string // LandingHref + "#install"
-	NavItems     []navItem
-	Crumbs       []crumbView
-	SidebarTitle string
-	SidebarBadge string
-	SidebarItems []sbItem
-	VersionStamp string
-	StampNote    string
-	SourceURL    string // GitHub blob URL for doc-meta
-	EditURL      string // GitHub edit URL; empty hides the edit link
-	SourceLabel  string // text shown in doc-meta "Source: <label>"
-	Body         template.HTML
-	TOC          []tocItem
-	ShowTOC      bool
-	Prev         *NavLink
-	Next         *NavLink
-	FooterLinks  []navItem
-	FooterSource template.HTML // the "sourced from ..." span inner HTML
+	Lang             string
+	Title            string // <title> and H1
+	PageTitle        string // browser <title> ("X — byn docs")
+	Description      string
+	AssetPrefix      string // "../../" etc.
+	LandingHref      string // AssetPrefix + "index.html"
+	InstallHref      string // LandingHref + "#install"
+	NavItems         []navItem
+	Crumbs           []crumbView
+	SidebarTitle     string
+	SidebarBadge     string
+	SidebarItems     []sbItem
+	VersionStamp     string
+	StampNote        string
+	SourceURL        string // GitHub blob URL for doc-meta
+	EditURL          string // GitHub edit URL; empty hides the edit link
+	SourceLabel      string // text shown in doc-meta "Source: <label>"
+	Body             template.HTML
+	TOC              []tocItem
+	ShowTOC          bool
+	Prev             *NavLink
+	Next             *NavLink
+	FooterLinks      []navItem
+	FooterSource     template.HTML // the "sourced from ..." span inner HTML
+	Version          string        // current byn release, shown in the footer
+	ReleaseNotesHref string        // relative URL to the in-site release-notes page
+	ReleasesURL      string        // GitHub releases page (external)
 }
 
 type crumbView struct {
@@ -163,12 +166,14 @@ const pageTemplate = `<!DOCTYPE html>
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from {{.FooterSource}}</span>
+    <span>byn <a href="{{.ReleaseNotesHref}}">{{.Version}}</a> · docs sourced from {{.FooterSource}}</span>
   </div>
   <div>
 {{- range .FooterLinks}}
     <a href="{{.Href}}">{{.Label}}</a>
 {{- end}}
+    <a href="{{.ReleaseNotesHref}}">Release notes</a>
+    <a href="{{.ReleasesURL}}" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

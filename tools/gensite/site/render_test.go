@@ -117,8 +117,12 @@ func TestRenderPage_PrevNextPager(t *testing.T) {
 func TestRenderPage_Footer(t *testing.T) {
 	html, err := RenderPage(samplePage(), sampleMD)
 	require.NoError(t, err)
+	// Footer shows the current version, linked to the in-site release notes,
+	// followed by the "docs sourced from" GitHub link.
 	assert.Contains(t, html,
-		`byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/security.md">github.com/sandeepbaynes/byn/docs</a>`)
+		`byn <a href="../../docs/releases/">`+Version+`</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/security.md">github.com/sandeepbaynes/byn/docs</a>`)
+	// Footer links to the GitHub releases page.
+	assert.Contains(t, html, `<a href="`+ReleasesURL+`" target="_blank" rel="noopener">Releases ↗</a>`)
 }
 
 func TestRenderPage_BodyContent(t *testing.T) {
