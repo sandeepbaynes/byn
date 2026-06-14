@@ -5,6 +5,8 @@ a local per-user daemon and injects them into commands on demand — values neve
 touch your shell history, `argv`, or scrollback, and are never written to disk in
 plaintext.
 
+---
+
 ## 1. Install
 
 ```sh
@@ -16,6 +18,8 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
 ```
 
+---
+
 ## 2. Start the daemon
 
 All of byn's logic lives in a background daemon that holds the vault key in
@@ -26,6 +30,8 @@ byn start                   # detached
 # …or have it auto-start on login (launchd on macOS, systemd --user on Linux):
 byn daemon install
 ```
+
+---
 
 ## 3. Create and unlock the vault
 
@@ -63,6 +69,8 @@ affecting other open sessions.
 > `CAP_SYS_PTRACE`). See [Migration & setup](migration.md) and the
 > [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56).
 
+---
+
 ## 4. Store your first secret
 
 `byn put` reads the value from **stdin**, so it never lands in your shell
@@ -72,6 +80,8 @@ history:
 printf 'postgres://user:pass@localhost/app' | byn put DATABASE_URL
 byn list                    # → DATABASE_URL
 ```
+
+---
 
 ## 5. Use it
 
@@ -89,6 +99,8 @@ Or read one explicitly:
 byn get DATABASE_URL
 ```
 
+---
+
 ## 6. The web portal
 
 ```sh
@@ -102,6 +114,8 @@ an assisted authoring environment for project scope files: structured builder
 form, inline TOML validator, command-tester (simulate the exec gate before
 trusting), and one-click save+trust. See [portal.md](portal.md) for the full
 panel reference.
+
+---
 
 ## Next steps
 
