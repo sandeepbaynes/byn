@@ -16,7 +16,7 @@ package site
 // Reference-only docs (spec, architecture, glossary, …) remain plain markdown
 // on GitHub, exactly as the existing gh-pages tree had them.
 func Manifest() []Page {
-	const v = "v0.3.0"
+	const v = Version
 
 	docsHome := Crumb{Label: "Docs", Href: "../"}
 	fieldNotesParent := Crumb{Label: "Field notes", Href: "../"}
@@ -272,6 +272,18 @@ func Manifest() []Page {
 			VersionStamp: v,
 			StampNote:    "Re-verified at each release",
 			GitHubPath:   "docs/field-notes/tool-comparison.md",
+		},
+
+		// ---- Release notes (changelog) ----
+		{
+			SourceRel:    "releases.md",
+			OutDir:       "docs/releases",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Release notes", Current: true}},
+			SidebarTitle: "Release notes",
+			SidebarBadge: v,
+			GitHubPath:   "docs/releases.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Docs home", Href: "../"},
 		},
 	}
 }
