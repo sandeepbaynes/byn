@@ -19,8 +19,15 @@ import (
 // grant paths use the caller-specific error handling) or exceeds the cap.
 // The stat (for mtime) is returned separately so callers that need it don't
 // have to re-stat.
+//
+// The daemon reads the REAL file deliberately: it is the security authority and
+// validates the on-disk fingerprint itself rather than trusting content the
+// (possibly compromised) CLI/UI supplies. Under privsep the daemon runs as _byn
+// and reaches a user-owned .byn via the read ACL the owner CLI grants at trust
+// time (privsep.GrantBynReadACL); without provisioning it runs owner-UID and
+// reads directly.
 func readBynFile(path string) (body []byte, fi os.FileInfo, err error) {
-	f, err := os.Open(path) // #nosec G304 -- user-named; daemon runs as the same user
+	f, err := os.Open(path) // #nosec G304 -- user-named; daemon reads via owner-granted ACL under privsep
 	if err != nil {
 		return nil, nil, err
 	}
