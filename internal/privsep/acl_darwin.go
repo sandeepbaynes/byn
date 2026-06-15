@@ -99,13 +99,14 @@ func RevokeProjectACL(run func(name string, args ...string) error, projectDir, h
 // The home ACE is dropped when home == the project dir (the .byn sits directly
 // in home) to avoid a redundant duplicate.
 func bynReadGrantCommands(bynPath, homeDir, user string) [][]string {
-	projectDir := filepath.Dir(bynPath)
 	cmds := [][]string{
 		{"chmod", "+a", aceArg(user, bynReadACEPerms), bynPath}, // read the file
-		{"chmod", "+a", aceArg(user, homeACEPerms), projectDir}, // traverse into its dir
 	}
-	if homeDir != "" && homeDir != projectDir {
-		cmds = append(cmds, []string{"chmod", "+a", aceArg(user, homeACEPerms), homeDir})
+	// Traverse EVERY ancestor from the .byn's own dir up to home — a single
+	// restrictive intermediate (e.g. a 0700 ~/Documents) would otherwise block
+	// the open even though the leaf file is readable.
+	for _, d := range traverseAncestors(filepath.Dir(bynPath), homeDir) {
+		cmds = append(cmds, []string{"chmod", "+a", aceArg(user, homeACEPerms), d})
 	}
 	return cmds
 }

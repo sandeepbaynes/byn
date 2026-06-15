@@ -154,6 +154,21 @@ func TestBynReadGrantCommands_Linux_HomeEqualsDir(t *testing.T) {
 	assert.Equal(t, "/home/o", cmds[1][len(cmds[1])-1])
 }
 
+// TestBynReadGrantCommands_Linux_DeepPath grants a traverse entry on EVERY
+// intermediate dir up to home (a 0700 ancestor would otherwise block the open).
+func TestBynReadGrantCommands_Linux_DeepPath(t *testing.T) {
+	cmds := bynReadGrantCommands("/home/o/Documents/proj/.byn", "/home/o", "_byn")
+	require.Len(t, cmds, 4)
+	targets := map[string]bool{}
+	for _, c := range cmds[1:] {
+		targets[c[len(c)-1]] = true
+		assert.Equal(t, "u:_byn:x", c[2], "ancestor entry must grant traverse only")
+	}
+	assert.True(t, targets["/home/o/Documents"], "intermediate must get a traverse entry; got %v", targets)
+	assert.True(t, targets["/home/o/Documents/proj"], "project dir must get a traverse entry")
+	assert.True(t, targets["/home/o"], "home must get a traverse entry")
+}
+
 // TestBynReadRevokeCommands_Linux removes the file read entry and the dir
 // traversal entry but NOT the shared home traversal.
 func TestBynReadRevokeCommands_Linux(t *testing.T) {

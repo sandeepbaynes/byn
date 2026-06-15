@@ -82,13 +82,14 @@ func RevokeProjectACL(run func(name string, args ...string) error, projectDir, h
 //
 // The home entry is dropped when home == the project dir.
 func bynReadGrantCommands(bynPath, homeDir, user string) [][]string {
-	projectDir := filepath.Dir(bynPath)
 	cmds := [][]string{
-		{"setfacl", "-m", fmt.Sprintf("u:%s:r", user), bynPath},    // read the file
-		{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), projectDir}, // traverse into its dir
+		{"setfacl", "-m", fmt.Sprintf("u:%s:r", user), bynPath}, // read the file
 	}
-	if homeDir != "" && homeDir != projectDir {
-		cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), homeDir})
+	// Traverse EVERY ancestor from the .byn's own dir up to home — a single
+	// restrictive intermediate (e.g. a 0700 ~/Documents) would otherwise block
+	// the open even though the leaf file is readable.
+	for _, d := range traverseAncestors(filepath.Dir(bynPath), homeDir) {
+		cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), d})
 	}
 	return cmds
 }

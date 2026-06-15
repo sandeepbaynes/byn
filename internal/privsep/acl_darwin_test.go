@@ -167,6 +167,24 @@ func TestBynReadGrantCommands_Darwin_HomeEqualsDir(t *testing.T) {
 	assert.Equal(t, "/Users/o", cmds[1][3])
 }
 
+// TestBynReadGrantCommands_Darwin_DeepPath grants a traverse ACE on EVERY
+// intermediate dir up to home — a single 0700 ancestor (e.g. ~/Documents) would
+// otherwise block the daemon even though the leaf .byn is readable. This is the
+// real-world bug: ~/Documents is owner-only.
+func TestBynReadGrantCommands_Darwin_DeepPath(t *testing.T) {
+	cmds := bynReadGrantCommands("/Users/o/Documents/proj/.byn", "/Users/o", "_byn")
+	// file + [.../Documents/proj, .../Documents, /Users/o]
+	require.Len(t, cmds, 4)
+	targets := map[string]bool{}
+	for _, c := range cmds[1:] {
+		targets[c[len(c)-1]] = true
+		assert.Contains(t, c[2], "execute", "ancestor ACE must grant traverse")
+	}
+	assert.True(t, targets["/Users/o/Documents"], "intermediate ~/Documents must get a traverse ACE; got %v", targets)
+	assert.True(t, targets["/Users/o/Documents/proj"], "project dir must get a traverse ACE")
+	assert.True(t, targets["/Users/o"], "home must get a traverse ACE")
+}
+
 // TestBynReadRevokeCommands_Darwin removes the file read ACE and the dir
 // traversal ACE but NOT the shared home traversal (siblings still need it).
 func TestBynReadRevokeCommands_Darwin(t *testing.T) {
