@@ -96,7 +96,7 @@ func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byt
 
 	// os.Stat must succeed: a zero mtime would silently degrade to a v1
 	// record. Fail closed so the caller can retry (the file just vanished).
-	fi, serr := os.Stat(path) // #nosec G304 -- user-named; daemon runs as the same user
+	fi, serr := os.Stat(path) // #nosec G304 -- user-named; daemon reaches it via owner-granted ACL under privsep
 	if serr != nil {
 		return "", "", false, trustGrantPolicy{},
 			fmt.Errorf("stat %s after read: %w (file may have been removed)", path, serr)
