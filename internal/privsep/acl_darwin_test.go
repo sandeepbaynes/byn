@@ -55,26 +55,41 @@ func TestACLGrantCommands_Darwin_EmptyHome(t *testing.T) {
 }
 
 // TestACLRevokeCommands_Darwin asserts revoke uses `-a` (delete) with the same
-// ACE text it added, recursively on the project and once on the home.
+// ACE text it added, recursively on the project dir. It deliberately LEAVES the
+// ancestor traversals — shared by sibling projects under the same home/Documents.
 func TestACLRevokeCommands_Darwin(t *testing.T) {
 	cmds := aclRevokeCommands("/Users/o/proj", "/Users/o", "_byn-exec")
-	require.Len(t, cmds, 2)
+	require.Len(t, cmds, 1, "revoke must leave shared ancestor traversals")
 
 	assert.Equal(t, []string{"chmod", "-R", "-a"}, cmds[0][:3])
 	assert.Contains(t, cmds[0][3], "_byn-exec allow ")
 	assert.Contains(t, cmds[0][3], "file_inherit")
 	assert.Equal(t, "/Users/o/proj", cmds[0][4])
-
-	assert.Equal(t, []string{"chmod", "-a"}, cmds[1][:2])
-	assert.Contains(t, cmds[1][2], "_byn-exec allow ")
-	assert.Contains(t, cmds[1][2], "execute")
-	assert.Equal(t, "/Users/o", cmds[1][3])
+	for _, c := range cmds {
+		assert.NotEqual(t, "/Users/o", c[len(c)-1], "home traversal must not be revoked")
+	}
 }
 
-// TestACLRevokeCommands_Darwin_HomeEqualsProject drops the home command.
+// TestACLRevokeCommands_Darwin_HomeEqualsProject still emits the single project
+// command (no separate ancestor command to drop).
 func TestACLRevokeCommands_Darwin_HomeEqualsProject(t *testing.T) {
 	cmds := aclRevokeCommands("/p", "/p", "_byn-exec")
 	require.Len(t, cmds, 1)
+}
+
+// TestACLGrantCommands_Darwin_DeepPath grants the exec child a traverse ACE on
+// every intermediate dir up to home — the real-world 0700 ~/Documents case.
+func TestACLGrantCommands_Darwin_DeepPath(t *testing.T) {
+	cmds := aclGrantCommands("/Users/o/Documents/proj", "/Users/o", "_byn-exec")
+	// recursive project grant + traverse on [/Users/o/Documents, /Users/o]
+	require.Len(t, cmds, 3)
+	targets := map[string]bool{}
+	for _, c := range cmds[1:] {
+		targets[c[len(c)-1]] = true
+		assert.Contains(t, c[2], "execute", "ancestor ACE must grant traverse")
+	}
+	assert.True(t, targets["/Users/o/Documents"], "intermediate must get a traverse ACE; got %v", targets)
+	assert.True(t, targets["/Users/o"], "home must get a traverse ACE")
 }
 
 // TestGrantProjectACL_Darwin_RunsAllAndUsesExecUser verifies the exported entry
@@ -105,7 +120,8 @@ func TestGrantProjectACL_Darwin_StopsAtFirstError(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
-// TestRevokeProjectACL_Darwin_RunsAll verifies the revoke entry iterates all.
+// TestRevokeProjectACL_Darwin_RunsAll verifies the revoke entry runs the single
+// project-dir removal (ancestor traversals are intentionally left).
 func TestRevokeProjectACL_Darwin_RunsAll(t *testing.T) {
 	var ran [][]string
 	err := RevokeProjectACL(func(name string, args ...string) error {
@@ -113,7 +129,7 @@ func TestRevokeProjectACL_Darwin_RunsAll(t *testing.T) {
 		return nil
 	}, "/Users/o/proj", "/Users/o")
 	require.NoError(t, err)
-	require.Len(t, ran, 2)
+	require.Len(t, ran, 1)
 }
 
 // TestRevokeProjectACL_Darwin_StopsAtFirstError mirrors the grant short-circuit.
