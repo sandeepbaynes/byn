@@ -131,11 +131,15 @@ func runTrustAdd(args []string) int {
 	// password"). The daemon owns vault-existence; we just consume its report.
 	// initSet == nil means "couldn't determine" (a non-fatal status error): we
 	// then fall back to today's behavior and let the daemon reject the grant.
-	initSet, derr := fetchInitializedVaults(dir)
+	initSet, privsepOn, derr := fetchInitializedVaults(dir)
 	if errors.Is(derr, ipc.ErrDaemonDown) {
 		// Daemon down: nothing can be trusted — surface the standard error.
 		return handleCallError(derr)
 	}
+	// Under privsep the daemon runs as _byn and cannot read a user-owned .byn,
+	// so the owner (this CLI) grants it read access before each grant call and
+	// rolls that back for any path the daemon rejects (see grantTrustACLs).
+	home, _ := os.UserHomeDir()
 	// Partition the vault groups: any group whose target vault is NOT in the
 	// initialized set is rejected here (no prompt). When initSet is nil we
 	// treat every group as "initialized" so the grant is attempted as before.
@@ -164,11 +168,33 @@ func runTrustAdd(args []string) int {
 			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
 			return exitErr
 		}
+		// Privsep: grant the daemon read access to every .byn in this group
+		// BEFORE it validates them (it reads the REAL file — never the CLI's
+		// content). Granted on the canonical path so the ACE lands on the real
+		// inode. Tracked so a rejected path's grant is rolled back below.
+		var grantedCanon []string
+		if privsepOn {
+			for _, p := range byVault[v] {
+				cp := trust.Canonicalize(p)
+				if gerr := grantTrustACLs(cp, home); gerr != nil {
+					fmt.Fprintf(os.Stderr, "  %s %s: granting daemon read access failed: %v\n",
+						yellow("!"), p, gerr)
+				}
+				grantedCanon = append(grantedCanon, cp)
+			}
+		}
 		var resp ipc.TrustGrantBulkResp
 		cerr := newClient(dir, v).Call(ipc.OpTrustGrantBulk,
 			ipc.TrustGrantBulkReq{Paths: byVault[v], Vault: v, Password: pw}, &resp)
 		wipe()
 		if cerr != nil {
+			// The whole call failed — nothing in this group was trusted, so roll
+			// back every ACL we granted for it (leaving the shared home traversal).
+			if privsepOn {
+				for _, cp := range grantedCanon {
+					revokeTrustACLs(cp, home)
+				}
+			}
 			// Single vault group with no pre-flight rejection: keep the original
 			// exit-code semantics — a daemon error (wrong password, not-init,
 			// down) maps straight through handleCallError so scripts see the
@@ -192,6 +218,12 @@ func runTrustAdd(args []string) int {
 		}
 		for _, r := range resp.Results {
 			if r.Error != "" {
+				// This path was rejected (malformed, oversize, …) — roll back the
+				// ACL we granted for it. r.Path is the daemon's canonical record
+				// path, matching the canonical path we granted on.
+				if privsepOn {
+					revokeTrustACLs(r.Path, home)
+				}
 				fmt.Fprintf(os.Stderr, "  %s %s: %s\n", red("x"), r.Path, r.Error)
 				failed++
 				continue
@@ -241,21 +273,23 @@ func resolveVaultName(v string) string {
 }
 
 // fetchInitializedVaults asks the daemon ONCE (via OpStatus) which vaults are
-// initialized and returns the set of their names. It is the pre-flight that
-// lets bulk trust REJECT an uninitialized-vault group up front without ever
-// prompting for that vault's password.
+// initialized and returns the set of their names plus whether privilege
+// separation is engaged. It is the pre-flight that lets bulk trust REJECT an
+// uninitialized-vault group up front without ever prompting for that vault's
+// password, and tells the caller whether it must grant the daemon read access
+// to each .byn (privsep) before the daemon can validate it.
 //
 // Return contract:
-//   - (set, nil)              — authoritative: a name is initialized iff present.
-//   - (nil, ipc.ErrDaemonDown) — daemon down; the caller surfaces it (nothing
-//     can be trusted against a dead socket).
-//   - (nil, otherErr)          — status failed for some other reason; the caller
+//   - (set, privsep, nil)       — authoritative: a name is initialized iff present.
+//   - (nil, false, ipc.ErrDaemonDown) — daemon down; the caller surfaces it
+//     (nothing can be trusted against a dead socket).
+//   - (nil, false, otherErr)    — status failed for some other reason; the caller
 //     treats this as "unknown" and falls back to attempting the grant (the
 //     daemon then rejects an uninitialized vault as before).
-func fetchInitializedVaults(dir string) (map[string]bool, error) {
+func fetchInitializedVaults(dir string) (map[string]bool, bool, error) {
 	var resp ipc.StatusResp
 	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	set := make(map[string]bool, len(resp.Vaults))
 	for _, v := range resp.Vaults {
@@ -263,7 +297,20 @@ func fetchInitializedVaults(dir string) (map[string]bool, error) {
 			set[v.Name] = true
 		}
 	}
-	return set, nil
+	return set, resp.Privsep, nil
+}
+
+// daemonPrivsep reports whether the daemon runs with privilege separation
+// engaged. Untrust uses it to decide whether to revoke the owner-granted
+// daemon/exec ACLs. A status error is treated as "off" — best-effort: a stale
+// ACL is harmless (the daemon won't act on an untrusted .byn) and self-heals on
+// the next trust.
+func daemonPrivsep(dir string) bool {
+	var resp ipc.StatusResp
+	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp); err != nil {
+		return false
+	}
+	return resp.Privsep
 }
 
 // absForDaemon makes a path absolute against the CLIENT's working directory
@@ -346,6 +393,10 @@ func runUntrust(args []string, _ cliScope) int {
 	}
 
 	client := newClient(dir, "")
+	// Under privsep, mirror trust: revoke the daemon/exec ACLs the owner granted
+	// at trust time once a record is actually removed (best-effort).
+	privsepOn := daemonPrivsep(dir)
+	home, _ := os.UserHomeDir()
 	multi := len(paths) > 1
 	removed, absent := 0, 0
 	for _, p := range paths {
@@ -353,6 +404,9 @@ func runUntrust(args []string, _ cliScope) int {
 		var resp ipc.TrustRemoveResp
 		if cerr := client.Call(ipc.OpTrustRemove, ipc.TrustRemoveReq{Path: canon}, &resp); cerr != nil {
 			return handleCallError(cerr)
+		}
+		if resp.Removed && privsepOn {
+			revokeTrustACLs(canon, home)
 		}
 		switch {
 		case resp.Removed && multi:
