@@ -113,6 +113,13 @@ const (
 	// in localStorage. The bootstrap token never reappears after the exchange.
 	OpWebBootstrap Op = "web.bootstrap" //nolint:gosec // G101: op name, not a credential
 
+	// OpConfigAuth mints a single-use, short-lived (60s) token that authorizes
+	// exactly ONE config WRITE from the portal. Only the socket owner can call it
+	// (UID-gated). `byn config-auth` calls it AFTER proving sudo via `sudo -v`
+	// (PAM); the owner pastes the returned code into the settings panel, which
+	// sends it with the one config write. The daemon consumes it once.
+	OpConfigAuth Op = "config.auth" //nolint:gosec // G101: op name, not a credential
+
 	// OpSessionEnd revokes the session token carried in the request Envelope.Session.
 	// The request body is empty; the daemon invalidates the token and returns an
 	// empty response.  Idempotent (no-op when the token is absent or already expired).
@@ -139,6 +146,7 @@ var AllOps = []Op{
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
 	OpPasskeyList, OpPasskeyRemove,
 	OpWebBootstrap,
+	OpConfigAuth,
 	OpSessionEnd,
 }
 
@@ -246,6 +254,17 @@ type StatusResp struct {
 	SocketPath  string         `json:"socket_path,omitempty"`
 	StartedAt   time.Time      `json:"started_at"`
 	Vaults      []VaultSummary `json:"vaults"`
+
+	// UIEnabled / UIPort expose the daemon's resolved web-portal config so the
+	// owner-UID CLI (`byn web`) need not read the config file directly — under
+	// privsep the config lives in the _byn-owned data dir and is unreadable by the
+	// owner. Privsep reports whether privilege separation is engaged so `byn exec`
+	// learns it from the daemon (authoritative) rather than a misread of the
+	// unreadable config, which would silently downgrade exec to the non-privsep
+	// (owner-UID child) path. Single source of truth, per "binary = IPC client only".
+	UIEnabled bool `json:"ui_enabled"`
+	UIPort    int  `json:"ui_port"`
+	Privsep   bool `json:"privsep"`
 }
 
 // VaultSummary is the per-vault entry in StatusResp.Vaults. LastActive
@@ -1248,6 +1267,17 @@ type WebBootstrapReq struct{} //nolint:gosec // G101: req type for minting, not 
 // token is single-use and expires after 60 seconds.
 type WebBootstrapResp struct {
 	Token string `json:"token"` //nolint:gosec // G101: short-lived bootstrap token
+}
+
+// ConfigAuthReq has no fields — the daemon mints a one-time config-write token
+// for the caller. Only the Unix-socket owner can issue it (UID-gated); the CLI
+// must have proven sudo via `sudo -v` BEFORE calling.
+type ConfigAuthReq struct{} //nolint:gosec // G101: req type for minting, not a credential
+
+// ConfigAuthResp carries the single-use code the owner pastes into the settings
+// panel to authorize ONE config write. Single-use; expires after 60 seconds.
+type ConfigAuthResp struct {
+	Token string `json:"token"` //nolint:gosec // G101: short-lived config-write token
 }
 
 // ---- Diagnostics -------------------------------------------------------

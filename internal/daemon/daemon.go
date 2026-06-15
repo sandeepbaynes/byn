@@ -104,6 +104,11 @@ type Daemon struct {
 	pidPath     string
 	limiterPath string
 
+	// provisioned is true when `byn setup` has run (owner record present): the
+	// daemon runs as the _byn service user, so the socket must be connectable by
+	// the human owner (a different UID) — 0666 + peercred rather than 0600.
+	provisioned bool
+
 	ownerUID uint32
 
 	startedAt time.Time
@@ -142,6 +147,13 @@ type Daemon struct {
 	// without embedding the long-lived portal token in argv or URLs where
 	// it would be visible to `ps`.
 	bootstrapTokens *bootstrapTokens
+
+	// configAuthTokens are single-use, sudo-verified tokens that each authorize
+	// ONE config WRITE. Minted by `byn config-auth` (after the CLI proves sudo via
+	// PAM) over the UID-gated socket and consumed once at POST /api/config. They
+	// keep a same-UID process or a plain portal session from changing security
+	// settings ([security] privsep) — only a fresh sudo-verified token can write.
+	configAuthTokens *configAuthTokens
 
 	// sessions is the NU-3 session store: a mutex-guarded map of live session
 	// tokens keyed by the token string (32 random bytes, hex-encoded). Each
@@ -243,6 +255,13 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: resolve socket path: %w", serr)
 	}
 
+	// Provisioned (owner record present) ⇒ daemon runs as _byn; the socket must be
+	// connectable by the owner UID, so it is chmod'd 0666 (peercred-gated) at bind.
+	provisioned, perr := paths.ProvisionedIn(cfg.Dir)
+	if perr != nil {
+		return nil, fmt.Errorf("daemon: resolve provisioned state: %w", perr)
+	}
+
 	// Resolve the session idle window: 0 ⇒ inherit the vault idle timeout.
 	sessionIdle := cfg.SessionIdle
 	if sessionIdle == 0 {
@@ -250,17 +269,19 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		cfg:             cfg,
-		socketPath:      socketPath,
-		pidPath:         filepath.Join(cfg.Dir, PIDFilename),
-		limiterPath:     filepath.Join(cfg.Dir, auth.RateLimiterFile),
-		ownerUID:        cfg.OwnerUID,
-		closeCh:         make(chan struct{}),
-		vaults:          make(map[string]*vaultEntry),
-		pkChallenges:    newPasskeyChallenges(),
-		presenceTokens:  newPresenceTokens(),
-		bootstrapTokens: newBootstrapTokens(),
-		sessions:        newSessionStore(cfg.SessionTTL, sessionIdle),
+		cfg:              cfg,
+		socketPath:       socketPath,
+		provisioned:      provisioned,
+		pidPath:          filepath.Join(cfg.Dir, PIDFilename),
+		limiterPath:      filepath.Join(cfg.Dir, auth.RateLimiterFile),
+		ownerUID:         cfg.OwnerUID,
+		closeCh:          make(chan struct{}),
+		vaults:           make(map[string]*vaultEntry),
+		pkChallenges:     newPasskeyChallenges(),
+		presenceTokens:   newPresenceTokens(),
+		bootstrapTokens:  newBootstrapTokens(),
+		configAuthTokens: newConfigAuthTokens(),
+		sessions:         newSessionStore(cfg.SessionTTL, sessionIdle),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
 	d.limiter = auth.NewRateLimiter(d.limiterPath)
@@ -436,7 +457,7 @@ func (d *Daemon) startUILocked(port int) error {
 	if tok == "" {
 		return fmt.Errorf("portal disabled: portal token is empty (fail-closed)")
 	}
-	srv := ui.New(d, ui.Config{Port: port, Token: tok, Bootstrap: d})
+	srv := ui.New(d, ui.Config{Port: port, Token: tok, Bootstrap: d, ConfigAuth: d})
 	if err := srv.Listen(); err != nil {
 		return err
 	}
@@ -465,6 +486,13 @@ func (d *Daemon) ConsumeBootstrap(t string) string {
 		return ""
 	}
 	return d.uiSrv.Token()
+}
+
+// ConsumeConfigAuth implements ui.ConfigAuthConsumer. It burns the single-use,
+// sudo-verified config-write token t, returning true only if it was valid +
+// unexpired + unused. POST /api/config calls this before writing config.
+func (d *Daemon) ConsumeConfigAuth(t string) bool {
+	return d.configAuthTokens.consume(t, time.Now())
 }
 
 // Shutdown drains in-flight connections and releases socket + pidfile.
@@ -871,7 +899,7 @@ func (d *Daemon) bind() error {
 	if err != nil {
 		return fmt.Errorf("daemon: listen %s: %w", d.socketPath, err)
 	}
-	if err := os.Chmod(d.socketPath, 0o600); err != nil {
+	if err := os.Chmod(d.socketPath, socketMode(d.provisioned)); err != nil {
 		_ = l.Close()
 		return fmt.Errorf("daemon: chmod socket: %w", err)
 	}
@@ -879,6 +907,20 @@ func (d *Daemon) bind() error {
 	d.listener = l
 	d.listenerMu.Unlock()
 	return nil
+}
+
+// socketMode is the file mode the bound Unix socket is chmod'd to. When the
+// daemon runs as the owner (legacy/unprovisioned — same UID) 0600 suffices. When
+// provisioned the daemon is _byn but the human owner (a DIFFERENT UID) must be
+// able to connect(): a 0600 _byn socket would deny the owner outright, before
+// peercred is even consulted. Access stays gated by SO_PEERCRED / LOCAL_PEERCRED
+// (dispatch rejects any UID != ownerUID), so the permissive mode does not widen
+// real access — it only lets the allowlisted owner reach the gate.
+func socketMode(provisioned bool) os.FileMode {
+	if provisioned {
+		return 0o666
+	}
+	return 0o600
 }
 
 // ensureSocketDir makes sure the socket's parent directory exists and is

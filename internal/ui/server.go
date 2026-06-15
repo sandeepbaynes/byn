@@ -73,6 +73,11 @@ type Config struct {
 	// exchange a one-time bootstrap token for the persistent portal token.
 	// May be nil in tests that do not exercise the bootstrap flow.
 	Bootstrap BootstrapConsumer
+
+	// ConfigAuth consumes a single-use, sudo-verified config-WRITE token (minted
+	// by `byn config-auth`). POST /api/config requires a valid one. nil in tests
+	// disables the gate (any write is allowed) — mirrors the empty-Token escape.
+	ConfigAuth ConfigAuthConsumer
 }
 
 // BootstrapConsumer is the slice of the daemon that the portal session
@@ -82,6 +87,14 @@ type BootstrapConsumer interface {
 	// ConsumeBootstrap consumes the one-time bootstrap token t and returns
 	// the persistent portal token, or "" if t is invalid/expired/replayed.
 	ConsumeBootstrap(t string) string
+}
+
+// ConfigAuthConsumer is the slice of the daemon that gates config WRITES: consume
+// a single-use, sudo-verified config-auth token. Returns true only if the token
+// was valid + unexpired + unused (it is burned on consume). The daemon satisfies
+// it via the Daemon struct.
+type ConfigAuthConsumer interface {
+	ConsumeConfigAuth(t string) bool
 }
 
 // Server is the embedded portal HTTP server.
@@ -102,8 +115,9 @@ type Server struct {
 	// sync.Map is used to avoid holding the main mutex during dispatch.
 	vaultTokens sync.Map // string → string
 
-	sessions  *pkSessions
-	bootstrap BootstrapConsumer // may be nil (tests that don't need bootstrap)
+	sessions   *pkSessions
+	bootstrap  BootstrapConsumer  // may be nil (tests that don't need bootstrap)
+	configAuth ConfigAuthConsumer // may be nil (tests) ⇒ config-write gate disabled
 }
 
 // New constructs a portal server bound to disp. It does not listen until
@@ -114,27 +128,35 @@ func New(disp Dispatcher, cfg Config) *Server {
 		port = 2967
 	}
 	s := &Server{
-		disp:      disp,
-		mux:       http.NewServeMux(),
-		port:      port,
-		token:     cfg.Token,
-		sessions:  newPKSessions(),
-		bootstrap: cfg.Bootstrap,
+		disp:       disp,
+		mux:        http.NewServeMux(),
+		port:       port,
+		token:      cfg.Token,
+		sessions:   newPKSessions(),
+		bootstrap:  cfg.Bootstrap,
+		configAuth: cfg.ConfigAuth,
 	}
 	s.routes()
 	return s
 }
 
-// routes registers every handler. Static assets and the SPA fallback are
-// ungated (the HTML is harmless without a token). All /api/* routes are gated
-// by requireToken (the owner-token check). Mutating /api/* routes are also
-// wrapped in sameOrigin (CSRF defense). Both layers are necessary:
+// routes registers every handler. The portal has NO token gate (design decision
+// A, 2026-06-15): opening localhost:<port> shows the scope tree + entry NAMES with
+// no auth, exactly like `byn ls` — metadata is treated as open. The real gates
+// are at the daemon / per-action layer:
 //
-//   - requireToken: stops other-UID local processes that can reach loopback TCP
-//     but cannot read <data-dir>/portal.token (mode 0600, owned by daemon UID).
-//   - sameOrigin: stops browser CSRF — a browser always sends Origin on a
-//     cross-site POST, so a malicious page cannot drive the portal even if it
-//     somehow obtained the token via XSS.
+//   - VALUES + scope mutations: the daemon's per-action master-password gate (a
+//     locked vault returns auth_required / CodeLocked, which the SPA steps up).
+//   - config WRITES: a single-use, sudo-verified token in X-Byn-Config-Auth,
+//     minted by `byn config-auth` and consumed once (see handleConfigRoute).
+//   - sameOrigin (CSRF) on every mutating route — a browser always sends Origin
+//     on a cross-site POST, so a malicious page cannot drive the portal.
+//
+// Accepted tradeoff (owner): the loopback HTTP port is not UID-gated, so names
+// are readable by any local process or anyone the port is forwarded to. Names are
+// ALREADY readable by the owner UID via the socket (`byn ls` on a locked vault);
+// values stay password-gated either way. Remote use = an SSH tunnel, not a
+// network bind (Listen still binds 127.0.0.1 only).
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/favicon.svg", s.handleFavicon)
@@ -148,63 +170,65 @@ func (s *Server) routes() {
 	// cross-origin POSTs, so a malicious page cannot replay a ps-captured token).
 	s.mux.HandleFunc("/api/session/bootstrap", s.sameOrigin(s.only(http.MethodPost, s.handleSessionBootstrap)))
 
-	s.mux.HandleFunc("/api/status", s.requireToken(s.only(http.MethodGet, s.handleStatus)))
-	s.mux.HandleFunc("/api/audit", s.requireToken(s.only(http.MethodGet, s.handleAudit)))
-	s.mux.HandleFunc("/api/audit/verify", s.requireToken(s.only(http.MethodGet, s.handleAuditVerify)))
-	s.mux.HandleFunc("/api/trust", s.requireToken(s.only(http.MethodGet, s.handleTrust)))
-	s.mux.HandleFunc("/api/trust/remove", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleTrustRemove))))
+	s.mux.HandleFunc("/api/status", s.only(http.MethodGet, s.handleStatus))
+	s.mux.HandleFunc("/api/audit", s.only(http.MethodGet, s.handleAudit))
+	s.mux.HandleFunc("/api/audit/verify", s.only(http.MethodGet, s.handleAuditVerify))
+	s.mux.HandleFunc("/api/trust", s.only(http.MethodGet, s.handleTrust))
+	s.mux.HandleFunc("/api/trust/remove", s.sameOrigin(s.only(http.MethodPost, s.handleTrustRemove)))
 
-	// Per-vault lock state (no portal session).
-	s.mux.HandleFunc("/api/unlock", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleUnlock))))
-	s.mux.HandleFunc("/api/lock", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleLock))))
+	// Per-vault lock state (no portal session). Unlock carries the master
+	// password; lock needs none — both are sameOrigin-gated against CSRF.
+	s.mux.HandleFunc("/api/unlock", s.sameOrigin(s.only(http.MethodPost, s.handleUnlock)))
+	s.mux.HandleFunc("/api/lock", s.sameOrigin(s.only(http.MethodPost, s.handleLock)))
 
 	// Portal passkey (WebAuthn) ceremonies. begin/finish forward to the daemon;
-	// a verified assertion issues a session cookie. The SPA has the token by
-	// the time these routes are called, so they carry the same owner-token gate.
-	s.mux.HandleFunc("/api/passkey/register/begin", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRegisterBegin))))
-	s.mux.HandleFunc("/api/passkey/register/finish", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRegisterFinish))))
-	s.mux.HandleFunc("/api/passkey/auth/begin", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyAuthBegin))))
-	s.mux.HandleFunc("/api/passkey/auth/finish", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyAuthFinish))))
-	s.mux.HandleFunc("/api/passkey/list", s.requireToken(s.only(http.MethodGet, s.handlePasskeyList)))
-	s.mux.HandleFunc("/api/passkey/remove", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRemove))))
-	s.mux.HandleFunc("/api/passkey/session", s.requireToken(s.only(http.MethodGet, s.handlePasskeySession)))
+	// the WebAuthn assertion + per-action password gate are the real auth.
+	s.mux.HandleFunc("/api/passkey/register/begin", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRegisterBegin)))
+	s.mux.HandleFunc("/api/passkey/register/finish", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRegisterFinish)))
+	s.mux.HandleFunc("/api/passkey/auth/begin", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyAuthBegin)))
+	s.mux.HandleFunc("/api/passkey/auth/finish", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyAuthFinish)))
+	s.mux.HandleFunc("/api/passkey/list", s.only(http.MethodGet, s.handlePasskeyList))
+	s.mux.HandleFunc("/api/passkey/remove", s.sameOrigin(s.only(http.MethodPost, s.handlePasskeyRemove)))
+	s.mux.HandleFunc("/api/passkey/session", s.only(http.MethodGet, s.handlePasskeySession))
 
-	// Scope CRUD.
-	s.mux.HandleFunc("/api/vaults", s.requireToken(s.sameOrigin(s.handleVaults))) // POST create
-	s.mux.HandleFunc("/api/vault/delete", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleVaultDelete))))
-	s.mux.HandleFunc("/api/vault/passwd", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleVaultPasswd))))
-	s.mux.HandleFunc("/api/projects", s.requireToken(s.sameOrigin(s.handleProjects))) // GET list, POST create
-	s.mux.HandleFunc("/api/envs", s.requireToken(s.sameOrigin(s.handleEnvs)))         // GET list, POST create
-	s.mux.HandleFunc("/api/project/delete", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleProjectDelete))))
-	s.mux.HandleFunc("/api/env/delete", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleEnvDelete))))
-	s.mux.HandleFunc("/api/project/rename", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleProjectRename))))
-	s.mux.HandleFunc("/api/env/rename", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleEnvRename))))
-	s.mux.HandleFunc("/api/vault/rename", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleVaultRename))))
+	// Scope CRUD. Reads are open metadata; mutations are sameOrigin + the
+	// daemon's per-action password gate (a locked vault returns auth_required).
+	s.mux.HandleFunc("/api/vaults", s.sameOrigin(s.handleVaults)) // POST create
+	s.mux.HandleFunc("/api/vault/delete", s.sameOrigin(s.only(http.MethodPost, s.handleVaultDelete)))
+	s.mux.HandleFunc("/api/vault/passwd", s.sameOrigin(s.only(http.MethodPost, s.handleVaultPasswd)))
+	s.mux.HandleFunc("/api/projects", s.sameOrigin(s.handleProjects)) // GET list, POST create
+	s.mux.HandleFunc("/api/envs", s.sameOrigin(s.handleEnvs))         // GET list, POST create
+	s.mux.HandleFunc("/api/project/delete", s.sameOrigin(s.only(http.MethodPost, s.handleProjectDelete)))
+	s.mux.HandleFunc("/api/env/delete", s.sameOrigin(s.only(http.MethodPost, s.handleEnvDelete)))
+	s.mux.HandleFunc("/api/project/rename", s.sameOrigin(s.only(http.MethodPost, s.handleProjectRename)))
+	s.mux.HandleFunc("/api/env/rename", s.sameOrigin(s.only(http.MethodPost, s.handleEnvRename)))
+	s.mux.HandleFunc("/api/vault/rename", s.sameOrigin(s.only(http.MethodPost, s.handleVaultRename)))
 
 	// Entry data plane. Reads of names are open; reveal/edit hit the
-	// daemon, which returns CodeLocked (423) for a locked vault.
-	s.mux.HandleFunc("/api/entries", s.requireToken(s.sameOrigin(s.handleEntries))) // GET list, POST put
-	s.mux.HandleFunc("/api/entry/reveal", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleReveal))))
-	s.mux.HandleFunc("/api/entry/delete", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleDelete))))
-	s.mux.HandleFunc("/api/entry/rename", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleRename))))
-	// Global config — GET reads (no path, no traversal), POST writes (credential-gated).
-	s.mux.HandleFunc("/api/config", s.requireToken(s.handleConfigRoute))
-	// config.validate: POST {content} → {errors, parsed?}. sameOrigin — no
-	// secrets, but we apply the same cross-origin protection as byn.validate.
-	s.mux.HandleFunc("/api/config/validate", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleConfigValidate))))
-	s.mux.HandleFunc("/api/byn/write", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleBynWrite))))
-	s.mux.HandleFunc("/api/byn/validate", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleBynValidate))))
-	s.mux.HandleFunc("/api/byn/simulate", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleBynSimulate))))
+	// daemon, which returns CodeLocked / auth_required for a locked vault.
+	s.mux.HandleFunc("/api/entries", s.sameOrigin(s.handleEntries)) // GET list, POST put
+	s.mux.HandleFunc("/api/entry/reveal", s.sameOrigin(s.only(http.MethodPost, s.handleReveal)))
+	s.mux.HandleFunc("/api/entry/delete", s.sameOrigin(s.only(http.MethodPost, s.handleDelete)))
+	s.mux.HandleFunc("/api/entry/rename", s.sameOrigin(s.only(http.MethodPost, s.handleRename)))
+	// Global config — GET reads are OPEN (settings, not secrets); POST writes are
+	// gated by a single-use sudo token (handleConfigRoute consumes it). This is the
+	// gate that stops a plain portal session from changing [security]/privsep.
+	s.mux.HandleFunc("/api/config", s.sameOrigin(s.handleConfigRoute))
+	// config.validate: POST {content} → {errors, parsed?}. sameOrigin (no secrets).
+	s.mux.HandleFunc("/api/config/validate", s.sameOrigin(s.only(http.MethodPost, s.handleConfigValidate)))
+	s.mux.HandleFunc("/api/byn/write", s.sameOrigin(s.only(http.MethodPost, s.handleBynWrite)))
+	s.mux.HandleFunc("/api/byn/validate", s.sameOrigin(s.only(http.MethodPost, s.handleBynValidate)))
+	s.mux.HandleFunc("/api/byn/simulate", s.sameOrigin(s.only(http.MethodPost, s.handleBynSimulate)))
 	// POST (not GET) with sameOrigin so cross-origin pages cannot use this as
 	// an arbitrary file-read oracle even if the daemon's own .byn filter is
 	// somehow bypassed. The daemon additionally enforces that the path is a
 	// .byn file (filepath.Base == ".byn").
-	s.mux.HandleFunc("/api/byn/read", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleBynRead))))
-	s.mux.HandleFunc("/api/fs/listdir", s.requireToken(s.sameOrigin(s.only(http.MethodGet, s.handleFSListDir))))
-	s.mux.HandleFunc("/api/fs/readfile", s.requireToken(s.sameOrigin(s.only(http.MethodGet, s.handleFSReadFile))))
+	s.mux.HandleFunc("/api/byn/read", s.sameOrigin(s.only(http.MethodPost, s.handleBynRead)))
+	s.mux.HandleFunc("/api/fs/listdir", s.sameOrigin(s.only(http.MethodGet, s.handleFSListDir)))
+	s.mux.HandleFunc("/api/fs/readfile", s.sameOrigin(s.only(http.MethodGet, s.handleFSReadFile)))
 	// Daemon lifecycle (portal-only, sameOrigin POST).
-	s.mux.HandleFunc("/api/daemon/reload", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleDaemonReload))))
-	s.mux.HandleFunc("/api/daemon/restart", s.requireToken(s.sameOrigin(s.only(http.MethodPost, s.handleDaemonRestart))))
+	s.mux.HandleFunc("/api/daemon/reload", s.sameOrigin(s.only(http.MethodPost, s.handleDaemonReload)))
+	s.mux.HandleFunc("/api/daemon/restart", s.sameOrigin(s.only(http.MethodPost, s.handleDaemonRestart)))
 }
 
 // Listen binds the loopback listener. It binds 127.0.0.1 explicitly —

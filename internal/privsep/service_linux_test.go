@@ -29,7 +29,9 @@ func TestSystemdUnitContents(t *testing.T) {
 	// Core service identity + entry point.
 	assert.Contains(t, unit, "User="+DaemonUser)
 	assert.Contains(t, unit, "User=_byn")
-	assert.Contains(t, unit, "ExecStart="+execPath+" daemon start")
+	// --foreground is load-bearing: systemd Type=simple supervises the process, so
+	// the daemon must run in the foreground and not self-detach.
+	assert.Contains(t, unit, "ExecStart="+execPath+" daemon start --foreground")
 	assert.Contains(t, unit, "StateDirectory=byn")
 	assert.Contains(t, unit, "Restart=on-failure")
 

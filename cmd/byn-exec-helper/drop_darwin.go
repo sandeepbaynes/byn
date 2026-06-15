@@ -12,7 +12,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const helperConfigPath = "/Library/Application Support/byn/exec-helper.conf"
+// helperConfigPath is the compiled-in path of the root-owned UID/GID config.
+// It lives beside the helper binary in the root-owned /usr/local/libexec, NOT in
+// the _byn-owned vault data dir, so the daemon user cannot rewrite it and it does
+// not collide with `byn migrate`. MUST match helperConfigPathDarwin in
+// internal/privsep/provision_darwin.go EXACTLY.
+const helperConfigPath = "/usr/local/libexec/byn-exec-helper.conf"
 
 // dropTo drops privileges to the given uid/gid on Darwin (macOS).
 // Drop order: setgroups([gid]) → setregid(g,g) → setreuid(u,u) → verify via readback.

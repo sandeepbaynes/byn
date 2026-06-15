@@ -44,7 +44,7 @@ func TestProvisionRunsCommandWhenUsersAbsent(t *testing.T) {
 
 func TestHelperConfigPath_Linux(t *testing.T) {
 	got := HelperConfigPath()
-	assert.Equal(t, "/var/lib/byn/exec-helper.conf", got)
+	assert.Equal(t, "/usr/local/libexec/byn-exec-helper.conf", got)
 }
 
 func TestInstallHelperWritesConfig(t *testing.T) {
@@ -53,10 +53,16 @@ func TestInstallHelperWritesConfig(t *testing.T) {
 		cmds = append(cmds, cmd)
 		return nil
 	}, "/src/byn-exec-helper", "/usr/local/libexec/byn-exec-helper",
-		"/var/lib/byn/exec-helper.conf", 411, 411)
+		"/usr/local/libexec/byn-exec-helper.conf", 411, 411)
 	assert.NoError(t, err)
-	// Should call install, setcap, install (state dir), sh (config write)
-	assert.GreaterOrEqual(t, len(cmds), 3)
+	// Should call: install -d (helper dir), install (binary), setcap, install -d
+	// (state dir), sh (config write).
+	assert.GreaterOrEqual(t, len(cmds), 5)
+	assert.Equal(t, "install", cmds[0], "first must create the helper's parent dir")
+	assert.Equal(t, "install", cmds[1], "second must install the helper binary")
+	assert.Equal(t, "setcap", cmds[2], "third must set file caps")
+	assert.Equal(t, "install", cmds[3], "fourth must create the state dir")
+	assert.Equal(t, "sh", cmds[4], "fifth must write the config")
 }
 
 func TestInstallHelperErrorPaths(t *testing.T) {
@@ -67,10 +73,11 @@ func TestInstallHelperErrorPaths(t *testing.T) {
 		failAtCall int // zero-based index of the call to fail
 	}
 	steps := []step{
-		{"install binary", 0},
-		{"setcap", 1},
-		{"create state dir", 2},
-		{"write config", 3},
+		{"create helper dir", 0},
+		{"install binary", 1},
+		{"setcap", 2},
+		{"create state dir", 3},
+		{"write config", 4},
 	}
 	for _, s := range steps {
 		s := s
@@ -83,7 +90,7 @@ func TestInstallHelperErrorPaths(t *testing.T) {
 				}
 				return nil
 			}, "/src/byn-exec-helper", "/usr/local/libexec/byn-exec-helper",
-				"/var/lib/byn/exec-helper.conf", 411, 411)
+				"/usr/local/libexec/byn-exec-helper.conf", 411, 411)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, sentinel)
 		})

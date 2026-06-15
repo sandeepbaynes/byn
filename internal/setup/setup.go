@@ -57,7 +57,8 @@ type Deps struct {
 	DaemonUser func() (uid, gid int, err error)
 
 	// InstallSpawnHelper runs privsep.Setup (create service users + install the
-	// prebuilt spawn helper + helper config). Idempotent.
+	// prebuilt spawn helper + helper config + the _byn-owned system data dir).
+	// Idempotent.
 	InstallSpawnHelper func() error
 
 	// InstallService installs + loads the system service (systemd unit // macOS
@@ -96,22 +97,25 @@ type Result struct {
 	LegacyDir string // the legacy dir relocated FROM (only when Migrated)
 }
 
-// Provision runs the full `byn setup`: install service users + spawn helper →
-// install + load the system service → relocate any legacy ~/.byn → record the
-// owner UID → verify post-conditions. It is root-required (enforced by the
-// caller) and idempotent. The orchestration order is load-bearing:
+// Provision runs the full `byn setup`: provision service users + spawn helper +
+// the _byn-owned data dir → relocate any legacy ~/.byn → record the owner UID →
+// install + start the system service → verify. It is root-required (enforced by
+// the caller) and idempotent. The order is load-bearing — the service that runs
+// the daemon as _byn starts LAST, only once everything it reads is in place:
 //
-//  1. InstallSpawnHelper FIRST — creates the _byn / _byn-exec accounts; the
-//     relocate's chown target and the service's User=_byn both need _byn to
-//     exist before they run.
-//  2. InstallService — installs + enables the system unit/LaunchDaemon (User=_byn).
-//  3. Relocate (only if a legacy ~/.byn exists) — moves the old vault into the
-//     system dir, chowned to _byn, BEFORE the owner record is written so a
-//     verify sees a fully-populated tree.
-//  4. WriteOwnerRecord — records the invoking human's UID (never 0). The owner
-//     record is the authoritative "provisioned" marker (paths.Provisioned), so
-//     it is written LAST: an interrupted setup before this point is not yet
-//     "provisioned" and re-running is clean.
+//  1. InstallSpawnHelper FIRST — creates the _byn / _byn-exec accounts and the
+//     _byn-owned system data dir; the relocate's chown target and the service's
+//     User=_byn both need _byn to exist before they run.
+//  2. Relocate (only if a legacy ~/.byn exists) — moves the old vault into the
+//     system dir, chowned to _byn, BEFORE the service starts so the daemon never
+//     races the adopt or boots against an empty, not-yet-owned data dir.
+//  3. WriteOwnerRecord — records the invoking human's UID (never 0), before the
+//     daemon starts so it allowlists the owner on first boot.
+//  4. InstallService LAST — installs + starts the system unit/LaunchDaemon
+//     (User=_byn), now that the data dir is _byn-owned + populated and the owner
+//     record exists. The owner record is the authoritative "provisioned" marker;
+//     an interrupted setup before the service step is not yet "provisioned" and
+//     re-running is clean.
 //  5. Verify — lightweight post-conditions (no daemon round-trip).
 func Provision(d Deps) (Result, error) {
 	ownerUID, ok := d.SudoUID()
@@ -119,7 +123,7 @@ func Provision(d Deps) (Result, error) {
 		return Result{}, errNoSudoContext
 	}
 
-	// 1. Service users + spawn helper (creates _byn / _byn-exec). Idempotent.
+	// 1. Service users + spawn helper + the _byn-owned data dir. Idempotent.
 	if err := d.InstallSpawnHelper(); err != nil {
 		return Result{}, fmt.Errorf("install spawn helper / service users: %w", err)
 	}
@@ -131,14 +135,10 @@ func Provision(d Deps) (Result, error) {
 		return Result{}, fmt.Errorf("resolve %s service account after provisioning: %w", "_byn", err)
 	}
 
-	// 2. System service (systemd unit // LaunchDaemon), User=_byn. Idempotent.
-	if err := d.InstallService(); err != nil {
-		return Result{}, fmt.Errorf("install system service: %w", err)
-	}
-
 	systemDir := d.SystemDataDir()
 
-	// 3. Relocate a legacy ~/.byn ONLY if it exists (fresh install skips this).
+	// 2. Relocate a legacy ~/.byn ONLY if it exists (fresh install skips this).
+	//    Done BEFORE the service starts so the daemon never races the adopt.
 	res := Result{OwnerUID: ownerUID, SystemDir: systemDir}
 	legacyDir, legacyExists, lerr := d.LegacyDir()
 	if lerr != nil {
@@ -152,10 +152,19 @@ func Provision(d Deps) (Result, error) {
 		res.LegacyDir = legacyDir
 	}
 
-	// 4. Owner record (the provisioned marker) — written LAST, never UID 0.
+	// 3. Owner record (the provisioned marker), never UID 0. Written before the
+	//    service starts so the daemon allowlists the owner on first boot.
 	ownerRecordPath := d.OwnerRecordPath()
 	if err := d.WriteOwnerRecord(ownerRecordPath, ownerUID); err != nil {
 		return Result{}, fmt.Errorf("record owner UID: %w", err)
+	}
+
+	// 4. System service (systemd unit // LaunchDaemon), User=_byn — installed +
+	//    started LAST, once the data dir is _byn-owned, the vault is in place, and
+	//    the owner record exists. Starting it earlier races the relocate and boots
+	//    the daemon against a not-yet-owned, empty data dir. Idempotent.
+	if err := d.InstallService(); err != nil {
+		return Result{}, fmt.Errorf("install system service: %w", err)
 	}
 
 	// 5. Verify post-conditions (lightweight; no daemon round-trip).

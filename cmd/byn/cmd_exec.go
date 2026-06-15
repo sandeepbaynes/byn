@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
@@ -118,15 +117,18 @@ func runExec(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, "")
 
-	// The CLI is a separate process from the daemon, so it learns whether
-	// privsep is enabled by reading the SAME ~/.byn/config the daemon reads
-	// (config.Load on the data dir). A missing/invalid file yields defaults
-	// (privsep OFF) — we never want a config read error to block exec, so a
-	// load failure degrades to the legacy in-process path silently.
+	// Learn whether privsep is engaged from the DAEMON (authoritative) over the
+	// UID-gated socket — not by reading the config file. Under privsep the config
+	// lives in the _byn-owned data dir and the owner-UID CLI cannot read it; a
+	// misread would set privsepOn=false and silently downgrade exec to the legacy
+	// in-process path (child runs as the OWNER, not _byn-exec), defeating the
+	// isolation. A status-call failure means the daemon is unreachable, in which
+	// case the exec round-trip below fails anyway, so degrading here is harmless.
 	privsepOn := !noPrivsep
 	if privsepOn {
-		cfg, cerr := config.Load(config.Path(dir))
-		privsepOn = cerr == nil && cfg.PrivsepEnabled()
+		var st ipc.StatusResp
+		serr := client.Call(ipc.OpStatus, ipc.StatusReq{}, &st)
+		privsepOn = serr == nil && st.Privsep
 	}
 
 	// One round-trip: the daemon verifies trust, enforces the .byn's
