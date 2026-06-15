@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 )
 
@@ -46,6 +47,28 @@ type State struct {
 // currentUID returns the effective UID of the calling process.
 func currentUID() int {
 	return os.Getuid()
+}
+
+// traverseAncestors returns startDir followed by each of its ancestor
+// directories up to and INCLUDING home (or the filesystem root if home is not
+// an ancestor). A service user must have execute/search ("traverse") permission
+// on EVERY one of these to open a file beneath startDir — a single restrictive
+// intermediate (e.g. a 0700 ~/Documents) otherwise blocks access even when the
+// leaf file itself is readable. The result is granted idempotently, so passing
+// already-world-traversable dirs (e.g. /Users) is harmless.
+func traverseAncestors(startDir, home string) []string {
+	home = filepath.Clean(home)
+	var dirs []string
+	d := startDir
+	for {
+		dirs = append(dirs, d)
+		parent := filepath.Dir(d)
+		if d == home || d == parent { // reached home (inclusive) or the root
+			break
+		}
+		d = parent
+	}
+	return dirs
 }
 
 // uidLookup is a function that resolves a username to its UID and GID.

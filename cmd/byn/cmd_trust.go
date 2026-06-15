@@ -131,7 +131,7 @@ func runTrustAdd(args []string) int {
 	// password"). The daemon owns vault-existence; we just consume its report.
 	// initSet == nil means "couldn't determine" (a non-fatal status error): we
 	// then fall back to today's behavior and let the daemon reject the grant.
-	initSet, privsepOn, derr := fetchInitializedVaults(dir)
+	initSet, derr := fetchInitializedVaults(dir)
 	if errors.Is(derr, ipc.ErrDaemonDown) {
 		// Daemon down: nothing can be trusted — surface the standard error.
 		return handleCallError(derr)
@@ -139,6 +139,10 @@ func runTrustAdd(args []string) int {
 	// Under privsep the daemon runs as _byn and cannot read a user-owned .byn,
 	// so the owner (this CLI) grants it read access before each grant call and
 	// rolls that back for any path the daemon rejects (see grantTrustACLs).
+	// Gated on whether _byn EXISTS locally — the file-access problem is a
+	// property of the daemon's UID (provisioned), not the [security] privsep
+	// config flag, and this works regardless of the running daemon's version.
+	privsepOn := cliPrivsepProvisioned()
 	home, _ := os.UserHomeDir()
 	// Partition the vault groups: any group whose target vault is NOT in the
 	// initialized set is rejected here (no prompt). When initSet is nil we
@@ -273,23 +277,21 @@ func resolveVaultName(v string) string {
 }
 
 // fetchInitializedVaults asks the daemon ONCE (via OpStatus) which vaults are
-// initialized and returns the set of their names plus whether privilege
-// separation is engaged. It is the pre-flight that lets bulk trust REJECT an
-// uninitialized-vault group up front without ever prompting for that vault's
-// password, and tells the caller whether it must grant the daemon read access
-// to each .byn (privsep) before the daemon can validate it.
+// initialized and returns the set of their names. It is the pre-flight that
+// lets bulk trust REJECT an uninitialized-vault group up front without ever
+// prompting for that vault's password.
 //
 // Return contract:
-//   - (set, privsep, nil)       — authoritative: a name is initialized iff present.
-//   - (nil, false, ipc.ErrDaemonDown) — daemon down; the caller surfaces it
-//     (nothing can be trusted against a dead socket).
-//   - (nil, false, otherErr)    — status failed for some other reason; the caller
+//   - (set, nil)              — authoritative: a name is initialized iff present.
+//   - (nil, ipc.ErrDaemonDown) — daemon down; the caller surfaces it (nothing
+//     can be trusted against a dead socket).
+//   - (nil, otherErr)          — status failed for some other reason; the caller
 //     treats this as "unknown" and falls back to attempting the grant (the
 //     daemon then rejects an uninitialized vault as before).
-func fetchInitializedVaults(dir string) (map[string]bool, bool, error) {
+func fetchInitializedVaults(dir string) (map[string]bool, error) {
 	var resp ipc.StatusResp
 	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	set := make(map[string]bool, len(resp.Vaults))
 	for _, v := range resp.Vaults {
@@ -297,20 +299,7 @@ func fetchInitializedVaults(dir string) (map[string]bool, bool, error) {
 			set[v.Name] = true
 		}
 	}
-	return set, resp.Privsep, nil
-}
-
-// daemonPrivsep reports whether the daemon runs with privilege separation
-// engaged. Untrust uses it to decide whether to revoke the owner-granted
-// daemon/exec ACLs. A status error is treated as "off" — best-effort: a stale
-// ACL is harmless (the daemon won't act on an untrusted .byn) and self-heals on
-// the next trust.
-func daemonPrivsep(dir string) bool {
-	var resp ipc.StatusResp
-	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp); err != nil {
-		return false
-	}
-	return resp.Privsep
+	return set, nil
 }
 
 // absForDaemon makes a path absolute against the CLIENT's working directory
@@ -395,7 +384,7 @@ func runUntrust(args []string, _ cliScope) int {
 	client := newClient(dir, "")
 	// Under privsep, mirror trust: revoke the daemon/exec ACLs the owner granted
 	// at trust time once a record is actually removed (best-effort).
-	privsepOn := daemonPrivsep(dir)
+	privsepOn := cliPrivsepProvisioned()
 	home, _ := os.UserHomeDir()
 	multi := len(paths) > 1
 	removed, absent := 0, 0

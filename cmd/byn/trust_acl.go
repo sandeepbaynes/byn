@@ -21,6 +21,17 @@ var ownerACLRun = func(name string, args ...string) error {
 	return exec.Command(name, args...).Run()
 }
 
+// cliPrivsepProvisioned reports whether this machine is provisioned for privsep
+// — i.e. the _byn service user exists, so the daemon runs as _byn and cannot
+// read a user-owned .byn without the owner-granted ACL. Checked LOCALLY (not via
+// the daemon's status) so the grant decision is correct regardless of the
+// daemon's version or its [security] privsep config flag: the file-access
+// problem is a property of the daemon's UID (provisioned), not that flag.
+func cliPrivsepProvisioned() bool {
+	_, _, err := privsep.LookupDaemonUser()
+	return err == nil
+}
+
 // grantTrustACLs gives the privsep service users access to a just-trusted .byn,
 // addressed by its CANONICAL path (symlinks resolved) so the ACL lands on the
 // real inode the daemon will open: the _byn daemon gets READ on the file (to
