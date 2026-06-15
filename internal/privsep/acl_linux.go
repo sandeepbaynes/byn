@@ -2,7 +2,10 @@
 
 package privsep
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // aclGrantCommands returns the setfacl invocations to give `user` access to a
 // project dir: recursive rwX (+ a default ACL so newly-created files are
@@ -64,6 +67,63 @@ func GrantProjectACL(run func(name string, args ...string) error, projectDir, ho
 // Best-effort: returns the first command error. See GrantProjectACL.
 func RevokeProjectACL(run func(name string, args ...string) error, projectDir, homeDir string) error {
 	for _, c := range aclRevokeCommands(projectDir, homeDir, ExecUser) {
+		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bynReadGrantCommands returns the setfacl invocations that give the _byn daemon
+// read access to a single .byn FILE (u:_byn:r) plus execute-only (search)
+// traversal on the dir it lives in and on the owner's home, so the daemon can
+// open and hash it to validate the fingerprint. The owner CLI runs these (it
+// owns the file; the daemon cannot setfacl a user-owned file).
+//
+// The home entry is dropped when home == the project dir.
+func bynReadGrantCommands(bynPath, homeDir, user string) [][]string {
+	projectDir := filepath.Dir(bynPath)
+	cmds := [][]string{
+		{"setfacl", "-m", fmt.Sprintf("u:%s:r", user), bynPath},    // read the file
+		{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), projectDir}, // traverse into its dir
+	}
+	if homeDir != "" && homeDir != projectDir {
+		cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), homeDir})
+	}
+	return cmds
+}
+
+// bynReadRevokeCommands removes the daemon's read entry on the FILE and the
+// traversal entry on its DIR. It deliberately does NOT revoke the home entry: a
+// single home hosts many trusted .byn files, so dropping the shared traversal on
+// untrust of one would break the daemon's access to every sibling. The home
+// entry is idempotent (re-added on the next grant) and harmless (x, not r).
+func bynReadRevokeCommands(bynPath, user string) [][]string {
+	projectDir := filepath.Dir(bynPath)
+	return [][]string{
+		{"setfacl", "-x", fmt.Sprintf("u:%s", user), bynPath},
+		{"setfacl", "-x", fmt.Sprintf("u:%s", user), projectDir},
+	}
+}
+
+// GrantBynReadACL grants the _byn daemon read access to a single .byn file (and
+// traversal to reach it) via setfacl. Run by the OWNER CLI at trust time so the
+// daemon can independently read+validate the file. Best-effort: returns the
+// first command error. run executes without a shell (see GrantProjectACL).
+func GrantBynReadACL(run func(name string, args ...string) error, bynPath, homeDir string) error {
+	for _, c := range bynReadGrantCommands(bynPath, homeDir, DaemonUser) {
+		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RevokeBynReadACL removes the daemon's read entry on the .byn and the traversal
+// entry on its dir (leaving the shared home traversal — see bynReadRevokeCommands).
+// Best-effort: returns the first command error.
+func RevokeBynReadACL(run func(name string, args ...string) error, bynPath, _ string) error {
+	for _, c := range bynReadRevokeCommands(bynPath, DaemonUser) {
 		if err := run(c[0], c[1:]...); err != nil {
 			return err
 		}

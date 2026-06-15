@@ -2,7 +2,10 @@
 
 package privsep
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // macOS ACL entry (ACE) permission sets for `chmod +a`.
 //
@@ -13,9 +16,16 @@ import "fmt"
 //
 // homeACEPerms grants only execute,search on the owner's home: enough to
 // traverse INTO the project, NOT enough to list the home (no `read`).
+//
+// bynReadACEPerms grants read-only access to a single .byn FILE so the _byn
+// daemon can open+hash it to validate the fingerprint. The daemon is the
+// security authority: it reads the REAL file rather than trusting UI-supplied
+// content, so the owner CLI grants it exactly this — read on the file, plus
+// traverse (homeACEPerms) on the ancestors it must walk to reach it.
 const (
 	projectACEPerms = "read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit"
 	homeACEPerms    = "execute,search"
+	bynReadACEPerms = "read"
 )
 
 // aceArg builds a single `chmod +a` ACE argument: "<name> allow <perms>".
@@ -73,6 +83,65 @@ func GrantProjectACL(run func(name string, args ...string) error, projectDir, ho
 // Best-effort: returns the first command error. See GrantProjectACL.
 func RevokeProjectACL(run func(name string, args ...string) error, projectDir, homeDir string) error {
 	for _, c := range aclRevokeCommands(projectDir, homeDir, ExecUser) {
+		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bynReadGrantCommands returns the chmod invocations that give the _byn daemon
+// read access to a single .byn FILE plus execute/search traversal on the dir it
+// lives in and on the owner's home. The daemon (running as _byn) needs this to
+// open and hash the file at trust + exec time; the owner CLI runs these (it owns
+// the file, so it can add the ACEs — the daemon cannot ACL a user-owned file).
+//
+// The home ACE is dropped when home == the project dir (the .byn sits directly
+// in home) to avoid a redundant duplicate.
+func bynReadGrantCommands(bynPath, homeDir, user string) [][]string {
+	projectDir := filepath.Dir(bynPath)
+	cmds := [][]string{
+		{"chmod", "+a", aceArg(user, bynReadACEPerms), bynPath}, // read the file
+		{"chmod", "+a", aceArg(user, homeACEPerms), projectDir}, // traverse into its dir
+	}
+	if homeDir != "" && homeDir != projectDir {
+		cmds = append(cmds, []string{"chmod", "+a", aceArg(user, homeACEPerms), homeDir})
+	}
+	return cmds
+}
+
+// bynReadRevokeCommands returns the chmod invocations that remove the daemon's
+// read ACE on the FILE and the traversal ACE on its DIR. It deliberately does
+// NOT revoke the home-traversal ACE: a single home typically hosts many trusted
+// .byn files, and dropping the shared `execute,search` ACE on untrust of one
+// would break the daemon's access to every sibling project. The home ACE is
+// idempotent (re-added on the next grant) and harmless (traverse, not list).
+func bynReadRevokeCommands(bynPath, user string) [][]string {
+	projectDir := filepath.Dir(bynPath)
+	return [][]string{
+		{"chmod", "-a", aceArg(user, bynReadACEPerms), bynPath},
+		{"chmod", "-a", aceArg(user, homeACEPerms), projectDir},
+	}
+}
+
+// GrantBynReadACL grants the _byn daemon read access to a single .byn file (and
+// traversal to reach it) via `chmod +a`. Run by the OWNER CLI at trust time so
+// the daemon can independently read+validate the file. Best-effort: returns the
+// first command error. run executes without a shell (see GrantProjectACL).
+func GrantBynReadACL(run func(name string, args ...string) error, bynPath, homeDir string) error {
+	for _, c := range bynReadGrantCommands(bynPath, homeDir, DaemonUser) {
+		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RevokeBynReadACL removes the daemon's read ACE on the .byn and the traversal
+// ACE on its dir (leaving the shared home traversal — see bynReadRevokeCommands).
+// Best-effort: returns the first command error.
+func RevokeBynReadACL(run func(name string, args ...string) error, bynPath, _ string) error {
+	for _, c := range bynReadRevokeCommands(bynPath, DaemonUser) {
 		if err := run(c[0], c[1:]...); err != nil {
 			return err
 		}
