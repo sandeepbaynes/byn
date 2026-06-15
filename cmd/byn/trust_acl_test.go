@@ -27,11 +27,12 @@ func withStubACLRunner(t *testing.T, fn func(name string, args ...string) error)
 	return &ran
 }
 
-// TestGrantTrustACLs_GrantsDaemonReadAndExecAccess asserts the owner-side grant
-// gives the _byn daemon READ on the .byn file and _byn-exec access to the
-// project dir — the two halves that let the daemon validate the file and the
-// exec child run under it.
-func TestGrantTrustACLs_GrantsDaemonReadAndExecAccess(t *testing.T) {
+// TestGrantTrustACLs_GrantsDaemonReadNoRecursion asserts the owner-side grant
+// gives the _byn daemon READ on the .byn file and traversal to reach it — and
+// crucially runs NO recursive ACL command. A recursive grant (chmod -R /
+// setfacl -R) on a real project would walk node_modules and hang; that bug is
+// guarded here.
+func TestGrantTrustACLs_GrantsDaemonReadNoRecursion(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("ACL grants are no-ops on this platform")
 	}
@@ -41,31 +42,29 @@ func TestGrantTrustACLs_GrantsDaemonReadAndExecAccess(t *testing.T) {
 	if err := grantTrustACLs(byn, "/Users/o"); err != nil {
 		t.Fatalf("grantTrustACLs: %v", err)
 	}
-	if len(*ran) < 3 {
-		t.Fatalf("expected several ACL commands, got %d: %v", len(*ran), *ran)
-	}
 
-	var fileCmds, execDirCmds int
+	var fileCmds int
 	for _, c := range *ran {
-		last := c[len(c)-1]
-		joined := strings.Join(c, " ")
-		// Exactly the daemon-read grant targets the .byn FILE itself.
-		if last == byn {
+		// No recursive grants — they would traverse node_modules and hang.
+		for _, a := range c {
+			if a == "-R" {
+				t.Errorf("trust grant must never run a recursive ACL: %v", c)
+			}
+		}
+		if c[len(c)-1] == byn {
 			fileCmds++
-			if !strings.Contains(joined, privsep.DaemonUser) {
+			if !strings.Contains(strings.Join(c, " "), privsep.DaemonUser) {
 				t.Errorf("file ACL must name the _byn daemon: %v", c)
 			}
 		}
-		// _byn-exec access is granted on the project dir.
-		if last == "/Users/o/proj" && strings.Contains(joined, privsep.ExecUser) {
-			execDirCmds++
+		// The exec user must NOT be granted here (that grant is recursive and
+		// belongs to the exec model, not trust).
+		if strings.Contains(strings.Join(c, " "), privsep.ExecUser) {
+			t.Errorf("trust grant must not touch _byn-exec: %v", c)
 		}
 	}
 	if fileCmds == 0 {
 		t.Errorf("no ACL command granted the daemon read on the .byn file; got %v", *ran)
-	}
-	if execDirCmds == 0 {
-		t.Errorf("no ACL command granted _byn-exec on the project dir; got %v", *ran)
 	}
 }
 

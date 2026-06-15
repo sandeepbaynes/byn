@@ -2,7 +2,6 @@ package main
 
 import (
 	"os/exec"
-	"path/filepath"
 
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
@@ -32,25 +31,26 @@ func cliPrivsepProvisioned() bool {
 	return err == nil
 }
 
-// grantTrustACLs gives the privsep service users access to a just-trusted .byn,
-// addressed by its CANONICAL path (symlinks resolved) so the ACL lands on the
-// real inode the daemon will open: the _byn daemon gets READ on the file (to
-// independently read+validate the fingerprint at trust + exec) and _byn-exec
-// gets rwX on the project dir (so shimmed commands can run). Returns the first
-// error so the caller can roll the grant back if the daemon rejects the trust.
-// Only call when the daemon reports privsep engaged (off → privsep funcs no-op).
+// grantTrustACLs grants the _byn daemon READ access to a just-trusted .byn,
+// addressed by its CANONICAL path (symlinks resolved) so the ACE lands on the
+// real inode the daemon opens: read on the file + execute/search traversal on
+// every ancestor up to home. This is exactly what the daemon needs to
+// independently read+validate the fingerprint (at trust + exec). Returns the
+// first error so the caller can roll the grant back if the daemon rejects.
+//
+// It deliberately does NOT grant the _byn-exec project-dir ACL here. That grant
+// is recursive (chmod -R / setfacl -R) and only matters when [security] privsep
+// is enabled (exec children drop to _byn-exec); running it on a real project
+// would recurse through node_modules and hang. Exec-time file access is
+// provisioned separately by the exec model — not at trust time.
 func grantTrustACLs(canonBynPath, home string) error {
-	if err := privsep.GrantBynReadACL(ownerACLRun, canonBynPath, home); err != nil {
-		return err
-	}
-	return privsep.GrantProjectACL(ownerACLRun, filepath.Dir(canonBynPath), home)
+	return privsep.GrantBynReadACL(ownerACLRun, canonBynPath, home)
 }
 
-// revokeTrustACLs removes what grantTrustACLs added (best-effort: an orphaned
-// ACL is harmless — the daemon never acts on a .byn with no trust record — and
-// is re-granted on the next trust). Used both for untrust and for rolling back a
-// grant the daemon rejected. Addressed by the same CANONICAL path as the grant.
+// revokeTrustACLs removes the daemon read ACE grantTrustACLs added (best-effort:
+// an orphaned ACL is harmless — the daemon never acts on a .byn with no trust
+// record — and is re-granted on the next trust). Used both for untrust and for
+// rolling back a grant the daemon rejected. Same CANONICAL path as the grant.
 func revokeTrustACLs(canonBynPath, home string) {
 	_ = privsep.RevokeBynReadACL(ownerACLRun, canonBynPath, home)
-	_ = privsep.RevokeProjectACL(ownerACLRun, filepath.Dir(canonBynPath), home)
 }
