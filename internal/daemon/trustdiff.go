@@ -3,9 +3,12 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"syscall"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/bynfile"
@@ -29,7 +32,7 @@ import (
 func readBynFile(path string) (body []byte, fi os.FileInfo, err error) {
 	f, err := os.Open(path) // #nosec G304 -- user-named; daemon reads via owner-granted ACL under privsep
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, annotateReadErr(path, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -47,6 +50,24 @@ func readBynFile(path string) (body []byte, fi os.FileInfo, err error) {
 		return nil, fi, err
 	}
 	return body, fi, nil
+}
+
+// annotateReadErr makes a macOS TCC denial actionable. The daemon runs as the
+// _byn service user under launchd; macOS privacy protection (TCC) blocks it from
+// open()ing files in protected locations (~/Documents, ~/Desktop, ~/Downloads,
+// iCloud Drive) with EPERM even when POSIX permissions AND ACLs allow it —
+// "operation not permitted", distinct from EACCES "permission denied". The fix
+// is Full Disk Access for the daemon binary, or keeping projects outside those
+// dirs. On other OSes / other errors the input error is returned UNCHANGED so
+// callers' os.IsNotExist(err) checks keep working.
+func annotateReadErr(path string, err error) error {
+	if runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM) {
+		return fmt.Errorf("open %s: the byn daemon was denied by macOS privacy protection (TCC). "+
+			"Grant Full Disk Access to the byn daemon binary in System Settings > Privacy & Security > "+
+			"Full Disk Access, then restart it (sudo launchctl kickstart -k system/com.sandeepbaynes.byn) — "+
+			"or move the project out of ~/Documents, ~/Desktop and ~/Downloads", path)
+	}
+	return err
 }
 
 // handleTrustDiff compares the current on-disk .byn content against the

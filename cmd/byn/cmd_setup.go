@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/sandeepbaynes/byn/internal/migrate"
@@ -99,7 +100,26 @@ func runProvision(stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stdout, "Enable privilege separation: set "+cyan("[security] privsep = true")+
 		" via the portal ("+cyan("byn web")+" → Settings) or by editing "+
 		cyan(filepath.Join(res.SystemDir, "config"))+" as root, then restart the daemon service.")
+	printMacOSFDANote(stdout)
 	return exitOK
+}
+
+// printMacOSFDANote warns, on macOS only, that the daemon (running as _byn under
+// launchd) cannot read .byn files in TCC-protected folders without Full Disk
+// Access — and that keeping projects elsewhere avoids the issue entirely. No-op
+// on other platforms (no TCC).
+func printMacOSFDANote(stdout io.Writer) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	_, _ = fmt.Fprintln(stdout, "")
+	_, _ = fmt.Fprintln(stdout, "macOS note: the daemon runs as "+cyan(privsep.DaemonUser)+
+		" and macOS privacy protection (TCC) blocks it from reading .byn files under "+
+		cyan("~/Documents")+", "+cyan("~/Desktop")+", "+cyan("~/Downloads")+" or iCloud Drive.")
+	_, _ = fmt.Fprintln(stdout, "  • Easiest: keep byn projects OUTSIDE those folders (e.g. "+cyan("~/code")+
+		") — then nothing else is needed.")
+	_, _ = fmt.Fprintln(stdout, "  • Otherwise: grant "+bold("Full Disk Access")+" to the byn binary in "+
+		cyan("System Settings > Privacy & Security > Full Disk Access")+", then restart the daemon.")
 }
 
 // runTeardown confirms a purge (loud) then reverses a previous setup.
