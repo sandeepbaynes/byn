@@ -264,6 +264,9 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 	case ipc.OpWebBootstrap:
 		return d.handleWebBootstrap(env)
 
+	case ipc.OpConfigAuth:
+		return d.handleConfigAuth(env)
+
 	case ipc.OpSessionEnd:
 		return d.handleSessionEnd(ctx, env)
 
@@ -284,6 +287,9 @@ func (d *Daemon) handleStatus(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		SocketPath:  d.socketPath,
 		StartedAt:   d.startedAt,
 		Vaults:      summaries,
+		UIEnabled:   d.cfg.UIEnabled,
+		UIPort:      d.cfg.UIPort,
+		Privsep:     d.cfg.Privsep,
 	})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -1520,6 +1526,27 @@ func (d *Daemon) handleWebBootstrap(env *ipc.Envelope) *ipc.Envelope {
 		return internalErr(env.ID, err)
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.WebBootstrapResp{Token: token})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// handleConfigAuth mints a single-use, 60s config-WRITE token. Only the socket
+// owner reaches this op (UID-gated by peercred in handleConn). The caller
+// (`byn config-auth`) must have already proven sudo via `sudo -v` (PAM) BEFORE
+// invoking this — the daemon runs as _byn and cannot run sudo itself, so it
+// trusts the owner-UID caller's assertion that sudo passed. That is acceptable
+// because the token is single-use + short-TTL: a same-UID attacker could call
+// this op, but the code is useless until pasted into one config write, and they
+// still could not pass the CLI's `sudo -v` without the OS password.
+// (sudo-equivalent, not root-attested — see the design spec, decision B3.)
+func (d *Daemon) handleConfigAuth(env *ipc.Envelope) *ipc.Envelope {
+	token, err := d.configAuthTokens.mint(time.Now())
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.ConfigAuthResp{Token: token})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}

@@ -13,7 +13,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const helperConfigPath = "/var/lib/byn/exec-helper.conf"
+// helperConfigPath is the compiled-in path of the root-owned UID/GID config. It
+// lives beside the helper binary in the root-owned /usr/local/libexec, NOT in the
+// _byn-owned /var/lib/byn state dir, so the daemon user cannot rewrite it, the
+// "all parent dirs root-owned" invariant holds, and it does not collide with
+// `byn migrate`. MUST match helperConfigPathLinux in
+// internal/privsep/provision_linux.go EXACTLY.
+const helperConfigPath = "/usr/local/libexec/byn-exec-helper.conf"
 
 // dropTo drops privileges to the given uid/gid on Linux.
 // Drop order: setgroups([gid]) → setresgid(g,g,g) → setresuid(u,u,u) → verify → clearAllCaps.

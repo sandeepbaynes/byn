@@ -13,8 +13,9 @@ import (
 )
 
 // When provisioned, the daemon binds the RUNTIME socket under a separate
-// parent, and Start makes that parent owner-traversable (0755) while the socket
-// file itself stays 0600 + peercred-gated. Driven through the byntest seam so
+// parent, and Start makes that parent owner-traversable (0755) and the socket
+// file 0666 + peercred-gated (the owner is a different UID than _byn and must be
+// able to connect; peercred is the real gate). Driven through the byntest seam so
 // SocketPath() resolves to an isolated runtime dir distinct from the state dir
 // — no root needed. OwnerUID is pinned to this process so peercred + bind work.
 //
@@ -69,14 +70,17 @@ func TestStart_ProvisionedRelocatesSocketWithTraversableParent(t *testing.T) {
 	if mode := fi.Mode().Perm(); mode != 0o755 {
 		t.Fatalf("runtime socket dir mode = %o, want 0755 (owner-traversable)", mode)
 	}
-	// Socket file itself stays 0600 (peercred-gated; dir traversability does not
-	// widen socket access).
+	// Provisioned: the daemon runs as _byn, but the human owner (a DIFFERENT UID)
+	// must be able to connect(), so the socket is 0666 — a 0600 _byn socket would
+	// deny the owner outright, before peercred is even consulted. Access stays
+	// gated by peercred (dispatch rejects any UID != ownerUID), so the permissive
+	// file mode does not widen real access; it only lets the owner reach the gate.
 	sfi, err := os.Stat(d.SocketPath())
 	if err != nil {
 		t.Fatalf("stat socket: %v", err)
 	}
-	if mode := sfi.Mode().Perm(); mode != 0o600 {
-		t.Fatalf("socket mode = %o, want 0600", mode)
+	if mode := sfi.Mode().Perm(); mode != 0o666 {
+		t.Fatalf("socket mode = %o, want 0666 (owner-connectable, peercred-gated)", mode)
 	}
 }
 

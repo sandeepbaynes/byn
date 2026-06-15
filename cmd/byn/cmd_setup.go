@@ -95,8 +95,10 @@ func runProvision(stdout, stderr io.Writer) int {
 			res.LegacyDir, res.SystemDir)
 	}
 	_, _ = fmt.Fprintln(stdout, "")
+	_, _ = fmt.Fprintln(stdout, "Run byn as your normal user (NOT sudo) — only "+cyan("byn setup")+" needs root.")
 	_, _ = fmt.Fprintln(stdout, "Enable privilege separation: set "+cyan("[security] privsep = true")+
-		" in ~/.byn/config, then "+cyan("byn restart")+".")
+		" via the portal ("+cyan("byn web")+" → Settings) or by editing "+
+		cyan(filepath.Join(res.SystemDir, "config"))+" as root, then restart the daemon service.")
 	return exitOK
 }
 

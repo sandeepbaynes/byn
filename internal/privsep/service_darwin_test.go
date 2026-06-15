@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +14,53 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestShSingleQuote(t *testing.T) {
+	assert.Equal(t, `'abc'`, shSingleQuote("abc"))
+	assert.Equal(t, `'a'\''b'`, shSingleQuote("a'b"))
+
+	// Round-trips through `sh -c`: printf '%s' <quoted> echoes the original
+	// byte-for-byte, including newlines and double-quotes.
+	in := "line1\nline2 with \"quotes\" and 'apostrophe'"
+	out, err := exec.Command("sh", "-c", "printf '%s' "+shSingleQuote(in)).CombinedOutput()
+	require.NoError(t, err)
+	assert.Equal(t, in, string(out))
+}
+
+func TestLaunchDaemonWriteCmdSingleQuotesContent(t *testing.T) {
+	cmd := launchDaemonWriteCmd(launchDaemonPlist("/usr/local/bin/byn"), launchDaemonPlistPath)
+	// Content is single-quoted (printf '%s' '...'), NOT %q double-quoted.
+	assert.Contains(t, cmd, "printf '%s' '<?xml")
+	assert.Contains(t, cmd, "chown root:wheel")
+	assert.Contains(t, cmd, "chmod 0644")
+	assert.Contains(t, cmd, launchDaemonPlistPath)
+}
+
+// TestLaunchDaemonPlistWriteProducesValidPlist executes the actual write step and
+// lints the file — the coverage that was missing and let the %q quoting bug ship
+// (the written plist had literal \n escapes and launchd rejected it).
+func TestLaunchDaemonPlistWriteProducesValidPlist(t *testing.T) {
+	if _, err := exec.LookPath("plutil"); err != nil {
+		t.Skip("plutil not available")
+	}
+	path := filepath.Join(t.TempDir(), "com.test.byn.plist")
+	plist := launchDaemonPlist("/usr/local/bin/byn")
+
+	// The production write minus the root-only chown/chmod: printf '%s' <plist> > <path>.
+	writeCmd := "printf '%s' " + shSingleQuote(plist) + " > " + shSingleQuote(path)
+	if out, err := exec.Command("sh", "-c", writeCmd).CombinedOutput(); err != nil {
+		t.Fatalf("write: %v: %s", err, out)
+	}
+
+	if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
+		t.Fatalf("plutil -lint rejected the written plist: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), `\n`, "written plist has literal backslash-n (the quoting bug)")
+	assert.Contains(t, string(data), "<key>UserName</key>")
+	assert.Contains(t, string(data), "<string>_byn</string>")
+}
 
 // recordRunner returns a runner that records each invocation as "cmd arg arg…".
 func recordRunner(into *[]string) runner {
@@ -35,11 +83,13 @@ func TestLaunchDaemonPlistContents(t *testing.T) {
 	assert.Contains(t, plist, "<string>"+launchDaemonLabel+"</string>")
 	assert.Contains(t, plist, "<string>com.sandeepbaynes.byn</string>")
 
-	// ProgramArguments = [<execPath>, daemon, start].
+	// ProgramArguments = [<execPath>, daemon, start, --foreground]. --foreground is
+	// load-bearing: launchd supervises the process, so the daemon must not detach.
 	assert.Contains(t, plist, "<key>ProgramArguments</key>")
 	assert.Contains(t, plist, "<string>"+execPath+"</string>")
 	assert.Contains(t, plist, "<string>daemon</string>")
 	assert.Contains(t, plist, "<string>start</string>")
+	assert.Contains(t, plist, "<string>--foreground</string>")
 
 	// Auto-start at boot + restart on crash.
 	assert.Contains(t, plist, "<key>RunAtLoad</key>")
@@ -129,8 +179,8 @@ func TestInstallServiceSequence(t *testing.T) {
 	var ran []string
 	require.NoError(t, InstallService(recordRunner(&ran), "/usr/local/bin/byn"))
 
-	// provisionUsers (users absent in CI/dev) creates both accounts → 2
-	// sysadminctl calls; then 2 dscl IsHidden; then the plist write; then
+	// provisionUsers (users absent in CI/dev) creates both accounts via dscl;
+	// then hideServiceAccounts re-asserts IsHidden; then the plist write; then
 	// bootstrap. When the accounts already exist provisionUsers is a no-op, so
 	// assert by content rather than a fixed length.
 	require.NotEmpty(t, ran)
@@ -156,20 +206,40 @@ func TestInstallServiceSequence(t *testing.T) {
 			assert.Equal(t, bootstrapIdx, i, "bootstrap must be the final step")
 		}
 	}
+
+	// Idempotent re-run: a best-effort bootout precedes the bootstrap so a second
+	// setup does not fail with "service already loaded".
+	bootoutIdx := -1
+	for i, c := range ran {
+		if c == "launchctl bootout system/"+launchDaemonLabel {
+			bootoutIdx = i
+		}
+	}
+	require.GreaterOrEqual(t, bootoutIdx, 0, "expected a launchctl bootout before bootstrap")
+	assert.Less(t, bootoutIdx, bootstrapIdx, "bootout must run before bootstrap")
 }
 
 func TestInstallServiceErrorPaths(t *testing.T) {
 	sentinel := errors.New("boom")
-	// Worst case (accounts absent) is 6 side-effecting calls: 2 sysadminctl,
-	// 2 dscl, 1 plist write, 1 bootstrap. Fail at each and require the error
-	// propagates.
-	for failAt := 0; failAt < 6; failAt++ {
-		failAt := failAt
-		t.Run("fail_at_"+string(rune('0'+failAt)), func(t *testing.T) {
-			call := 0
-			err := InstallService(func(string, ...string) error {
-				defer func() { call++ }()
-				if call == failAt {
+	// provisionUsers now issues a variable number of dscl steps, so fail by
+	// matching the command rather than a brittle call index. This keeps coverage
+	// of each meaningful boundary: account provisioning, the plist write, and the
+	// launchctl bootstrap.
+	cases := []struct {
+		name  string
+		match func(cmd string, args []string) bool
+	}{
+		{"provision account (dscl)", func(cmd string, _ []string) bool { return cmd == "dscl" }},
+		{"write plist (sh)", func(cmd string, _ []string) bool { return cmd == "sh" }},
+		{"bootstrap (launchctl)", func(cmd string, args []string) bool {
+			return cmd == "launchctl" && len(args) > 0 && args[0] == "bootstrap"
+		}},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			err := InstallService(func(cmd string, args ...string) error {
+				if c.match(cmd, args) {
 					return sentinel
 				}
 				return nil

@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
@@ -21,7 +20,7 @@ import (
 // to the browser. The SPA immediately exchanges the bootstrap token at
 // POST /api/session/bootstrap for the persistent portal token, stores the
 // persistent token in localStorage, and strips the ?auth= param via
-// replaceState. A ps-captured bootstrap token is single-use and expires in 60s.
+// replaceState. A ps-captured bootstrap token is single-use and expires in 30s.
 func runWeb(args []string) int {
 	_ = args
 	dir, err := defaultDir()
@@ -29,27 +28,25 @@ func runWeb(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	cfg, err := config.Load(config.Path(dir))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return exitErr
-	}
-	if !cfg.UI.Enabled {
-		fmt.Fprintln(os.Stderr, "Error: the web portal is disabled.")
-		fmt.Fprintf(os.Stderr, "Set [ui] enabled = true in %s and restart the daemon.\n", config.Path(dir))
-		return exitErr
-	}
 
-	// Best-effort daemon liveness check so we give an actionable hint
-	// rather than launching a browser at a dead port.
-	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err != nil {
+	// The portal config (enabled + port) comes from the daemon over the UID-gated
+	// socket, not from the config file directly: under privsep the config lives in
+	// the _byn-owned data dir and the owner-UID CLI cannot read it ("binary = IPC
+	// client only"). This status call doubles as the daemon liveness check.
+	var st ipc.StatusResp
+	if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &st); err != nil {
 		fmt.Fprintln(os.Stderr, "Error: byn daemon is not running.")
 		fmt.Fprintln(os.Stderr, "Run: byn start")
 		return exitDaemonDown
 	}
+	if !st.UIEnabled {
+		fmt.Fprintln(os.Stderr, "Error: the web portal is disabled.")
+		fmt.Fprintln(os.Stderr, "Set [ui] enabled = true (portal Settings, or the config file) and restart the daemon.")
+		return exitErr
+	}
 
 	// Mint a one-time bootstrap token via the UID-gated socket. The token is
-	// single-use and expires in 60s, so a `ps` snapshot is of limited value
+	// single-use and expires in 30s, so a `ps` snapshot is of limited value
 	// to an attacker. The persistent portal token never appears in argv or URLs.
 	var bootResp ipc.WebBootstrapResp
 	if err := newClient(dir, "").Call(ipc.OpWebBootstrap, ipc.WebBootstrapReq{}, &bootResp); err != nil {
@@ -58,7 +55,7 @@ func runWeb(args []string) int {
 		fmt.Fprintf(os.Stderr, "Warning: could not mint bootstrap token (%v); opening without auth.\n", err)
 	}
 
-	base := fmt.Sprintf("http://localhost:%d", cfg.UI.Port)
+	base := fmt.Sprintf("http://localhost:%d", st.UIPort)
 	url := base
 	if bootResp.Token != "" {
 		url = base + "/?auth=" + bootResp.Token

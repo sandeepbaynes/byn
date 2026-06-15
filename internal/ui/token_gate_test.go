@@ -55,33 +55,25 @@ func postWithToken(t *testing.T, c *http.Client, url, token, origin string, body
 
 // ---- token gate core tests -----------------------------------------------
 
-// TestTokenGate_MissingToken: /api/* without token → 401 portal_token_required.
-func TestTokenGate_MissingToken(t *testing.T) {
+// TestPortal_ReadOpenNoToken: /api/* reads are OPEN (design A) — no token gate.
+// Opening the portal shows status/names with no auth, like `byn ls`.
+func TestPortal_ReadOpenNoToken(t *testing.T) {
 	ts, c := newGatedTestServer(t)
 	resp := getWithToken(t, c, ts.URL+"/api/status", "")
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("missing token = %d, want 401", resp.StatusCode)
-	}
-	var body map[string]string
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "portal_token_required" {
-		t.Errorf("error = %q, want portal_token_required", body["error"])
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("read without token = %d, want 200 (reads are open)", resp.StatusCode)
 	}
 }
 
-// TestTokenGate_WrongToken: /api/* with wrong token → 401 portal_token_required.
-func TestTokenGate_WrongToken(t *testing.T) {
+// TestPortal_ReadIgnoresStaleToken: a leftover/garbage token is simply ignored
+// now that the gate is gone — reads still succeed.
+func TestPortal_ReadIgnoresStaleToken(t *testing.T) {
 	ts, c := newGatedTestServer(t)
 	resp := getWithToken(t, c, ts.URL+"/api/status", "wrongtoken")
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("wrong token = %d, want 401", resp.StatusCode)
-	}
-	var body map[string]string
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "portal_token_required" {
-		t.Errorf("error = %q, want portal_token_required", body["error"])
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("read with stale token = %d, want 200 (token ignored)", resp.StatusCode)
 	}
 }
 
@@ -95,19 +87,16 @@ func TestTokenGate_CorrectToken(t *testing.T) {
 	}
 }
 
-// TestTokenGate_PostMissingToken: POST /api/unlock without token → 401.
-func TestTokenGate_PostMissingToken(t *testing.T) {
+// TestPortal_MutationNoTokenProceeds: POST /api/unlock with no token is NOT
+// blocked by a token gate (it's gone) — the real gate is the master password the
+// daemon enforces. The request reaches the dispatcher (not 401).
+func TestPortal_MutationNoTokenProceeds(t *testing.T) {
 	ts, c := newGatedTestServer(t)
 	resp := postWithToken(t, c, ts.URL+"/api/unlock", "", "",
 		map[string]string{"vault": "default", "password": "pw"})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("POST without token = %d, want 401", resp.StatusCode)
-	}
-	var body map[string]string
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "portal_token_required" {
-		t.Errorf("error = %q, want portal_token_required", body["error"])
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("POST /api/unlock without token = 401; a token gate must not exist")
 	}
 }
 
@@ -183,17 +172,16 @@ func TestTokenGate_AndCSRF_BothLayers(t *testing.T) {
 	}
 }
 
-// TestTokenGate_AndCSRF_MissingToken_IgnoresOrigin: a request with no token
-// at all is rejected (401) even if origin would be accepted — the token gate
-// fires first.
-func TestTokenGate_AndCSRF_MissingToken_IgnoresOrigin(t *testing.T) {
+// TestPortal_MutationNoTokenCorrectOriginProceeds: no token + a same-origin POST
+// is accepted (sameOrigin is the CSRF gate; there is no token gate). The daemon's
+// per-action password gate is what actually protects the mutation.
+func TestPortal_MutationNoTokenCorrectOriginProceeds(t *testing.T) {
 	ts, c := newGatedTestServer(t)
-	// No token, correct-looking origin → still 401 (token gate fires first).
 	resp := postWithToken(t, c, ts.URL+"/api/entry/delete", "", "http://localhost:2967",
 		map[string]any{"scope": map[string]string{"vault": "default"}, "name": "K"})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("no-token+correct-origin = %d, want 401", resp.StatusCode)
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("no-token+correct-origin = 401; there must be no token gate")
 	}
 }
 
@@ -210,15 +198,80 @@ func TestTokenGate_AndCSRF_BothPass(t *testing.T) {
 
 // ---- disabled gate (existing behaviour) ----------------------------------
 
-// TestTokenGate_DisabledWhenEmpty: when the server is constructed with an
-// empty token, the gate is disabled and /api/* routes are reachable without
-// any token header. This is the existing test behaviour.
+// TestTokenGate_DisabledWhenEmpty: reads are open with no token header.
 func TestTokenGate_DisabledWhenEmpty(t *testing.T) {
-	// newTestServer sets Token:"" (gate disabled).
 	ts, c := newTestServer(t, &fakeDisp{})
 	resp := getURL(t, c, ts.URL+"/api/status")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("ungated status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// ---- config-write gate: single-use sudo token (design B) -----------------
+
+// fakeConfigAuth is a test ConfigAuthConsumer that accepts exactly one token value.
+type fakeConfigAuth struct{ valid string }
+
+func (f *fakeConfigAuth) ConsumeConfigAuth(t string) bool { return t != "" && t == f.valid }
+
+func newConfigGatedServer(t *testing.T) (*httptest.Server, *http.Client) {
+	t.Helper()
+	srv := New(&fakeDisp{}, Config{Port: 0, ConfigAuth: &fakeConfigAuth{valid: "goodtoken"}})
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	return ts, &http.Client{}
+}
+
+// TestConfigWrite_RequiresSudoToken: POST /api/config with no X-Byn-Config-Auth
+// header → 401 config_auth_required. Config writes are the only portal action
+// gated by the single-use sudo token (privsep etc. can't be flipped without it).
+func TestConfigWrite_RequiresSudoToken(t *testing.T) {
+	ts, c := newConfigGatedServer(t)
+	resp := postWithToken(t, c, ts.URL+"/api/config", "", "http://localhost:2967",
+		map[string]string{"content": "[ui]\n"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("config write without sudo token = %d, want 401", resp.StatusCode)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body["error"] != "config_auth_required" {
+		t.Errorf("error = %q, want config_auth_required", body["error"])
+	}
+}
+
+// TestConfigWrite_WithSudoTokenPassesGate: a valid config-auth token passes the
+// gate (the request reaches the dispatcher — not a 401).
+func TestConfigWrite_WithSudoTokenPassesGate(t *testing.T) {
+	ts, c := newConfigGatedServer(t)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/config",
+		bytes.NewReader([]byte(`{"content":"[ui]\n"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://localhost:2967")
+	req.Header.Set("X-Byn-Config-Auth", "goodtoken")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/config: %v", err)
+	}
+	defer resp.Body.Close()
+	// The config-auth gate must have PASSED — i.e. the response is not a
+	// config_auth_required rejection. (A downstream 401 from the dispatcher's own
+	// credential check is fine; that's a separate gate, not ours.)
+	var body map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode == http.StatusUnauthorized && body["error"] == "config_auth_required" {
+		t.Fatalf("config write WITH valid sudo token rejected as config_auth_required; gate should have passed")
+	}
+}
+
+// TestConfigRead_OpenNoToken: GET /api/config is open — config holds settings,
+// not secrets (only writes are sudo-gated).
+func TestConfigRead_OpenNoToken(t *testing.T) {
+	ts, c := newConfigGatedServer(t)
+	resp := getURL(t, c, ts.URL+"/api/config")
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("config read = 401; reads must be open")
 	}
 }
