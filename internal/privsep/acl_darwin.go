@@ -42,9 +42,14 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 	cmds := [][]string{
 		{"chmod", "-R", "+a", aceArg(user, projectACEPerms), projectDir},
 	}
+	// Traverse (not list) every ancestor ABOVE the project dir up to home, so a
+	// restrictive intermediate (e.g. a 0700 ~/Documents) can't block the child
+	// from reaching the project. projectDir itself is covered by the recursive
+	// grant above; execute,search = traverse, not list.
 	if homeDir != "" && homeDir != projectDir {
-		// execute,search on the home → traverse, not list. Not recursive.
-		cmds = append(cmds, []string{"chmod", "+a", aceArg(user, homeACEPerms), homeDir})
+		for _, d := range traverseAncestors(filepath.Dir(projectDir), homeDir) {
+			cmds = append(cmds, []string{"chmod", "+a", aceArg(user, homeACEPerms), d})
+		}
 	}
 	return cmds
 }
@@ -52,14 +57,14 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 // aclRevokeCommands returns the chmod invocations that remove the ACEs added by
 // aclGrantCommands. `chmod -a "<ace>"` deletes the matching entry; the ACE text
 // must match what was added. Mirrors aclGrantCommands.
-func aclRevokeCommands(projectDir, homeDir, user string) [][]string {
-	cmds := [][]string{
+func aclRevokeCommands(projectDir, _, user string) [][]string {
+	// Remove only the project-dir access; LEAVE the ancestor traversals. A home
+	// (or a 0700 ~/Documents) hosts many trusted projects, so dropping a shared
+	// traverse ACE on untrust of one would break the others. Harmless to leave
+	// (traverse, not list) and re-added idempotently on the next grant.
+	return [][]string{
 		{"chmod", "-R", "-a", aceArg(user, projectACEPerms), projectDir},
 	}
-	if homeDir != "" && homeDir != projectDir {
-		cmds = append(cmds, []string{"chmod", "-a", aceArg(user, homeACEPerms), homeDir})
-	}
-	return cmds
 }
 
 // GrantProjectACL grants the _byn-exec service user a full inheriting ACE on

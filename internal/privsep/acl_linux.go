@@ -19,9 +19,13 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 		{"setfacl", "-R", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
 		{"setfacl", "-R", "-d", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
 	}
+	// Traverse (execute-only) every ancestor ABOVE the project dir up to home so
+	// a restrictive intermediate (e.g. a 0700 ~/Documents) can't block the child
+	// from reaching the project. projectDir itself is covered by the grant above.
 	if homeDir != "" && homeDir != projectDir {
-		// execute-only on the home → traverse, not list.
-		cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), homeDir})
+		for _, d := range traverseAncestors(filepath.Dir(projectDir), homeDir) {
+			cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), d})
+		}
 	}
 	return cmds
 }
@@ -34,15 +38,14 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 //     so that newly-created files no longer inherit _byn-exec access.
 //
 // Mirrors aclGrantCommands.
-func aclRevokeCommands(projectDir, homeDir, user string) [][]string {
-	cmds := [][]string{
+func aclRevokeCommands(projectDir, _, user string) [][]string {
+	// Remove only the project-dir access + default ACL; LEAVE the ancestor
+	// traversals. A home (or a 0700 ~/Documents) hosts many trusted projects, so
+	// dropping a shared traverse entry on untrust of one would break the others.
+	return [][]string{
 		{"setfacl", "-R", "-x", fmt.Sprintf("u:%s", user), projectDir},
 		{"setfacl", "-R", "-x", fmt.Sprintf("d:u:%s", user), projectDir},
 	}
-	if homeDir != "" && homeDir != projectDir {
-		cmds = append(cmds, []string{"setfacl", "-x", fmt.Sprintf("u:%s", user), homeDir})
-	}
-	return cmds
 }
 
 // GrantProjectACL grants the _byn-exec service user rwX on projectDir (+ a

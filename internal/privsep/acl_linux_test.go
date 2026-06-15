@@ -44,21 +44,36 @@ func TestACLGrantCommands_Linux_EmptyHome(t *testing.T) {
 	require.Len(t, cmds, 2)
 }
 
-// TestACLRevokeCommands_Linux asserts three removals: -x on the project access
-// ACL (recursive), -x on the project default ACL (recursive, so newly-created
-// files stop inheriting _byn-exec access), and -x on the home traversal entry.
+// TestACLRevokeCommands_Linux asserts two removals: -x on the project access ACL
+// (recursive) and -x on the project default ACL (recursive). It LEAVES ancestor
+// traversal entries — shared by sibling projects under the same home/Documents.
 func TestACLRevokeCommands_Linux(t *testing.T) {
 	cmds := aclRevokeCommands("/home/o/proj", "/home/o", "_byn-exec")
-	require.Len(t, cmds, 3)
+	require.Len(t, cmds, 2, "revoke must leave shared ancestor traversals")
 	assert.Equal(t,
 		[]string{"setfacl", "-R", "-x", "u:_byn-exec", "/home/o/proj"},
 		cmds[0], "remove access ACL on project")
 	assert.Equal(t,
 		[]string{"setfacl", "-R", "-x", "d:u:_byn-exec", "/home/o/proj"},
 		cmds[1], "remove default ACL on project")
-	assert.Equal(t,
-		[]string{"setfacl", "-x", "u:_byn-exec", "/home/o"},
-		cmds[2], "remove traversal entry on home")
+	for _, c := range cmds {
+		assert.NotEqual(t, "/home/o", c[len(c)-1], "home traversal must not be revoked")
+	}
+}
+
+// TestACLGrantCommands_Linux_DeepPath grants the exec child a traverse entry on
+// every intermediate dir up to home — the real-world 0700 ~/Documents case.
+func TestACLGrantCommands_Linux_DeepPath(t *testing.T) {
+	cmds := aclGrantCommands("/home/o/Documents/proj", "/home/o", "_byn-exec")
+	// recursive access + default ACL + traverse on [/home/o/Documents, /home/o]
+	require.Len(t, cmds, 4)
+	targets := map[string]bool{}
+	for _, c := range cmds[2:] {
+		targets[c[len(c)-1]] = true
+		assert.Equal(t, "u:_byn-exec:x", c[2], "ancestor entry must grant traverse only")
+	}
+	assert.True(t, targets["/home/o/Documents"], "intermediate must get a traverse entry; got %v", targets)
+	assert.True(t, targets["/home/o"], "home must get a traverse entry")
 }
 
 // TestACLRevokeCommands_Linux_HomeEqualsProject drops the home command when
@@ -100,8 +115,8 @@ func TestGrantProjectACL_Linux_StopsAtFirstError(t *testing.T) {
 	assert.Equal(t, 1, calls, "should stop at the first failing command")
 }
 
-// TestRevokeProjectACL_Linux_RunsAll verifies the revoke entry iterates all
-// three commands: access ACL removal, default ACL removal, and home removal.
+// TestRevokeProjectACL_Linux_RunsAll verifies the revoke entry runs the two
+// project-dir removals (access + default ACL); ancestor traversals are left.
 func TestRevokeProjectACL_Linux_RunsAll(t *testing.T) {
 	var ran [][]string
 	err := RevokeProjectACL(func(name string, args ...string) error {
@@ -109,10 +124,9 @@ func TestRevokeProjectACL_Linux_RunsAll(t *testing.T) {
 		return nil
 	}, "/home/o/proj", "/home/o")
 	require.NoError(t, err)
-	require.Len(t, ran, 3)
+	require.Len(t, ran, 2)
 	assert.Contains(t, ran[0], "u:_byn-exec", "first cmd removes access ACL")
 	assert.Contains(t, ran[1], "d:u:_byn-exec", "second cmd removes default ACL")
-	assert.Contains(t, ran[2], "u:_byn-exec", "third cmd removes home traversal")
 }
 
 // TestRevokeProjectACL_Linux_StopsAtFirstError mirrors the grant short-circuit.
