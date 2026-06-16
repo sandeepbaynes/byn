@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
+	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
 
 // handleExecFetch authorizes a `byn exec` and returns the values to
@@ -131,11 +133,13 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		})
 	}
 
-	// Early lock check: exec ALWAYS needs an unlocked vault.
-	// Even for zero-value injections, values must never flow from a
-	// locked vault — this is STRICTER than the old CLI path (which could
-	// proceed with a zero-value injection while locked).
-	if st.IsLocked() {
+	// Lock check applies to AD-HOC exec only (no .byn): it injects the whole
+	// scope via the in-memory vault key, so it needs an unlocked vault. A
+	// trusted-.byn exec does NOT — it decrypts only the allowlisted vars via the
+	// .byn's sealed exec capability (machine-fingerprint keyed, no vault key), so
+	// it runs autonomously while LOCKED. That is the core promise: agents run
+	// after a reboot with no password.
+	if req.Path == "" && st.IsLocked() {
 		le := ipc.NewError(id, ipc.CodeLocked, "vault is locked", "byn unlock")
 		auditExec(le)
 		return nil, nil, false, false, false, le
@@ -209,16 +213,21 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		if fi != nil {
 			currentMTime = fi.ModTime().UnixNano()
 		}
-		// Use-time trust gate. fp-MAC always; vk-MAC whenever values can
-		// flow (vault unlocked). Fail CLOSED if the vk key can't derive.
+		// Use-time trust gate. fp-MAC always; vk-MAC ONLY when the vault is
+		// unlocked (the vk key needs the in-memory vault key). Autonomous exec
+		// runs locked → vkKey is nil and the machine-fingerprint fp-MAC is the
+		// tamper-evidence (same machine binding as the capability itself).
 		var vkKey []byte
-		vkKey, derr := st.DeriveSubkey(trust.VKMACKeyInfo)
-		if derr != nil {
-			resp := mapVaultErr(id, derr)
-			auditExec(resp)
-			return nil, nil, false, false, false, resp
+		if !st.IsLocked() {
+			k, derr := st.DeriveSubkey(trust.VKMACKeyInfo)
+			if derr != nil {
+				resp := mapVaultErr(id, derr)
+				auditExec(resp)
+				return nil, nil, false, false, false, resp
+			}
+			vkKey = k
+			defer zeroBytes(vkKey)
 		}
-		defer zeroBytes(vkKey)
 
 		status, _, rec, verr := trust.Verify(d.cfg.Dir, canon, trust.Hash(body), currentMTime, d.fpMACKey, vkKey)
 		if verr != nil {
@@ -373,30 +382,42 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		// Capture the authorized argv for the response. The CLI executes
 		// exactly this, giving a single authoritative contract.
 		finalArgv = resolvedArgv
+
+		// Inject the allowlisted vars. PREFER the sealed exec capability (no vault
+		// key — works while LOCKED, autonomous). Fall back to the vault-key path
+		// for a trusted record that predates capabilities (requires unlock); if
+		// it's locked AND has no capability, ask the user to unlock or re-trust.
+		var le *ipc.Envelope
+		switch {
+		case noneDeclared:
+			// The .byn declares no env to inject — nothing to decrypt, so no
+			// vault key or capability is needed; it runs (subject to the actions
+			// gate above) even while locked.
+			values = nil
+		case len(rec.ExecCapability) > 0:
+			values, le = d.execValuesFromCapability(ctx, id, st, scope, rec)
+		case !st.IsLocked():
+			values, le = d.execValuesFromVaultKey(ctx, id, st, scope, allow, wildcard)
+		default:
+			le = ipc.NewError(id, ipc.CodeLocked,
+				"this trusted .byn has no stored exec capability (granted before autonomous exec); unlock once or re-trust to enable it",
+				"byn unlock, or re-trust: byn trust "+canon)
+		}
+		if le != nil {
+			auditExec(le)
+			return nil, nil, false, false, false, le
+		}
 	}
 
-	infos, err := st.ListEnvVars(ctx, scope)
-	if err != nil {
-		resp := mapVaultErr(id, err)
-		auditExec(resp)
-		return nil, nil, false, false, false, resp
-	}
-	allowSet := make(map[string]bool, len(allow))
-	for _, n := range allow {
-		allowSet[n] = true
-	}
-	values = make([]ipc.ExecFetchValue, 0, len(infos))
-	for _, m := range infos {
-		if req.Path != "" && !wildcard && !allowSet[m.Name] {
-			continue
+	if req.Path == "" {
+		// Ad-hoc exec: inject the whole scope via the in-memory vault key
+		// (unlock was enforced at the top for this path).
+		var le *ipc.Envelope
+		values, le = d.execValuesFromVaultKey(ctx, id, st, scope, nil, true)
+		if le != nil {
+			auditExec(le)
+			return nil, nil, false, false, false, le
 		}
-		got, gerr := st.GetEnvVar(ctx, scope, m.Name)
-		if gerr != nil {
-			resp := mapVaultErr(id, gerr)
-			auditExec(resp)
-			return nil, nil, false, false, false, resp
-		}
-		values = append(values, ipc.ExecFetchValue{Name: got.Name, Value: got.Value})
 	}
 	d.touchVault(req.Scope.Vault)
 	// Success: emit the single authorization audit here (outcome "ok"), so both
@@ -406,6 +427,81 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	auditExec(nil)
 	resolvedArgv = finalArgv
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, nil
+}
+
+// execValuesFromCapability decrypts a trusted .byn's allowlisted vars via its
+// sealed exec capability (rec.ExecCapability) — using ONLY the machine
+// fingerprint, no vault key, so it works while the vault is LOCKED. The
+// capability's keys ARE the allowlist resolved at grant time, so we iterate
+// them directly. An empty capability (a .byn with no [exec] env, or a record
+// granted before capabilities existed) injects nothing. A captured var that has
+// since been deleted is skipped; any other decrypt failure fails the exec.
+func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *vault.Store, scope vault.Scope, rec trust.Record) ([]ipc.ExecFetchValue, *ipc.Envelope) {
+	if len(rec.ExecCapability) == 0 {
+		return nil, nil // nothing to inject
+	}
+	if d.fpMACKey == nil {
+		return nil, ipc.NewError(id, ipc.CodeLocked,
+			"this machine has no fingerprint, so the trusted .byn's exec capability can't be unsealed",
+			"unlock the vault and re-run, or re-trust on this machine")
+	}
+	capKey, err := vcrypto.DeriveCapKey(d.fpMACKey)
+	if err != nil {
+		return nil, internalErr(id, err)
+	}
+	defer zeroBytes(capKey)
+	rowKeys, err := vcrypto.OpenCapability(capKey, rec.ExecCapability)
+	if err != nil {
+		return nil, ipc.NewError(id, ipc.CodeTrustDenied,
+			"the trusted .byn's exec capability could not be unsealed on this machine",
+			"re-trust on this machine: byn trust "+rec.Path)
+	}
+	defer func() {
+		for _, k := range rowKeys {
+			zeroBytes(k)
+		}
+	}()
+
+	values := make([]ipc.ExecFetchValue, 0, len(rowKeys))
+	for name, rk := range rowKeys {
+		val, verr := st.OpenEnvVarWithRowKey(ctx, scope, name, rk)
+		if verr != nil {
+			if errors.Is(verr, vault.ErrNotFound) {
+				continue // captured var since deleted — skip
+			}
+			return nil, internalErr(id, fmt.Errorf("decrypt %q via capability: %w", name, verr))
+		}
+		values = append(values, ipc.ExecFetchValue{Name: name, Value: val})
+	}
+	return values, nil
+}
+
+// execValuesFromVaultKey injects env-var values using the in-memory vault key —
+// the path for ad-hoc exec and for a trusted record that predates exec
+// capabilities. Requires an unlocked vault (the caller gates that). With
+// wildcard set, or an empty allow list, every var in scope is injected;
+// otherwise only the allowlisted names.
+func (d *Daemon) execValuesFromVaultKey(ctx context.Context, id string, st *vault.Store, scope vault.Scope, allow []string, wildcard bool) ([]ipc.ExecFetchValue, *ipc.Envelope) {
+	infos, err := st.ListEnvVars(ctx, scope)
+	if err != nil {
+		return nil, mapVaultErr(id, err)
+	}
+	allowSet := make(map[string]bool, len(allow))
+	for _, n := range allow {
+		allowSet[n] = true
+	}
+	values := make([]ipc.ExecFetchValue, 0, len(infos))
+	for _, m := range infos {
+		if !wildcard && len(allow) > 0 && !allowSet[m.Name] {
+			continue
+		}
+		got, gerr := st.GetEnvVar(ctx, scope, m.Name)
+		if gerr != nil {
+			return nil, mapVaultErr(id, gerr)
+		}
+		values = append(values, ipc.ExecFetchValue{Name: got.Name, Value: got.Value})
+	}
+	return values, nil
 }
 
 // trustDenyMessage renders why exec was blocked, matching the CLI's
