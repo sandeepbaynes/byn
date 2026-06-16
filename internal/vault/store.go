@@ -667,6 +667,34 @@ func zeroRowKeys(m map[string][]byte) {
 	}
 }
 
+// OpenEnvVarWithRowKey decrypts a single env var using a caller-supplied per-row
+// key (recovered from a trusted .byn's exec capability) — WITHOUT the vault key
+// and WITHOUT unlocking. This is the autonomous-exec read path: it works while
+// the vault is locked, since the row key + the row's ciphertext + the AAD are
+// all the daemon needs.
+//
+// The row must be stored under the per-row scheme (aad_version=2); a legacy v1
+// row is refused (a capture would have migrated it — refusing surfaces a stale
+// capability rather than silently failing the AEAD). Returns ErrNotFound if the
+// var is absent.
+func (s *Store) OpenEnvVarWithRowKey(ctx context.Context, scope Scope, name string, rowKey []byte) ([]byte, error) {
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	r, found, err := s.fetchEntry(ctx, projectID, envID, kindAADEnvVar, name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	if r.AADVersion != aadVersionRowKey {
+		return nil, fmt.Errorf("vault: %q is not stored under a per-row key (aad_version=%d); re-trust the .byn", name, r.AADVersion)
+	}
+	return vcrypto.DecryptWithAAD(rowKey, r.Value, s.entryAAD(kindAADEnvVar, name))
+}
+
 // IsLocked reports whether the vault is currently locked.
 func (s *Store) IsLocked() bool {
 	s.mu.RLock()
