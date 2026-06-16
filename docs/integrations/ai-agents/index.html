@@ -44,7 +44,7 @@
       <a href="#example-agent-flow-bootstrap-a-project" class="sb-item">Example agent flow: bootstrap a project</a>
       <a href="#example-harness-allowdeny-rules" class="sb-item">Example: harness allow/deny rules</a>
       <a href="#patterns-to-know" class="sb-item">Patterns to know</a>
-      <a href="#future-agent-features-not-yet-shipped" class="sb-item">Future agent features (not yet shipped)</a>
+      <a href="#scoping-what-an-agent-can-do" class="sb-item">Scoping what an agent can do</a>
     </div>
   </aside>
 
@@ -70,6 +70,7 @@
     and consume vault secrets safely — agents can see <strong>key names</strong> and
     <strong>structure</strong>, but values only land in the child process spawned via
     <code>byn exec</code>, not in agent context or scrollback.</p>
+    <hr>
     <h2 id="why-byn-for-agents">Why byn for agents</h2>
     <p>A code agent often has the following problem:</p>
     <ul>
@@ -132,6 +133,7 @@
     </tr>
     </tbody>
     </table>
+    <hr>
     <h2 id="recommended-agent-harness-rules">Recommended agent harness rules</h2>
     <p>In your agent harness (hooks, permission rules, or system prompt), allow:</p>
     <pre><code>byn daemon status
@@ -154,21 +156,22 @@ byn export …             # bulk leak
 </code></pre>
     <p>(Deny <code>cat NAME</code> and <code>byn cat NAME</code> similarly — <code>cat</code> is an alias
     for <code>get</code>.)</p>
+    <hr>
     <h2 id="example-agent-flow-bootstrap-a-project">Example agent flow: bootstrap a project</h2>
     <ol>
     <li>
     <p><strong>Agent</strong>: lists current state.</p>
     <pre><code class="language-sh">byn status --json
 byn project list --json
-byn --project maison-agent env list --json
-byn --project maison-agent list --json
+byn --project myapp-agent env list --json
+byn --project myapp-agent list --json
 </code></pre>
     </li>
     <li>
     <p><strong>User (before the agent is active)</strong>: import any existing <code>.env</code>
     into the vault and delete the file, so the agent never has a
     plaintext file to read in the first place:</p>
-    <pre><code class="language-sh">byn --project maison-agent import .env.local
+    <pre><code class="language-sh">byn --project myapp-agent import .env.local
 rm .env.local   # values now live in the vault only
 </code></pre>
     <p>Do this step <em>yourself</em>. If the agent runs the import, the values
@@ -178,7 +181,7 @@ rm .env.local   # values now live in the vault only
     <p><strong>Agent</strong>: writes a runner that uses byn for any command that
     needs secrets:</p>
     <pre><code class="language-sh">#!/usr/bin/env bash
-exec byn --project maison-agent exec -- &quot;$@&quot;
+exec byn --project myapp-agent exec -- &quot;$@&quot;
 </code></pre>
     </li>
     <li>
@@ -189,6 +192,7 @@ exec byn --project maison-agent exec -- &quot;$@&quot;
     </ol>
     <p>The agent never sees <code>DATABASE_URL=postgres://…</code> — only <code>DATABASE_URL</code>.
     The test runner gets the URL via environ from <code>byn exec</code>.</p>
+    <hr>
     <h2 id="example-harness-allowdeny-rules">Example: harness allow/deny rules</h2>
     <p>Most agent harnesses read an allow/deny rule file. Configure it with
     rules like:</p>
@@ -227,10 +231,11 @@ exec byn --project maison-agent exec -- &quot;$@&quot;
     audited</strong> (<code>byn audit</code>), so a leak is <em>detectable</em> even when a deny
     rule fails. Prevention is best-effort; detection is the guarantee.</p>
     </blockquote>
+    <hr>
     <h2 id="patterns-to-know">Patterns to know</h2>
     <h3 id="pin-a-per-project-scope">Pin a per-project scope</h3>
     <p>Add to your project's <code>.envrc</code> (direnv) or shell init:</p>
-    <pre><code class="language-sh">export BYN_PROJECT=maison-agent
+    <pre><code class="language-sh">export BYN_PROJECT=myapp-agent
 export BYN_ENV=dev
 </code></pre>
     <p>The agent then needs no flags — every <code>byn</code> command picks the right
@@ -242,18 +247,28 @@ export BYN_ENV=dev
     <li>The vault unlock password lives on YOUR laptop only.</li>
     <li>Agent runs <code>byn exec -- whatever</code> — values are injected only
     when you're connected and have unlocked the vault from your client.</li>
-    <li>On disconnect, the vault auto-locks (Phase 2+ feature).</li>
+    <li>An idle vault auto-relocks after <code>[daemon] idle_timeout</code> (default
+    15m); run <code>byn lock</code> (or <code>byn lock --session</code>) to drop access
+    immediately.</li>
     </ol>
     <h3 id="audit-trail">Audit trail</h3>
     <p>Every <code>byn</code> op writes an HMAC-chained entry to the vault's audit
-    log. The agent's actions are reviewable later via <code>byn audit</code>
-    (when that command lands; Slice 4).</p>
-    <h2 id="future-agent-features-not-yet-shipped">Future agent features (not yet shipped)</h2>
+    log. The agent's actions are reviewable with <code>byn audit</code>
+    (<code>tail</code>, <code>view</code>, <code>verify</code>).</p>
+    <hr>
+    <h2 id="scoping-what-an-agent-can-do">Scoping what an agent can do</h2>
+    <p>Per-command secret scoping is shipped via the <code>.byn</code> manifest:</p>
     <ul>
-    <li><code>byn exec --command-key</code> to inject only specific keys (per-command
-    allowlists from a <code>.byn</code> manifest — planned).</li>
-    <li>Push-based unlock approval (laptop receives notification when agent
-    on remote VM tries to read; user taps to allow). Currently deferred.</li>
+    <li><code>[exec] env</code> lists exactly which vars <code>byn exec</code> injects — the agent
+    never sees the rest of the scope.</li>
+    <li><code>[exec] actions</code> pins which commands run without per-call
+    authorization; everything else is gated.</li>
+    </ul>
+    <p>See the <a href="../byn-file-format/"><code>.byn</code> file format</a>.</p>
+    <h3 id="not-yet-shipped">Not yet shipped</h3>
+    <ul>
+    <li>Push-based unlock approval (laptop receives a notification when an
+    agent on a remote VM tries to read; user taps to allow). Deferred.</li>
     </ul>
   </main>
 
@@ -267,7 +282,8 @@ export BYN_ENV=dev
     <a href="#pin-a-per-project-scope" class="toc-item sub">Pin a per-project scope</a>
     <a href="#read-only-agent-on-a-remote-vm" class="toc-item sub">Read-only agent on a remote VM</a>
     <a href="#audit-trail" class="toc-item sub">Audit trail</a>
-    <a href="#future-agent-features-not-yet-shipped" class="toc-item">Future agent features (not yet shipped)</a>
+    <a href="#scoping-what-an-agent-can-do" class="toc-item">Scoping what an agent can do</a>
+    <a href="#not-yet-shipped" class="toc-item sub">Not yet shipped</a>
   </nav>
 
 </div>
@@ -275,12 +291,14 @@ export BYN_ENV=dev
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/ai-agents.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/ai-agents.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../../index.html">Home</a>
     <a href="../../../docs/cli-reference/">CLI Reference</a>
     <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

@@ -42,6 +42,7 @@
       <a href="#why-byn-exists-owned-by-you-operated-by-many" class="sb-item">Why byn exists: owned by you, operated by many</a>
       <a href="#threat-model" class="sb-item">Threat model</a>
       <a href="#known-weaknesses--how-to-protect-yourself" class="sb-item">Known weaknesses &amp; how to protect yourself</a>
+      <a href="#known-limitations-this-release" class="sb-item">Known limitations (this release)</a>
       <a href="#best-practices" class="sb-item">Best practices</a>
       <a href="#crypto-choices" class="sb-item">Crypto choices</a>
       <a href="#process--ipc-defenses" class="sb-item">Process &amp; IPC defenses</a>
@@ -138,7 +139,7 @@
     <tr>
     <td><strong>A passive thief</strong> with <code>vault.db</code></td>
     <td>A copy of the encrypted DB</td>
-    <td>Reading any secret <strong>value</strong>. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with <code>Argon2id(master password)</code> — <strong>the password is the only barrier</strong>. The vault file is deliberately <strong>portable</strong> (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id (default 64 MiB / time=2, ~1s on the <em>defender's</em> laptop) slows each guess, but it is not a high wall against a funded attacker with GPUs/ASICs, and a weak password falls regardless. <strong>What the file does NOT hide:</strong> entry/project/env <em>names</em>, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see &quot;Audit &amp; forensics&quot; below); and the audit chain's HMAC seed travels in the file, so the <em>thief's copy</em> of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1).</td>
+    <td>Reading any secret <strong>value</strong>. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with <code>Argon2id(master password)</code> — <strong>the password is the only barrier</strong>. The vault file is deliberately <strong>portable</strong> (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id (default 64 MiB / time=2, ~1s on the <em>defender's</em> laptop) slows each guess, but it is not a high wall against a funded attacker with GPUs/ASICs, and a weak password falls regardless. <strong>What the file does NOT hide:</strong> entry/project/env <em>names</em>, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see &quot;Audit &amp; forensics&quot; below); and the audit chain's HMAC seed travels in the file, so the <em>thief's copy</em> of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). <strong>One scoped exception to &quot;the password is the only barrier&quot;:</strong> vars that a trusted <code>.byn</code> has allowlisted for <em>autonomous (password-free) exec</em> are additionally recoverable <strong>on the original machine</strong> via a machine-fingerprint-wrapped capability stored in the trust record (see &quot;Known limitations&quot; and &quot;Row encryption&quot;) — for those specific vars, machine + service-user isolation is the at-rest floor, not the password. Every other value stays password-only at rest.</td>
     </tr>
     <tr>
     <td><strong>A shoulder-surfer</strong> of the user's terminal</td>
@@ -310,6 +311,38 @@
     different OS user.</strong> Those three are not byn features; they are the controls
     byn depends on.</p>
     <hr>
+    <h2 id="known-limitations-this-release">Known limitations (this release)</h2>
+    <p>byn is a <strong>development-time</strong> secrets tool, not a production secrets manager.
+    With privilege separation enabled it runs your commands under a dedicated
+    service user and injects secrets there, so other processes running <strong>as you</strong>
+    cannot read those secrets from the environment, and every access is audited.
+    That is the win it is built for. These are the limits that come with it — read
+    them before you rely on byn for anything that matters.</p>
+    <ul>
+    <li><strong>Concurrent commands share one service user.</strong> Two byn-run commands running
+    at the same time are <strong>not</strong> isolated from each other — both children run as
+    the single <code>_byn-exec</code> service user, so one could read the other's injected
+    secrets from its environment. Don't run mutually-distrusting commands in
+    parallel under byn.</li>
+    <li><strong>No defense against root or a compromised byn service.</strong> Anyone who can run
+    code as root, as <code>_byn</code>, or as <code>_byn-exec</code> can read secrets. byn guards your
+    dev workflow against ordinary same-user processes (agents, scripts, IDE
+    extensions); it is <strong>not</strong> a hardware vault.</li>
+    <li><strong>Autonomous (password-free) exec lowers the at-rest floor for the vars it
+    covers.</strong> Secrets that a trusted <code>.byn</code> allowlists for password-free exec are
+    stored so the daemon can inject them <strong>without</strong> your master password; their
+    at-rest protection is then the machine fingerprint + service-user isolation,
+    not your password. This applies <strong>only</strong> to the vars your trusted <code>.byn</code> files
+    allowlist (a <code>env = &quot;*&quot;</code> <code>.byn</code> opts its whole scope in); everything else
+    stays password-protected at rest.</li>
+    <li><strong>Physical and memory attacks are out of scope</strong> — cold-boot, swap, and
+    memory dumps can recover an unlocked key or injected secrets; byn does not
+    defend against them.</li>
+    </ul>
+    <p>The bottom line: byn is <strong>not</strong> a production secrets manager. It shrinks and
+    audits the agent-era leak on your own machine; it does not replace a hardware
+    HSM, a cloud secrets service, or OS/VM isolation.</p>
+    <hr>
     <h2 id="best-practices">Best practices</h2>
     <p>A short, ordered checklist. Each line is the practice and why it matters.</p>
     <ol>
@@ -391,19 +424,40 @@ wrapped.key = XChaCha20-Poly1305-Seal(
     visible for long-lived keys. 24 bytes lifts it past anything we
     realistically reach.</p>
     <h3 id="3-row-encryption">3. Row encryption</h3>
-    <p>Every entry value is AEAD-sealed individually:</p>
-    <pre><code>ciphertext = XChaCha20-Poly1305-Seal(
-    key   = vault_key,
+    <p>Every entry value is AEAD-sealed individually under a <strong>per-row key</strong>
+    derived from the vault key:</p>
+    <pre><code>K_row      = HKDF-SHA256(
+    secret = vault_key,
+    info   = vault_id || 0x1F || kind || 0x1F || name,
+)
+
+ciphertext = XChaCha20-Poly1305-Seal(
+    key   = K_row,
     nonce = random 24 bytes,
     plain = value bytes,
     aad   = vault_id || 0x1F || kind || 0x1F || name,
 )
 </code></pre>
     <p>Stored format: <code>nonce || ciphertext_with_tag</code>.</p>
+    <p><strong>Why per-row keys (v2):</strong> because each row is sealed under its own
+    <code>K_row = HKDF(vault_key, vaultID‖kind‖name)</code> (plus a fresh per-write nonce and
+    the AAD binding), the daemon can hand out <strong>decryption capability for one
+    specific var</strong> — by capturing just that var's <code>K_row</code> — without ever exposing
+    the vault key. This is what makes autonomous trusted-<code>.byn</code> exec possible: a
+    trusted <code>.byn</code>'s allowlisted vars have their per-row keys captured and wrapped
+    under a machine-fingerprint key (<code>K_cap</code>) in the trust record, so the daemon can
+    inject them with the vault <strong>locked</strong> and no password (see &quot;Known limitations&quot;).
+    Everything not allowlisted stays sealed under a <code>K_row</code> only the unlocked vault
+    key can re-derive.</p>
+    <p><strong>Legacy v1 rows still decrypt.</strong> Rows written before per-row keys were sealed
+    <strong>directly</strong> with the vault key (no HKDF step). Those <code>v1</code> rows are still read
+    correctly, and migrate to <code>v2</code> (HKDF per-row key) on the next write, rename, or
+    trust-capture of that entry — there is no bulk re-encryption.</p>
     <p><strong>Why AAD includes vault_id, kind, name:</strong> a row literally cut from
     one vault and pasted into another (or one entry's bytes copied onto
-    another's row) fails to decrypt. This catches both DB-level tampering
-    and accidental row-swap bugs.</p>
+    another's row) fails to decrypt — and with per-row keys the <code>K_row</code> itself no
+    longer even matches. This catches both DB-level tampering and accidental
+    row-swap bugs.</p>
     <p><strong>Why per-row nonces (not deterministic):</strong> two entries with the same
     plaintext have unrelated ciphertexts. Also avoids any need for nonce
     counters or per-vault sequence state.</p>
@@ -490,8 +544,8 @@ wrapped.key = XChaCha20-Poly1305-Seal(
     goes through <code>internal/daemon/peercred_{darwin,linux}.go</code>:</p>
     <ul>
     <li>Linux: <code>SO_PEERCRED</code> returns UID of peer.</li>
-    <li>macOS: <code>LOCAL_PEEREPID</code> (effective PID) + getppid lookup; UID
-    derived. (peerPID is partial today; documented in PLAN.)</li>
+    <li>macOS: <code>LOCAL_PEERCRED</code> (Xucred) returns the peer UID; <code>LOCAL_PEERPID</code>
+    returns the PID (best-effort).</li>
     </ul>
     <p>If peer UID ≠ daemon owner UID, the connection is closed
     immediately — before reading the request.</p>
@@ -956,7 +1010,7 @@ wrapped.key = XChaCha20-Poly1305-Seal(
     slice</strong>; even then, a same-UID adversary that can recompute the key
     isn't fully stopped without OS isolation.</p>
     <h3 id="hints-redaction">Hints redaction</h3>
-    <p><code>hintf</code> writes scope path but not values: <code>Stored &quot;DB_URL&quot; in maison-agent/staging.</code> Never <code>Stored &quot;DB_URL=…&quot; in …</code>. Set
+    <p><code>hintf</code> writes scope path but not values: <code>Stored &quot;DB_URL&quot; in myapp-agent/staging.</code> Never <code>Stored &quot;DB_URL=…&quot; in …</code>. Set
     <code>BYN_HINTS=0</code> to suppress even those.</p>
     <hr>
     <h2 id="audit--forensics">Audit &amp; forensics</h2>
@@ -1169,11 +1223,6 @@ byn exec -- make build      # succeeds
     <td>Together with the trust-file hardening</td>
     </tr>
     <tr>
-    <td>LOCAL_PEEREPID on macOS</td>
-    <td>Multi-user attacks are out of scope for solo dev box; the existing peer-UID check is sufficient</td>
-    <td>When byn ships to multi-user servers</td>
-    </tr>
-    <tr>
     <td>Constant-time rate-limit responses</td>
     <td>Timing oracle on failed-unlock counts is low value (attacker already has the encrypted DB if they can time you)</td>
     <td>When byn ships to multi-user servers</td>
@@ -1249,6 +1298,7 @@ byn exec -- make build      # succeeds
     <a href="#the-primary-threat-dev-time-ai-agents-reading-secret-files" class="toc-item sub">The primary threat: dev-time AI agents reading secret files</a>
     <a href="#a-second-silent-vector-ide-code-completion" class="toc-item sub">A second silent vector: IDE code-completion</a>
     <a href="#known-weaknesses--how-to-protect-yourself" class="toc-item">Known weaknesses &amp; how to protect yourself</a>
+    <a href="#known-limitations-this-release" class="toc-item">Known limitations (this release)</a>
     <a href="#best-practices" class="toc-item">Best practices</a>
     <a href="#crypto-choices" class="toc-item">Crypto choices</a>
     <a href="#1-vault-key" class="toc-item sub">1. Vault key</a>
@@ -1293,12 +1343,14 @@ byn exec -- make build      # succeeds
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/security.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/security.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>
     <a href="../../docs/">Quickstart</a>
     <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

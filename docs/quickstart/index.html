@@ -69,6 +69,7 @@
     a local per-user daemon and injects them into commands on demand — values never
     touch your shell history, <code>argv</code>, or scrollback, and are never written to disk in
     plaintext.</p>
+    <hr>
     <h2 id="1-install">1. Install</h2>
     <pre><code class="language-sh"># Homebrew (macOS/Linux) or the install script — both put `byn` on your PATH:
 brew install sandeepbaynes/tap/byn
@@ -77,6 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 # or, with the Go toolchain (builds from source):
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
 </code></pre>
+    <hr>
     <h2 id="2-start-the-daemon">2. Start the daemon</h2>
     <p>All of byn's logic lives in a background daemon that holds the vault key in
     memory; the CLI is a thin client over a Unix socket.</p>
@@ -84,6 +86,7 @@ go install github.com/sandeepbaynes/byn/cmd/byn@latest
 # …or have it auto-start on login (launchd on macOS, systemd --user on Linux):
 byn daemon install
 </code></pre>
+    <hr>
     <h2 id="3-create-and-unlock-the-vault">3. Create and unlock the vault</h2>
     <pre><code class="language-sh">byn init                    # creates the vault and sets your master password
 byn unlock                  # unlocks it for this terminal
@@ -119,12 +122,14 @@ byn status                  # confirm: daemon up, vault unlocked
     <code>CAP_SYS_PTRACE</code>). See <a href="migration/">Migration &amp; setup</a> and the
     <a href="security/#privilege-separation-the-three-uid-model-opt-in-nu-56">security model</a>.</p>
     </blockquote>
+    <hr>
     <h2 id="4-store-your-first-secret">4. Store your first secret</h2>
     <p><code>byn put</code> reads the value from <strong>stdin</strong>, so it never lands in your shell
     history:</p>
     <pre><code class="language-sh">printf 'postgres://user:pass@localhost/app' | byn put DATABASE_URL
 byn list                    # → DATABASE_URL
 </code></pre>
+    <hr>
     <h2 id="5-use-it">5. Use it</h2>
     <p>Inject scoped secrets into any command — the child process sees them as
     env-vars; you never see the value:</p>
@@ -134,6 +139,7 @@ byn exec -- printenv DATABASE_URL    # prove it's there
     <p>Or read one explicitly:</p>
     <pre><code class="language-sh">byn get DATABASE_URL
 </code></pre>
+    <hr>
     <h2 id="6-the-web-portal">6. The web portal</h2>
     <pre><code class="language-sh">byn web                     # opens the local admin portal in your browser
 </code></pre>
@@ -144,6 +150,7 @@ byn exec -- printenv DATABASE_URL    # prove it's there
     form, inline TOML validator, command-tester (simulate the exec gate before
     trusting), and one-click save+trust. See <a href="portal/">portal.md</a> for the full
     panel reference.</p>
+    <hr>
     <h2 id="next-steps">Next steps</h2>
     <ul>
     <li>
@@ -208,12 +215,14 @@ actions = [&quot;/usr/bin/env&quot;, &quot;/usr/local/bin/your-app&quot;]
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/quickstart.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/quickstart.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>
     <a href="../../docs/cli-reference/">CLI Reference</a>
     <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

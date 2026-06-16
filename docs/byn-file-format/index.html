@@ -388,18 +388,18 @@ test = &quot;cargo test&quot;
     <hr>
     <h2 id="examples">Examples</h2>
     <h3 id="per-project-pinning">Per-project pinning</h3>
-    <pre><code>~/projects/maison/
-├── .byn             # [scope] project = &quot;maison&quot;
+    <pre><code>~/projects/myapp/
+├── .byn             # [scope] project = &quot;myapp&quot;
 ├── ...
 └── src/
 </code></pre>
-    <p>Inside <code>~/projects/maison/</code> and any subdir: <code>byn list</code> →
-    <code>maison/default</code>.</p>
+    <p>Inside <code>~/projects/myapp/</code> and any subdir: <code>byn list</code> →
+    <code>myapp/default</code>.</p>
     <h3 id="per-env-pinning-via-env-var">Per-env pinning via env-var</h3>
     <p><code>.byn</code> pins project; the engineer pins env per shell:</p>
-    <pre><code class="language-sh">cd ~/projects/maison
+    <pre><code class="language-sh">cd ~/projects/myapp
 export BYN_ENV=dev      # or staging, etc.
-byn list                # maison/dev
+byn list                # myapp/dev
 </code></pre>
     <h3 id="shielding-a-subproject">Shielding a subproject</h3>
     <p>Mono-repo with a different vault for one subproject:</p>
@@ -422,11 +422,11 @@ byn list                # maison/dev
     <h3 id="direnv-combo">Direnv combo</h3>
     <p>Keep secrets in byn; expose only the scope selection in the shell:</p>
     <pre><code class="language-sh"># .envrc
-export BYN_PROJECT=maison
+export BYN_PROJECT=myapp
 export BYN_ENV=dev
 </code></pre>
     <p>Now every <code>byn</code> invocation in the directory uses
-    <code>maison/dev</code> — no <code>.byn</code> file at all, no TOFU.</p>
+    <code>myapp/dev</code> — no <code>.byn</code> file at all, no TOFU.</p>
     <hr>
     <h2 id="known-weaknesses">Known weaknesses</h2>
     <ul>
@@ -500,12 +500,14 @@ export BYN_ENV=dev
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/byn-file-format.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/byn-file-format.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>
     <a href="../../docs/cli-reference/">CLI Reference</a>
     <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

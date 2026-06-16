@@ -69,11 +69,13 @@
     <p>Eclipse Run Configurations have an <strong>Environment</strong> tab that stores
     plaintext values into the workspace's <code>.launch</code> files. Bypass that and
     inject from byn instead.</p>
+    <hr>
     <h2 id="prerequisites">Prerequisites</h2>
     <ul>
     <li><code>byn</code> on <code>$PATH</code></li>
     <li>Daemon running, vault unlocked</li>
     </ul>
+    <hr>
     <h2 id="approach-1-external-tools-configuration">Approach 1: External Tools Configuration</h2>
     <p><code>Run → External Tools → External Tools Configurations…</code>:</p>
     <ul>
@@ -82,6 +84,7 @@
     <li><strong>Arguments</strong>: <code>exec -- ${string_prompt:Command:./gradlew bootRun}</code></li>
     </ul>
     <p>Bind it to a toolbar button for one-click launch.</p>
+    <hr>
     <h2 id="approach-2-launch-via-shell-wrapper">Approach 2: launch via shell wrapper</h2>
     <p>Create <code>scripts/run.sh</code> in your project:</p>
     <pre><code class="language-bash">#!/usr/bin/env bash
@@ -92,6 +95,7 @@ exec byn exec -- &quot;$@&quot;
     via an external process (use <strong>Run → External Tools</strong> rather than
     <strong>Java Application</strong> — Eclipse's Java runner ignores environment
     override for inheriting from a wrapper).</p>
+    <hr>
     <h2 id="approach-3-maven--gradle-wrapping">Approach 3: Maven / Gradle wrapping</h2>
     <p>For Maven goals: in <strong>Run Configurations → Maven Build</strong>, set:</p>
     <ul>
@@ -106,12 +110,14 @@ exec byn exec -- &quot;$@&quot;
 </code></pre>
     <p>…via an External Tool configuration instead of a Maven Build
     configuration.</p>
+    <hr>
     <h2 id="approach-4-terminal-view">Approach 4: terminal view</h2>
     <p>The most direct path. Install <strong>TM Terminal</strong> (Help → Eclipse
     Marketplace → &quot;TM Terminal&quot;), open a terminal in the project, then:</p>
     <pre><code>byn exec -- ./gradlew bootRun
 byn exec -- ./mvnw spring-boot:run
 </code></pre>
+    <hr>
     <h2 id="per-project-scope">Per-project scope</h2>
     <p>In External Tools' <strong>Environment</strong> tab, add:</p>
     <ul>
@@ -138,12 +144,14 @@ byn exec -- ./mvnw spring-boot:run
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/eclipse.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/eclipse.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../../index.html">Home</a>
     <a href="../../../docs/cli-reference/">CLI Reference</a>
     <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 
