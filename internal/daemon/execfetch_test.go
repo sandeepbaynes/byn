@@ -395,9 +395,13 @@ func TestExecFetchAdHocPresenceTokenSucceeds(t *testing.T) {
 	}
 }
 
-// ---- Test 8: locked vault → CodeLocked, audited ---------------------------
+// ---- Test 8: trusted exec is NOT lock-gated; an unpinned command still
+// requires authorization (the actions policy is the gate, not the lock). The
+// .byn here pins NO actions, so an arbitrary command needs auth even though the
+// vault is locked. (Autonomous trusted exec runs PINNED actions while locked —
+// covered by the capability tests.) ------------------------------------------
 
-func TestExecFetchLockedVaultDenied(t *testing.T) {
+func TestExecFetchLockedUnpinnedNeedsAuth(t *testing.T) {
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -405,31 +409,60 @@ func TestExecFetchLockedVaultDenied(t *testing.T) {
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\n")
 	grantBynFile(t, c, byn, pw)
 
-	// Lock the vault.
+	// Lock the vault — no longer the gate for trusted exec.
 	lockVaultStore(t, d, "default")
 
 	const cmd = "byn exec locked-test"
 	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: cmd})
-	if code := errCode(t, err); code != ipc.CodeLocked {
-		t.Fatalf("code = %v, want locked", code)
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+		t.Fatalf("code = %v, want auth_required (unpinned command on a trusted .byn)", code)
 	}
 
-	// Audit trail must record the denied exec even though the vault was locked.
+	// Audit trail must record the denied exec.
 	ev := findExecAudit(t, c, cmd)
 	if ev == nil {
-		t.Fatal("no exec audit event for locked-vault denial")
+		t.Fatal("no exec audit event for the denied exec")
 	}
 	if ev.Outcome != "denied" {
 		t.Errorf("outcome = %q, want denied", ev.Outcome)
 	}
-	if ev.ErrorCode != string(ipc.CodeLocked) {
-		t.Errorf("error_code = %q, want %q", ev.ErrorCode, string(ipc.CodeLocked))
+	if ev.ErrorCode != string(ipc.CodeAuthRequired) {
+		t.Errorf("error_code = %q, want %q", ev.ErrorCode, string(ipc.CodeAuthRequired))
 	}
 	if ev.BynPath != trust.Canonicalize(byn) {
 		t.Errorf("byn_path = %q, want %q", ev.BynPath, trust.Canonicalize(byn))
 	}
 	if ev.Command != cmd {
 		t.Errorf("command = %q, want %q", ev.Command, cmd)
+	}
+}
+
+// ---- Test 8b: THE headline feature — trusted exec injects secrets while
+// LOCKED, via the sealed capability, with no password. -----------------------
+
+func TestExecFetch_LockedTrustedInjectsViaCapability(t *testing.T) {
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// Create the secret, then trust a .byn that allowlists it and pins the
+	// command (so the actions gate authorizes it without a password).
+	putVar(t, c, ipc.Scope{}, "DB_URL", []byte("postgres://prod"))
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DB_URL\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	// LOCK the vault — the capability path must still decrypt and inject.
+	lockVaultStore(t, d, "default")
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("trusted exec while locked must succeed (autonomous): %v", err)
+	}
+	if m := valueMap(resp.Values); m["DB_URL"] != "postgres://prod" {
+		t.Fatalf("DB_URL = %q, want postgres://prod — the capability must decrypt it while LOCKED, no password",
+			m["DB_URL"])
 	}
 }
 
