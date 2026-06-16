@@ -58,10 +58,25 @@ uninstall-man:
 
 # Build then install the binary (and man page) to $(PREFIX). Override the
 # location with PREFIX=... or BINDIR=... (e.g. `make install BINDIR=$HOME/bin`).
+#
+# macOS only: set CODESIGN_IDENTITY to sign the installed binaries with a stable
+# identity so a Full Disk Access grant SURVIVES reinstalls (the default ad-hoc
+# signature changes every build, forcing a re-grant). A FREE Apple ID is enough:
+#   make install CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)"
+# Find the identity with: security find-identity -v -p codesigning
+# See docs/troubleshooting.md "macOS Full Disk Access (TCC)".
 install: build install-man
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
 	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
+	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
+		echo "Signing installed binaries with: $(CODESIGN_IDENTITY)"; \
+		codesign --force --identifier com.sandeepbaynes.byn \
+			--sign "$(CODESIGN_IDENTITY)" $(DESTDIR)$(BINDIR)/byn; \
+		codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
+			--sign "$(CODESIGN_IDENTITY)" $(DESTDIR)$(BINDIR)/byn-exec-helper; \
+		echo "Signed. Re-add /usr/local/bin/byn to Full Disk Access once; the grant then persists across reinstalls signed with this identity."; \
+	fi
 	@echo "Installed $(BINDIR)/byn (+ byn-exec-helper) ($(VERSION))"
 
 uninstall: uninstall-man

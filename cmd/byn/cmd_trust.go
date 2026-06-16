@@ -731,5 +731,17 @@ Usage:
 Bulk trust groups files by their target vault and asks each vault's password
 once (so a monorepo's .byn files across vaults need only one prompt per vault).
 
-Note: .byn files exceeding 64KB are refused at grant and exec.`)
+Note: .byn files exceeding 64KB are refused at grant and exec.
+
+macOS — "operation not permitted" (not "permission denied"): the daemon runs
+as _byn and macOS privacy protection (TCC) blocks it from reading .byn files
+under ~/Documents, ~/Desktop, ~/Downloads or iCloud Drive. TCC overrides file
+ACLs. Fix EITHER by keeping projects outside those folders (e.g. ~/code — no
+setup needed), OR by granting the byn binary Full Disk Access (System Settings
+> Privacy & Security > Full Disk Access) and restarting the daemon:
+  sudo launchctl kickstart -k system/com.sandeepbaynes.byn
+The grant is tied to the build unless you sign with a (free) Apple ID identity:
+  make install CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)"
+Full steps incl. signing: man byn ("macOS Full Disk Access") or
+docs/troubleshooting.md.`)
 }
