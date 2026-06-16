@@ -155,6 +155,16 @@ func macPreimageV2(domain, path, sha256hex string, r *Record) []byte {
 		b = writeField(b, r.Aliases[k])
 	}
 
+	// Exec capability: bind the sealed per-row-key blob when present. Included
+	// ONLY when non-empty so a record WITHOUT a capability produces the same
+	// preimage as before this field existed (backward-compatible — existing v2
+	// records still verify). Add/remove/swap of a present blob all flip the MAC:
+	// removing it skips this field at verify, mismatching the stored MAC that was
+	// computed WITH it.
+	if len(r.ExecCapability) > 0 {
+		b = writeField(b, string(r.ExecCapability))
+	}
+
 	return b
 }
 
