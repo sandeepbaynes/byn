@@ -1121,6 +1121,38 @@ workspace via
 is staged but not yet wired into the unlock path \- see deferred
 items in
 .IR docs/security.md .
+.SS Known limitations
+byn is a development\-time secrets tool, not a production secrets manager.
+With privilege separation enabled it runs your commands under a dedicated
+service user and audits every access, but the following limits apply:
+.IP \(bu 2
+\fBConcurrent commands share one service user.\fR Two byn\-run commands
+running at once both execute as the single
+.I _byn\-exec
+account, so they are not isolated from each other \(em one can read the
+other's injected secrets. Don't run mutually\-distrusting commands in
+parallel under byn.
+.IP \(bu 2
+\fBNo defense against root or a compromised byn service.\fR Anyone who can
+run code as root, as
+.IR _byn ,
+or as
+.IR _byn\-exec
+can read secrets. byn guards against ordinary same\-user processes; it is
+not a hardware vault.
+.IP \(bu 2
+\fBAutonomous (password\-free) exec lowers the at\-rest floor for the vars it
+covers.\fR Vars a trusted \fB.byn\fR allowlists for password\-free exec are
+stored so the daemon can inject them WITHOUT the master password \(em their
+at\-rest protection is then the machine fingerprint plus service\-user
+isolation, not the password. This applies ONLY to those allowlisted vars
+(an \fBenv = "*"\fR \fB.byn\fR opts in its whole scope); every other value
+stays password\-protected at rest.
+.IP \(bu 2
+\fBNot a production secrets manager.\fR Physical and memory attacks
+(cold\-boot, swap, memory dumps) are out of scope. See
+.IR docs/security.md
+for the full threat model.
 .SH ROADMAP
 Vault / project / env hierarchy, vault CRUD, project CRUD, env CRUD,
 import / export, audit tail + verify, doctor,
