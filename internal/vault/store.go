@@ -573,6 +573,100 @@ func hkdfSubkey(vk []byte, info string) ([]byte, error) {
 	return out, nil
 }
 
+// CaptureRowKeys returns the per-row key for each named env var in scope, after
+// ensuring the row is sealed under the per-row scheme (migrating a legacy v1 row
+// to v2 IN PLACE so the returned key actually decrypts it). Vars that don't
+// exist yet are skipped (absent from the result). This is the trust-time half of
+// the autonomous-exec capability: the caller seals the returned keys under K_cap
+// and stores the blob in the trust record.
+//
+// SECURITY: the returned map holds raw row keys — the caller MUST zero them
+// after sealing. Uses the in-memory vault key; returns ErrLocked if locked (the
+// caller can use CaptureRowKeysWithPassword for the locked + password path).
+func (s *Store) CaptureRowKeys(ctx context.Context, scope Scope, names []string) (map[string][]byte, error) {
+	vk := s.snapshotVaultKey()
+	if vk == nil {
+		return nil, ErrLocked
+	}
+	defer zero(vk)
+	return s.captureRowKeys(ctx, vk, scope, names)
+}
+
+// CaptureRowKeysWithPassword is CaptureRowKeys for the locked path: it unwraps
+// the vault key with password (proof-of-presence, like trust grant), does the
+// capture+migration, and zeroes the key. See CaptureRowKeys.
+func (s *Store) CaptureRowKeysWithPassword(ctx context.Context, password []byte, scope Scope, names []string) (map[string][]byte, error) {
+	wrapped, err := os.ReadFile(filepath.Join(s.dir, wrappedFilename)) // #nosec G304 -- path is store-configured
+	if err != nil {
+		return nil, fmt.Errorf("vault: read wrapped key: %w", err)
+	}
+	vk, err := vcrypto.Unwrap(password, wrapped)
+	if err != nil {
+		return nil, err
+	}
+	defer zero(vk)
+	return s.captureRowKeys(ctx, vk, scope, names)
+}
+
+// captureRowKeys is the shared core: derive each var's row key and, if the row
+// is still legacy v1, re-seal it under that row key (migrate to v2) so the
+// captured key decrypts it. Missing vars are skipped. A migration failure aborts
+// the whole capture (no partial capability); partially-migrated rows are still
+// valid and re-converge on the next call.
+func (s *Store) captureRowKeys(ctx context.Context, vaultKey []byte, scope Scope, names []string) (map[string][]byte, error) {
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(names))
+	for _, name := range names {
+		r, found, ferr := s.fetchEntry(ctx, projectID, envID, kindAADEnvVar, name)
+		if ferr != nil {
+			zeroRowKeys(out)
+			return nil, ferr
+		}
+		if !found {
+			continue // not created yet — no capability entry for it
+		}
+		krow, kerr := vcrypto.DeriveRowKey(vaultKey, s.entryAAD(kindAADEnvVar, name))
+		if kerr != nil {
+			zeroRowKeys(out)
+			return nil, kerr
+		}
+		if r.AADVersion != aadVersionRowKey {
+			pt, oerr := s.openEntry(vaultKey, r.AADVersion, kindAADEnvVar, name, r.Value)
+			if oerr != nil {
+				zero(krow)
+				zeroRowKeys(out)
+				return nil, fmt.Errorf("vault: migrate %q: %w", name, oerr)
+			}
+			ct, eerr := vcrypto.EncryptWithAAD(krow, pt, s.entryAAD(kindAADEnvVar, name))
+			zero(pt)
+			if eerr != nil {
+				zero(krow)
+				zeroRowKeys(out)
+				return nil, eerr
+			}
+			if _, uerr := s.db.ExecContext(ctx,
+				`UPDATE entries SET value=?, aad_version=? WHERE project_id=? AND env_id=? AND kind='env_var' AND name=?`,
+				ct, aadVersionRowKey, projectID, envID, name); uerr != nil {
+				zero(krow)
+				zeroRowKeys(out)
+				return nil, uerr
+			}
+		}
+		out[name] = krow
+	}
+	return out, nil
+}
+
+// zeroRowKeys wipes every key in a captured row-key map (used on the error path).
+func zeroRowKeys(m map[string][]byte) {
+	for _, k := range m {
+		zero(k)
+	}
+}
+
 // IsLocked reports whether the vault is currently locked.
 func (s *Store) IsLocked() bool {
 	s.mu.RLock()

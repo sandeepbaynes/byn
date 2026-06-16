@@ -2,10 +2,22 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
+
+// rowCiphertext reads the raw stored ciphertext for an env_var by name.
+func rowCiphertext(t *testing.T, st *Store, name string) []byte {
+	t.Helper()
+	var ct []byte
+	if err := st.db.QueryRowContext(context.Background(),
+		`SELECT value FROM entries WHERE kind='env_var' AND name=?`, name).Scan(&ct); err != nil {
+		t.Fatalf("read ciphertext for %q: %v", name, err)
+	}
+	return ct
+}
 
 // rowAADVersion reads the stored aad_version for an env_var by name.
 func rowAADVersion(t *testing.T, st *Store, name string) int {
@@ -117,5 +129,114 @@ func TestStore_UnknownAADVersionRejected(t *testing.T) {
 	}
 	if _, err := st.GetEnvVar(ctx, defaultScope(), "BAD"); err == nil {
 		t.Fatal("get with unknown aad_version must error")
+	}
+}
+
+// TestCaptureRowKeys_ReturnsDecryptingKeys: the captured keys actually decrypt
+// their rows (the property the capability relies on).
+func TestCaptureRowKeys_ReturnsDecryptingKeys(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	vals := map[string]string{"DB_URL": "pg://x", "API_KEY": "k-123"}
+	for n, v := range vals {
+		if err := st.PutEnvVar(ctx, defaultScope(), n, []byte(v), PutOpt{}); err != nil {
+			t.Fatalf("put %s: %v", n, err)
+		}
+	}
+	keys, err := st.CaptureRowKeys(ctx, defaultScope(), []string{"DB_URL", "API_KEY"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	for n, want := range vals {
+		if keys[n] == nil {
+			t.Fatalf("no key captured for %q", n)
+		}
+		pt, err := vcrypto.DecryptWithAAD(keys[n], rowCiphertext(t, st, n), st.entryAAD(kindAADEnvVar, n))
+		if err != nil {
+			t.Fatalf("decrypt %q with captured key: %v", n, err)
+		}
+		if string(pt) != want {
+			t.Fatalf("%q = %q, want %q", n, pt, want)
+		}
+	}
+}
+
+// TestCaptureRowKeys_MigratesV1: capturing a legacy v1 var migrates it to v2 and
+// the returned key decrypts the migrated row.
+func TestCaptureRowKeys_MigratesV1(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "OLD", []byte("x"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	rewriteAsLegacyV1(t, st, "OLD", []byte("legacy-val"))
+	keys, err := st.CaptureRowKeys(ctx, defaultScope(), []string{"OLD"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if v := rowAADVersion(t, st, "OLD"); v != currentAADVersion {
+		t.Fatalf("after capture aad_version=%d, want %d (migrated)", v, currentAADVersion)
+	}
+	pt, err := vcrypto.DecryptWithAAD(keys["OLD"], rowCiphertext(t, st, "OLD"), st.entryAAD(kindAADEnvVar, "OLD"))
+	if err != nil {
+		t.Fatalf("decrypt migrated with captured key: %v", err)
+	}
+	if string(pt) != "legacy-val" {
+		t.Fatalf("value=%q, want legacy-val", pt)
+	}
+}
+
+// TestCaptureRowKeys_SkipsMissing: vars that don't exist are absent from the map.
+func TestCaptureRowKeys_SkipsMissing(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "PRESENT", []byte("v"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	keys, err := st.CaptureRowKeys(ctx, defaultScope(), []string{"PRESENT", "ABSENT"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if _, ok := keys["PRESENT"]; !ok {
+		t.Fatal("PRESENT should be captured")
+	}
+	if _, ok := keys["ABSENT"]; ok {
+		t.Fatal("ABSENT must be skipped (not created)")
+	}
+}
+
+// TestCaptureRowKeys_LockedReturnsErrLocked: the in-memory variant needs an
+// unlocked vault.
+func TestCaptureRowKeys_LockedReturnsErrLocked(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "V", []byte("v"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	st.Lock()
+	if _, err := st.CaptureRowKeys(ctx, defaultScope(), []string{"V"}); !errors.Is(err, ErrLocked) {
+		t.Fatalf("locked capture err = %v, want ErrLocked", err)
+	}
+}
+
+// TestCaptureRowKeysWithPassword: the locked + password path works (trust grant
+// is proof-of-presence and may run while locked); a wrong password fails.
+func TestCaptureRowKeysWithPassword(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "V", []byte("secret"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	st.Lock()
+	keys, err := st.CaptureRowKeysWithPassword(ctx, []byte(testPassword), defaultScope(), []string{"V"})
+	if err != nil {
+		t.Fatalf("capture w/ password: %v", err)
+	}
+	pt, err := vcrypto.DecryptWithAAD(keys["V"], rowCiphertext(t, st, "V"), st.entryAAD(kindAADEnvVar, "V"))
+	if err != nil || string(pt) != "secret" {
+		t.Fatalf("decrypt: pt=%q err=%v", pt, err)
+	}
+	if _, err := st.CaptureRowKeysWithPassword(ctx, []byte("wrong-password"), defaultScope(), []string{"V"}); err == nil {
+		t.Fatal("wrong password must fail")
 	}
 }
