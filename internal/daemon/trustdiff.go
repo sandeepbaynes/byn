@@ -63,9 +63,12 @@ func readBynFile(path string) (body []byte, fi os.FileInfo, err error) {
 func annotateReadErr(path string, err error) error {
 	if runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM) {
 		return fmt.Errorf("open %s: the byn daemon was denied by macOS privacy protection (TCC). "+
-			"Grant Full Disk Access to the byn daemon binary in System Settings > Privacy & Security > "+
-			"Full Disk Access, then restart it (sudo launchctl kickstart -k system/com.sandeepbaynes.byn) — "+
-			"or move the project out of ~/Documents, ~/Desktop and ~/Downloads", path)
+			"Fix EITHER by keeping the project outside ~/Documents, ~/Desktop, ~/Downloads and iCloud "+
+			"(e.g. ~/code — no setup needed), OR by granting the byn binary Full Disk Access "+
+			"(System Settings > Privacy & Security > Full Disk Access) and restarting the daemon "+
+			"(sudo launchctl kickstart -k system/com.sandeepbaynes.byn). "+
+			"Full steps incl. free code-signing so the grant persists: "+
+			"`man byn` (macOS Full Disk Access) or docs/troubleshooting.md", path)
 	}
 	return err
 }

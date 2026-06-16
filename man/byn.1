@@ -649,6 +649,52 @@ is given.
 See
 .BR byn-setup (1),
 .BR byn-trust (1).
+.SS macOS Full Disk Access (TCC)
+On macOS the daemon runs as the
+.B _byn
+service user under launchd, and macOS privacy protection (TCC) blocks it from
+reading
+.I .byn
+files in protected folders \(em
+.IR ~/Documents ", " ~/Desktop ", " ~/Downloads ,
+and iCloud Drive \(em even when POSIX permissions and ACLs allow it. The symptom
+is
+.B operation not permitted
+(EPERM) when trusting or running, distinct from
+.B permission denied
+(EACCES). TCC overrides file ACLs, so
+.BR chmod / setfacl
+cannot fix it. Two resolutions:
+.TP
+.B Keep projects outside the protected folders (recommended)
+Put byn\-managed projects under e.g.
+.IR ~/code ", " ~/dev ", or " /opt
+\(em not
+.IR ~/Documents , ~/Desktop , ~/Downloads ,
+or iCloud Drive. No Full Disk Access and no code signing required. A symlink does
+not help; TCC checks the real path.
+.TP
+.B Grant the daemon Full Disk Access
+Open System Settings \(-> Privacy & Security \(-> Full Disk Access, add the byn
+binary
+.RI ( /usr/local/bin/byn ),
+enable it, then restart the daemon:
+.RS
+.B sudo launchctl kickstart \-k system/com.sandeepbaynes.byn
+.RE
+The binary ships ad\-hoc signed, so the grant is tied to that build and must be
+re\-granted after each reinstall. To make it persist, sign the binary with a
+stable identity \(em a
+.B free
+Apple ID certificate suffices (no paid program):
+.RS
+.B make install CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)"
+.RE
+The full step\-by\-step, including the
+.B codesign
+commands and the paid Developer ID path for distributing to other Macs, is in
+.I docs/troubleshooting.md
+(\(lqmacOS Full Disk Access (TCC)\(rq).
 .SS Daemon control
 .TP
 .B start \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]

@@ -1380,6 +1380,27 @@ EXAMPLES
        Revoke trust:
            $ byn untrust ./.byn
 
+TROUBLESHOOTING
+       macOS, "operation not permitted" (distinct from "permission
+       denied"): the daemon runs as _byn and macOS privacy protection
+       (TCC) blocks it from reading .byn files under ~/Documents,
+       ~/Desktop, ~/Downloads or iCloud Drive. TCC overrides file ACLs,
+       so chmod/setfacl cannot fix it. Two resolutions:
+
+       Option A (recommended): keep byn projects outside those folders
+       (e.g. ~/code) — no Full Disk Access or code signing needed.
+
+       Option B: grant the byn binary Full Disk Access in System Settings
+       > Privacy & Security > Full Disk Access, then restart the daemon:
+           sudo launchctl kickstart -k system/com.sandeepbaynes.byn
+       The grant is tied to the build unless you sign with a (free) Apple
+       ID identity so it persists across reinstalls:
+           make install CODESIGN_IDENTITY="Apple Development: you (TEAMID)"
+
+       Full steps incl. code-signing and the paid Developer ID path for
+       distributing to other Macs: man byn ("macOS Full Disk Access") or
+       docs/troubleshooting.md.
+
 EXIT STATUS
        byn trust diff exits 0 when the file is identical (content and
        modification time unchanged). It exits 1 when the content
