@@ -60,6 +60,13 @@ type Record struct {
 	ScopeVault   string `json:"scope_vault,omitempty"`
 	ScopeProject string `json:"scope_project,omitempty"`
 	ScopeEnv     string `json:"scope_env,omitempty"`
+	// ExecCapability is the sealed autonomous-exec capability captured at grant:
+	// the .byn's allowlisted vars' per-row keys, wrapped under a machine-
+	// fingerprint key (K_cap). It lets the daemon inject those vars at exec time
+	// with NO password/unlock (survives restart). MAC-bound (v2 preimage) so it
+	// cannot be added, removed, or swapped after trust. Empty for .byn files with
+	// no [exec] env allowlist, and for records granted before this existed.
+	ExecCapability []byte `json:"exec_capability,omitempty"`
 }
 
 // Store is the file content.
