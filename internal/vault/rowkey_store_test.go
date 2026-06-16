@@ -240,3 +240,51 @@ func TestCaptureRowKeysWithPassword(t *testing.T) {
 		t.Fatal("wrong password must fail")
 	}
 }
+
+// TestOpenEnvVarWithRowKey_WorksWhileLocked: a captured row key decrypts the var
+// even after the vault is LOCKED — the autonomous-exec read path needs no vault
+// key. Plus: wrong key fails, missing var → ErrNotFound, legacy v1 row refused.
+func TestOpenEnvVarWithRowKey_WorksWhileLocked(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "TOKEN", []byte("t-secret"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	keys, err := st.CaptureRowKeys(ctx, defaultScope(), []string{"TOKEN"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	rowKey := append([]byte(nil), keys["TOKEN"]...) // keep a copy across lock
+
+	st.Lock() // no vault key in memory now
+	got, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "TOKEN", rowKey)
+	if err != nil {
+		t.Fatalf("open while locked: %v", err)
+	}
+	if string(got) != "t-secret" {
+		t.Fatalf("value=%q, want t-secret", got)
+	}
+
+	// Wrong row key → AEAD failure.
+	if _, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "TOKEN", make([]byte, 32)); err == nil {
+		t.Fatal("wrong row key must fail")
+	}
+	// Missing var.
+	if _, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "NOPE", rowKey); err == nil {
+		t.Fatal("missing var must error")
+	}
+}
+
+// TestOpenEnvVarWithRowKey_RefusesLegacyV1: a v1 row (no per-row key) is refused
+// rather than silently failing the AEAD.
+func TestOpenEnvVarWithRowKey_RefusesLegacyV1(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "OLD", []byte("v"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	rewriteAsLegacyV1(t, st, "OLD", []byte("legacy"))
+	if _, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "OLD", make([]byte, 32)); err == nil {
+		t.Fatal("a v1 row must be refused under the per-row-key read path")
+	}
+}
