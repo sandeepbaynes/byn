@@ -8,16 +8,22 @@ import (
 )
 
 // aclGrantCommands returns the setfacl invocations to give `user` access to a
-// project dir: recursive rwX (+ a default ACL so newly-created files are
-// reachable) on the project dir, and an execute-only (search) ACL on the
-// owner's home so `user` can traverse INTO the project without being able to
-// LIST the home. Returns [][]string (each = a command + args for exec.Command).
+// project dir: NON-recursive rwX on the project dir plus a default ACL so files
+// the child CREATES under it inherit access, and an execute-only (search) ACL on
+// each ancestor up to home so `user` can traverse INTO the project without being
+// able to LIST it. Returns [][]string (each = a command + args for exec.Command).
+//
+// It is deliberately NON-recursive: `setfacl -R` over a real project would walk
+// node_modules and hang for minutes. The default ACL covers NEW files; existing
+// files are reachable via their own world/group perms (typical for source
+// trees). The trade-off — a pre-existing OWNER-ONLY file is not granted to the
+// exec child — is accepted (see docs/security.md / threat-model.md).
 //
 // X = +x only on dirs/already-exec files (not data files) — POSIX ACL X-flag.
 func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 	cmds := [][]string{
-		{"setfacl", "-R", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
-		{"setfacl", "-R", "-d", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
+		{"setfacl", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
+		{"setfacl", "-d", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
 	}
 	// Traverse (execute-only) every ancestor ABOVE the project dir up to home so
 	// a restrictive intermediate (e.g. a 0700 ~/Documents) can't block the child
@@ -30,21 +36,15 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 	return cmds
 }
 
-// aclRevokeCommands returns the setfacl invocations that remove `user`'s entry
-// from the project dir and the execute-only entry on the owner's home.
-// Two commands target the project dir:
-//  1. Remove the access ACL entry (-x u:<user>).
-//  2. Remove the default ACL entry (-x d:u:<user>) that was set by the -d grant
-//     so that newly-created files no longer inherit _byn-exec access.
-//
-// Mirrors aclGrantCommands.
+// aclRevokeCommands returns the setfacl invocations that remove `user`'s access
+// + default ACL entries from the project dir (non-recursive, mirroring the
+// grant). It LEAVES the ancestor traversals: a home (or a 0700 ~/Documents)
+// hosts many trusted projects, so dropping a shared traverse entry on untrust of
+// one would break the others.
 func aclRevokeCommands(projectDir, _, user string) [][]string {
-	// Remove only the project-dir access + default ACL; LEAVE the ancestor
-	// traversals. A home (or a 0700 ~/Documents) hosts many trusted projects, so
-	// dropping a shared traverse entry on untrust of one would break the others.
 	return [][]string{
-		{"setfacl", "-R", "-x", fmt.Sprintf("u:%s", user), projectDir},
-		{"setfacl", "-R", "-x", fmt.Sprintf("d:u:%s", user), projectDir},
+		{"setfacl", "-x", fmt.Sprintf("u:%s", user), projectDir},
+		{"setfacl", "-x", fmt.Sprintf("d:u:%s", user), projectDir},
 	}
 }
 

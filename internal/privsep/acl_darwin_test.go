@@ -18,9 +18,9 @@ func TestACLGrantCommands_Darwin(t *testing.T) {
 	cmds := aclGrantCommands("/Users/o/proj", "/Users/o", "_byn-exec")
 	require.Len(t, cmds, 2)
 
-	// Project: chmod -R +a "<ace>" <dir>, ACE with inherit flags.
-	assert.Equal(t, []string{"chmod", "-R", "+a"}, cmds[0][:3])
-	projACE := cmds[0][3]
+	// Project: chmod +a "<ace>" <dir>, ACE with inherit flags (NON-recursive).
+	assert.Equal(t, []string{"chmod", "+a"}, cmds[0][:2])
+	projACE := cmds[0][2]
 	assert.True(t, strings.HasPrefix(projACE, "_byn-exec allow "),
 		"ACE must be '<name> allow <perms>'; got %q", projACE)
 	assert.Contains(t, projACE, "allow")
@@ -30,7 +30,7 @@ func TestACLGrantCommands_Darwin(t *testing.T) {
 	assert.Contains(t, projACE, "write")
 	assert.Contains(t, projACE, "add_file")
 	assert.Contains(t, projACE, "add_subdirectory")
-	assert.Equal(t, "/Users/o/proj", cmds[0][4])
+	assert.Equal(t, "/Users/o/proj", cmds[0][3])
 
 	// Home: chmod +a "<ace>" <dir>, execute/search only (no read = can't list).
 	assert.Equal(t, []string{"chmod", "+a"}, cmds[1][:2])
@@ -55,16 +55,16 @@ func TestACLGrantCommands_Darwin_EmptyHome(t *testing.T) {
 }
 
 // TestACLRevokeCommands_Darwin asserts revoke uses `-a` (delete) with the same
-// ACE text it added, recursively on the project dir. It deliberately LEAVES the
-// ancestor traversals — shared by sibling projects under the same home/Documents.
+// ACE text it added, NON-recursively on the project dir. It deliberately LEAVES
+// the ancestor traversals — shared by sibling projects under the same home.
 func TestACLRevokeCommands_Darwin(t *testing.T) {
 	cmds := aclRevokeCommands("/Users/o/proj", "/Users/o", "_byn-exec")
 	require.Len(t, cmds, 1, "revoke must leave shared ancestor traversals")
 
-	assert.Equal(t, []string{"chmod", "-R", "-a"}, cmds[0][:3])
-	assert.Contains(t, cmds[0][3], "_byn-exec allow ")
-	assert.Contains(t, cmds[0][3], "file_inherit")
-	assert.Equal(t, "/Users/o/proj", cmds[0][4])
+	assert.Equal(t, []string{"chmod", "-a"}, cmds[0][:2])
+	assert.Contains(t, cmds[0][2], "_byn-exec allow ")
+	assert.Contains(t, cmds[0][2], "file_inherit")
+	assert.Equal(t, "/Users/o/proj", cmds[0][3])
 	for _, c := range cmds {
 		assert.NotEqual(t, "/Users/o", c[len(c)-1], "home traversal must not be revoked")
 	}

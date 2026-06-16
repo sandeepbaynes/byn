@@ -18,10 +18,10 @@ func TestACLGrantCommands_Linux(t *testing.T) {
 	require.Len(t, cmds, 3)
 
 	assert.Equal(t,
-		[]string{"setfacl", "-R", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
+		[]string{"setfacl", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
 		cmds[0], "recursive rwX on project")
 	assert.Equal(t,
-		[]string{"setfacl", "-R", "-d", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
+		[]string{"setfacl", "-d", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
 		cmds[1], "default rwX ACL on project")
 	assert.Equal(t,
 		[]string{"setfacl", "-m", "u:_byn-exec:x", "/home/o"},
@@ -51,10 +51,10 @@ func TestACLRevokeCommands_Linux(t *testing.T) {
 	cmds := aclRevokeCommands("/home/o/proj", "/home/o", "_byn-exec")
 	require.Len(t, cmds, 2, "revoke must leave shared ancestor traversals")
 	assert.Equal(t,
-		[]string{"setfacl", "-R", "-x", "u:_byn-exec", "/home/o/proj"},
+		[]string{"setfacl", "-x", "u:_byn-exec", "/home/o/proj"},
 		cmds[0], "remove access ACL on project")
 	assert.Equal(t,
-		[]string{"setfacl", "-R", "-x", "d:u:_byn-exec", "/home/o/proj"},
+		[]string{"setfacl", "-x", "d:u:_byn-exec", "/home/o/proj"},
 		cmds[1], "remove default ACL on project")
 	for _, c := range cmds {
 		assert.NotEqual(t, "/home/o", c[len(c)-1], "home traversal must not be revoked")

@@ -34,18 +34,25 @@ func aceArg(user, perms string) string {
 }
 
 // aclGrantCommands returns the chmod invocations to give `user` access to a
-// project dir: a recursive `+a` ACE carrying the inherit flags on the project
-// dir, and an execute/search-only `+a` ACE on the owner's home so `user` can
-// traverse INTO the project without being able to LIST the home. Returns
+// project dir: a NON-recursive `+a` ACE carrying the inherit flags on the
+// project dir (so the dir is accessible and files/dirs the child creates inherit
+// access), and an execute/search-only `+a` ACE on each ancestor up to home so
+// `user` can traverse INTO the project without being able to LIST it. Returns
 // [][]string (each = a command + args for exec.Command).
+//
+// It is deliberately NON-recursive: a `chmod -R` over a real project would walk
+// node_modules and hang for minutes. The inherit flags (file_inherit,
+// directory_inherit in projectACEPerms) cover NEW files; existing files are
+// reachable via their own world/group perms (typical for source trees). The
+// trade-off — a pre-existing OWNER-ONLY file is not granted to the exec child —
+// is accepted (see docs/security.md / threat-model.md AR-3 neighborhood).
 func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 	cmds := [][]string{
-		{"chmod", "-R", "+a", aceArg(user, projectACEPerms), projectDir},
+		{"chmod", "+a", aceArg(user, projectACEPerms), projectDir},
 	}
 	// Traverse (not list) every ancestor ABOVE the project dir up to home, so a
 	// restrictive intermediate (e.g. a 0700 ~/Documents) can't block the child
-	// from reaching the project. projectDir itself is covered by the recursive
-	// grant above; execute,search = traverse, not list.
+	// from reaching the project. execute,search = traverse, not list.
 	if homeDir != "" && homeDir != projectDir {
 		for _, d := range traverseAncestors(filepath.Dir(projectDir), homeDir) {
 			cmds = append(cmds, []string{"chmod", "+a", aceArg(user, homeACEPerms), d})
@@ -54,16 +61,14 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 	return cmds
 }
 
-// aclRevokeCommands returns the chmod invocations that remove the ACEs added by
-// aclGrantCommands. `chmod -a "<ace>"` deletes the matching entry; the ACE text
-// must match what was added. Mirrors aclGrantCommands.
+// aclRevokeCommands returns the chmod invocations that remove the project-dir
+// ACE added by aclGrantCommands (non-recursive, mirroring the grant). It LEAVES
+// the ancestor traversals: a home (or a 0700 ~/Documents) hosts many trusted
+// projects, so dropping a shared traverse ACE on untrust of one would break the
+// others — harmless to leave (traverse, not list) and re-added on the next grant.
 func aclRevokeCommands(projectDir, _, user string) [][]string {
-	// Remove only the project-dir access; LEAVE the ancestor traversals. A home
-	// (or a 0700 ~/Documents) hosts many trusted projects, so dropping a shared
-	// traverse ACE on untrust of one would break the others. Harmless to leave
-	// (traverse, not list) and re-added idempotently on the next grant.
 	return [][]string{
-		{"chmod", "-R", "-a", aceArg(user, projectACEPerms), projectDir},
+		{"chmod", "-a", aceArg(user, projectACEPerms), projectDir},
 	}
 }
 
