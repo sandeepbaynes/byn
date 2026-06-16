@@ -861,8 +861,7 @@ func (s *Store) PutEnvVar(ctx context.Context, scope Scope, name string, value [
 	}
 	defer zero(key)
 
-	aad := s.entryAAD(kindAADEnvVar, name)
-	ct, err := vcrypto.EncryptWithAAD(key, value, aad)
+	ct, err := s.sealEntry(key, kindAADEnvVar, name, value)
 	if err != nil {
 		return fmt.Errorf("vault: encrypt: %w", err)
 	}
@@ -897,10 +896,10 @@ func (s *Store) PutEnvVar(ctx context.Context, scope Scope, name string, value [
 	// scope+name.
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO entries (project_id, env_id, kind, name, value, aad_version, created_at, updated_at)
-		 VALUES (?, ?, 'env_var', ?, ?, 1, ?, ?)
+		 VALUES (?, ?, 'env_var', ?, ?, ?, ?, ?)
 		 ON CONFLICT(project_id, env_id, name) DO UPDATE SET
 			value=excluded.value, aad_version=excluded.aad_version, updated_at=excluded.updated_at`,
-		projectID, envID, name, ct, now, now); err != nil {
+		projectID, envID, name, ct, currentAADVersion, now, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1106,29 +1105,32 @@ func (s *Store) RenameEnvVar(ctx context.Context, scope Scope, oldName, newName 
 	// transformation is bound by the same DB transaction so a crash
 	// can't leave half-renamed state.
 	var ctOld []byte
+	var oldVer int
 	err = tx.QueryRowContext(ctx,
-		`SELECT value FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var' AND name = ?`,
-		projectID, envID, oldName).Scan(&ctOld)
+		`SELECT value, aad_version FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var' AND name = ?`,
+		projectID, envID, oldName).Scan(&ctOld, &oldVer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	pt, err := vcrypto.DecryptWithAAD(key, ctOld, s.entryAAD(kindAADEnvVar, oldName))
+	// The row key is bound to the row identity (name), so a rename re-seals under
+	// the NEW name's key — and opportunistically migrates a legacy v1 row to v2.
+	pt, err := s.openEntry(key, oldVer, kindAADEnvVar, oldName, ctOld)
 	if err != nil {
 		return fmt.Errorf("vault: decrypt during rename: %w", err)
 	}
-	ctNew, err := vcrypto.EncryptWithAAD(key, pt, s.entryAAD(kindAADEnvVar, newName))
+	ctNew, err := s.sealEntry(key, kindAADEnvVar, newName, pt)
 	if err != nil {
 		zero(pt)
 		return fmt.Errorf("vault: encrypt during rename: %w", err)
 	}
 	zero(pt)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE entries SET name = ?, value = ?, updated_at = ?
+		`UPDATE entries SET name = ?, value = ?, aad_version = ?, updated_at = ?
 		 WHERE project_id = ? AND env_id = ? AND kind = 'env_var' AND name = ?`,
-		newName, ctNew, nowUnix(), projectID, envID, oldName); err != nil {
+		newName, ctNew, currentAADVersion, nowUnix(), projectID, envID, oldName); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1149,6 +1151,52 @@ func (s *Store) entryAAD(kind, name string) []byte {
 	aad = append(aad, sep)
 	aad = append(aad, name...)
 	return aad
+}
+
+// Entry-row key schemes, persisted in entries.aad_version. The row identity
+// bytes (entryAAD) serve as BOTH the AEAD AAD and, for the per-row scheme, the
+// HKDF context that derives the row key.
+const (
+	aadVersionVaultKey = 1 // legacy: the row is sealed directly with the vault key
+	aadVersionRowKey   = 2 // per-row key: vcrypto.DeriveRowKey(vaultKey, row identity)
+
+	// currentAADVersion is the scheme all new writes use. Per-row keys let the
+	// daemon hand out decryption capability for the specific rows a trusted .byn
+	// allowlists (autonomous exec) without exposing the vault key.
+	currentAADVersion = aadVersionRowKey
+)
+
+// sealEntry encrypts an entry value under its per-row key (currentAADVersion).
+// The row identity (entryAAD) is both the AEAD AAD and the row-key derivation
+// context. Caller must hold a non-nil vault key.
+func (s *Store) sealEntry(vaultKey []byte, kind, name string, value []byte) ([]byte, error) {
+	rid := s.entryAAD(kind, name)
+	krow, err := vcrypto.DeriveRowKey(vaultKey, rid)
+	if err != nil {
+		return nil, err
+	}
+	defer zero(krow)
+	return vcrypto.EncryptWithAAD(krow, value, rid)
+}
+
+// openEntry decrypts an entry value, choosing the key by the row's stored
+// aad_version: v1 uses the vault key directly (legacy rows), v2 derives the
+// per-row key. An unknown version is corruption / out-of-band tampering.
+func (s *Store) openEntry(vaultKey []byte, aadVersion int, kind, name string, ct []byte) ([]byte, error) {
+	rid := s.entryAAD(kind, name)
+	switch aadVersion {
+	case aadVersionVaultKey:
+		return vcrypto.DecryptWithAAD(vaultKey, ct, rid)
+	case aadVersionRowKey:
+		krow, err := vcrypto.DeriveRowKey(vaultKey, rid)
+		if err != nil {
+			return nil, err
+		}
+		defer zero(krow)
+		return vcrypto.DecryptWithAAD(krow, ct, rid)
+	default:
+		return nil, fmt.Errorf("vault: unknown aad_version=%d for %q", aadVersion, name)
+	}
 }
 
 // scopeIDs resolves the (project, env) string scope to numeric IDs in
@@ -1220,12 +1268,7 @@ func (s *Store) fetchEntry(ctx context.Context, projectID, envID int64, kind, na
 // the caller surfaces verbatim (callers above this layer don't see
 // the raw AEAD).
 func (s *Store) decryptEntry(key []byte, r entryRow, source Source) (Entry, error) {
-	if r.AADVersion != 1 {
-		// Pre-1.0: no legacy versions exist. Any other value =
-		// corruption / out-of-band tampering.
-		return Entry{}, fmt.Errorf("vault: unknown aad_version=%d for %q", r.AADVersion, r.Name)
-	}
-	pt, err := vcrypto.DecryptWithAAD(key, r.Value, s.entryAAD(r.Kind, r.Name))
+	pt, err := s.openEntry(key, r.AADVersion, r.Kind, r.Name, r.Value)
 	if err != nil {
 		return Entry{}, fmt.Errorf("vault: decrypt %q: %w", r.Name, err)
 	}
