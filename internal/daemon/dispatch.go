@@ -761,7 +761,7 @@ func (d *Daemon) handleTrustGrant(ctx context.Context, env *ipc.Envelope) *ipc.E
 	}
 	// Mint both MACs (vk from the derived key, fp from the machine key) and
 	// record the full v2 record. Parse/ValidateAuth failure → CodeBadRequest.
-	canon, hash, changed, policy, gerr := d.putTrustRecordWithKey(name, req.Path, body, vkKey)
+	canon, hash, changed, policy, gerr := d.putTrustRecordWithKey(ctx, st, name, req.Path, body, vkKey, req.Password)
 	if gerr != nil {
 		d.auditEmit(ctx, name, audit.Event{
 			Op: string(ipc.OpTrustGrant), Outcome: audit.OutcomeDenied,
@@ -829,7 +829,7 @@ func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *i
 			results = append(results, ipc.TrustGrantResult{Path: p, Error: rerr.Error()})
 			continue
 		}
-		canon, hash, changed, policy, perr := d.putTrustRecordWithKey(name, p, body, vkKey)
+		canon, hash, changed, policy, perr := d.putTrustRecordWithKey(ctx, st, name, p, body, vkKey, req.Password)
 		if perr != nil {
 			// Parse/validate failure → per-file error, others continue.
 			d.auditEmit(ctx, name, audit.Event{
