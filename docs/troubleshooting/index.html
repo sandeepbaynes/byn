@@ -54,6 +54,7 @@
       <a href="#hints-arent-showing" class="sb-item">Hints aren&#39;t showing</a>
       <a href="#audit-log-file-modes-unexpectedly-permissive" class="sb-item">Audit log file modes unexpectedly permissive</a>
       <a href="#related" class="sb-item">Related</a>
+      <a href="#operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc" class="sb-item">&#34;operation not permitted&#34; reading a .byn — macOS Full Disk Access (TCC)</a>
     </div>
   </aside>
 
@@ -303,6 +304,97 @@ echo s | byn put X
     <li><a href="file-layout/">File layout</a> — every file's intended mode +
     recovery procedure.</li>
     </ul>
+    <hr>
+    <h2 id="operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc">&quot;operation not permitted&quot; reading a <code>.byn</code> — macOS Full Disk Access (TCC)</h2>
+    <pre><code>$ byn trust .
+  x .../.byn: open .../.byn: operation not permitted
+</code></pre>
+    <p>or, surfaced through the daemon:</p>
+    <pre><code>Error: open .../.byn: the byn daemon was denied by macOS privacy
+protection (TCC). Grant Full Disk Access ...
+</code></pre>
+    <p><strong>Cause.</strong> Under privilege separation the daemon runs as the <code>_byn</code> service
+    user via launchd. macOS <strong>TCC</strong> (Transparency, Consent &amp; Control) blocks any
+    process from reading files in protected folders — <strong><code>~/Documents</code>,
+    <code>~/Desktop</code>, <code>~/Downloads</code>, iCloud Drive</strong>, and removable/network volumes —
+    unless it has <strong>Full Disk Access</strong>. <strong>TCC overrides POSIX permissions and
+    ACLs</strong>, so this is not something <code>chmod</code>/<code>setfacl</code> can fix. Your CLI reads the
+    file fine (it inherits Terminal's access); the daemon, a separate user, does
+    not. The tell is the errno: <strong><code>operation not permitted</code></strong> (EPERM = TCC) versus
+    <strong><code>permission denied</code></strong> (EACCES = ordinary permissions).</p>
+    <h3 id="option-a--keep-projects-out-of-the-protected-folders-recommended-free">Option A — keep projects out of the protected folders (recommended, free)</h3>
+    <p>The simplest fix needs no Full Disk Access and no code signing: keep
+    byn-managed projects <strong>outside</strong> <code>~/Documents</code>, <code>~/Desktop</code>, <code>~/Downloads</code> and
+    iCloud Drive. Anything under e.g. <code>~/code</code>, <code>~/dev</code>, <code>~/src</code>, <code>/opt</code>,
+    <code>/Users/Shared</code> is not TCC-protected, and the daemon reads it normally.</p>
+    <pre><code class="language-sh">mkdir -p ~/code
+mv ~/Documents/my-project ~/code/my-project
+cd ~/code/my-project
+byn trust .
+</code></pre>
+    <p>A symlink does <strong>not</strong> help — TCC checks the real path. Move the real directory.</p>
+    <h3 id="option-b--grant-the-daemon-full-disk-access">Option B — grant the daemon Full Disk Access</h3>
+    <p>Keep projects where they are and authorize the daemon once.</p>
+    <ol>
+    <li>Confirm the daemon binary path (the LaunchDaemon's program):
+    <pre><code class="language-sh">grep -A1 ProgramArguments /Library/LaunchDaemons/com.sandeepbaynes.byn.plist
+# usually /usr/local/bin/byn
+</code></pre>
+    </li>
+    <li>Open <strong>System Settings → Privacy &amp; Security → Full Disk Access</strong>:
+    <pre><code class="language-sh">open &quot;x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles&quot;
+</code></pre>
+    </li>
+    <li>Click <strong>+</strong>. In the file picker press <strong>⌘⇧G</strong>, type <code>/usr/local/bin/byn</code>,
+    press Return, then <strong>Open</strong>. Toggle the new <strong>byn</strong> entry <strong>on</strong>.</li>
+    <li>Restart the daemon so it picks up the grant:
+    <pre><code class="language-sh">sudo launchctl kickstart -k system/com.sandeepbaynes.byn
+</code></pre>
+    </li>
+    <li>Verify (no password needed) against any already-trusted <code>.byn</code>:
+    <pre><code class="language-sh">byn trust diff /path/to/a/trusted/.byn
+# success (a diff or &quot;no changes&quot;) = the daemon can read it
+</code></pre>
+    </li>
+    </ol>
+    <h3 id="make-the-full-disk-access-grant-survive-reinstalls-optional-free">Make the Full Disk Access grant survive reinstalls (optional, free)</h3>
+    <p>byn ships <strong>ad-hoc signed</strong> (Go's default), so TCC ties the grant to that exact
+    build — after <code>make install</code> of a new build you must re-grant. To make it
+    persist, sign the binary with a <strong>stable identity</strong>. A <strong>free</strong> Apple ID is
+    enough; you do <strong>not</strong> need the paid Developer Program for your own machine.</p>
+    <ol>
+    <li>Add your Apple ID in <strong>Xcode → Settings → Accounts</strong> (creates a free
+    &quot;Personal Team&quot; and an <strong>Apple Development</strong> certificate in your login
+    keychain). Xcode or the Command Line Tools must be installed.</li>
+    <li>Find the signing identity:
+    <pre><code class="language-sh">security find-identity -v -p codesigning
+# e.g. &quot;Apple Development: you@example.com (TEAMID1234)&quot;
+</code></pre>
+    </li>
+    <li>Install <strong>and sign in one step</strong> (the Makefile signs when <code>CODESIGN_IDENTITY</code>
+    is set, using stable identifiers so the grant persists):
+    <pre><code class="language-sh">sudo make install CODESIGN_IDENTITY=&quot;Apple Development: you@example.com (TEAMID1234)&quot;
+</code></pre>
+    Or sign an already-installed binary by hand (keep the <code>--identifier</code> constant
+    across rebuilds — TCC keys on identifier + identity):
+    <pre><code class="language-sh">sudo codesign --force --identifier com.sandeepbaynes.byn \
+  --sign &quot;Apple Development: you@example.com (TEAMID1234)&quot; /usr/local/bin/byn
+sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
+  --sign &quot;Apple Development: you@example.com (TEAMID1234)&quot; /usr/local/bin/byn-exec-helper
+</code></pre>
+    </li>
+    <li>Re-add <code>/usr/local/bin/byn</code> to Full Disk Access <strong>once</strong> (the identity changed
+    from ad-hoc), then restart the daemon. Every later reinstall signed with the
+    same identity keeps the grant.</li>
+    </ol>
+    <h3 id="distributing-byn-to-other-macs-your-team">Distributing byn to other Macs (your team)</h3>
+    <p>A free Apple ID development certificate works on <strong>your</strong> machine but is not
+    valid on other people's Macs — Gatekeeper blocks it and FDA can't be attributed.
+    To ship byn to a team you need the <strong>paid Apple Developer Program</strong> ($99/yr) for
+    a <strong>Developer ID Application</strong> certificate plus <strong>notarization</strong>, after which the
+    binary runs cleanly and Full Disk Access can be pre-granted fleet-wide via an MDM
+    PPPC configuration profile. Until then, tell your team to use <strong>Option A</strong> —
+    projects outside the protected folders — which needs no signing at all.</p>
 
     <div class="docs-nav">
       <a href="../glossary/" class="docs-nav-btn">
@@ -333,6 +425,11 @@ echo s | byn put X
     <a href="#hints-arent-showing" class="toc-item">Hints aren&#39;t showing</a>
     <a href="#audit-log-file-modes-unexpectedly-permissive" class="toc-item">Audit log file modes unexpectedly permissive</a>
     <a href="#related" class="toc-item">Related</a>
+    <a href="#operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc" class="toc-item">&#34;operation not permitted&#34; reading a .byn — macOS Full Disk Access (TCC)</a>
+    <a href="#option-a--keep-projects-out-of-the-protected-folders-recommended-free" class="toc-item sub">Option A — keep projects out of the protected folders (recommended, free)</a>
+    <a href="#option-b--grant-the-daemon-full-disk-access" class="toc-item sub">Option B — grant the daemon Full Disk Access</a>
+    <a href="#make-the-full-disk-access-grant-survive-reinstalls-optional-free" class="toc-item sub">Make the Full Disk Access grant survive reinstalls (optional, free)</a>
+    <a href="#distributing-byn-to-other-macs-your-team" class="toc-item sub">Distributing byn to other Macs (your team)</a>
   </nav>
 
 </div>
@@ -340,12 +437,14 @@ echo s | byn put X
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/troubleshooting.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/troubleshooting.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>
     <a href="../../docs/cli-reference/">CLI Reference</a>
     <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

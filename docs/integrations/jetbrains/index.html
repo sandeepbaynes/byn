@@ -69,6 +69,7 @@
     <p>Inject vault env-vars into Run/Debug configurations without typing
     plaintext into the IDE's &quot;Environment variables&quot; field (which gets
     saved into <code>workspace.xml</code> and accidentally committed).</p>
+    <hr>
     <h2 id="prerequisites">Prerequisites</h2>
     <ul>
     <li><code>byn</code> on <code>$PATH</code> and resolvable from the IDE's launcher
@@ -78,6 +79,7 @@
     to include the directory containing <code>byn</code>.</li>
     <li>Daemon running, vault unlocked.</li>
     </ul>
+    <hr>
     <h2 id="approach-1-wrap-the-interpreter--executable">Approach 1: wrap the interpreter / executable</h2>
     <p>Most Run configurations let you change the <strong>interpreter</strong> or
     <strong>runner</strong> path. Set it to <code>byn</code> with <code>exec --</code> as the prefix.</p>
@@ -103,6 +105,7 @@
     <h3 id="webstorm--nodejs">WebStorm — Node.js</h3>
     <p>Similarly: set <strong>Node interpreter</strong> to <code>byn</code> and <strong>Node parameters</strong>
     to <code>exec -- node</code>.</p>
+    <hr>
     <h2 id="approach-2-external-tools">Approach 2: External Tools</h2>
     <p><code>Settings → Tools → External Tools → +</code>:</p>
     <ul>
@@ -114,11 +117,13 @@
     <p>Bind a shortcut to it (<code>Keymap → External Tools → Run via byn</code>).
     Triggering it opens a prompt for the command, then runs it with vault
     env-vars injected.</p>
+    <hr>
     <h2 id="approach-3-terminal">Approach 3: terminal</h2>
     <p>The simplest: <code>Alt+F12</code> (or <strong>View → Tool Windows → Terminal</strong>), then:</p>
     <pre><code>byn exec -- npm test
 byn exec -- ./gradlew bootRun
 </code></pre>
+    <hr>
     <h2 id="per-project-scope">Per-project scope</h2>
     <p><code>File → Settings → Tools → Terminal → Environment variables</code>:</p>
     <pre><code>BYN_PROJECT=my-app
@@ -126,6 +131,7 @@ BYN_ENV=dev
 </code></pre>
     <p>Now the terminal scope is pinned, and so is anything you launch from
     the IDE's terminal.</p>
+    <hr>
     <h2 id="storing-env-vars-in-the-run-config--dont">Storing env vars in the run config — DON'T</h2>
     <p>Avoid pasting secrets into the &quot;Environment variables&quot; field of a Run
     configuration. JetBrains stores them in <code>.idea/workspace.xml</code>. That
@@ -152,12 +158,14 @@ BYN_ENV=dev
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/jetbrains.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/jetbrains.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../../index.html">Home</a>
     <a href="../../../docs/cli-reference/">CLI Reference</a>
     <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

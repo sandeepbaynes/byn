@@ -111,12 +111,14 @@
     still sits next to the vault, byn protects nothing about it. And an
     agent running in a terminal <em>you unlocked</em> can use that session
     (see Vector 6).</li>
-    <li><strong>Coming:</strong> privilege separation (next release) puts the daemon and
+    <li><strong>Now (opt-in) + coming:</strong> privilege separation — shipped opt-in in
+    v0.3.0 (<code>[security] privsep</code> + <code>sudo byn setup</code>) — puts the daemon and
     exec children on their own service UIDs, so a same-UID agent can't
     ptrace the daemon or read an injected child's <code>/proc/&lt;pid&gt;/environ</code>.
-    Phase 3 shims (<code>aws</code>, <code>ssh</code>, …) remove still more plaintext files;
-    FUSE-gated crown-jewel files are on the roadmap behind them.</li>
+    Still on the roadmap: Phase 3 shims (<code>aws</code>, <code>ssh</code>, …) to remove more
+    plaintext files, and FUSE-gated crown-jewel files behind them.</li>
     </ul>
+    <hr>
     <h2 id="vector-2--the-secret-ends-up-in-the-agents-context-anyway">Vector 2 — The secret ends up in the agent's context anyway</h2>
     <p><strong>How it happens.</strong> A test prints the connection string on failure; a
     verbose flag dumps the env; an error message embeds the token. The agent
@@ -135,6 +137,7 @@
     shapes, secrets piped to terminals) is under exploration as a
     rule-based, pluggable detector.</li>
     </ul>
+    <hr>
     <h2 id="vector-3--ide-inline-completion-ingests-the-secret-as-you-type-it">Vector 3 — IDE inline completion ingests the secret as you type it</h2>
     <p><strong>How it happens.</strong> Inline completion (Copilot, Cursor Tab, JetBrains
     AI, …) streams your buffer to an inference endpoint on every keystroke.
@@ -167,6 +170,7 @@
     <li><strong>Coming:</strong> nothing can intercept the editor from user space without
     becoming the IDE; this vector stays a discipline byn enables.</li>
     </ul>
+    <hr>
     <h2 id="vector-4--the-secret-gets-committed-and-pushed">Vector 4 — The secret gets committed and pushed</h2>
     <p><strong>How it happens.</strong> A <code>.env</code> slips past <code>.gitignore</code>; a config with an
     embedded token gets committed by you or generated-and-committed by an
@@ -182,6 +186,7 @@
     not the last one.</li>
     <li><strong>Coming:</strong> —</li>
     </ul>
+    <hr>
     <h2 id="vector-5--supply-chain-malware-wearing-your-uid-harvests-credentials">Vector 5 — Supply-chain malware wearing your UID harvests credentials</h2>
     <p><strong>How it happens.</strong> A compromised npm package's post-install script, a
     malicious VS Code extension, or a trojaned CLI runs as <em>you</em> and sweeps
@@ -210,6 +215,7 @@
     not machine binding; a stronger break-glass recovery wrap is planned so a
     memorable password isn't the at-rest floor.</li>
     </ul>
+    <hr>
     <h2 id="vector-6--prompt-injection-turns-a-good-agent-rogue">Vector 6 — Prompt injection turns a good agent rogue</h2>
     <p><strong>How it happens.</strong> The agent itself is fine; its <em>input</em> is hostile. A
     poisoned issue, README, rules file, or web page instructs the agent to
@@ -227,12 +233,13 @@
     terminal with a live session can use that session for gated reads
     until it expires or you <code>byn lock --session</code>. The TTY binding is not
     a same-UID boundary (a determined process can acquire your terminal).</li>
-    <li><strong>Coming:</strong> privilege separation tightens the daemon surface;
-    per-command <code>[auth]</code> policy already lets you force <code>always</code> auth for
-    sensitive scopes; out-of-band approval surfaces (a channel the agent
-    can't drive) are the planned strong form via the pluggable auth
-    provider interface.</li>
+    <li><strong>Now (opt-in) + coming:</strong> privilege separation (opt-in in v0.3.0)
+    tightens the daemon surface; per-command <code>[auth]</code> policy already lets
+    you force <code>always</code> auth for sensitive scopes; out-of-band approval
+    surfaces (a channel the agent can't drive) are the planned strong form
+    via the pluggable auth provider interface.</li>
     </ul>
+    <hr>
     <h2 id="vector-7--long-lived-credentials-on-dev-vms-and-remote-boxes">Vector 7 — Long-lived credentials on dev VMs and remote boxes</h2>
     <p><strong>How it happens.</strong> A dev VM accumulates real cloud credentials in
     dotfiles because the tooling expects them there. The box is reachable,
@@ -369,12 +376,14 @@
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/how-agents-leak-secrets.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/how-agents-leak-secrets.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../../index.html">Home</a>
     <a href="../../../docs/">Quickstart</a>
     <a href="../../../docs/security/">Security model</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 

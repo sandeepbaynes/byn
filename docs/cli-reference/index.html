@@ -185,7 +185,9 @@ esac
     <li>On success, starts the per-vault idle timer.</li>
     </ul>
     <h3 id="byn-lock"><code>byn lock</code></h3>
-    <p>Zero the in-memory vault key for <code>--vault</code> (or <code>*</code> to lock all).</p>
+    <p>Zero the in-memory vault key for <code>--vault</code> (or <code>--all</code> to lock every
+    unlocked vault). <code>--session</code> ends only this terminal's session and
+    leaves the vault unlocked.</p>
     <h3 id="byn-daemon-start---foreground"><code>byn daemon start [--foreground]</code></h3>
     <p>Start the long-lived daemon.</p>
     <ul>
@@ -532,8 +534,8 @@ byn --vault myv exec deploy                   # globals before subcommand still 
     <code>bash -c '...'</code></li>
     </ul>
     <h3 id="byn-edit--byn-view--byn-no-args"><code>byn edit</code> / <code>byn view</code> / <code>byn</code> (no args)</h3>
-    <p>Open the modal vi-style TUI. Currently env-vars in the default scope
-    only — the left-rail multi-scope redesign is Slice 7.</p>
+    <p>Open the modal vi-style TUI, with a left rail to navigate the
+    vault → project → env tree.</p>
     <hr>
     <h2 id="diagnostics">Diagnostics</h2>
     <h3 id="byn-doctor---json"><code>byn doctor [--json]</code></h3>
@@ -566,9 +568,10 @@ byn --vault myv exec deploy                   # globals before subcommand still 
     </table>
     <p>Severity is <code>ok</code> / <code>warn</code> / <code>fail</code>. Exit code is non-zero if any
     <code>fail</code>. <code>--json</code> emits <code>[]DoctorCheck{Name, Severity, Detail}</code>.</p>
-    <h3 id="byn-audit-tail---lines-n---json"><code>byn audit tail [--lines N] [--json]</code></h3>
-    <p>Print the most recent N events from the active vault's audit log.
-    Default N = 50; <code>--lines 0</code> returns everything.</p>
+    <h3 id="byn-audit-tail--n-n--f---json"><code>byn audit tail [-n N] [-f] [--json]</code></h3>
+    <p>Print the most recent N events from the active vault's audit log
+    (like <code>tail(1)</code>). Default N = 10 (<code>--lines</code> is an alias for <code>-n</code>);
+    <code>-f</code> follows the log.</p>
     <p>Allowed while locked — audit metadata is not secret. See
     <a href="security/">security.md</a> for what's captured per event.</p>
     <p>Human format: timestamp + op + scope + entry name + outcome:</p>
@@ -884,7 +887,7 @@ enabled = true
     <a href="#byn-edit--byn-view--byn-no-args" class="toc-item sub">byn edit / byn view / byn (no args)</a>
     <a href="#diagnostics" class="toc-item">Diagnostics</a>
     <a href="#byn-doctor---json" class="toc-item sub">byn doctor [--json]</a>
-    <a href="#byn-audit-tail---lines-n---json" class="toc-item sub">byn audit tail [--lines N] [--json]</a>
+    <a href="#byn-audit-tail--n-n--f---json" class="toc-item sub">byn audit tail [-n N] [-f] [--json]</a>
     <a href="#byn-audit-verify---json" class="toc-item sub">byn audit verify [--json]</a>
     <a href="#trust-byn-tofu" class="toc-item">Trust (.byn TOFU)</a>
     <a href="#byn-trust-path" class="toc-item sub">byn trust [PATH]</a>
@@ -908,12 +911,14 @@ enabled = true
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>
     <a href="../../docs/">Quickstart</a>
     <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
   </div>
 </footer>
 
