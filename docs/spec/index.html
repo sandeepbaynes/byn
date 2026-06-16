@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn — Specification — byn docs</title>
+<meta name="description" content="This file is the authoritative contract for byn behavior. Everyguarantee made here MUST hold in production code; tests verify it; anychange here is a breaking change that requires deliberate planning.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Specification</div>
+      <a href="./" class="sb-item active">byn — Specification</a>
+      <a href="#1-vault-layer" class="sb-item">1. Vault layer</a>
+      <a href="#2-scope-hierarchy" class="sb-item">2. Scope hierarchy</a>
+      <a href="#3-ipc" class="sb-item">3. IPC</a>
+      <a href="#4-daemon" class="sb-item">4. Daemon</a>
+      <a href="#5-cli" class="sb-item">5. CLI</a>
+      <a href="#6-byn-discovery--tofu" class="sb-item">6. .byn discovery &#43; TOFU</a>
+      <a href="#7-audit-log" class="sb-item">7. Audit log</a>
+      <a href="#8-tui" class="sb-item">8. TUI</a>
+      <a href="#9-security-guarantees" class="sb-item">9. Security guarantees</a>
+      <a href="#10-backward-compatibility" class="sb-item">10. Backward compatibility</a>
+      <a href="#11-process" class="sb-item">11. Process</a>
+      <a href="#12-web-portal-browser-admin-ui" class="sb-item">12. Web portal (browser admin UI)</a>
+      <a href="#related-docs-deeper-explanations-not-contracts" class="sb-item">Related docs (deeper explanations, not contracts)</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Specification</span>
+    </div>
+
+    <h1>byn — Specification</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/spec.md">docs/spec.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/spec.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>This file is the <strong>authoritative contract</strong> for byn behavior. Every
+    guarantee made here MUST hold in production code; tests verify it; any
+    change here is a breaking change that requires deliberate planning.</p>
+    <p>Read <a href="architecture/">docs/architecture.md</a> for the <em>how</em>. This
+    file is the <em>what must always be true</em>.</p>
+    <p>Conventions:</p>
+    <ul>
+    <li><strong>MUST / MUST NOT / SHALL</strong> — load-bearing invariants. Tests cover them.</li>
+    <li><strong>SHOULD</strong> — strong default; deviation requires comment + rationale.</li>
+    <li><strong>MAY</strong> — discretionary.</li>
+    <li>Where a guarantee is qualified (a known weakness, a deferred fix),
+    the qualification is the contract — don't tighten it without
+    shipping the deferred work first.</li>
+    </ul>
+    <p>When making a change:</p>
+    <ol>
+    <li>Read the relevant section(s) here first.</li>
+    <li>If the change tightens an invariant, add a test that proves it.</li>
+    <li>If the change loosens an invariant (anti-feature, regression risk),
+    explicitly list which contract you're moving and why; update this
+    doc as part of the same PR/commit.</li>
+    </ol>
+    <hr>
+    <h2 id="1-vault-layer">1. Vault layer</h2>
+    <h3 id="11-storage">1.1 Storage</h3>
+    <p>1.1.0. <strong>Data root.</strong> All on-disk state lives under a single <strong>data root</strong>. There
+    is NO runtime override of this root (the former data-root env override is removed
+    — spec §6.5 of the privsep design). The root MUST be: the fixed per-OS <strong>system
+    path</strong> when the machine is provisioned for privilege separation — <code>/var/lib/byn</code>
+    (Linux) or <code>/Library/Application Support/byn</code> (macOS), owned by the <code>_byn</code>
+    service account, mode <code>0700</code>; otherwise the legacy per-user path <code>~/.byn</code>, owned
+    by the owner, mode <code>0700</code>. Subsequent clauses write paths relative to this root
+    as <code>&lt;data root&gt;/…</code>.</p>
+    <p>1.1.1. Each vault is a directory <code>&lt;data root&gt;/vaults/&lt;name&gt;/</code> containing
+    exactly:</p>
+    <ul>
+    <li><code>vault.db</code> — SQLite STRICT tables, WAL journal, FK enforced</li>
+    <li><code>wrapped.key</code> — Argon2id-wrapped vault key (binary header + nonce + ciphertext + tag)</li>
+    <li><code>meta.json</code> — <code>{schema_version, vault_id (UUIDv4), wrapped_key_fingerprint_sha256, created_at}</code></li>
+    </ul>
+    <p>1.1.2. File modes MUST be <code>0600</code>. Directory mode MUST be <code>0700</code>.</p>
+    <p>1.1.3. <code>meta.json.wrapped_key_fingerprint_sha256</code> MUST be the SHA-256
+    of the actual <code>wrapped.key</code> file bytes. Mismatch → vault refuses to
+    open.</p>
+    <p>1.1.4. Vault names MUST match <code>^[a-z][a-z0-9_-]{0,62}$</code>. Uppercase
+    input is rejected with an auto-suggest message; CLI MUST NOT silently
+    lowercase.</p>
+    <h3 id="12-encryption">1.2 Encryption</h3>
+    <p>1.2.1. Vault key is a fresh 32-byte random value from <code>crypto/rand</code> at
+    <code>init</code>. It MUST exist on disk only in wrapped form, and in memory only
+    while the vault is unlocked.</p>
+    <p>1.2.2. Wrapping primitive: <code>XChaCha20-Poly1305-Seal(key=Argon2id(password,salt), nonce=24B random, plaintext=vault_key, aad=full_header_bytes)</code>.</p>
+    <p>1.2.3. The <code>aad</code> for the wrap MUST include every byte of the header
+    (version + salt + Argon2 params + nonce). Any bit-flip in the header
+    MUST fail unwrap.</p>
+    <p>1.2.4. Argon2id parameters: time ∈ [1, 16], memory ∈ [8 MiB, 1 GiB],
+    threads ∈ [1, 16], key length = 32. Defaults (<code>DefaultArgon2Params</code>):
+    time=2, memory=64 MiB, threads=4 (tuned for ~1s on a laptop).
+    Out-of-range parameters in a stored header MUST be rejected at unwrap.</p>
+    <p>1.2.5. Row-value encryption: <code>XChaCha20-Poly1305-Seal(key=vault_key, nonce=24B random, plaintext=value, aad=vault_id ‖ 0x1F ‖ kind ‖ 0x1F ‖ name)</code>.</p>
+    <p>1.2.6. AAD components for row encryption MUST be: vault UUID, kind
+    (<code>env_var</code> or <code>file</code>), entry name (plaintext). Cutting and pasting a
+    row from another vault, or onto a different entry, MUST fail
+    decryption.</p>
+    <p>1.2.7. Nonces MUST be freshly random per encryption. Counter-based
+    nonces are forbidden.</p>
+    <h3 id="13-schema">1.3 Schema</h3>
+    <p>1.3.1. Current schema version: <strong>3</strong>.</p>
+    <p>1.3.2. Schema includes the tables <code>meta</code>, <code>projects</code>, <code>envs</code>,
+    <code>entries</code>, <code>entry_versions</code>, <code>passkey</code>, <code>passkey_unlock</code>, and
+    <code>file_meta</code> (reserved).</p>
+    <p>1.3.3. <code>projects (name UNIQUE)</code> and <code>envs (project_id, name UNIQUE)</code>.</p>
+    <p>1.3.4. Default project and default env MUST be created at <code>init</code>.
+    Both are named <code>default</code>.</p>
+    <p>1.3.5. <code>entries.value</code> is a BLOB containing <code>nonce(24) ‖ ciphertext ‖ tag(16)</code>.</p>
+    <p>1.3.6. FOREIGN KEY constraints MUST be enforced (<code>PRAGMA foreign_keys=ON</code>).</p>
+    <p>1.3.7. <code>entries.deleted_at</code> is a soft-delete column. The current CLI
+    does hard deletes (cascade); soft deletes are reserved for a future
+    versioning surface.</p>
+    <p>1.3.8. <code>entry_versions</code> is append-only. Future <code>byn history</code> /
+    <code>revert</code> / <code>diff</code> will read it; today only writes flow in.</p>
+    <hr>
+    <h2 id="2-scope-hierarchy">2. Scope hierarchy</h2>
+    <h3 id="21-structure">2.1 Structure</h3>
+    <p>2.1.1. Hierarchy: <code>vault → project → env → entry</code>. Exactly four levels.</p>
+    <p>2.1.2. Each level has a <code>default</code> member (vault <code>default</code>, project
+    <code>default</code>, env <code>default</code>). <code>default</code> is a regular member — same CRUD
+    rules apply with one exception: <strong>deletion of any <code>default</code> is
+    refused</strong> at the CLI layer AND the daemon layer.</p>
+    <h3 id="22-resolution">2.2 Resolution</h3>
+    <p>2.2.1. Resolution precedence (highest first):</p>
+    <ol>
+    <li>CLI flag (<code>--vault</code>/<code>--project</code>/<code>--env</code>)</li>
+    <li>Env var (<code>BYN_VAULT</code>/<code>BYN_PROJECT</code>/<code>BYN_ENV</code>)</li>
+    <li>Discovered <code>.byn</code> scope (see §6)</li>
+    <li>Daemon default (<code>default</code>)</li>
+    </ol>
+    <p>2.2.2. CLI flag MUST work before AND after the subcommand. Conflicting
+    duplicates (e.g. <code>--vault a --vault b</code>) MUST hard-error.</p>
+    <h3 id="23-inheritance">2.3 Inheritance</h3>
+    <p>2.3.1. <strong>Env inherits from default env, within the same project, when
+    an entry is missing.</strong> Other levels (project, vault) do NOT inherit.</p>
+    <p>2.3.2. <code>OpList</code> for <code>(vault=V, project=P, env=E)</code> where E ≠ <code>default</code>
+    MUST return both:</p>
+    <ul>
+    <li>entries from <code>(V, P, E)</code> with <code>Source=&quot;scope&quot;</code></li>
+    <li>entries from <code>(V, P, default)</code> that are NOT in <code>(V, P, E)</code>, with
+    <code>Source=&quot;default&quot;</code></li>
+    </ul>
+    <p>2.3.3. <code>OpGet</code> MUST honor the same fallback.</p>
+    <p>2.3.4. <code>OpPut</code>, <code>OpDelete</code>, <code>OpRename</code> operate on the <strong>exact</strong> scope
+    — no inheritance. Deleting an entry in <code>staging</code> does NOT touch
+    <code>default</code>.</p>
+    <hr>
+    <h2 id="3-ipc">3. IPC</h2>
+    <h3 id="31-transport">3.1 Transport</h3>
+    <p>3.1.1. Socket: <code>daemon.sock</code> at the daemon's runtime path, mode <code>0600</code>. (Under
+    privilege separation the socket sits at an owner-traversable runtime path
+    distinct from the <code>0700</code> state dir, so the owner can reach it; unprovisioned it
+    is <code>&lt;data root&gt;/daemon.sock</code>.)</p>
+    <p>3.1.2. Connection model: one envelope per connection. The CLI dials,
+    sends one request, reads one response, closes.</p>
+    <p>3.1.3. Peer credentials MUST be checked before reading any envelope.
+    Peer UID ≠ daemon owner UID → connection closed.</p>
+    <p>3.1.4. macOS uses <code>LOCAL_PEERCRED</code> (returns Xucred → UID); Linux uses
+    <code>SO_PEERCRED</code> (returns ucred → UID).</p>
+    <h3 id="32-frame">3.2 Frame</h3>
+    <p>3.2.1. Wire frame: <code>length(uint32 BE) ‖ JSON envelope bytes</code>.</p>
+    <p>3.2.2. Max frame size: 1 MiB. Larger → reject.</p>
+    <p>3.2.3. <code>Envelope.V</code> MUST equal <code>ipc.ProtocolVersion</code> (currently 2).
+    Version negotiation surface is reserved (Min/Max in <code>StatusResp</code>) but
+    strict equality is enforced today.</p>
+    <p>3.2.4. JSON decode MUST use <code>DisallowUnknownFields</code> on both envelope
+    read and body decode. (Body decode is on the deferred-hardening list;
+    envelope already does this.)</p>
+    <h3 id="33-operations">3.3 Operations</h3>
+    <p>3.3.1. Op string set (current): listed in <code>ipc.AllOps</code>. Adding ops is
+    backwards-compatible; removing or renaming is not.</p>
+    <p>3.3.2. Every op response MUST be either a typed response body OR a
+    typed <code>ErrMsg</code>. No silent successes; no untyped errors.</p>
+    <p>3.3.3. Stable error codes (must not change meaning): <code>unknown_op</code>,
+    <code>bad_request</code>, <code>unsupported_version</code>, <code>binary_too_old</code>, <code>locked</code>,
+    <code>wrong_password</code>, <code>rate_limited</code>, <code>already_init</code>, <code>not_init</code>,
+    <code>vault_not_found</code>, <code>vault_exists</code>, <code>bad_name</code>, <code>not_found</code>,
+    <code>already_exists</code>, <code>project_not_found</code>, <code>project_exists</code>,
+    <code>env_not_found</code>, <code>env_exists</code>, <code>internal</code>.</p>
+    <h3 id="34-existence-oracle-defense">3.4 Existence-oracle defense</h3>
+    <p>3.4.1. <code>vault.unlock</code> MUST return <code>wrong_password</code> for both:</p>
+    <ul>
+    <li>the password is genuinely wrong</li>
+    <li>the vault does not exist on disk</li>
+    </ul>
+    <p>This prevents an attacker from probing which vault names are present
+    by timing or response shape.</p>
+    <p>3.4.2. Successful unlock MAY reveal the vault exists; this is by
+    design (the user just told us it does).</p>
+    <hr>
+    <h2 id="4-daemon">4. Daemon</h2>
+    <h3 id="41-lifecycle">4.1 Lifecycle</h3>
+    <p>4.1.1. Single instance per data root enforced via
+    <code>&lt;data root&gt;/daemon.pid</code>. Stale pidfile detected via signal-0 probe;
+    the daemon MUST reclaim it on restart, not refuse to start.</p>
+    <p>4.1.2. Multi-vault: the daemon maintains a map of unlocked vaults.
+    Each entry holds its own SQLite store, audit logger, idle timer, and
+    last-active timestamp.</p>
+    <p>4.1.3. Per-vault idle timer locks the vault key after inactivity. The
+    timeout is <code>[daemon] idle_timeout</code> in <code>&lt;data root&gt;/config</code> (Go duration
+    string; default <code>15m</code>); <code>&quot;0s&quot;</code> disables auto-relock. Reset on every
+    successful op. Implemented by the daemon's idle janitor (started at
+    <code>daemon start</code> when the timeout is positive); the janitor zeroes the
+    in-memory key via the same path as an explicit <code>vault.lock</code>.</p>
+    <p>4.1.4. <code>daemon stop</code> sends SIGTERM via pidfile. Shutdown drains
+    in-flight handlers up to 5 seconds, then exits.</p>
+    <h3 id="42-vault-lookups">4.2 Vault lookups</h3>
+    <p>4.2.1. <code>openVault(name)</code> lazily opens the SQLite + audit logger for a
+    named vault. Locking state is independent — opening doesn't unlock.</p>
+    <p>4.2.2. Operations on a locked vault MUST return <code>CodeLocked</code>, EXCEPT
+    name/metadata reads that expose no value: <code>vault.list</code>, <code>audit.tail</code>,
+    <code>audit.verify</code>, <code>doctor</code>, project/env list, AND env-var <strong><code>list</code></strong>. Entry
+    <code>list</code> returns NAMES only and MUST work while locked — this is byn's core
+    promise: which env-vars exist is always visible, the values never are
+    (see §9.1). Value writes (<code>put</code>) and value reads (<code>get</code>) genuinely need the
+    vault key, so they gate hard on lock and CANNOT proceed while locked — a
+    write while locked MUST return <code>CodeLocked</code> (the UI surfaces &quot;unlock the
+    vault to add values&quot;).</p>
+    <p>4.2.2.1. <strong>Deletes while locked.</strong> The deletes — env-var <code>delete</code>,
+    project/env <code>delete</code>, and <code>vault.delete</code> — touch only names/IDs and never
+    need the vault key. So a locked vault accepts them when the request carries
+    the correct master <code>password</code>: the daemon verifies it against the wrapped
+    key via <code>Store.VerifyPassword</code> (which unwraps then immediately zeroes the
+    key) and proceeds WITHOUT unlocking the vault. This lets a user remove a
+    secret/scope/vault they no longer want without exposing the rest of the
+    vault to a process sniffing daemon memory. A locked delete with no password
+    returns <code>CodeLocked</code> (clients then prompt); a wrong password returns
+    <code>CodeWrongPassword</code> and is rate-limited exactly like unlock (§4.3, shared
+    limiter). <code>rename</code> still requires a full unlock (<code>requireUnlocked</code>).
+    Enforced by <code>authorizeMutationWhileLocked</code> in dispatch. The CLI prompts for
+    the password on <code>CodeLocked</code> (or reads it via <code>--password-stdin</code>); the
+    portal's delete confirmation grows a password field when the vault is
+    locked.</p>
+    <p>4.2.2.2. <strong><code>vault.delete</code></strong> refuses the default vault, then (after authz)
+    emits a <code>vault.delete</code> audit event, evicts the in-memory store, and calls
+    <code>vault.Destroy</code>: overwrite <code>wrapped.key</code> with random bytes, then remove
+    <code>&lt;root&gt;/vaults/&lt;name&gt;/</code>. The audit log lives at <code>&lt;root&gt;/audit/&lt;name&gt;/</code>,
+    OUTSIDE the vault directory, so the forensic trail of a deleted vault
+    survives the wipe.</p>
+    <h3 id="43-rate-limiter">4.3 Rate limiter</h3>
+    <p>4.3.1. Failed unlocks update <code>~/.byn/auth-state.json</code> with an
+    exponential backoff. State MUST persist across daemon restarts.</p>
+    <p>4.3.2. Backoff parameters: base 1s, multiplier 1.8, capped at 30 min.
+    After N failures the wait is <code>min(30min, base * multiplier^N)</code>.</p>
+    <p>4.3.3. The state file is not currently signed — tampering by an
+    attacker who can write <code>~/.byn</code> is undetected. Hardening designed,
+    deferred (see <a href="security/">docs/security.md</a>).</p>
+    <hr>
+    <h2 id="5-cli">5. CLI</h2>
+    <h3 id="51-exit-codes">5.1 Exit codes</h3>
+    <p>5.1.1. <strong>MUST</strong> be stable:</p>
+    <ul>
+    <li><code>0</code> — success</li>
+    <li><code>1</code> — generic error (bad input, runtime failure)</li>
+    <li><code>2</code> — daemon unreachable (CLI also prints a recovery hint)</li>
+    <li><code>3</code> — daemon returned a typed error (locked, wrong password, not found, etc.)</li>
+    </ul>
+    <p>5.1.2. Scripts SHOULD branch on these codes; the CLI MUST NOT use
+    other values without updating this contract.</p>
+    <h3 id="52-commands">5.2 Commands</h3>
+    <p>5.2.1. Every shipped command listed in this section MUST remain
+    backwards-compatible: same name, same flags, same exit code semantics.</p>
+    <p>5.2.2. <strong>Lifecycle:</strong> <code>init</code>, <code>unlock</code>, <code>lock [--all]</code>, <code>passwd</code>, <code>daemon {start,stop,restart,reload,status}</code>, <code>status</code>. <code>lock --all</code> locks every unlocked vault (daemon <code>OpVaultLock</code> with <code>Name=&quot;*&quot;</code>). <code>passwd</code> changes a vault's master password by <strong>re-wrapping</strong> the vault key — unwrap with the current password, wrap under the new one (fresh salt/nonce), rewrite <code>wrapped.key</code> + <code>meta.json</code> fingerprint. The vault key and ciphertext are never touched, so encrypted data survives and the lock state is preserved; a forgotten password is unrecoverable by design. <code>passwd</code> is rate-limited like <code>unlock</code>. <code>daemon restart</code> = stop (wait for exit) then start (picks up a new binary); degrades to start when nothing is running. <code>daemon reload</code> sends SIGHUP to re-read <code>~/.byn/config</code> and apply runtime-changeable settings (<code>idle_timeout</code>, web portal enable/disable/port) <strong>without</strong> dropping daemon state — open vaults stay unlocked. Data dir, owner UID and binary version are fixed at start (need a restart).</p>
+    <p>5.2.3. <strong>Structure CRUD:</strong> <code>vault {list,delete,rename,passwd,init,unlock,lock}</code>,
+    <code>project {create,list,delete,rename}</code>, <code>env {create,list,delete,rename}</code>.
+    <code>vault rename OLD NEW</code> moves <code>vaults/&lt;old&gt;/</code> → <code>vaults/&lt;new&gt;/</code> and the audit
+    trail <code>audit/&lt;old&gt;/</code> → <code>audit/&lt;new&gt;/</code>, updates <code>meta.json</code>'s name, refuses
+    the default vault and an existing destination. Renaming is crypto-safe (the
+    AEAD AAD binds to <code>vault_id</code>, not the name) but evicts the in-memory store,
+    so the vault is <strong>left locked</strong> afterwards. Like deletes, <code>vault rename</code>,
+    <code>project/env delete</code> accept a one-shot password while the vault is locked
+    (<code>authorizeMutationWhileLocked</code>); <code>project/env rename</code> still require unlock.</p>
+    <p>5.2.4. <strong>Env-var data plane:</strong> <code>put</code>, <code>get</code> (alias <code>cat</code>), <code>list</code>
+    (alias <code>ls</code>), <code>delete</code> (alias <code>rm</code>), <code>rename</code> (alias <code>mv</code>).</p>
+    <p>5.2.5. <strong>Bulk I/O:</strong> <code>import [PATH | -] [--format env|yaml|json] [--dry-run] [--skip-existing | --replace [--yes]]</code>,
+    <code>export [--format env|yaml|json] [--output PATH]</code>.</p>
+    <p>5.2.6. <strong>Execution:</strong> <code>exec -- COMMAND [ARGS...]</code>.</p>
+    <p>5.2.7. <strong>Editor / TUI:</strong> <code>edit</code>, <code>view</code>, bare <code>byn</code> (no args).</p>
+    <p>5.2.8. <strong>Diagnostics:</strong> <code>doctor [--json]</code>, <code>audit {view [--lines N] [--json], tail [-n N] [-f] [--json], verify [--json]}</code>. <code>audit view</code> is
+    the snapshot; <code>audit tail</code> mirrors <code>tail(1)</code> (last N, <code>-f</code> follows in
+    realtime). Both render the caller (§7.1.3) on each row.</p>
+    <p>5.2.9. <strong>Trust:</strong> <code>trust [PATH]</code>, <code>trust list [--json]</code>,
+    <code>untrust [PATH]</code>.</p>
+    <p>5.2.10. <strong>Misc:</strong> <code>version</code>, <code>help [COMMAND]</code>.</p>
+    <h3 id="53-input-safety">5.3 Input safety</h3>
+    <p>5.3.1. <code>byn put NAME VALUE</code> MUST be rejected with an error
+    explaining the security issue. Values come from stdin only.</p>
+    <p>5.3.2. <code>byn get NAME</code> MUST emit the raw value bytes to stdout
+    without a trailing newline when stdout is not a TTY.</p>
+    <p>5.3.3. <code>byn exec</code> MUST use <code>syscall.Exec</code> (replace-in-place), so
+    the child gets the parent CLI's PID and the values never live in a
+    shell variable.</p>
+    <p>5.3.4. Argv-leak refusal MUST extend to any future command that takes
+    a sensitive value.</p>
+    <h3 id="54-agent-mode---json">5.4 Agent mode (<code>--json</code>)</h3>
+    <p>5.4.1. When <code>--json</code> appears anywhere before <code>--</code> in argv, the CLI
+    enters agent mode.</p>
+    <p>5.4.2. Agent mode MUST refuse all interactive prompts. Untrusted
+    <code>.byn</code> files MUST hard-fail in agent mode; the user must run
+    <code>byn trust PATH</code> from an interactive terminal first.</p>
+    <p>5.4.3. <code>--json</code> does NOT auto-enable on subcommands that don't
+    support a JSON output today. The flag is a no-op for those (no error).</p>
+    <h3 id="55-mutating-op-hints-byn-hints">5.5 Mutating-op hints (<code>BYN_HINTS</code>)</h3>
+    <p>5.5.1. After every mutating CLI op (put, delete, rename, project
+    create, env create, import, export, etc.), a one-line stderr echo MAY
+    fire. The hint MUST NOT contain secret values — only names + scope.</p>
+    <p>5.5.2. <code>BYN_HINTS=0</code> (or <code>false</code>, <code>off</code>, <code>no</code>) MUST suppress
+    hints. Non-TTY stderr SHOULD auto-suppress.</p>
+    <h3 id="56-pager">5.6 Pager</h3>
+    <p>5.6.1. <code>byn help</code> output MUST be paged through <code>$PAGER</code> (default
+    <code>less -RFX</code>) when stdout is a TTY. <code>PAGER=cat</code> and <code>BYN_NO_PAGER=1</code>
+    disable.</p>
+    <hr>
+    <h2 id="6-byn-discovery--tofu">6. <code>.byn</code> discovery + TOFU</h2>
+    <h3 id="61-discovery">6.1 Discovery</h3>
+    <p>6.1.1. Discovery walks from CWD up through parent directories looking
+    for a <code>.byn</code> file. The first non-empty hit wins.</p>
+    <p>6.1.2. Stop conditions: hitting <code>$HOME</code>, hitting filesystem root, or
+    hitting an empty <code>.byn</code> (per-project escape hatch).</p>
+    <p>6.1.3. <code>.byn</code> is strict TOML. Schema:</p>
+    <pre><code class="language-toml">[scope]
+vault   = &quot;...&quot;  # optional
+project = &quot;...&quot;  # optional
+env     = &quot;...&quot;  # optional
+</code></pre>
+    <p>Unknown top-level keys MUST fail with a clear error pointing at the
+    key.</p>
+    <p>6.1.4. Discovery is skipped for management commands: <code>trust</code>,
+    <code>untrust</code>, <code>daemon</code>, <code>version</code>, <code>help</code>, <code>doctor</code>. Otherwise an
+    untrusted <code>.byn</code> would prevent the user from running
+    <code>byn trust</code> to fix it.</p>
+    <p>6.1.5. <code>--no-discovery</code> flag and <code>BYN_NO_DISCOVERY=1</code> env var
+    opt out for one call / one session.</p>
+    <h3 id="62-trust-on-first-use">6.2 Trust on First Use</h3>
+    <p>6.2.1. Each first-seen or changed <code>.byn</code> is refused by discovery — the user
+    must explicitly approve it with <code>byn trust PATH</code>, which requires the master
+    password (op <code>trust.grant</code>). Discovery itself never prompts or auto-trusts;
+    agent mode gets a tailored hint pointing at the same command.</p>
+    <p>6.2.2. Trust record: <code>(canonical_path, sha256_of_full_contents)</code>,
+    written to <code>~/.byn/trusted_byn.json</code> (mode 0600).</p>
+    <p>6.2.3. Canonical path computation: <code>filepath.EvalSymlinks(path)</code>.
+    This MUST be used so <code>/tmp/x</code> and <code>/private/tmp/x</code> (macOS) match.</p>
+    <p>6.2.4. On every subsequent invocation: the file is hashed; mismatch
+    or absent record MUST be treated as untrusted.</p>
+    <p>6.2.5. Trust file integrity is currently UNIX-perms only. HMAC
+    signing is designed and deferred (see
+    internal design notes).</p>
+    <hr>
+    <h2 id="7-audit-log">7. Audit log</h2>
+    <h3 id="71-format">7.1 Format</h3>
+    <p>7.1.1. Per-vault append-only log under
+    <code>&lt;data root&gt;/audit/&lt;vault&gt;/YYYY-MM.log</code>. New file each month.</p>
+    <p>7.1.2. Mode <code>0600</code>. NDJSON: one JSON object per line.</p>
+    <p>7.1.3. Event schema MUST include: <code>ts</code> (unix nanos), <code>vault_id</code>,
+    <code>vault_name</code>, <code>project</code>, <code>env</code>, <code>kind</code>, <code>entry_name</code>, <code>op</code>,
+    <code>outcome</code>, <code>error_code</code>, <code>hmac_chain</code>, AND the caller identity for
+    forensics: <code>caller_uid</code>, <code>caller_pid</code>, <code>caller_comm</code> (the caller
+    process's name), <code>caller_pcomm</code> (its parent's name — who invoked it),
+    and <code>caller_surface</code> (<code>socket</code> for CLI/TUI over the Unix socket,
+    <code>portal</code> for the in-process browser UI). Socket callers' UID/PID come
+    from <code>SO_PEERCRED</code> (Linux) / <code>LOCAL_PEERCRED</code>+<code>LOCAL_PEERPID</code> (macOS);
+    process names from <code>/proc</code> (Linux) / <code>sysctl kern.proc</code> (macOS), and are
+    best-effort (empty when unavailable). Portal requests record the
+    daemon-owner UID + daemon PID. Value reads — <code>get</code>, and a portal/TUI
+    reveal (which routes through <code>get</code>) — are audited like any other access.</p>
+    <h3 id="72-hmac-chain">7.2 HMAC chain</h3>
+    <p>7.2.1. <code>hmac_chain_i = HMAC-SHA256(seed, prev_chain ‖ canonical_event_bytes_i)</code>.</p>
+    <p>7.2.2. Seed is 32 random bytes, stored in vault's <code>meta.audit_chain_seed</code>.
+    Head (latest chain) stored in <code>meta.audit_chain_head</code>.</p>
+    <p>7.2.3. Both seed and head live in the unencrypted meta table — <code>audit tail</code> and <code>audit verify</code> MUST work on a locked vault.</p>
+    <p>7.2.4. <code>audit verify</code> MUST walk the entire log and report the first
+    broken index (or <code>-1</code> for intact). CLI exits 3 on a broken chain.</p>
+    <p>7.2.5. Plain-text entry names in the log. This is a deliberate
+    forensics decision — hashing would hide what was accessed. MUST NOT
+    change without documenting the trade-off.</p>
+    <p>7.2.6. Crash window: there is a (small) window between writing a line
+    to disk and updating the DB-stored head where a process crash can
+    leave the on-disk log ahead of the head. <code>byn audit verify</code> would
+    flag this as broken until a future <code>doctor</code> repair mode is shipped.</p>
+    <hr>
+    <h2 id="8-tui">8. TUI</h2>
+    <h3 id="81-layout">8.1 Layout</h3>
+    <p>8.1.1. Five tiers based on terminal dimensions:</p>
+    <ul>
+    <li><strong>Below-min</strong> (&lt; 40 cols OR &lt; 12 rows): fallback screen, no rail/content</li>
+    <li><strong>Tiny</strong> (40-59 cols): no rail, breadcrumb in top bar, abbreviated dates</li>
+    <li><strong>Medium</strong> (60-89 cols): 20-col rail, abbreviated dates</li>
+    <li><strong>Standard</strong> (90-119 cols): 26-col rail, full dates</li>
+    <li><strong>Large</strong> (120+ cols): 26-col rail + 32-col detail pane</li>
+    </ul>
+    <p>8.1.2. 1-column gutter between adjacent visible panes. Status line
+    takes 1 row at the bottom, always.</p>
+    <p>8.1.3. Layout MUST be recomputed on every <code>WindowSizeMsg</code>. Resize
+    MUST not crash or leak panes from a prior frame.</p>
+    <p>8.1.4. The ENV-VARS list MUST scroll to keep the selected entry visible
+    when there are more entries than fit the content pane (e.g. after
+    importing a large <code>.env</code>). The list windows around <code>entryCursor</code>; the
+    FILES and RECENT AUDIT sections take fixed space and MUST remain visible
+    — a long list takes the remaining height and MUST NOT push them
+    off-screen or be clipped such that the cursor row disappears. When an
+    entry is expanded (REVEAL value, or INSERT/RENAME editor), the viewport
+    MUST reserve room for that box so the box AND its hint line stay
+    on-screen. The rendered content frame MUST NOT exceed the terminal
+    height — height accounting counts real terminal rows, not multi-line
+    slice elements — so the always-present status line (§8.1.2) is never
+    pushed below the viewport.</p>
+    <h3 id="82-focus">8.2 Focus</h3>
+    <p>8.2.1. Default focus on launch: <strong>rail</strong> (so j/k work immediately).</p>
+    <p>8.2.2. <code>Tab</code> and <code>Shift+Tab</code> toggle focus between rail and content.
+    (Only two focusable panes today; detail pane is read-only.)</p>
+    <h3 id="83-modes">8.3 Modes</h3>
+    <p>8.3.1. Modes: NORMAL, INSERT, ADD, RENAME, REVEAL, CONFIRM-DELETE,
+    SCOPE-PICKER, COMMAND, SEARCH, AUDIT, HELP.</p>
+    <p>8.3.2. Status line MUST always show the current mode label.</p>
+    <p>8.3.3. Mode transitions MUST be reversible without data loss (ESC
+    preserves the draft, except for SCOPE/AUDIT/HELP/CONFIRM modes which
+    have no draft state).</p>
+    <h3 id="84-draft--save-vi-semantics">8.4 Draft / save (vi semantics)</h3>
+    <p>8.4.1. <strong>Typing in INSERT, ADD, or RENAME mode modifies a local
+    draft buffer only. The daemon is not contacted.</strong></p>
+    <p>8.4.2. <code>:w</code> commits the draft (single <code>OpPut</code>). Returns to NORMAL.</p>
+    <p>8.4.3. <code>:q</code> from edit context refuses if the draft is dirty.
+    <code>unsaved edit — :w to save or :q! to discard</code> flash.</p>
+    <p>8.4.4. <code>:q!</code> discards the draft unconditionally.</p>
+    <p>8.4.5. <code>:wq</code> is <code>:w</code> then leave edit context (NOT <code>:q</code> then quit-app).</p>
+    <p>8.4.6. <code>q</code> from NORMAL: quits the TUI ONLY if no dirty draft exists.
+    Otherwise refuses with the same message as <code>:q</code>.</p>
+    <p>8.4.7. <code>ESC</code> from INSERT/ADD/RENAME drops to NORMAL but <strong>keeps</strong>
+    the draft. Flash explains the next step. The draft is only cleared
+    on <code>:w</code> (success) or <code>:q!</code> (discard).</p>
+    <p>8.4.8. Dirty-draft indicators MUST be visible from NORMAL view:</p>
+    <ul>
+    <li><code>[DRAFT: NAME]</code> chip in the status line</li>
+    <li><code>[*]</code> prefix on the row that has the pending draft</li>
+    </ul>
+    <p>8.4.9. Pressing <code>i</code> / <code>a</code> / <code>r</code> while a dirty draft for a DIFFERENT
+    entry exists MUST refuse with a clear message. Pressing <code>i</code> on the
+    <strong>same</strong> entry MUST resume the draft (no daemon re-fetch).</p>
+    <p>8.4.10. <code>Enter</code> in INSERT or ADD-value field inserts a literal <code>\n</code>
+    (multi-line values are supported). <code>Enter</code> on ADD-name field
+    advances to the value field. <code>Enter</code> in RENAME is ignored
+    (single-line). <code>Enter</code> MUST NOT commit; only <code>:w</code> does.</p>
+    <h3 id="85-undo--redo--clipboard">8.5 Undo / redo / clipboard</h3>
+    <p>8.5.1. <code>u</code> (NORMAL): undo last change in draft. Snapshot-per-keystroke.</p>
+    <p>8.5.2. <code>Ctrl+R</code> (NORMAL): redo.</p>
+    <p>8.5.3. Undo history capped at 200 snapshots per draft. Oldest dropped first.</p>
+    <p>8.5.4. <code>y</code> (NORMAL, entry selected): yank the entry's value to the
+    system clipboard. This MUST fire a daemon <code>OpGet</code> and emit an audit
+    event (same auditability as <code>R</code> reveal).</p>
+    <p>8.5.5. <code>y</code> (REVEAL): copy the already-revealed value to the
+    clipboard. No new IPC roundtrip.</p>
+    <p>8.5.6. <code>p</code> (NORMAL): paste clipboard into the currently-open draft
+    at cursor. Refuses if no draft is open.</p>
+    <p>8.5.7. <code>Ctrl+V</code> (INSERT): paste inline.</p>
+    <h3 id="86-scope-picker-s">8.6 Scope picker (<code>s</code>)</h3>
+    <p>8.6.1. Centered 3-column modal: vault / project / env.</p>
+    <p>8.6.2. Moving the vault cursor (column 0) MUST repopulate BOTH the
+    projects column AND the envs column, using the first/matching
+    project as parent. (Otherwise Tab→Tab→Enter on a small screen lands
+    on an empty env list.)</p>
+    <p>8.6.3. The modal SHOULD try to preserve the user's current project</p>
+    <ul>
+    <li>env across a vault change — if matching names exist in the new
+    vault, they stay selected.</li>
+    </ul>
+    <h3 id="87-rail-tree">8.7 Rail tree</h3>
+    <p>8.7.1. <code>h</code> / <code>l</code> fold/unfold the focused node. Cursor MUST stay on
+    the same node — no auto-snap to active scope after the rebuild.</p>
+    <p>8.7.2. Auto-snap to active scope happens ONLY on initial load (after
+    envs for the active scope finish loading) and on explicit scope
+    changes (Enter on env leaf, scope picker apply).</p>
+    <p>8.7.3. <code>+ new vault</code> row is pinned at the bottom of the rail. Pressing
+    Enter on it currently flashes <code>vault creation not yet wired in TUI — use 'byn init'</code>. This is a deliberate gap, NOT a bug.</p>
+    <p>8.7.4. <strong>Scope CRUD from the rail — DEFERRED (planned, not built).</strong>
+    Creating and deleting vaults, projects, and envs from the TUI rail
+    (and, once it exists, the browser portal) is a planned feature. Today
+    the only way to add or remove a scope is the CLI (<code>vault init/delete</code>,
+    <code>project create/delete</code>, <code>env create/delete</code>). The TUI/portal MUST
+    eventually offer: add vault/project/env, and delete vault/project/env
+    (with the §2.1.2 refusal-to-delete-<code>default</code> rules and a confirm
+    step). Tracked on the roadmap. Until then,
+    this is a known gap, NOT a bug.</p>
+    <h3 id="88-inheritance-badges">8.8 Inheritance badges</h3>
+    <p>8.8.1. When the active env is non-default, each entry row MUST show
+    exactly one of three badges:</p>
+    <ul>
+    <li><code>↓</code> dim cyan — Source=default (daemon-inherited from default env)</li>
+    <li><code>⤴</code> bold yellow — Source=scope AND name exists in default env's list</li>
+    <li><code>✦</code> bold green — Source=scope AND name does NOT exist in default env</li>
+    </ul>
+    <p>8.8.2. When the active env IS default, the badge column MUST be
+    hidden.</p>
+    <p>8.8.3. To distinguish overridden from new, the TUI MUST list the
+    default env's names via a separate <code>OpList</code>. Until that response
+    arrives, entries display no badge (renderer SHOULD NOT guess).</p>
+    <p>8.8.4. A one-line legend MUST appear under the ENV-VARS header
+    whenever the active env is non-default.</p>
+    <h3 id="89-active-filter">8.9 Active filter</h3>
+    <p>8.9.1. When <code>m.entriesFilter != &quot;&quot;</code>, the active filter MUST be
+    visible in:</p>
+    <ul>
+    <li>the ENV-VARS section header (warning color, <code>(N of M match — ESC to clear)</code>)</li>
+    <li>the status line (persistent chip <code>filter=&quot;...&quot;</code>)</li>
+    </ul>
+    <p>8.9.2. <code>ESC</code> from NORMAL MUST clear an active filter (in addition to
+    its normal behavior in other modes).</p>
+    <p>8.9.3. <code>a</code> (start add) MUST also clear the filter so the new entry is
+    visible after commit.</p>
+    <h3 id="810-locked-vault">8.10 Locked vault</h3>
+    <p>8.10.1. When the current scope's vault is locked, <code>i</code>/<code>a</code>/<code>r</code>/<code>R</code>
+    MUST refuse with a flash naming the vault and pointing at the
+    recovery command (<code>byn --vault NAME unlock</code>).</p>
+    <p>8.10.2. The ENV-VARS section MUST render <code>Vault is locked</code> + the
+    recovery hint instead of <code>(no env-vars)</code>.</p>
+    <p>8.10.3. <code>byn --vault X edit</code> MUST unlock X (not &quot;default&quot;) at
+    bootstrap. Password prompt MUST name the targeted vault.</p>
+    <h3 id="811-audit-visibility">8.11 Audit visibility</h3>
+    <p>8.11.1. The TUI MUST refresh its audit-tail snapshot after every
+    mutating op (put, delete, rename) AND after every reveal/yank, so
+    the RECENT AUDIT section reflects current state.</p>
+    <p>8.11.2. <code>ga</code> opens the full-screen AUDIT view. <code>q</code> returns. <code>r</code>
+    refreshes. <code>v</code> runs an <code>audit verify</code>.</p>
+    <hr>
+    <h2 id="9-security-guarantees">9. Security guarantees</h2>
+    <h3 id="91-in-scope">9.1 In scope</h3>
+    <ul>
+    <li>Confidentiality of vault values against other local users (UNIX
+    perms + peer-UID enforcement).</li>
+    <li>Confidentiality of vault values against passive thieves with the
+    encrypted DB (Argon2id + AEAD).</li>
+    <li>Integrity of the audit log against tampering by anyone who doesn't
+    have the seed (HMAC chain + verify).</li>
+    <li>Forensic visibility of access patterns (plain-text names + caller
+    UID/PID + chained outcomes).</li>
+    <li>Refusal to leak values via argv, environment, prompts, shell
+    history, or scrollback.</li>
+    <li>Protection of agent harnesses against silent <code>.byn</code> redirection
+    (TOFU + agent-mode hard fail).</li>
+    <li><strong>Reduction and detection of dev-time AI-agent secret leakage</strong> (the
+    primary use case): a coding/debugging agent has no plaintext
+    <code>.env</code>/credential file to read accidentally — values live only in the
+    vault — and every value access is recorded in the tamper-evident
+    audit log. This is a <em>reduce-and-detect</em> guarantee, not prevention;
+    see §9.4 for the full model and limits.</li>
+    </ul>
+    <h3 id="92-out-of-scope">9.2 Out of scope</h3>
+    <ul>
+    <li>Root on the local machine.</li>
+    <li>Attackers who know the master password.</li>
+    <li>A <strong>maliciously active</strong> attacker with shell access as the daemon's
+    UID (they can replace the binary, trace memory, or read another
+    process's <code>/proc/&lt;pid&gt;/environ</code>). Note the boundary vs the in-scope
+    case (§9.4): byn defends against an agent that <em>accidentally</em> reads
+    secret files and against <em>casual</em> extraction; it does not claim to
+    stop a same-UID process that is <em>actively</em> hunting for secrets.</li>
+    <li>Live-memory attackers attached to the running daemon.</li>
+    <li>Network adversaries (byn is local-only today; cloud sync is a
+    future spec).</li>
+    <li>Coercion (&quot;type your password or else&quot;).</li>
+    </ul>
+    <h3 id="93-known-qualifications-must-remain-documented">9.3 Known qualifications (must remain documented)</h3>
+    <ul>
+    <li><code>internal/secmem</code> is wired into the <strong>CLI-side password prompt</strong>
+    (<code>auth.PromptStdinSecure</code>): the master password is mlock'd from
+    prompt input through IPC send + wipe. <strong>NOT YET WIRED:</strong> the
+    daemon-side receive (<code>req.Password</code> is plain <code>[]byte</code> once it
+    arrives over the Unix socket), the Argon2id workspace inside
+    <code>crypto.Unwrap</code>, and the unwrapped vault key in <code>vault.Store</code>.
+    Documented in <a href="security/">docs/security.md</a>. The CLI window
+    is brief (prompt → IPC send) but real; daemon-side wrapping
+    requires changing the <code>vault.Unlock([]byte)</code> interface and the
+    <code>crypto/wrap.Unwrap</code> workspace.</li>
+    <li><code>~/.byn/trusted_byn.json</code> and <code>~/.byn/auth-state.json</code> are
+    protected only by UNIX file permissions. Tampering by an attacker
+    who can write <code>~</code> is undetected. HMAC signing is designed; see
+    internal design notes.</li>
+    <li><code>vault.unlock</code> is not currently constant-time across the entire
+    decision path. The wrap/unwrap primitive itself uses
+    <code>hmac.Equal</code>; surrounding code does not.</li>
+    <li><code>ipc.DecodeBody</code> does not currently use <code>DisallowUnknownFields</code>.
+    Envelope decode does. A malicious peer can pad request bodies with
+    arbitrary fields without effect today.</li>
+    <li>The audit chain has a (small) crash window between log file fsync
+    and chain head MetaSet. A repair mode in <code>byn doctor</code> is the
+    planned mitigation; not yet shipped.</li>
+    </ul>
+    <p>These qualifications ARE part of the contract — they bound what we
+    promise. Don't tighten them without shipping the corresponding work.</p>
+    <h3 id="94-dev-time-ai-agent-threat-model-reduce-and-detect">9.4 Dev-time AI-agent threat model (reduce-and-detect)</h3>
+    <p>byn's PRIMARY purpose is to keep secrets away from coding/debugging
+    agents that would otherwise read a plaintext <code>.env</code>,
+    <code>~/.aws/credentials</code>, SSH key, or cert off disk and leak it into chat
+    history, logs, tool output, or a commit — often silently, so the user
+    may not learn of the leak until later. This threat is real and
+    externally validated: in-app agent guardrails are unreliable (e.g.
+    Claude Code <code>read.deny</code> rules have repeatedly failed to block <code>.env</code>
+    reads — anthropics/claude-code#24846), so byn MUST NOT depend on the
+    agent harness enforcing a deny. A survey of prior art found no existing
+    tool that combines transparent credential injection, keeping plaintext
+    off the agent's disk, AND a per-access audit trail (full analysis:
+    internal design notes).</p>
+    <p>The guarantee is <strong>reduce-and-detect, not prevent.</strong></p>
+    <p>Today (env-var injection + audit, shipped):</p>
+    <ul>
+    <li>There is NO plaintext <code>.env</code> for the agent to read accidentally —
+    values live only in the vault.</li>
+    <li>Every value access (<code>get</code>, <code>exec</code>, TUI reveal/yank) is recorded in
+    the tamper-evident audit log, so a leak is <em>detectable</em> after the
+    fact.</li>
+    </ul>
+    <p><strong>Accepted limitation (contract):</strong> env-var values injected into a
+    child process ARE readable from that child's <code>/proc/&lt;pid&gt;/environ</code> by a
+    same-UID process. byn does not attempt to prevent this — the consuming
+    process must read them. For env vars the guarantee is <em>no accidental
+    file read</em> + <em>audited access</em>, NOT concealment from a determined
+    same-UID reader.</p>
+    <p>Intended extension as later phases land (the <em>target</em> model — the
+    sealed-tool/broker/FUSE pieces are NOT yet shipped):</p>
+    <ul>
+    <li><strong>Sealed CLI tool</strong> (uses creds, doesn't print them — <code>aws</code>/<code>psql</code>/
+    <code>ssh</code>; Phase 3 shims): credential NOT exposed to the agent.</li>
+    <li><strong>Cloud cred used by agent-authored code:</strong> bounded + detected
+    (short-lived, scoped, audited) is the ceiling — not concealment.</li>
+    <li><strong>Static secret used by agent-authored code:</strong> detected (audited) only.</li>
+    <li><strong>File / crown-jewel secret:</strong> FUSE + shim path (Phase 5/3) keeps the
+    value out of any on-disk file.</li>
+    </ul>
+    <p>Deferred hardening that would raise the bar (NOT committed; revisit
+    post-launch — see <a href="security/">docs/security.md</a> and
+    internal design notes):
+    per-operation biometric auth instead of a persistent unlock window;
+    a fingerprinted exec allowlist; an ephemeral scoped credential broker
+    (STS via <code>credential_process</code>); pairing the PATH-shim with an OS
+    deny-read layer (Seatbelt/Landlock).</p>
+    <hr>
+    <h2 id="10-backward-compatibility">10. Backward compatibility</h2>
+    <h3 id="101-stable-surfaces">10.1 Stable surfaces</h3>
+    <p>10.1.1. CLI exit codes (§5.1) — never change meaning.</p>
+    <p>10.1.2. Command names and aliases that have shipped (§5.2) — never
+    remove or rename without a major version bump.</p>
+    <p>10.1.3. IPC error codes (§3.3.3) — never change meaning. New codes
+    MAY be added.</p>
+    <p>10.1.4. IPC envelope schema (<code>V</code>, <code>ID</code>, <code>Op</code>, <code>Req</code>/<code>Resp</code>/<code>Err</code>).
+    Versioned via <code>ProtocolVersion</code>; bumping requires explicit
+    negotiation work.</p>
+    <p>10.1.5. On-disk file layout (§1.1) — additions MAY happen via schema
+    migration; removals or renames require migration + version bump.</p>
+    <p>10.1.6. SQLite schema migrations MUST be forward-only.</p>
+    <h3 id="102-pre-10-waiver">10.2 Pre-1.0 waiver</h3>
+    <p>Until byn hits 1.0, we MAY break the on-disk vault format with
+    explicit migration steps. Once 1.0 ships, migrations MUST be
+    non-destructive (read old, write new, no data lost).</p>
+    <h3 id="103-removing-a-deferred-feature">10.3 Removing a deferred feature</h3>
+    <p>If we ever decide NOT to ship a deferred feature listed in this
+    document (e.g., the trust-file MAC), we MUST update the corresponding
+    qualification in §9.3 explaining why, BEFORE merging the decision.</p>
+    <hr>
+    <h2 id="11-process">11. Process</h2>
+    <h3 id="111-tests">11.1 Tests</h3>
+    <p>11.1.1. Every shipped feature MUST have unit tests. Integration tests
+    MUST cover daemon-CLI happy path + error paths.</p>
+    <p>11.1.2. Coverage SHOULD stay above 80% per-package for non-terminal
+    code. TUI rendering and TTY-only paths are excluded from this floor.</p>
+    <p>11.1.3. Tests SHIP WITH the code in the same commit. Never after.</p>
+    <p>11.1.4. Snapshot tests guard TUI layouts at each tier (Tiny, Medium,
+    Standard, Large, Below-min).</p>
+    <h3 id="112-documentation">11.2 Documentation</h3>
+    <p>11.2.1. Every shipped feature MUST be reflected in:</p>
+    <ul>
+    <li><code>docs/cli-reference.md</code> (user-facing command reference)</li>
+    <li><code>cmd/byn/help_text.go</code> (per-command help blob)</li>
+    <li><code>man/byn.1</code> (man page)</li>
+    <li>This file, if the feature carries a contract</li>
+    </ul>
+    <p>11.2.2. Phase/slice work MUST appear in the development log with
+    date + decisions + deferrals.</p>
+    <p>11.2.3. Long-horizon planning lives in the roadmap. Active session
+    tracking lives in the task list.</p>
+    <h3 id="113-change-discipline">11.3 Change discipline</h3>
+    <p>11.3.1. One feature at a time. The default disposition is to finish
+    the in-flight feature before starting a new one (see
+    internal design notes).</p>
+    <p>11.3.2. A commit/PR that adds a contract here MUST also add the test
+    that proves it.</p>
+    <p>11.3.3. A commit/PR that loosens a contract here MUST list the
+    weakening explicitly in the commit message AND update §9.3 / §10
+    accordingly.</p>
+    <hr>
+    <h2 id="12-web-portal-browser-admin-ui">12. Web portal (browser admin UI)</h2>
+    <h3 id="121-transport">12.1 Transport</h3>
+    <p>12.1.1. The daemon hosts an embedded browser portal when <code>[ui] enabled</code>
+    is true in <code>&lt;data root&gt;/config</code> (default true). It binds <strong>loopback only</strong>
+    (<code>127.0.0.1:&lt;port&gt;</code>), never <code>0.0.0.0</code>. The port is <code>[ui] port</code> (default
+    <strong>2967</strong>).</p>
+    <p>12.1.2. The portal is <strong>plain HTTP</strong> on loopback — no TLS, no
+    <code>local.byn.com</code>, no certificate distribution. <code>http://localhost</code> is a
+    browser-trusted secure context, which is sufficient for the portal and
+    for future WebAuthn.</p>
+    <p>12.1.3. A bind failure (e.g. port already in use) MUST disable the
+    portal without preventing the daemon from serving the CLI/TUI over the
+    Unix socket.</p>
+    <p>12.1.4. Every browser request is translated into an in-process IPC
+    envelope and routed through the <strong>same <code>dispatch</code> path</strong> as Unix-socket
+    clients — identical scope resolution, lock checks, inheritance, and
+    audit. The portal MUST NOT reimplement vault logic.</p>
+    <h3 id="122-authentication--none-per-vault-lock-is-the-gate">12.2 Authentication — none (per-vault lock is the gate)</h3>
+    <p>12.2.1. <strong>There is no portal login or session.</strong> Like <code>byn ls</code>, the scope
+    tree (vault/project/env names) and entry names are visible without any
+    portal password. The <em>gate for VALUES</em> is the daemon's per-vault lock
+    state, enforced by the same <code>dispatch</code> path: a value read/write on a
+    locked vault returns <code>CodeLocked</code> (HTTP 423). This mirrors the TUI, which
+    shows names but renders &quot;Vault is locked&quot; for values (§8.10).</p>
+    <p>12.2.2. Vault lock state is toggled per-vault from the portal:
+    <code>POST /api/unlock {vault,password}</code> (→ <code>OpVaultUnlock</code>) and
+    <code>POST /api/lock {vault}</code> (→ <code>OpVaultLock</code>; <code>vault:&quot;*&quot;</code> locks all). These only
+    change daemon lock state; they create no portal session.</p>
+    <p>12.2.2.1. <strong>The daemon is the source of truth for lock state.</strong> The portal
+    MUST NOT gate the lock/unlock actions on its own cached belief: the <code>l</code>/<code>u</code>
+    hotkeys and the lock/unlock buttons always issue the request (the daemon's
+    lock is idempotent), so an emergency lock (<code>l</code>) fires even if the UI thinks
+    the vault is already locked, and <code>l a</code> locks every vault. To keep the cached
+    view honest when a vault is locked/unlocked from the CLI or TUI, the portal
+    <strong>polls <code>GET /api/status</code> every ~2s</strong> and re-renders when a lock state
+    changed (guarded so it never clobbers an in-progress edit/dialog) — without
+    this the UI could show a &quot;locked&quot; banner over a vault that is actually
+    unlocked, or refuse a lock it believes redundant.</p>
+    <p>12.2.2.2. <strong>Changing the master password</strong> from the portal:
+    <code>POST /api/vault/passwd {vault, old_password, new_password}</code> (→
+    <code>OpVaultPasswd</code>). <strong>Renaming</strong>: <code>POST /api/{project,env,vault}/rename</code>
+    (→ <code>OpProjectRename</code>/<code>OpEnvRename</code>/<code>OpVaultRename</code>); the vault-rename body
+    carries a <code>password</code> for the locked case (§5.2.3). Deletes carry a
+    <code>password</code> too (§4.2.2.1).</p>
+    <p>12.2.3. <strong>CSRF defense is an Origin check</strong> (not a token): a mutating
+    (non-GET) request whose <code>Origin</code> header is present and is not the portal's
+    own loopback origin (<code>http://localhost:&lt;port&gt;</code> / <code>http://127.0.0.1:&lt;port&gt;</code>)
+    MUST be refused (403). A browser always sends <code>Origin</code> on a cross-site
+    POST, so a malicious page cannot drive the portal even without a session.
+    A request with no <code>Origin</code> (a non-browser local client) is allowed — it
+    could use the Unix socket directly anyway (§12.4). The server MUST NOT
+    emit <code>Access-Control-Allow-Origin</code>, so cross-origin reads stay blocked by
+    the browser.</p>
+    <p>12.2.4. <code>POST /api/vaults {name,password}</code> creates a vault (<code>OpVaultInit</code>)
+    and unlocks it. The portal MUST NOT take any dependency on a cloud
+    identity; all auth is local.</p>
+    <h3 id="123-behavior">12.3 Behavior</h3>
+    <p>12.3.1. Value reads via the portal (<code>POST /api/entry/reveal</code>) go through
+    <code>OpGet</code> and MUST be audited exactly like a CLI <code>get</code> or TUI reveal.</p>
+    <p>12.3.2. The portal shares the TUI's information architecture — the
+    <code>vault → project → env</code> scope tree and the inheritance badge meanings
+    (<code>↓</code> inherited / <code>⤴</code> overrides default / <code>✦</code> new in env) — rendered as a
+    conventional web app (not a terminal mimic).</p>
+    <p>12.3.3. The portal MUST take no dependency on any cloud identity; auth is
+    strictly local (password today; passkey later). Full-cloud auth is a
+    separate, unbuilt design.</p>
+    <h3 id="124-known-qualifications-must-remain-documented">12.4 Known qualifications (must remain documented)</h3>
+    <ul>
+    <li>Any local process can open a TCP connection to <code>localhost:&lt;port&gt;</code> and
+    read the scope tree + entry names, and read/write values of any
+    <strong>currently-unlocked</strong> vault — there is no portal password. This is by
+    design (§12.2.1) and is the same same-UID boundary as the rest of byn
+    (§9.2): a same-UID process can already drive the Unix socket. The open
+    TCP port is a new <em>surface</em> vs the 0600 socket, mitigated by loopback
+    binding + the Origin check; values of <em>locked</em> vaults remain protected
+    by the lock.</li>
+    <li>Revealed values cross the loopback connection in cleartext (loopback
+    traffic does not leave the machine).</li>
+    <li><strong>Portal passkey / Touch ID unlock is built</strong> (WebAuthn PRF on macOS;
+    enroll/revoke from the portal). It is a <em>second</em> wrapping of the vault key —
+    the master password stays the durable recovery root, and authenticators
+    without PRF degrade to session-only. Design notes:
+    <a href="research/webauthn-prf-spike/"><code>docs/research/webauthn-prf-spike.md</code></a>;
+    security model in <a href="security/"><code>security.md</code></a> §7.</li>
+    </ul>
+    <hr>
+    <h2 id="related-docs-deeper-explanations-not-contracts">Related docs (deeper explanations, not contracts)</h2>
+    <ul>
+    <li><a href="architecture/">docs/architecture.md</a> — system design + IPC flow.</li>
+    <li><a href="security/">docs/security.md</a> — full threat model + crypto stack + deferred hardening.</li>
+    <li><a href="cli-reference/">docs/cli-reference.md</a> — every command, flag, env var.</li>
+    <li><a href="byn-file-format/">docs/byn-file-format.md</a> — discovery + TOFU.</li>
+    <li><a href="file-layout/">docs/file-layout.md</a> — what each file on disk contains.</li>
+    <li><a href="tui-design/">docs/tui-design.md</a> — TUI design spec.</li>
+    <li><a href="glossary/">docs/glossary.md</a> — terminology.</li>
+    <li><a href="troubleshooting/">docs/troubleshooting.md</a> — common error states.</li>
+    </ul>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#1-vault-layer" class="toc-item">1. Vault layer</a>
+    <a href="#11-storage" class="toc-item sub">1.1 Storage</a>
+    <a href="#12-encryption" class="toc-item sub">1.2 Encryption</a>
+    <a href="#13-schema" class="toc-item sub">1.3 Schema</a>
+    <a href="#2-scope-hierarchy" class="toc-item">2. Scope hierarchy</a>
+    <a href="#21-structure" class="toc-item sub">2.1 Structure</a>
+    <a href="#22-resolution" class="toc-item sub">2.2 Resolution</a>
+    <a href="#23-inheritance" class="toc-item sub">2.3 Inheritance</a>
+    <a href="#3-ipc" class="toc-item">3. IPC</a>
+    <a href="#31-transport" class="toc-item sub">3.1 Transport</a>
+    <a href="#32-frame" class="toc-item sub">3.2 Frame</a>
+    <a href="#33-operations" class="toc-item sub">3.3 Operations</a>
+    <a href="#34-existence-oracle-defense" class="toc-item sub">3.4 Existence-oracle defense</a>
+    <a href="#4-daemon" class="toc-item">4. Daemon</a>
+    <a href="#41-lifecycle" class="toc-item sub">4.1 Lifecycle</a>
+    <a href="#42-vault-lookups" class="toc-item sub">4.2 Vault lookups</a>
+    <a href="#43-rate-limiter" class="toc-item sub">4.3 Rate limiter</a>
+    <a href="#5-cli" class="toc-item">5. CLI</a>
+    <a href="#51-exit-codes" class="toc-item sub">5.1 Exit codes</a>
+    <a href="#52-commands" class="toc-item sub">5.2 Commands</a>
+    <a href="#53-input-safety" class="toc-item sub">5.3 Input safety</a>
+    <a href="#54-agent-mode---json" class="toc-item sub">5.4 Agent mode (--json)</a>
+    <a href="#55-mutating-op-hints-byn-hints" class="toc-item sub">5.5 Mutating-op hints (BYN_HINTS)</a>
+    <a href="#56-pager" class="toc-item sub">5.6 Pager</a>
+    <a href="#6-byn-discovery--tofu" class="toc-item">6. .byn discovery &#43; TOFU</a>
+    <a href="#61-discovery" class="toc-item sub">6.1 Discovery</a>
+    <a href="#62-trust-on-first-use" class="toc-item sub">6.2 Trust on First Use</a>
+    <a href="#7-audit-log" class="toc-item">7. Audit log</a>
+    <a href="#71-format" class="toc-item sub">7.1 Format</a>
+    <a href="#72-hmac-chain" class="toc-item sub">7.2 HMAC chain</a>
+    <a href="#8-tui" class="toc-item">8. TUI</a>
+    <a href="#81-layout" class="toc-item sub">8.1 Layout</a>
+    <a href="#82-focus" class="toc-item sub">8.2 Focus</a>
+    <a href="#83-modes" class="toc-item sub">8.3 Modes</a>
+    <a href="#84-draft--save-vi-semantics" class="toc-item sub">8.4 Draft / save (vi semantics)</a>
+    <a href="#85-undo--redo--clipboard" class="toc-item sub">8.5 Undo / redo / clipboard</a>
+    <a href="#86-scope-picker-s" class="toc-item sub">8.6 Scope picker (s)</a>
+    <a href="#87-rail-tree" class="toc-item sub">8.7 Rail tree</a>
+    <a href="#88-inheritance-badges" class="toc-item sub">8.8 Inheritance badges</a>
+    <a href="#89-active-filter" class="toc-item sub">8.9 Active filter</a>
+    <a href="#810-locked-vault" class="toc-item sub">8.10 Locked vault</a>
+    <a href="#811-audit-visibility" class="toc-item sub">8.11 Audit visibility</a>
+    <a href="#9-security-guarantees" class="toc-item">9. Security guarantees</a>
+    <a href="#91-in-scope" class="toc-item sub">9.1 In scope</a>
+    <a href="#92-out-of-scope" class="toc-item sub">9.2 Out of scope</a>
+    <a href="#93-known-qualifications-must-remain-documented" class="toc-item sub">9.3 Known qualifications (must remain documented)</a>
+    <a href="#94-dev-time-ai-agent-threat-model-reduce-and-detect" class="toc-item sub">9.4 Dev-time AI-agent threat model (reduce-and-detect)</a>
+    <a href="#10-backward-compatibility" class="toc-item">10. Backward compatibility</a>
+    <a href="#101-stable-surfaces" class="toc-item sub">10.1 Stable surfaces</a>
+    <a href="#102-pre-10-waiver" class="toc-item sub">10.2 Pre-1.0 waiver</a>
+    <a href="#103-removing-a-deferred-feature" class="toc-item sub">10.3 Removing a deferred feature</a>
+    <a href="#11-process" class="toc-item">11. Process</a>
+    <a href="#111-tests" class="toc-item sub">11.1 Tests</a>
+    <a href="#112-documentation" class="toc-item sub">11.2 Documentation</a>
+    <a href="#113-change-discipline" class="toc-item sub">11.3 Change discipline</a>
+    <a href="#12-web-portal-browser-admin-ui" class="toc-item">12. Web portal (browser admin UI)</a>
+    <a href="#121-transport" class="toc-item sub">12.1 Transport</a>
+    <a href="#122-authentication--none-per-vault-lock-is-the-gate" class="toc-item sub">12.2 Authentication — none (per-vault lock is the gate)</a>
+    <a href="#123-behavior" class="toc-item sub">12.3 Behavior</a>
+    <a href="#124-known-qualifications-must-remain-documented" class="toc-item sub">12.4 Known qualifications (must remain documented)</a>
+    <a href="#related-docs-deeper-explanations-not-contracts" class="toc-item">Related docs (deeper explanations, not contracts)</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/spec.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Migration &amp; setup guide — byn docs</title>
+<meta name="description" content="How byn provisions privilege separation, moves your vault to its new home, andwhat changes when you upgrade. This covers the opt-in three-UID model — seeSecurity model → privilege separationfor the threat reasoning and the honest ceiling.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Migration &amp; setup</div>
+      <a href="./" class="sb-item active">Migration &amp; setup guide</a>
+      <a href="#tldr" class="sb-item">TL;DR</a>
+      <a href="#one-sudo-on-purpose" class="sb-item">One sudo, on purpose</a>
+      <a href="#where-your-data-lives-now" class="sb-item">Where your data lives now</a>
+      <a href="#byn-migrate--relocate-vs-import" class="sb-item">byn migrate — relocate vs import</a>
+      <a href="#upgrade-note-the-data-root-override-is-gone" class="sb-item">Upgrade note: the data-root override is gone</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Migration &amp; setup</span>
+    </div>
+
+    <h1>Migration &amp; setup guide</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/migration.md">docs/migration.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/migration.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>How byn provisions privilege separation, moves your vault to its new home, and
+    what changes when you upgrade. This covers the <strong>opt-in</strong> three-UID model — see
+    <a href="security/#privilege-separation-the-three-uid-model-opt-in-nu-56">Security model → privilege separation</a>
+    for the threat reasoning and the honest ceiling.</p>
+    <blockquote>
+    <p><strong>Privsep is opt-in this release and off by default.</strong> Nothing here happens
+    until you choose to enable it (<code>[security] privsep = true</code>) and run
+    <code>byn setup</code>. If you do nothing, byn keeps running exactly as before: the daemon
+    at your own UID, state under <code>~/.byn</code>.</p>
+    </blockquote>
+    <hr>
+    <h2 id="tldr">TL;DR</h2>
+    <pre><code class="language-sh"># 1. Provision the service accounts + system service (one sudo prompt).
+sudo byn setup
+
+# 2. Turn privsep on in the config and restart the daemon.
+#    Add `privsep = true` under [security] in the byn config, then:
+byn daemon stop &amp;&amp; byn daemon start
+</code></pre>
+    <p><code>byn setup</code> is idempotent and safe to re-run on every install and upgrade. If you
+    had a legacy <code>~/.byn</code>, setup relocates it for you (step 3 below) and keeps your
+    trust + passkeys, because it is the same machine.</p>
+    <hr>
+    <h2 id="one-sudo-on-purpose">One sudo, on purpose</h2>
+    <p>Privilege separation needs root <strong>once</strong>: creating the <code>_byn</code> and <code>_byn-exec</code>
+    service accounts and installing a system service (a systemd system unit on Linux,
+    a LaunchDaemon on macOS) cannot happen without it. <code>byn setup</code> is the single
+    command that does this. There is no way to make the elevation disappear — the
+    design makes it happen at the right moment, behind one <code>sudo</code>, rather than as a
+    scattered manual chore.</p>
+    <p>Run setup <strong>via sudo</strong>, not as real root:</p>
+    <pre><code class="language-sh">sudo byn setup
+</code></pre>
+    <p><code>byn setup</code> reads <code>SUDO_UID</code> to learn <strong>who the owner is</strong> — the human who ran
+    sudo. That UID is recorded as the single identity the daemon allowlists on its
+    peercred-gated socket. Running as real root (e.g. a root shell, no sudo) <strong>fails
+    on purpose</strong>, rather than recording root as the owner.</p>
+    <p>What <code>byn setup</code> does, in order:</p>
+    <ol>
+    <li>Creates the <code>_byn</code> and <code>_byn-exec</code> service accounts and installs the prebuilt
+    privileged spawn helper (<code>byn-exec-helper</code>) + its root-owned config.</li>
+    <li>Installs and loads the system service that runs the daemon as <code>_byn</code> — <strong>not</strong>
+    you.</li>
+    <li>Relocates any legacy <code>~/.byn</code> into the fixed system data path (see below),
+    chowned to <code>_byn</code>. Skipped on a fresh install.</li>
+    <li>Records your owner UID (from <code>SUDO_UID</code>).</li>
+    <li>Verifies the result.</li>
+    </ol>
+    <p>It <strong>provisions</strong> privsep; it does not <strong>enable</strong> it. Engage it with
+    <code>[security] privsep = true</code> in the config and a <strong>daemon restart</strong>. With privsep
+    enabled but <strong>not</strong> provisioned, the daemon warns and trusted-<code>.byn</code> exec <strong>fails
+    closed</strong> — it never silently falls back to running as your UID. (A
+    lower-assurance <code>--no-privsep</code> opt-out exists for environments where you cannot
+    create system accounts; it runs the daemon and exec children at your UID, so the
+    same-UID ptrace / env-read weaknesses apply — use it only when you accept that.)</p>
+    <p>To reverse setup: <code>sudo byn setup --uninstall</code> removes the service, helper, and
+    owner record but <strong>leaves your vault intact</strong>. Add <code>--purge</code> to also delete the
+    system data dir and every secret in it — destructive, irreversible, and gated
+    behind a typed <code>yes</code> confirmation. The vault is <strong>never</strong> removed without
+    <code>--purge</code>.</p>
+    <hr>
+    <h2 id="where-your-data-lives-now">Where your data lives now</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>State</th>
+    <th>Provisioned (privsep on)</th>
+    <th>Unprovisioned (default)</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Data root (Linux)</td>
+    <td><code>/var/lib/byn</code>, owned <code>_byn</code>, <code>0700</code></td>
+    <td><code>~/.byn</code>, owned by you, <code>0700</code></td>
+    </tr>
+    <tr>
+    <td>Data root (macOS)</td>
+    <td><code>/Library/Application Support/byn</code>, owned <code>_byn</code>, <code>0700</code></td>
+    <td><code>~/.byn</code>, owned by you, <code>0700</code></td>
+    </tr>
+    <tr>
+    <td>Socket</td>
+    <td>owner-traversable runtime path (so you can connect)</td>
+    <td><code>&lt;data root&gt;/daemon.sock</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>The directory layout <em>inside</em> the root (<code>vaults/&lt;name&gt;/</code>, <code>audit/</code>,
+    <code>trusted_byn.json</code>, <code>config</code>, …) is identical either way — only the location and
+    owning UID change. See <a href="file-layout/">File layout</a> for the full tree.</p>
+    <hr>
+    <h2 id="byn-migrate--relocate-vs-import"><code>byn migrate</code> — relocate vs import</h2>
+    <p><code>byn setup</code> calls migrate for you on upgrade, but you can run it directly. There
+    are two modes, and the difference matters for your trust + passkeys.</p>
+    <p><code>byn migrate</code> always <strong>verifies the source without its password</strong> before adopting
+    anything: every <code>vault.db</code> must open as a well-formed, correctly-versioned vault
+    whose <code>wrapped.key</code>/<code>meta.json</code> fingerprint matches and whose audit chain is
+    intact. A malformed, truncated, or tampered source is <strong>rejected</strong> and the
+    destination is left untouched. The adopt is atomic and re-runnable — it never
+    half-migrates. It never <em>unlocks</em> the vault; the ciphertext stays gated by its
+    own password.</p>
+    <p>Both modes require root and an existing <code>_byn</code> account (run <code>byn setup</code> first —
+    migrate adopts with the correct ownership; it does not create users).</p>
+    <h3 id="relocate-the-legacy-upgrade--keeps-trust--passkeys">Relocate (the legacy upgrade) — keeps trust + passkeys</h3>
+    <pre><code class="language-sh">sudo byn migrate          # no --from
+</code></pre>
+    <p>Moves the legacy <code>~/.byn</code> into the system path. Because this is the <strong>same
+    machine</strong>, your trust store and passkey enrollments are <strong>kept</strong>. The old
+    <code>~/.byn</code> is removed only <strong>after</strong> the destination is fully adopted.</p>
+    <h3 id="import-from-anywhere--drops-trust--passkeys">Import (from anywhere) — drops trust + passkeys</h3>
+    <pre><code class="language-sh">sudo byn migrate --from /path/to/some/byn-vault          # add --force to overwrite
+</code></pre>
+    <p>Copies an external vault tree in (a backup, a mounted disk, a synced dir) and
+    <strong>never deletes the source</strong>. A non-empty destination is refused unless you pass
+    <code>--force</code>.</p>
+    <p>An import brings vault <strong>data only</strong>. It <strong>drops the trust store and passkey
+    enrollments</strong>. Afterwards you <strong>must</strong>:</p>
+    <ul>
+    <li>re-trust your <code>.byn</code> files with <code>byn trust</code>, and</li>
+    <li>re-enroll your passkeys on this machine.</li>
+    </ul>
+    <p><strong>Why trust + passkeys are dropped on import.</strong> Trust is never silently carried
+    across a machine boundary. A <code>.byn</code> trust fingerprint binds the <strong>machine
+    identity and the file's path</strong> — so a trust record carried in from another
+    machine would fail verification here anyway. Dropping it is both the safe choice
+    (you don't unknowingly adopt grants or unlock credentials someone else chose) and
+    the consistent one. Same-machine <em>relocate</em> keeps them precisely because the
+    machine and paths are unchanged.</p>
+    <hr>
+    <h2 id="upgrade-note-the-data-root-override-is-gone">Upgrade note: the data-root override is gone</h2>
+    <p>The environment variable that older byn versions used to repoint the data root
+    has been <strong>removed</strong>. A runtime-settable data root meant every code path had to
+    defend against a repointed or poisoned directory, and a process that could set
+    the env of a <code>byn</code> invocation could aim it at a vault it controlled — attack
+    surface byn no longer carries.</p>
+    <p>What this means for you:</p>
+    <ul>
+    <li><strong>The data root is fixed.</strong> It is the per-OS system path once provisioned
+    (<code>byn setup</code>), or <code>~/.byn</code> when unprovisioned. There is no override.</li>
+    <li><strong>&quot;Work vs personal&quot; is multiple vaults, not multiple dirs.</strong> byn has always
+    been multi-vault — use <code>byn init &lt;name&gt;</code> / <code>byn vault …</code> and scope your work
+    with vaults (and projects/envs), all served by the one daemon. The
+    multiple-data-dirs pattern is gone, not deferred.</li>
+    <li><strong>Scripts that set the old data-root variable should drop it.</strong> A production
+    <code>byn</code> ignores it. (The test suite isolates a tempdir via a <code>byntest</code>-build-tag
+    seam that is never compiled into a release binary, so it is not a runtime
+    surface. It is for byn's own tests, not for use.)</li>
+    </ul>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="cli-reference/">CLI reference</a> — <code>byn setup</code>, <code>byn migrate</code>, every flag.</li>
+    <li><a href="security/">Security model</a> — the three-UID model + the honest ceiling.</li>
+    <li><a href="file-layout/">File layout</a> — the data-root tree and modes.</li>
+    <li><code>man byn</code> — the authoritative command reference (<code>byn-setup(1)</code>,
+    <code>byn-migrate(1)</code>).</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../security/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Security model</div>
+      </a>
+      <a href="../architecture/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Architecture</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#tldr" class="toc-item">TL;DR</a>
+    <a href="#one-sudo-on-purpose" class="toc-item">One sudo, on purpose</a>
+    <a href="#where-your-data-lives-now" class="toc-item">Where your data lives now</a>
+    <a href="#byn-migrate--relocate-vs-import" class="toc-item">byn migrate — relocate vs import</a>
+    <a href="#relocate-the-legacy-upgrade--keeps-trust--passkeys" class="toc-item sub">Relocate (the legacy upgrade) — keeps trust &#43; passkeys</a>
+    <a href="#import-from-anywhere--drops-trust--passkeys" class="toc-item sub">Import (from anywhere) — drops trust &#43; passkeys</a>
+    <a href="#upgrade-note-the-data-root-override-is-gone" class="toc-item">Upgrade note: the data-root override is gone</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/migration.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>

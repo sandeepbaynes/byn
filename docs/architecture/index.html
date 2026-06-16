@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture — byn docs</title>
+<meta name="description" content="How byn is organized, end to end.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Architecture</div>
+      <a href="./" class="sb-item active">Architecture</a>
+      <a href="#process-model" class="sb-item">Process model</a>
+      <a href="#scope-hierarchy" class="sb-item">Scope hierarchy</a>
+      <a href="#multi-vault-state" class="sb-item">Multi-vault state</a>
+      <a href="#on-disk-layout" class="sb-item">On-disk layout</a>
+      <a href="#privilege-separation-three-uid-opt-in" class="sb-item">Privilege separation (three-UID, opt-in)</a>
+      <a href="#sqlite-schema-v3-strict" class="sb-item">SQLite schema (v3, STRICT)</a>
+      <a href="#ipc-envelope" class="sb-item">IPC envelope</a>
+      <a href="#request-flow-example-byn-put-db-url" class="sb-item">Request flow (example: byn put DB_URL)</a>
+      <a href="#audit-log" class="sb-item">Audit log</a>
+      <a href="#crypto-stack" class="sb-item">Crypto stack</a>
+      <a href="#cli-package-layout-cmdbyn" class="sb-item">CLI package layout (cmd/byn/)</a>
+      <a href="#daemon-package-layout-internaldaemon" class="sb-item">Daemon package layout (internal/daemon/)</a>
+      <a href="#other-internal-packages" class="sb-item">Other internal packages</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Architecture</span>
+    </div>
+
+    <h1>Architecture</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/architecture.md">docs/architecture.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/architecture.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>How byn is organized, end to end.</p>
+    <hr>
+    <h2 id="process-model">Process model</h2>
+    <pre><code>┌────────────────────────────────────┐
+│ byn (CLI, thin IPC client)      │
+│  • flag parsing + scope resolution │
+│  • password prompt (raw-mode TTY)  │
+│  • .byn discovery + TOFU check  │
+│  • renders responses               │
+└──────────────┬─────────────────────┘
+               │  length-prefixed JSON envelope
+               │  over Unix socket  (mode 0600, peer-UID checked)
+               ▼
+┌────────────────────────────────────┐
+│ byn daemon                      │
+│  • listener + dispatcher           │
+│  • multi-vault state map           │
+│  • per-vault audit logger          │
+│  • persistent failed-unlock backoff│
+│  • zero-copy mlock'd unwrap buffers│
+└────────────────────────────────────┘
+</code></pre>
+    <p>Two binaries, same code base, same <code>main</code> entrypoint
+    (<code>cmd/byn/main.go</code>). The daemon mode is invoked as
+    <code>byn daemon start --foreground</code>; the detached launcher re-execs
+    that. Everything else is the CLI.</p>
+    <p><strong>Why two processes:</strong> the vault key only ever lives in the daemon's
+    memory. The CLI is short-lived; it never holds a decrypted key, and
+    it can't ask the daemon for one — only for <em>operations</em> on it. The
+    peer-UID enforcement on the socket means another user on the same
+    machine can't talk to your daemon.</p>
+    <p><strong>Connection model:</strong> one envelope per connection. CLI dials, sends,
+    reads, closes. No multiplexing yet; not needed.</p>
+    <p><strong>Who the daemon runs as.</strong> By default (privsep off) the daemon runs at <em>your</em>
+    UID. When you opt into privilege separation (<code>[security] privsep = true</code>, after
+    <code>byn setup</code>), the daemon runs as the dedicated <strong><code>_byn</code></strong> service account instead
+    — a different UID from you — so a same-(owner)-UID process can no longer ptrace
+    the daemon and lift the vault key. See <a href="#privilege-separation-three-uid-opt-in">Privilege separation</a>
+    below and the <a href="security/#privilege-separation-the-three-uid-model-opt-in-nu-56">security model</a>
+    for the threat reasoning and the honest ceiling.</p>
+    <hr>
+    <h2 id="scope-hierarchy">Scope hierarchy</h2>
+    <pre><code>vault                 # top-level container, separately encrypted
+└── project           # logical group of envs
+    └── env           # leaf scope (e.g. dev/staging/prod)
+        └── entry     # one env-var (more kinds later: file)
+</code></pre>
+    <p>Every command targets a <code>(vault, project, env)</code> triple, defaulting to
+    <code>(default, default, default)</code>.</p>
+    <p><strong>Inheritance.</strong> A <code>get</code> against <code>env=staging</code> falls back to
+    <code>env=default</code> for entries that don't exist in staging. (Project and
+    vault are exact-match; no fallback above the env level.)</p>
+    <p><strong>Resolution precedence</strong> (highest first):</p>
+    <ol>
+    <li>CLI flag — <code>--vault NAME</code> / <code>--project NAME</code> / <code>--env NAME</code> (work
+    before or after the subcommand)</li>
+    <li>Env var — <code>BYN_VAULT</code> / <code>BYN_PROJECT</code> / <code>BYN_ENV</code></li>
+    <li><code>.byn</code> discovery — see <a href="byn-file-format/"><code>.byn</code> file + discovery</a></li>
+    <li>Daemon default — <code>default</code> everywhere</li>
+    </ol>
+    <p>Computed by <code>cmd/byn/cliscope.go:preParseGlobals()</code> and merged with
+    discovery in <code>cmd/byn/main.go:run()</code>.</p>
+    <hr>
+    <h2 id="multi-vault-state">Multi-vault state</h2>
+    <p><code>internal/daemon/daemon.go</code> holds:</p>
+    <pre><code class="language-go">vaults map[string]*vaultEntry   // keyed by vault name
+</code></pre>
+    <p>with <code>vaultEntry</code>:</p>
+    <pre><code class="language-go">type vaultEntry struct {
+    name       string
+    store      *vault.Store    // SQLite + crypto handle
+    auditor    *audit.Logger
+    lastActive atomic.Int64
+}
+</code></pre>
+    <p><strong>Lifecycle:</strong></p>
+    <ul>
+    <li><code>byn init</code> (vault.init op) → creates vault on disk + adopts entry.</li>
+    <li><code>byn unlock</code> (vault.unlock op) → opens the entry (lazy) +
+    unwraps the key.</li>
+    <li><code>byn lock</code> (vault.lock op) → zeroes the key, keeps the entry
+    (so the audit Logger handle stays alive).</li>
+    <li>Per-vault idle timer — locks the vault after N minutes of
+    inactivity (driven by <code>lastActive.Load()</code>).</li>
+    </ul>
+    <p><strong>Why per-vault:</strong> users may have multiple unrelated vaults (<code>work</code>,
+    <code>personal</code>, <code>client-X</code>). One unlock per vault, not per process. Vault A
+    being locked doesn't affect vault B.</p>
+    <hr>
+    <h2 id="on-disk-layout">On-disk layout</h2>
+    <p>See <a href="file-layout/">File layout</a> for the full reference. The data root is a
+    fixed per-machine location — <code>~/.byn</code> by default, or a system path
+    (<code>/var/lib/byn</code> // <code>/Library/Application Support/byn</code>, owned by <code>_byn</code>) once
+    provisioned for privilege separation. There is <strong>no</strong> runtime data-root env
+    override. Summary:</p>
+    <pre><code>&lt;data root&gt;/
+├── daemon.sock          # IPC socket (0600; runtime path when provisioned)
+├── daemon.pid           # single-instance guard
+├── daemon.log           # detached daemon's combined stdout/stderr
+├── auth-state.json      # failed-unlock backoff (0600)
+├── owner                # owner-UID record (provisioned only; &quot;privsep on&quot; marker)
+├── trusted_byn.json  # TOFU records
+├── audit/
+│   └── &lt;vault&gt;/
+│       └── YYYY-MM.log  # monthly rolled per-vault audit log (0600)
+└── vaults/
+    └── &lt;vault&gt;/
+        ├── vault.db     # SQLite, mode 0600
+        ├── wrapped.key  # Argon2id-wrapped vault key (0600)
+        └── meta.json    # UUID + fingerprint of wrapped key (0600)
+</code></pre>
+    <hr>
+    <h2 id="privilege-separation-three-uid-opt-in">Privilege separation (three-UID, opt-in)</h2>
+    <p>byn can run under a <strong>three-UID model</strong> that separates the human, the daemon, and
+    exec children. It is <strong>opt-in and off by default this release</strong> (<code>[security] privsep = true</code>, provisioned by <code>byn setup</code>). When off, byn behaves exactly as
+    before — the daemon and exec children run at your UID, and the same-UID env-sniff
+    / daemon-ptrace holes remain open. The full threat reasoning, the off-state holes,
+    and the honest ceiling are in the <a href="security/#privilege-separation-the-three-uid-model-opt-in-nu-56">security model</a>;
+    this section is the architecture sketch.</p>
+    <p>The three identities, all distinct (<code>owner ≠ _byn ≠ _byn-exec</code>):</p>
+    <table>
+    <thead>
+    <tr>
+    <th>UID</th>
+    <th>Runs</th>
+    <th>Sees</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><strong>owner</strong> (you)</td>
+    <td>the CLI, your shell, your agents</td>
+    <td>what your UID can already reach</td>
+    </tr>
+    <tr>
+    <td><strong><code>_byn</code></strong> (service account)</td>
+    <td>the daemon (vault key in memory)</td>
+    <td>the vault key — but not the exec child's env</td>
+    </tr>
+    <tr>
+    <td><strong><code>_byn-exec</code></strong> (service account)</td>
+    <td><code>byn exec</code> children of a trusted, <em>pinned</em> <code>.byn</code> action</td>
+    <td>only the injected env vars, for the child's lifetime</td>
+    </tr>
+    </tbody>
+    </table>
+    <p><strong>Server-side exec spawn.</strong> With privsep on, a trusted-<code>.byn</code> pinned <code>byn exec</code>
+    no longer runs the child in-process at your UID. The <code>_byn</code> daemon spawns it as
+    <code>_byn-exec</code> through a small, root-owned, file-capability <strong>spawn helper</strong>
+    (<code>byn-exec-helper</code>) that does exactly one privileged thing — <code>setuid</code> to
+    <code>_byn-exec</code> — then execs the pinned command with only the injected vars. A
+    same-(owner)-UID <strong>non-root</strong> process then can't read that child's
+    <code>/proc/&lt;pid&gt;/environ</code> (the kernel's ptrace-mode check denies the cross-UID read).
+    Linux additionally sets <code>PR_SET_DUMPABLE=0</code> on the daemon and child; the systemd
+    unit keeps <code>NoNewPrivileges=no</code> <strong>on purpose</strong> so the scoped helper retains its
+    <code>cap_setuid</code>.</p>
+    <p><strong>Honest ceiling.</strong> Privsep raises the bar to <strong>root</strong>. It does <strong>not</strong> defend
+    against root, <code>CAP_SYS_PTRACE</code>, or a root <code>task_for_pid</code> — those can still read
+    the daemon's or the child's memory/environ. macOS hardened-runtime protections
+    only take effect for a <strong>Developer ID-signed</strong> build (unsigned local builds don't
+    get them). Ad-hoc <code>byn exec</code> (no pinned <code>.byn</code>) still runs at your UID even with
+    privsep on.</p>
+    <p><strong>Fail-closed.</strong> Privsep enabled but <strong>not</strong> provisioned errors out (&quot;run <code>sudo byn setup</code>&quot;) — it never silently downgrades to running the daemon or exec child at
+    the owner UID.</p>
+    <hr>
+    <h2 id="sqlite-schema-v3-strict">SQLite schema (v3, STRICT)</h2>
+    <pre><code class="language-sql">-- Meta key-value table; schema_version, audit_chain_seed,
+-- audit_chain_head, entries_state_hash, totp_secret_v1 (reserved).
+meta(key TEXT PRIMARY KEY, value TEXT) STRICT
+
+-- Project rows; default project created at init.
+projects(
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT
+
+-- Env rows; default env per project created at init.
+envs(
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (project_id, name)
+) STRICT
+
+-- One row per env-var entry. Value is XChaCha20-Poly1305 ciphertext
+-- with random 24-byte nonce; AAD = vault_id || 0x1F || kind || 0x1F || name.
+-- require_2fa is reserved for the future TOTP gate.
+entries(
+    id INTEGER PRIMARY KEY,
+    env_id INTEGER NOT NULL REFERENCES envs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    value BLOB NOT NULL,
+    deleted_at TEXT,
+    require_2fa INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (env_id, name)
+) STRICT
+
+-- Historical revisions for entry_versioning. Append-only.
+entry_versions(
+    id INTEGER PRIMARY KEY,
+    entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    value BLOB NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+) STRICT
+
+-- Portal passkey credentials (WebAuthn). All columns are non-secret.
+passkey(
+    id INTEGER PRIMARY KEY,
+    credential_id BLOB NOT NULL UNIQUE,
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    aaguid BLOB, transports TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '',
+    backup_eligible INTEGER NOT NULL DEFAULT 0,   -- WebAuthn BE flag (must round-trip)
+    backup_state INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+) STRICT
+
+-- PRF-derived second wrapping of the vault key, one row per credential (cold
+-- unlock). Revoking the credential cascades here; the KEK = HKDF(prfOut) that
+-- unwraps wrapped_vault_key is computed in the browser and never stored.
+passkey_unlock(
+    credential_id BLOB PRIMARY KEY REFERENCES passkey(credential_id) ON DELETE CASCADE,
+    prf_salt BLOB NOT NULL,
+    wrapped_vault_key BLOB NOT NULL,
+    hkdf_info_version INTEGER NOT NULL DEFAULT 1,
+    aead_alg TEXT NOT NULL DEFAULT 'xchacha20poly1305',
+    label TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+) STRICT
+
+-- File-content secrets (reserved; data-plane CRUD not yet shipped).
+file_meta(...) STRICT
+</code></pre>
+    <p>Foreign keys are enforced (<code>PRAGMA foreign_keys = ON</code>). The whole DB
+    opens with WAL journaling.</p>
+    <p><strong>Why STRICT tables:</strong> SQLite's type affinity is famously loose. STRICT
+    mode makes every column type-checked at write time, so we catch
+    programmer errors instead of corrupting the row.</p>
+    <hr>
+    <h2 id="ipc-envelope">IPC envelope</h2>
+    <p><code>internal/ipc/types.go</code>:</p>
+    <pre><code class="language-go">type Envelope struct {
+    V    uint            // protocol version (negotiated against ProtocolMin..ProtocolMax)
+    ID   string          // 16-byte hex request id
+    Op   Op              // string op (e.g. &quot;vault.unlock&quot;, &quot;put&quot;, &quot;audit.tail&quot;)
+    Req  json.RawMessage // populated on request
+    Resp json.RawMessage // populated on response
+    Err  *ErrMsg         // populated on error response
+}
+
+type ErrMsg struct {
+    Code    ErrCode // stable code like &quot;wrong_password&quot;, &quot;locked&quot;, &quot;rate_limited&quot;
+    Message string
+    Recover string  // suggested recovery command, e.g. &quot;byn unlock&quot;
+}
+</code></pre>
+    <p><strong>Wire format:</strong> 4-byte big-endian length prefix + JSON. See
+    <code>internal/ipc/frame.go</code>.</p>
+    <p><strong>Op naming:</strong> <code>&lt;noun&gt;.&lt;verb&gt;</code> for namespaced (<code>vault.init</code>,
+    <code>project.create</code>, <code>audit.tail</code>); flat for the env-var data plane
+    (<code>put</code>, <code>get</code>, <code>list</code>, <code>delete</code>, <code>rename</code>) since they're the most
+    common.</p>
+    <p><strong>Error codes</strong> (stable string identifiers — CLI exit code 3 means
+    &quot;daemon returned a typed error&quot;):</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Code</th>
+    <th>Meaning</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>unknown_op</code></td>
+    <td>Daemon doesn't recognize op</td>
+    </tr>
+    <tr>
+    <td><code>bad_request</code></td>
+    <td>Body fails decode</td>
+    </tr>
+    <tr>
+    <td><code>unsupported_version</code></td>
+    <td>Protocol mismatch</td>
+    </tr>
+    <tr>
+    <td><code>binary_too_old</code></td>
+    <td>CLI older than daemon's <code>ProtocolMin</code></td>
+    </tr>
+    <tr>
+    <td><code>locked</code></td>
+    <td>Vault not unlocked</td>
+    </tr>
+    <tr>
+    <td><code>wrong_password</code></td>
+    <td>Generic unlock failure (existence-oracle defense)</td>
+    </tr>
+    <tr>
+    <td><code>rate_limited</code></td>
+    <td>Failed-unlock backoff hit</td>
+    </tr>
+    <tr>
+    <td><code>already_init</code></td>
+    <td>Vault already exists</td>
+    </tr>
+    <tr>
+    <td><code>not_init</code></td>
+    <td>Vault not present</td>
+    </tr>
+    <tr>
+    <td><code>vault_not_found</code> / <code>vault_exists</code></td>
+    <td>Multi-vault management</td>
+    </tr>
+    <tr>
+    <td><code>bad_name</code></td>
+    <td>Project/env/vault name fails validation</td>
+    </tr>
+    <tr>
+    <td><code>not_found</code></td>
+    <td>Entry, project, or env not found</td>
+    </tr>
+    <tr>
+    <td><code>already_exists</code></td>
+    <td>Create-only collision</td>
+    </tr>
+    <tr>
+    <td><code>project_not_found</code> / <code>project_exists</code></td>
+    <td>Project CRUD</td>
+    </tr>
+    <tr>
+    <td><code>env_not_found</code> / <code>env_exists</code></td>
+    <td>Env CRUD</td>
+    </tr>
+    <tr>
+    <td><code>internal</code></td>
+    <td>Daemon-side bug; check logs</td>
+    </tr>
+    </tbody>
+    </table>
+    <hr>
+    <h2 id="request-flow-example-byn-put-db-url">Request flow (example: <code>byn put DB_URL</code>)</h2>
+    <ol>
+    <li>CLI starts: <code>cmd/byn/main.go:run()</code> parses <code>os.Args</code>.</li>
+    <li><code>jsonModeFromArgs</code> + <code>noDiscoveryFromArgs</code> detect agent mode and
+    <code>--no-discovery</code>.</li>
+    <li><code>preParseGlobals</code> extracts <code>--vault/--project/--env</code> from anywhere
+    in argv; conflicts are a hard error.</li>
+    <li><code>.byn</code> discovery walks parents from CWD; first hit is hashed;
+    <code>isTrusted</code> checks against <code>trusted_byn.json</code>. Untrusted +
+    agent mode = hard fail; untrusted + TTY = prompt; trusted = apply.</li>
+    <li>Resolved scope = CLI flag &gt; env var &gt; discovered &gt; daemon default.</li>
+    <li><code>runPut</code> reads the value from stdin (never argv).</li>
+    <li><code>newClient(dir).Call(OpPut, PutReq{Scope, Name, Value, CreateOnly}, …)</code>
+    dials <code>~/.byn/daemon.sock</code>, writes one envelope, reads one.</li>
+    <li>Daemon's <code>handleConn → dispatch → handlePut</code>:
+    <ul>
+    <li>Looks up vault by <code>Scope.Vault</code> (case-sensitive after
+    <code>vault.ValidateVaultName</code>).</li>
+    <li><code>entry.touch()</code> updates idle timer.</li>
+    <li><code>entry.store.Put(scope.Project, scope.Env, name, value, …)</code>
+    encrypts the value (XChaCha20-Poly1305 + AAD-binding) and writes
+    the row.</li>
+    <li><code>auditEmit</code> appends a chained audit event:
+    <code>{Project, Env, Kind, EntryName, Op, Outcome, CallerUID, CallerPID, HMACChain}</code>.</li>
+    </ul>
+    </li>
+    <li>Response = <code>{Op: &quot;put&quot;, Resp: PutResp{}}</code>.</li>
+    <li>CLI prints the hint (<code>Stored &quot;DB_URL&quot; in default/default/default.</code>)
+    via <code>hintf()</code> (unless <code>BYN_HINTS=0</code> or stderr non-TTY).</li>
+    <li>Exit 0.</li>
+    </ol>
+    <hr>
+    <h2 id="audit-log">Audit log</h2>
+    <p>Per-vault append-only NDJSON files under <code>~/.byn/audit/&lt;vault&gt;/</code>.
+    Each event is one JSON line; files roll monthly (<code>2026-06.log</code>).</p>
+    <p><strong>Chain:</strong> each event carries an <code>hmac_chain</code> field, computed as
+    <code>HMAC-SHA256(seed, prev_chain || event_bytes_canonical)</code>. <code>seed</code> is
+    32 random bytes stored in the vault's <code>meta.audit_chain_seed</code> key.
+    The head (latest hash) is stored in <code>meta.audit_chain_head</code> so the
+    daemon can resume on cold start without re-walking.</p>
+    <p><strong>Verification:</strong> <code>byn audit verify</code> re-walks the log,
+    recomputing the chain and checking each line's <code>hmac_chain</code> matches.
+    First mismatch → BadIndex &gt;= 0 → exit code 3 + treat-as-compromised
+    message. Read by <code>internal/audit/audit.go:VerifyChain</code>.</p>
+    <p><strong>What's in an event:</strong></p>
+    <pre><code>{
+  &quot;ts&quot;:         &lt;unix nanos&gt;,
+  &quot;vault_id&quot;:   &lt;UUID from meta.json&gt;,
+  &quot;vault_name&quot;: &lt;human-readable&gt;,
+  &quot;project&quot;:    &lt;if op scoped&gt;,
+  &quot;env&quot;:        &lt;if op scoped&gt;,
+  &quot;kind&quot;:       &quot;env_var&quot; | &quot;file&quot;,
+  &quot;entry_name&quot;: &lt;plain-text name; forensics-friendly&gt;,
+  &quot;op&quot;:         &lt;ipc op string&gt;,
+  &quot;outcome&quot;:    &quot;ok&quot; | &quot;denied&quot; | &quot;not_found&quot; | &quot;error&quot;,
+  &quot;caller_uid&quot;: &lt;socket peer uid&gt;,
+  &quot;caller_pid&quot;: &lt;socket peer pid, where the OS surfaces it&gt;,
+  &quot;error_code&quot;: &lt;if outcome != ok&gt;,
+  &quot;hmac_chain&quot;: &lt;hex&gt;
+}
+</code></pre>
+    <p><strong>Why plain-text names</strong> (not hashed): trade-off documented in
+    internal design notes. Forensic value of
+    &quot;DB_URL was accessed&quot; beats the marginal confidentiality win of
+    hashing.</p>
+    <hr>
+    <h2 id="crypto-stack">Crypto stack</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Layer</th>
+    <th>Primitive</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Row value</td>
+    <td>XChaCha20-Poly1305, vault key, random 24-byte nonce per row, AAD = <code>vault_id ‖ 0x1F ‖ kind ‖ 0x1F ‖ name</code></td>
+    </tr>
+    <tr>
+    <td>Vault-key wrapping</td>
+    <td>Argon2id(password, salt) → wrapping key → XChaCha20-Poly1305, AAD = full header bytes (binds salt + Argon2 params + version)</td>
+    </tr>
+    <tr>
+    <td>Hardware-key wrapping</td>
+    <td>macOS Secure Enclave (ECIES via Security.framework) or Linux TPM2, with a software fallback. Wired but gated on entitlements (Slice 1.3)</td>
+    </tr>
+    <tr>
+    <td>Audit chain</td>
+    <td>HMAC-SHA256, 32-byte seed from vault meta</td>
+    </tr>
+    <tr>
+    <td>Failed-unlock state</td>
+    <td>unsigned today; HMAC-signed in deferred hardening</td>
+    </tr>
+    <tr>
+    <td>Trust file</td>
+    <td>UNIX perms today; HMAC-signed in deferred hardening (see internal design notes)</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>See <a href="security/">security.md</a> for parameters (Argon2id memory cost,
+    time cost), AAD-binding rationale, and threat model.</p>
+    <hr>
+    <h2 id="cli-package-layout-cmdbyn">CLI package layout (<code>cmd/byn/</code>)</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>File</th>
+    <th>What it does</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>main.go</code></td>
+    <td>Subcommand dispatcher; agent-mode detection; discovery wiring; usage</td>
+    </tr>
+    <tr>
+    <td><code>cliscope.go</code></td>
+    <td><code>cliScope</code> struct + hybrid pre-parser + conflict detection</td>
+    </tr>
+    <tr>
+    <td><code>discovery.go</code></td>
+    <td><code>.byn</code> walk + TOFU trust store</td>
+    </tr>
+    <tr>
+    <td><code>cmd_daemon.go</code></td>
+    <td><code>daemon {start,stop,status}</code> + <code>status [--json]</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_vault.go</code></td>
+    <td><code>init</code>, <code>unlock</code>, <code>lock</code>, <code>put</code>, <code>get</code>, <code>list</code>, <code>delete</code>, <code>rename</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_vault_crud.go</code></td>
+    <td><code>vault {list,delete,init,unlock,lock}</code> (top-level aliases)</td>
+    </tr>
+    <tr>
+    <td><code>cmd_project.go</code></td>
+    <td><code>project {create,list,delete,rename}</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_env.go</code></td>
+    <td><code>env {create,list,delete,rename}</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_exec.go</code></td>
+    <td><code>exec -- COMMAND</code> (in-process <code>syscall.Exec</code> env injection; with privsep on, a trusted-pinned exec is spawned daemon-side as <code>_byn-exec</code>)</td>
+    </tr>
+    <tr>
+    <td><code>cmd_setup.go</code></td>
+    <td><code>setup [--uninstall [--purge]]</code> — one-sudo privsep provisioning</td>
+    </tr>
+    <tr>
+    <td><code>cmd_migrate.go</code></td>
+    <td><code>migrate [--from PATH] [--force]</code> — relocate vs import</td>
+    </tr>
+    <tr>
+    <td><code>cmd_import.go</code></td>
+    <td><code>import</code> from .env/.yaml/.json</td>
+    </tr>
+    <tr>
+    <td><code>cmd_export.go</code></td>
+    <td><code>export</code> to .env/.yaml/.json</td>
+    </tr>
+    <tr>
+    <td><code>cmd_audit.go</code></td>
+    <td><code>audit {tail,verify}</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_doctor.go</code></td>
+    <td><code>doctor [--json]</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_trust.go</code></td>
+    <td><code>trust [PATH]</code>, <code>trust list</code>, <code>untrust [PATH]</code></td>
+    </tr>
+    <tr>
+    <td><code>cmd_tui.go</code></td>
+    <td>Modal vi-style TUI (env-vars only for default scope)</td>
+    </tr>
+    <tr>
+    <td><code>common.go</code></td>
+    <td>Exit codes, IPC client factory, <code>handleCallError</code></td>
+    </tr>
+    <tr>
+    <td><code>color.go</code></td>
+    <td>ANSI color helpers with NO_COLOR/FORCE_COLOR detection</td>
+    </tr>
+    <tr>
+    <td><code>hints.go</code></td>
+    <td><code>hintf</code> (gated by <code>BYN_HINTS</code>)</td>
+    </tr>
+    <tr>
+    <td><code>help_text.go</code></td>
+    <td>AWS-CLI-style per-command help blobs</td>
+    </tr>
+    <tr>
+    <td><code>pager.go</code></td>
+    <td><code>$PAGER</code> integration for help (default <code>less -RFX</code>)</td>
+    </tr>
+    </tbody>
+    </table>
+    <hr>
+    <h2 id="daemon-package-layout-internaldaemon">Daemon package layout (<code>internal/daemon/</code>)</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>File</th>
+    <th>What it does</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>daemon.go</code></td>
+    <td>Lifecycle: listener bind, pidfile, vault map, peer-UID enforcement</td>
+    </tr>
+    <tr>
+    <td><code>dispatch.go</code></td>
+    <td>Op routing + status/vault/project/env/data-plane handlers</td>
+    </tr>
+    <tr>
+    <td><code>dispatch_audit_doctor.go</code></td>
+    <td><code>audit.tail</code>, <code>audit.verify</code>, <code>doctor</code> handlers</td>
+    </tr>
+    <tr>
+    <td><code>peercred*.go</code></td>
+    <td><code>SO_PEERCRED</code> (Linux) / <code>LOCAL_PEEREPID</code> (macOS, partial)</td>
+    </tr>
+    </tbody>
+    </table>
+    <hr>
+    <h2 id="other-internal-packages">Other internal packages</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Package</th>
+    <th>Role</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>internal/vault</code></td>
+    <td>Store API; SQLite open/init/migrate; scoped CRUD; encryption</td>
+    </tr>
+    <tr>
+    <td><code>internal/vault/crypto</code></td>
+    <td>Argon2id wrap, AEAD seal/open</td>
+    </tr>
+    <tr>
+    <td><code>internal/ipc</code></td>
+    <td>Wire types, framing, client</td>
+    </tr>
+    <tr>
+    <td><code>internal/audit</code></td>
+    <td>HMAC-chained log; Tail/Append/VerifyChain</td>
+    </tr>
+    <tr>
+    <td><code>internal/auth</code></td>
+    <td>Raw-mode password prompt; persistent failed-unlock backoff</td>
+    </tr>
+    <tr>
+    <td><code>internal/secmem</code></td>
+    <td><code>mlock</code>'d buffers for sensitive workspace</td>
+    </tr>
+    <tr>
+    <td><code>internal/hwkey</code></td>
+    <td>macOS SE / Linux TPM2 / software fallback (provider interface)</td>
+    </tr>
+    <tr>
+    <td><code>internal/passkey</code></td>
+    <td>WebAuthn relying party — register/assert ceremonies + PRF→KEK derivation for portal passkey unlock</td>
+    </tr>
+    <tr>
+    <td><code>internal/ui</code></td>
+    <td>daemon-embedded browser portal (loopback HTTP; scope tree, entries, passkey unlock)</td>
+    </tr>
+    <tr>
+    <td><code>internal/paths</code></td>
+    <td>resolves the active data root + socket path (legacy <code>~/.byn</code> vs provisioned system path); owner-record lookup</td>
+    </tr>
+    <tr>
+    <td><code>internal/privsep</code></td>
+    <td>three-UID model: owner-record read/write, service-user resolution, the <code>_byn-exec</code> spawn path</td>
+    </tr>
+    <tr>
+    <td><code>internal/setup</code></td>
+    <td><code>byn setup</code> provisioning + teardown (service users, system service, spawn helper, owner record)</td>
+    </tr>
+    <tr>
+    <td><code>internal/migrate</code></td>
+    <td><code>byn migrate</code> relocate vs import (verify-without-password, atomic adopt)</td>
+    </tr>
+    <tr>
+    <td><code>internal/trust</code></td>
+    <td><code>.byn</code> TOFU store + fp-MAC (machine) / vk-MAC (vault-key) record verification</td>
+    </tr>
+    <tr>
+    <td><code>internal/machineid</code></td>
+    <td>stable per-machine identifier keying the trust fp-MAC (never touches the vault key)</td>
+    </tr>
+    <tr>
+    <td><code>internal/shim</code></td>
+    <td>(reserved; planned — see roadmap)</td>
+    </tr>
+    <tr>
+    <td><code>internal/acl</code></td>
+    <td>(reserved; planned)</td>
+    </tr>
+    </tbody>
+    </table>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="security/">Security model</a> — the <em>why</em> behind the crypto choices.</li>
+    <li><a href="byn-file-format/"><code>.byn</code> + discovery</a> — the spec for the
+    scope-discovery file and TOFU.</li>
+    <li><a href="file-layout/">File layout</a> — every file on disk, its purpose, its mode.</li>
+    <li><a href="cli-reference/">CLI reference</a> — every command + flag + exit code.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../migration/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Migration &amp; setup</div>
+      </a>
+      <a href="../file-layout/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">File layout</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#process-model" class="toc-item">Process model</a>
+    <a href="#scope-hierarchy" class="toc-item">Scope hierarchy</a>
+    <a href="#multi-vault-state" class="toc-item">Multi-vault state</a>
+    <a href="#on-disk-layout" class="toc-item">On-disk layout</a>
+    <a href="#privilege-separation-three-uid-opt-in" class="toc-item">Privilege separation (three-UID, opt-in)</a>
+    <a href="#sqlite-schema-v3-strict" class="toc-item">SQLite schema (v3, STRICT)</a>
+    <a href="#ipc-envelope" class="toc-item">IPC envelope</a>
+    <a href="#request-flow-example-byn-put-db-url" class="toc-item">Request flow (example: byn put DB_URL)</a>
+    <a href="#audit-log" class="toc-item">Audit log</a>
+    <a href="#crypto-stack" class="toc-item">Crypto stack</a>
+    <a href="#cli-package-layout-cmdbyn" class="toc-item">CLI package layout (cmd/byn/)</a>
+    <a href="#daemon-package-layout-internaldaemon" class="toc-item">Daemon package layout (internal/daemon/)</a>
+    <a href="#other-internal-packages" class="toc-item">Other internal packages</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/architecture.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>
