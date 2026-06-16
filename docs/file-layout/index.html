@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>File layout — byn docs</title>
+<meta name="description" content="Every file byn writes, where it lives, what it contains, and whatmode protects it.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">File layout</div>
+      <a href="./" class="sb-item active">File layout</a>
+      <a href="#daemon-files" class="sb-item">Daemon files</a>
+      <a href="#trust-file" class="sb-item">Trust file</a>
+      <a href="#audit-logs" class="sb-item">Audit logs</a>
+      <a href="#per-vault-files" class="sb-item">Per-vault files</a>
+      <a href="#permissions-reference" class="sb-item">Permissions reference</a>
+      <a href="#backup--restore" class="sb-item">Backup / restore</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">File layout</span>
+    </div>
+
+    <h1>File layout</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/file-layout.md">docs/file-layout.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/file-layout.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>Every file byn writes, where it lives, what it contains, and what
+    mode protects it.</p>
+    <p>The <strong>data root</strong> is a single per-machine location. There is <strong>no runtime
+    override</strong> — the data-root environment variable that older byn versions honored
+    has been removed (a repointable data root was attack surface). Where the root
+    lives depends on whether the machine has been
+    provisioned for privilege separation:</p>
+    <ul>
+    <li><strong>Provisioned</strong> (<code>byn setup</code> run, privsep on): a fixed <strong>system path</strong> owned by
+    the <code>_byn</code> service account, mode <code>0700</code>:
+    <ul>
+    <li>Linux: <code>/var/lib/byn</code> (the systemd unit's <code>StateDirectory=byn</code>)</li>
+    <li>macOS: <code>/Library/Application Support/byn</code></li>
+    </ul>
+    </li>
+    <li><strong>Unprovisioned</strong> (default, privsep off): the <strong>legacy</strong> per-user path <code>~/.byn</code>,
+    owned by you, mode <code>0700</code> — today's behavior, unchanged.</li>
+    </ul>
+    <p>The layout below is identical under both roots; only the location and owning UID
+    differ. To keep work and personal credentials apart, use <strong>multiple vaults</strong> in
+    the one daemon (<code>byn init &lt;name&gt;</code>), <strong>not</strong> multiple data dirs.</p>
+    <hr>
+    <pre><code>&lt;data root&gt;/                       # ~/.byn (legacy) or the system path (provisioned)
+├── daemon.sock                    # Unix socket; IPC (legacy root only — see note)
+├── daemon.pid                     # Single-instance pidfile
+├── daemon.log                     # Detached daemon's stdout+stderr
+├── auth-state.json                # Persistent failed-unlock backoff
+├── owner                          # Owner-UID record (provisioned only; the &quot;privsep on&quot; marker)
+├── trusted_byn.json            # TOFU records for .byn files
+├── audit/
+│   └── &lt;vault&gt;/
+│       └── YYYY-MM.log            # Monthly-rolled per-vault audit log
+└── vaults/
+    └── &lt;vault&gt;/
+        ├── vault.db               # SQLite (encrypted values)
+        ├── vault.db-wal           # SQLite WAL journal (transient)
+        ├── vault.db-shm           # SQLite shared-memory (transient)
+        ├── wrapped.key            # Argon2id-wrapped vault key
+        └── meta.json              # Vault UUID + wrapped-key fingerprint
+</code></pre>
+    <hr>
+    <h2 id="daemon-files">Daemon files</h2>
+    <h3 id="daemonsock"><code>daemon.sock</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td>daemon's UID</td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/daemon/daemon.go:Start</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Unix-domain socket. Every CLI invocation dials it. Peer UID is
+    checked on every connect; mismatched UIDs are closed immediately.</p>
+    <p><strong>Where it lives.</strong> On the <strong>legacy</strong> <code>~/.byn</code> root the socket sits inside the
+    data dir (shown above). When the machine is <strong>provisioned</strong> for privilege
+    separation, the daemon runs as <code>_byn</code> and the data root is <code>_byn</code>-owned <code>0700</code>,
+    so the socket can't live inside it (you'd be unable to connect). It binds instead
+    to an <strong>owner-traversable runtime path</strong>; the daemon's bind side and the CLI's
+    connect side resolve the same location, so they can never disagree. The peer-UID
+    check still allowlists exactly the owner.</p>
+    <p><strong>macOS caveat:</strong> <code>sun_path</code> is capped at 104 bytes, so the socket path must stay
+    short. The fixed data-root paths are chosen to fit; the test-only data-dir seam
+    (compiled in only under the <code>byntest</code> build tag) uses <code>/tmp/byn-it-XXXX</code> for this
+    reason.</p>
+    <h3 id="owner"><code>owner</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td><code>_byn</code> (provisioned root only)</td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>JSON: the allowlisted owner UID recorded by <code>byn setup</code> from <code>SUDO_UID</code></td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>byn setup</code> (<code>internal/privsep:WriteOwnerRecord</code>)</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Present only in a <strong>provisioned</strong> system root. Its existence is the
+    authoritative &quot;this machine is provisioned for privsep&quot; marker, and it names the
+    single UID the daemon allowlists on its peercred-gated socket. <code>sudo byn setup --uninstall</code> removes it; the vault stays intact. See
+    <a href="migration/">Migration &amp; setup</a>.</p>
+    <h3 id="daemonpid"><code>daemon.pid</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td>daemon's UID</td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/daemon/daemon.go:writePidfile</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Plain text decimal PID. On <code>daemon start</code>, a stale pidfile is
+    detected via signal-0 (<code>kill(pid, 0)</code>); if the process is gone, it's
+    replaced.</p>
+    <h3 id="daemonlog"><code>daemon.log</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td>daemon's UID</td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>cmd/byn/cmd_daemon.go:runDaemonDetached</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Combined stdout/stderr of the detached daemon. Append-only. Rotation
+    is your job (logrotate, manual, etc.).</p>
+    <h3 id="auth-statejson"><code>auth-state.json</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td>daemon's UID</td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>JSON: <code>{&quot;failures&quot;: N, &quot;next_allowed&quot;: &quot;RFC3339 ts&quot;}</code></td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/auth/ratelimit.go:persist</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Persistent failed-unlock backoff. Survives daemon restart so an
+    attacker can't <code>daemon stop &amp;&amp; start</code> to reset the timer.</p>
+    <p><strong>Hardening:</strong> not currently signed; an attacker with write access
+    to <code>~/.byn</code> can reset the counter. Deferred — see
+    <a href="security/">security.md</a>.</p>
+    <hr>
+    <h2 id="trust-file">Trust file</h2>
+    <h3 id="trusted-bynjson"><code>trusted_byn.json</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td>user (created by the CLI on first <code>byn trust</code>)</td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>JSON: <code>{&quot;records&quot;: [{&quot;path&quot;: &quot;...&quot;, &quot;sha256&quot;: &quot;...&quot;}, ...]}</code></td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>cmd/byn/discovery.go:saveTrustStore</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>TOFU records for <code>.byn</code> files. See
+    <a href="byn-file-format/"><code>.byn</code> file format</a> for the lookup
+    algorithm and TOFU semantics.</p>
+    <p><strong>Hardening:</strong> integrity protection (HMAC) is designed and deferred.</p>
+    <hr>
+    <h2 id="audit-logs">Audit logs</h2>
+    <h3 id="auditvaultyyyy-mmlog"><code>audit/&lt;vault&gt;/YYYY-MM.log</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Owner</td>
+    <td>daemon's UID</td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>NDJSON (one event per line)</td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/audit/audit.go:appendLine</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Append-only. New month → new file. The latest file is the only one
+    actively written; older months are immutable historical records.</p>
+    <p>Each line is an <code>audit.Event</code> (see <a href="architecture/#audit-log">architecture.md</a>).</p>
+    <p><strong>HMAC chain:</strong> every line's <code>hmac_chain</code> field depends on the
+    previous line's. Truncation, insertion, deletion, or modification all
+    fail <code>byn audit verify</code>.</p>
+    <p>The HMAC seed lives in the per-vault <code>meta.audit_chain_seed</code> SQLite
+    meta key. Both seed and head are accessible while the vault is locked
+    (both are in the unencrypted meta table), so <code>byn audit tail</code> and
+    <code>byn audit verify</code> work without unlocking.</p>
+    <hr>
+    <h2 id="per-vault-files">Per-vault files</h2>
+    <p>Path: <code>~/.byn/vaults/&lt;vault_name&gt;/</code>. The default vault lives at
+    <code>~/.byn/vaults/default/</code>.</p>
+    <h3 id="vaultdb"><code>vault.db</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>SQLite (STRICT tables, WAL journal, FK enforced)</td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/vault/store.go:Init</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Tables: <code>meta</code>, <code>projects</code>, <code>envs</code>, <code>entries</code>, <code>entry_versions</code>,
+    <code>file_meta</code> (reserved). See
+    <a href="architecture/#sqlite-schema-v3-strict">architecture.md</a> for the
+    schema.</p>
+    <ul>
+    <li><strong>Names</strong> (project, env, entry) are plaintext strings.</li>
+    <li><strong>Values</strong> are XChaCha20-Poly1305 AEAD ciphertext blobs:
+    <code>nonce(24) || ct || tag(16)</code>. AAD = <code>vault_id ‖ 0x1F ‖ kind ‖ 0x1F ‖ name</code>.</li>
+    </ul>
+    <p>The DB is <strong>portable by design</strong>: copy <code>vault.db + wrapped.key + meta.json</code> and the same master password unlocks them on another machine.
+    The vault key is wrapped with <code>Argon2id(password)</code> <strong>only</strong> — no machine
+    binding — so forensics and recovery work on different hardware (owner
+    decision, 2026-06-11). The machine fingerprint touches only the trust
+    store's fp-MAC, never the vault key. The trade-off: the password wrap is
+    the at-rest security floor of the file, so a stolen copy is offline-crackable
+    down to your passphrase strength — pick a long, high-entropy one. (The
+    <code>wrapped_key_fingerprint</code> in <code>meta.json</code> is a SHA-256 of <code>wrapped.key</code> for
+    swap/tamper detection, <strong>not</strong> a hardware binding.)</p>
+    <h3 id="vaultdb-wal-vaultdb-shm"><code>vault.db-wal</code>, <code>vault.db-shm</code></h3>
+    <p>SQLite WAL mode artifacts. Transient — created during writes,
+    checkpointed and cleaned by SQLite. Don't back them up; back up
+    <code>vault.db</code> after a clean shutdown.</p>
+    <h3 id="wrappedkey"><code>wrapped.key</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>Binary: `header</td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/vault/crypto/wrap.go:Wrap</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Argon2id-wrapped vault key. Header carries:</p>
+    <ul>
+    <li>Version byte</li>
+    <li>Argon2 time / memory / threads params + explicit salt/nonce length fields</li>
+    <li>Salt (32 bytes)</li>
+    <li>Nonce (24 bytes)</li>
+    </ul>
+    <p>The AEAD AAD covers the <em>full header bytes</em>, so any byte tampered
+    in the header (including param changes for downgrade attempts) fails
+    to unwrap. See <a href="security/#2-key-wrapping-argon2id--aead">security.md</a>
+    for parameter values.</p>
+    <h3 id="metajson"><code>meta.json</code></h3>
+    <table>
+    <thead>
+    <tr>
+    <th></th>
+    <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Mode</td>
+    <td><code>0600</code></td>
+    </tr>
+    <tr>
+    <td>Format</td>
+    <td>JSON: <code>{&quot;schema_version&quot;, &quot;vault_id&quot;, &quot;wrapped_key_fingerprint&quot;}</code></td>
+    </tr>
+    <tr>
+    <td>Created by</td>
+    <td><code>internal/vault/meta.go:WriteMetaJSON</code></td>
+    </tr>
+    </tbody>
+    </table>
+    <ul>
+    <li><code>vault_id</code> — random UUID, used in row AAD.</li>
+    <li><code>wrapped_key_fingerprint</code> — SHA-256 of <code>wrapped.key</code>. Detects an
+    attacker who swaps the wrapped key with a known one (e.g., from
+    another vault they control).</li>
+    <li><code>schema_version</code> — current <code>3</code>.</li>
+    </ul>
+    <p>The daemon checks the fingerprint against the actual file on every
+    open. Mismatch → vault refuses to open.</p>
+    <hr>
+    <h2 id="permissions-reference">Permissions reference</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Path</th>
+    <th>Mode</th>
+    <th>Reason</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>~/.byn/</code></td>
+    <td><code>0700</code></td>
+    <td>Created with strict default-deny</td>
+    </tr>
+    <tr>
+    <td><code>daemon.sock</code></td>
+    <td><code>0600</code></td>
+    <td>Plus peer-UID check at connect</td>
+    </tr>
+    <tr>
+    <td><code>daemon.pid</code></td>
+    <td><code>0600</code></td>
+    <td>Prevents another user from spoofing</td>
+    </tr>
+    <tr>
+    <td><code>daemon.log</code></td>
+    <td><code>0600</code></td>
+    <td>May contain stack traces; treat as sensitive</td>
+    </tr>
+    <tr>
+    <td><code>auth-state.json</code></td>
+    <td><code>0600</code></td>
+    <td>Includes timing info</td>
+    </tr>
+    <tr>
+    <td><code>trusted_byn.json</code></td>
+    <td><code>0600</code></td>
+    <td>Affects scope resolution</td>
+    </tr>
+    <tr>
+    <td><code>audit/&lt;vault&gt;/*.log</code></td>
+    <td><code>0600</code></td>
+    <td>Plain-text names; sensitive metadata</td>
+    </tr>
+    <tr>
+    <td><code>vault.db</code> (+ WAL/SHM)</td>
+    <td><code>0600</code></td>
+    <td>Encrypted but mode still tightens</td>
+    </tr>
+    <tr>
+    <td><code>wrapped.key</code></td>
+    <td><code>0600</code></td>
+    <td>Useless without password, but still</td>
+    </tr>
+    <tr>
+    <td><code>meta.json</code></td>
+    <td><code>0600</code></td>
+    <td>Vault UUID + fingerprint</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>The CLI never widens permissions. If <code>~/.byn</code> ever ends up
+    group-readable, run <code>chmod -R go-rwx ~/.byn</code> and audit how that
+    happened.</p>
+    <hr>
+    <h2 id="backup--restore">Backup / restore</h2>
+    <h3 id="minimum-backup">Minimum backup</h3>
+    <p>Per vault you want to preserve:</p>
+    <pre><code>~/.byn/vaults/&lt;vault&gt;/vault.db
+~/.byn/vaults/&lt;vault&gt;/wrapped.key
+~/.byn/vaults/&lt;vault&gt;/meta.json
+</code></pre>
+    <p>Plus, if you care about audit forensics:</p>
+    <pre><code>~/.byn/audit/&lt;vault&gt;/*.log
+</code></pre>
+    <h3 id="restore">Restore</h3>
+    <ol>
+    <li>Stop the daemon: <code>byn daemon stop</code>.</li>
+    <li>Restore files preserving mode (<code>cp -p</code> or <code>rsync -a</code>).</li>
+    <li>Start the daemon: <code>byn daemon start</code>.</li>
+    <li><code>byn unlock</code> with your password.</li>
+    <li><code>byn doctor</code> to confirm schema + fingerprint + audit chain are
+    all healthy.</li>
+    </ol>
+    <h3 id="caveats">Caveats</h3>
+    <ul>
+    <li>A restore on <strong>another machine</strong> works: the wrapped key is bound to your
+    master password only, not to any hardware. The same password unlocks the
+    restored vault anywhere. (The trust store and passkey enrollments do <strong>not</strong>
+    carry across a machine boundary — see <a href="migration/">Migration &amp; setup</a> for
+    why <code>byn migrate --from</code> drops them and you must re-trust + re-enroll.)</li>
+    <li>Don't restore stale <code>daemon.sock</code> / <code>daemon.pid</code> — let the daemon
+    recreate them.</li>
+    <li><code>vault.db-wal</code> and <code>vault.db-shm</code> are transient. Don't restore.</li>
+    </ul>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="architecture/">Architecture</a> — schema details + per-vault state model.</li>
+    <li><a href="security/">Security model</a> — why each file is encrypted/signed/perm-protected.</li>
+    <li><a href="cli-reference/">CLI reference</a> — <code>daemon</code>, <code>doctor</code>, <code>audit</code>, <code>vault</code> commands.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../architecture/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Architecture</div>
+      </a>
+      <a href="../byn-file-format/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">`.byn` file format</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#daemon-files" class="toc-item">Daemon files</a>
+    <a href="#daemonsock" class="toc-item sub">daemon.sock</a>
+    <a href="#owner" class="toc-item sub">owner</a>
+    <a href="#daemonpid" class="toc-item sub">daemon.pid</a>
+    <a href="#daemonlog" class="toc-item sub">daemon.log</a>
+    <a href="#auth-statejson" class="toc-item sub">auth-state.json</a>
+    <a href="#trust-file" class="toc-item">Trust file</a>
+    <a href="#trusted-bynjson" class="toc-item sub">trusted_byn.json</a>
+    <a href="#audit-logs" class="toc-item">Audit logs</a>
+    <a href="#auditvaultyyyy-mmlog" class="toc-item sub">audit/&lt;vault&gt;/YYYY-MM.log</a>
+    <a href="#per-vault-files" class="toc-item">Per-vault files</a>
+    <a href="#vaultdb" class="toc-item sub">vault.db</a>
+    <a href="#vaultdb-wal-vaultdb-shm" class="toc-item sub">vault.db-wal, vault.db-shm</a>
+    <a href="#wrappedkey" class="toc-item sub">wrapped.key</a>
+    <a href="#metajson" class="toc-item sub">meta.json</a>
+    <a href="#permissions-reference" class="toc-item">Permissions reference</a>
+    <a href="#backup--restore" class="toc-item">Backup / restore</a>
+    <a href="#minimum-backup" class="toc-item sub">Minimum backup</a>
+    <a href="#restore" class="toc-item sub">Restore</a>
+    <a href="#caveats" class="toc-item sub">Caveats</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/file-layout.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>

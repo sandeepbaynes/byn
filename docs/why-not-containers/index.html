@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Why byn doesn&#39;t use containers — byn docs</title>
+<meta name="description" content="A question security-minded evaluators ask — and should ask: &#34;Wouldn&#39;trunning this in a container be more secure? Other tools use containers(or Nix, or devcontainers) — doesn&#39;t that make them safer?&#34;">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/" class="active">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Why not containers?</div>
+      <a href="./" class="sb-item active">Why byn doesn&#39;t use containers</a>
+      <a href="#the-threat-restated-in-one-paragraph" class="sb-item">The threat, restated in one paragraph</a>
+      <a href="#what-a-container-actually-isolates--and-in-which-direction" class="sb-item">What a container actually isolates — and in which direction</a>
+      <a href="#put-the-secrets--injection-in-a-micro-container--examined" class="sb-item">&#34;Put the secrets / injection in a micro-container&#34; — examined</a>
+      <a href="#what-byn-does-instead" class="sb-item">What byn does instead</a>
+      <a href="#but-nix--devcontainers--tool-x-are-isolated" class="sb-item">&#34;But Nix / devcontainers / tool X are isolated…&#34;</a>
+      <a href="#where-containers-genuinely-help-contain-the-agent-not-the-secret" class="sb-item">Where containers genuinely help: contain the agent, not the secret</a>
+      <a href="#summary" class="sb-item">Summary</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Why not containers?</span>
+    </div>
+
+    <h1>Why byn doesn&#39;t use containers</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/why-not-containers.md">docs/why-not-containers.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/why-not-containers.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>A question security-minded evaluators ask — and should ask: <em>&quot;Wouldn't
+    running this in a container be more secure? Other tools use containers
+    (or Nix, or devcontainers) — doesn't that make them safer?&quot;</em></p>
+    <p>Short answer: <strong>a container's security boundary points the wrong way for
+    the problem byn solves.</strong> Containers protect the host <em>from the workload
+    inside them</em>. byn has to protect a secret-holding process <em>from untrusted
+    code already on the host</em> — the inverse. For that, a container adds
+    weight and attack surface without adding protection. The long answer,
+    including where containers genuinely <em>do</em> help (and how to use them
+    <strong>with</strong> byn), is below.</p>
+    <hr>
+    <h2 id="the-threat-restated-in-one-paragraph">The threat, restated in one paragraph</h2>
+    <p>byn defends against the <strong>agent-era leak</strong>: coding agents, IDE
+    extensions, MCP servers, and scripts running <strong>under your own UID</strong> that
+    read a plaintext <code>.env</code>, <code>~/.aws/credentials</code>, or SSH key off disk and
+    silently echo it into chat history, logs, or a commit. The adversary is
+    not a hostile workload you deliberately sandboxed — it is semi-trusted
+    code you invited, living in your normal host session, with your normal
+    permissions. (Full model: <a href="security/">Security model</a>, &quot;owned by you,
+    operated by many.&quot;)</p>
+    <hr>
+    <h2 id="what-a-container-actually-isolates--and-in-which-direction">What a container actually isolates — and in which direction</h2>
+    <p>A container is <strong>kernel namespaces + cgroups on a shared kernel</strong>. It is
+    a packaging and resource-isolation mechanism, not a hypervisor. Two
+    consequences matter here:</p>
+    <ol>
+    <li>
+    <p><strong>Containers are not &quot;unexploitable.&quot;</strong> Every container shares the
+    host kernel, and container escapes are a recurring reality — runc
+    CVE-2019-5736 (overwrite the host runc binary), the 2024 &quot;Leaky
+    Vessels&quot; runc/BuildKit escapes (CVE-2024-21626 et al.), plus any
+    kernel privilege-escalation bug. Projects like gVisor and Firecracker
+    exist precisely because plain containers were judged <em>insufficient</em>
+    as a boundary for hostile workloads. &quot;It's in a container, so there's
+    no way in&quot; is not a claim any container runtime makes.</p>
+    </li>
+    <li>
+    <p><strong>The boundary is directional.</strong> Namespaces hide the host from the
+    <em>contained</em> process. They do nothing to hide the container from the
+    <strong>host</strong>: the host kernel schedules every containerized process, the
+    host's <code>/proc</code> exposes them, and whoever can reach the container
+    runtime's control plane owns every container on the machine.</p>
+    </li>
+    </ol>
+    <p>That second point is the disqualifier. byn's adversary is <strong>on the
+    host</strong>, running as you. A container around byn's secrets would face the
+    attacker from its weak side.</p>
+    <hr>
+    <h2 id="put-the-secrets--injection-in-a-micro-container--examined">&quot;Put the secrets / injection in a micro-container&quot; — examined</h2>
+    <p>The intuitive design — run byn's injection inside a small container,
+    volume-map the project so your code and tools keep running on the host —
+    fails three independent ways:</p>
+    <ol>
+    <li>
+    <p><strong>The host owns the container.</strong> Any same-UID process that can reach
+    the container runtime can <code>docker exec</code> into the container, read its
+    environment with <code>docker inspect</code>, or read its processes through the
+    host's <code>/proc</code>. The Docker socket is <strong>root-equivalent by design</strong>
+    (mounting the host filesystem is one command away) — and dev-machine
+    agents very commonly have Docker access, because building and running
+    containers is part of the job we give them. Adding a container
+    runtime to the machine <em>expands</em> the attack surface byn is defending.</p>
+    </li>
+    <li>
+    <p><strong>Volume mounts pierce the boundary.</strong> The moment the container maps
+    a host volume, anything the injector writes there is plaintext on the
+    host disk — the exact thing byn exists to prevent. A boundary with a
+    shared-filesystem hole in it is not a boundary for secrets.</p>
+    </li>
+    <li>
+    <p><strong>The credential must cross back anyway.</strong> The processes that
+    <em>consume</em> credentials — <code>aws</code>, <code>psql</code>, your application, the agent's
+    build — run on the host in this design. So the plaintext has to leave
+    the container (via env, the shared volume, or a socket) at precisely
+    the moment it matters. The container protects the secret only while
+    nothing is using it — and that case is already covered by the
+    encrypted vault.</p>
+    </li>
+    </ol>
+    <p>And on macOS — the primary dev platform for this problem — there is no
+    native container support: Docker runs a <strong>Linux VM</strong>, so &quot;a micro
+    container for injection&quot; means crossing a VM boundary plus virtualized
+    file sharing on every credential use. Heavyweight, slower, and still
+    wrong-direction.</p>
+    <hr>
+    <h2 id="what-byn-does-instead">What byn does instead</h2>
+    <p>The one ingredient of a container that <em>is</em> relevant to this threat is
+    <strong>UID/privilege separation</strong> — and byn takes that ingredient directly,
+    without the container runtime around it:</p>
+    <ul>
+    <li><strong>A separate daemon process</strong> holds the vault key in memory only;
+    secret values are AEAD-encrypted at rest and never written to disk in
+    plaintext. The process boundary (separate address space) is the same
+    kernel primitive containers are built on.</li>
+    <li><strong>Privilege separation</strong> (in progress, next release): the daemon runs
+    as its own <code>_byn</code> service UID and <code>byn exec</code> spawns the child as a
+    <code>_byn-exec</code> UID — so a same-UID agent can no longer connect to the
+    daemon socket, ptrace the daemon, or read the child's
+    <code>/proc/&lt;pid&gt;/environ</code> without root. This is the cross-UID isolation a
+    container would have contributed, minus the root-equivalent control
+    plane, the VM on macOS, and the per-use latency.</li>
+    <li><strong>Per-terminal sessions and proof-of-presence</strong> gate sensitive
+    operations, and <strong>every value access is audited</strong> — so even when
+    prevention fails, the leak is detectable.</li>
+    </ul>
+    <p><strong>The honest ceiling is identical in both designs:</strong> an adversary with
+    root defeats containers and UID separation alike (root can exec into any
+    container, read any <code>/proc</code>, ptrace anything). No local architecture —
+    container, VM-per-secret, or privsep — changes that; see &quot;Out of scope&quot;
+    in the <a href="security/">Security model</a>.</p>
+    <hr>
+    <h2 id="but-nix--devcontainers--tool-x-are-isolated">&quot;But Nix / devcontainers / tool X are isolated…&quot;</h2>
+    <p>Reproducible-environment tools solve a <strong>different problem</strong> —
+    reproducibility — and are routinely mistaken for secret-confidentiality
+    tools. Two specifics worth knowing:</p>
+    <ul>
+    <li><strong>Nix:</strong> the Nix store (<code>/nix/store</code>) is world-readable by design;
+    anything a derivation embeds is plaintext for every user and process
+    on the machine. The community's own secret-management add-ons
+    (agenix, sops-nix) exist precisely because of this — and they decrypt
+    secrets onto the filesystem at activation time, which puts a readable
+    file back within reach of the same-UID workload. Nix gives you
+    reproducible environments, not confidential credentials.</li>
+    <li><strong>Devcontainers / Docker dev environments:</strong> a <code>.env</code> file mounted
+    into the container is exactly as plaintext as it was on the host —
+    and the coding agent you're worried about typically runs <strong>inside</strong>
+    that container, right next to the secrets. The container isolated the
+    agent from your host, not your secrets from the agent.</li>
+    </ul>
+    <p>None of these are competitors on the leak byn targets. They compose
+    with byn — which is the next section.</p>
+    <hr>
+    <h2 id="where-containers-genuinely-help-contain-the-agent-not-the-secret">Where containers genuinely help: contain the agent, not the secret</h2>
+    <p>The correct container play is the inversion. Don't put the secret in
+    the box — <strong>put the untrusted code in the box</strong>:</p>
+    <ul>
+    <li>Run agents and untrusted tooling in a container, VM, or separate OS
+    user account.</li>
+    <li>Do <strong>not</strong> mount <code>~/.byn</code>, the byn daemon socket, or
+    <code>/var/run/docker.sock</code> into that sandbox.</li>
+    <li>Keep byn on the host. Credentials are injected only into processes
+    <em>you</em> start via <code>byn exec</code>, and the sandboxed agent has no path to
+    the daemon, the vault file, or the injected child.</li>
+    </ul>
+    <p>Used this way, the container's boundary finally points the right
+    direction: host (and byn) protected <em>from</em> the workload. This is also
+    the standing recommendation in the
+    <a href="security/">Security model</a> best practices — until privilege
+    separation ships, a separate UID/sandbox/VM for untrusted code is the
+    real same-UID boundary, and it remains good defense-in-depth after.</p>
+    <hr>
+    <h2 id="summary">Summary</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Design</th>
+    <th>Boundary direction</th>
+    <th>Verdict for byn's threat</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Secrets/injection inside a container, volumes to host</td>
+    <td>Protects host <em>from container</em> — attacker is on the host</td>
+    <td>Wrong direction: runtime control plane is root-equivalent, mounts leak plaintext, creds cross back at use time</td>
+    </tr>
+    <tr>
+    <td>Nix / devcontainer environments</td>
+    <td>Reproducibility, not confidentiality</td>
+    <td>Orthogonal: world-readable store / mounted plaintext <code>.env</code>; agent lives with the secrets</td>
+    </tr>
+    <tr>
+    <td><strong>byn:</strong> encrypted vault + daemon + UID privsep + audit</td>
+    <td>Protects the secret-holder <em>from same-UID code</em></td>
+    <td>Matches the threat; container's useful ingredient (cross-UID isolation) without its baggage</td>
+    </tr>
+    <tr>
+    <td><strong>byn + sandboxed agent</strong> (container/VM/separate user)</td>
+    <td>Both directions covered</td>
+    <td>Recommended: byn guards the secrets, the sandbox guards the host</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>byn isn't container-less because containers were overlooked — it's
+    container-less because the threat model was taken seriously.</p>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="security/">Security model</a> — full threat model, named limits, best practices.</li>
+    <li><a href="architecture/">Architecture</a> — daemon process model and IPC.</li>
+    <li><a href="integrations/ai-agents/">Integrations: AI agents</a> — running agents against byn safely.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../troubleshooting/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Troubleshooting</div>
+      </a>
+      <a href="../field-notes/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Field notes</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#the-threat-restated-in-one-paragraph" class="toc-item">The threat, restated in one paragraph</a>
+    <a href="#what-a-container-actually-isolates--and-in-which-direction" class="toc-item">What a container actually isolates — and in which direction</a>
+    <a href="#put-the-secrets--injection-in-a-micro-container--examined" class="toc-item">&#34;Put the secrets / injection in a micro-container&#34; — examined</a>
+    <a href="#what-byn-does-instead" class="toc-item">What byn does instead</a>
+    <a href="#but-nix--devcontainers--tool-x-are-isolated" class="toc-item">&#34;But Nix / devcontainers / tool X are isolated…&#34;</a>
+    <a href="#where-containers-genuinely-help-contain-the-agent-not-the-secret" class="toc-item">Where containers genuinely help: contain the agent, not the secret</a>
+    <a href="#summary" class="toc-item">Summary</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/why-not-containers.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/">Quickstart</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+  </div>
+</footer>
+
+</body>
+</html>

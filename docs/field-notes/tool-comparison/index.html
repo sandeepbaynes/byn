@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn vs the other tools, honestly — byn docs</title>
+<meta name="description" content="Field note · coverage: v0.3.0 · updated with each release">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/" class="active">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Field notes</div>
+      <a href="./" class="sb-item active">byn vs the other tools, honestly</a>
+      <a href="#plain-env-files--dotfiles-the-incumbent" class="sb-item">Plain .env files / dotfiles (the incumbent)</a>
+      <a href="#direnv" class="sb-item">direnv</a>
+      <a href="#mise-en-place-mise" class="sb-item">mise-en-place (mise)</a>
+      <a href="#doppler" class="sb-item">Doppler</a>
+      <a href="#infisical" class="sb-item">Infisical</a>
+      <a href="#hashicorp-vault" class="sb-item">HashiCorp Vault</a>
+      <a href="#1password-cli-op-run" class="sb-item">1Password CLI (op run)</a>
+      <a href="#aws-vault" class="sb-item">aws-vault</a>
+      <a href="#byn" class="sb-item">byn</a>
+      <a href="#the-capability-matrix" class="sb-item">The capability matrix</a>
+      <a href="#how-to-read-this-table" class="sb-item">How to read this table</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Field notes</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Tool comparison</span>
+    </div>
+
+    <h1>byn vs the other tools, honestly</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/tool-comparison.md">docs/field-notes/tool-comparison.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/field-notes/tool-comparison.md">Edit on GitHub ↗</a>
+    </div>
+
+    <div class="version-stamp">
+      <span>Coverage:</span>
+      <strong>v0.3.0</strong>
+      <span>·</span>
+      <span>Re-verified at each release</span>
+    </div>
+
+    <p><em>Field note · coverage: v0.3.0 · updated with each release</em></p>
+    <p>A strengths-<strong>and</strong>-weaknesses comparison of the tools developers
+    actually use to handle secrets — including byn's own weaknesses, listed
+    just as bluntly. Two ground rules:</p>
+    <ol>
+    <li><strong>These are mostly good tools.</strong> Doppler, Infisical, Vault, 1Password,
+    aws-vault, direnv, and mise are well-built for what they target. The
+    honest claim is not &quot;byn is better&quot; — it is that they target a
+    <em>different problem</em> (supplying production/pipeline environments) and
+    byn targets the one they leave open (the dev machine itself, operated
+    by agents).</li>
+    <li><strong>byn is young.</strong> It is pre-1.0, single-owner-focused, and has real,
+    named gaps. They're in this page too.</li>
+    </ol>
+    <p>The one-line orientation: <strong>if your problem is getting secrets into
+    prod/CI, pick a platform below — they're excellent at it. If your
+    problem is a dev machine full of agents and plaintext credentials, that
+    is byn's problem statement, and you can run byn <em>alongside</em> any of
+    them.</strong></p>
+    <hr>
+    <h2 id="plain-env-files--dotfiles-the-incumbent">Plain <code>.env</code> files / dotfiles (the incumbent)</h2>
+    <ul>
+    <li><strong>Strengths:</strong> zero setup, universal tool support, works offline,
+    nothing to learn. This is why it's the default.</li>
+    <li><strong>Weaknesses:</strong> plaintext readable by every process under your UID
+    (the entire agent-era leak surface); no audit of who read it; slips
+    into commits, backups, and snapshots; long-lived broad credentials by
+    habit. Every incident on the
+    <a href="real-world-incidents/">real-world incidents</a> page begins here.</li>
+    </ul>
+    <h2 id="direnv">direnv</h2>
+    <ul>
+    <li><strong>Strengths:</strong> beloved, battle-tested developer experience —
+    per-directory env loading, tiny, scriptable, everywhere. Composes
+    with other tools (including byn).</li>
+    <li><strong>Weaknesses for this threat:</strong> it is an env <em>loader</em>, not a secret
+    <em>manager</em> — <code>.envrc</code> typically holds or sources plaintext values on
+    disk; no encryption, no access control, no audit. Pointing direnv at
+    a secrets backend helps storage but still materializes values into
+    the shell's ambient environment, where every child process inherits
+    them.</li>
+    </ul>
+    <h2 id="mise-en-place-mise">mise-en-place (mise)</h2>
+    <ul>
+    <li><strong>Strengths:</strong> excellent modern toolchain + task + env manager; fast;
+    has grown secrets-aware features (e.g. sops/age-encrypted env files),
+    which is genuinely better than raw dotfiles.</li>
+    <li><strong>Weaknesses for this threat:</strong> env files are plaintext by default
+    and decrypted values land in the ambient environment of whatever runs
+    in the directory — agents included. No per-access gating or audit on
+    the dev box; security is an add-on, not the design center.</li>
+    </ul>
+    <h2 id="doppler">Doppler</h2>
+    <ul>
+    <li><strong>Strengths:</strong> polished cloud secrets platform — environments,
+    branch configs, sync integrations to every CI/cloud, rotation,
+    team/org management, <strong>server-side</strong> access logs. For pipeline and
+    runtime secrets delivery, genuinely strong.</li>
+    <li><strong>Weaknesses for this threat:</strong> the design center is the cloud
+    workspace, not the dev box. The local CLI is an access path: once
+    authenticated, any same-UID process can run <code>doppler run</code> and receive
+    the values; the CLI token is cached locally; there is no local
+    per-access audit, no per-command authorization, and no offline
+    operation. Your secrets also live with a third party — fine for many
+    orgs, a real dependency nonetheless.</li>
+    </ul>
+    <h2 id="infisical">Infisical</h2>
+    <ul>
+    <li><strong>Strengths:</strong> open-source and self-hostable (a real differentiator
+    vs Doppler), broad integrations, secret scanning, growing
+    PKI/SSH/dynamic-secrets features, machine identities for CI.</li>
+    <li><strong>Weaknesses for this threat:</strong> same shape as Doppler from the dev
+    box's point of view — a platform→pipeline tool whose local CLI
+    session is ambient to your UID; machine-identity/auth tokens persist
+    locally; per-access visibility lives server-side, not on the machine
+    where the agent runs; no per-command gating.</li>
+    </ul>
+    <h2 id="hashicorp-vault">HashiCorp Vault</h2>
+    <ul>
+    <li><strong>Strengths:</strong> the production gold standard — dynamic secrets,
+    leases and revocation, fine-grained policies, audit devices,
+    ephemeral DB/cloud credentials. For infrastructure runtime secrets,
+    nothing here competes with it.</li>
+    <li><strong>Weaknesses for this threat:</strong> it was never meant for the laptop.
+    Heavy to operate; and the standard dev login flow drops a <strong>plaintext
+    token at <code>~/.vault-token</code></strong> — readable by any same-UID process, which
+    can then fetch whatever your policies allow. Server-side audit won't
+    distinguish you from the agent using your token. (Also BUSL-licensed
+    since 2023, for those comparing licenses.)</li>
+    </ul>
+    <h2 id="1password-cli-op-run">1Password CLI (<code>op run</code>)</h2>
+    <ul>
+    <li><strong>Strengths:</strong> superb UX; biometric unlock via the desktop app with
+    genuinely good per-app authorization prompts; secret references
+    (<code>op://…</code>) keep literals out of <code>.env</code> templates; mature, audited
+    vendor.</li>
+    <li><strong>Weaknesses for this threat:</strong> an authorized CLI session is usable
+    by the processes it spawns and there is no per-<em>command</em> allowlist —
+    <code>op run -- &lt;anything&gt;</code> injects into whatever is named. No local
+    per-access audit trail you can query on the box. Closed source,
+    subscription, cloud-account dependency.</li>
+    </ul>
+    <h2 id="aws-vault">aws-vault</h2>
+    <ul>
+    <li><strong>Strengths:</strong> free, open source, stores AWS keys in the OS keychain,
+    vends <strong>short-lived STS session credentials</strong> — a genuinely strong
+    property this page happily credits (it limits what a thief gets).</li>
+    <li><strong>Weaknesses for this threat:</strong> AWS-only; authorizes credential
+    <em>retrieval</em>, not commands — any process that can run <code>aws-vault exec</code>
+    gets a working environment; no audit log; keychain access is ambient
+    once the login session is unlocked; injected session creds are still
+    readable in the child's environ.</li>
+    </ul>
+    <h2 id="byn">byn</h2>
+    <ul>
+    <li><strong>Strengths (the combination the others lack):</strong> local-first, no
+    account, works offline; values AEAD-encrypted at rest with <strong>no
+    plaintext files</strong>; <strong>per-terminal sessions</strong> (your unlock grants an
+    agent's shell nothing); <strong>pinned per-command allowlist</strong> (<code>[exec] actions</code>) so only approved commands run without fresh auth;
+    agent-mode (<code>--json</code>) hard-fails instead of showing prompts an agent
+    could game; <strong>local, HMAC-chained per-access audit trail</strong>;
+    committable names-only <code>.byn</code> manifest with tamper-evident trust;
+    free and source-available.</li>
+    <li><strong>Weaknesses (just as honestly):</strong>
+    <ul>
+    <li><strong>Young.</strong> Pre-1.0, small community, no independent third-party
+    security audit yet. The <a href="../security/">security model</a> is
+    documented honestly, but maturity takes time.</li>
+    <li><strong>The same-UID ceiling is real in v0.3.0 by default.</strong> With privilege
+    separation off (the default), a code-executing process as your UID can
+    still ptrace the <em>unlocked</em> daemon or read an injected child's environ.
+    Privilege separation (daemon and exec children on their own service UIDs)
+    ships <strong>opt-in</strong> in v0.3.0 — enable it with <code>[security] privsep</code> +
+    <code>sudo byn setup</code>; it raises the bar to root but not past it. With it off,
+    OS-level isolation of untrusted code is the recommended companion control.</li>
+    <li><strong>The master passphrase is the at-rest floor.</strong> The vault file is
+    portable by design (no machine binding), so a stolen copy is
+    offline-crackable against a weak passphrase. A machine-bound wrap
+    with a break-glass recovery key is planned.</li>
+    <li><strong>Entry names are plaintext at rest</strong> — deliberate (listing while
+    locked is a feature), but a copied vault file is a map of <em>what</em>
+    you keep.</li>
+    <li><strong>A stolen file's audit trail is re-sealable</strong> until off-box
+    chain anchoring ships (planned).</li>
+    <li><strong>Coverage gaps today:</strong> SSH keys and tool-specific shims
+    (<code>aws</code>, <code>gcloud</code>, …) are roadmap, not shipped; no cloud sync yet
+    (roadmap) and no multi-human team sharing — byn is single-owner by
+    design (one human, many devices and agents); macOS and Linux only.</li>
+    <li><strong>License:</strong> BUSL-1.1 source-available (converts to Apache-2.0 four
+    years per release) — source-visible but not OSI open source. Same
+    family of trade-off HashiCorp made; stated here so nobody discovers
+    it in the fine print.</li>
+    </ul>
+    </li>
+    </ul>
+    <hr>
+    <h2 id="the-capability-matrix">The capability matrix</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Capability</th>
+    <th><code>.env</code></th>
+    <th>direnv / mise</th>
+    <th>Doppler / Infisical</th>
+    <th>Vault</th>
+    <th><code>op run</code></th>
+    <th>aws-vault</th>
+    <th>byn</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>No plaintext secret files at rest</td>
+    <td>✗</td>
+    <td>✗ (◐ with sops)</td>
+    <td>✓</td>
+    <td>◐ (<code>~/.vault-token</code>)</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Runtime injection by name</td>
+    <td>✗</td>
+    <td>◐ (ambient env)</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓ (AWS)</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Works offline / no cloud account</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>◐ (self-host)</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Per-access audit <strong>on the dev box</strong></td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗ (server-side)</td>
+    <td>✗ (server-side)</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Per-terminal session gating</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Per-command pinned allowlist</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Agent-mode hard-fail (no gameable prompt)</td>
+    <td>—</td>
+    <td>—</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Short-lived derived credentials</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>◐ (rotation)</td>
+    <td>✓ (dynamic)</td>
+    <td>✗</td>
+    <td>✓ (STS)</td>
+    <td>✗ planned</td>
+    </tr>
+    <tr>
+    <td>Team / org sharing &amp; RBAC</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✗ (single-owner by design)</td>
+    </tr>
+    <tr>
+    <td>Prod / CI / deploy delivery</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>◐</td>
+    <td>◐</td>
+    <td>✗ not the goal</td>
+    </tr>
+    <tr>
+    <td>Maturity / third-party audits</td>
+    <td>—</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗ young</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>✓ = yes · ◐ = partial/conditional · ✗ = no. Last two rows are where the
+    <em>other</em> tools win — kept in the table for exactly that reason.</p>
+    <h2 id="how-to-read-this-table">How to read this table</h2>
+    <p>The right column-pattern matters more than any single row. The platform
+    tools win every <strong>delivery</strong> row (prod, CI, teams, maturity) and lose
+    every <strong>dev-box containment</strong> row (local audit, session gating, command
+    allowlist, agent hard-fail). byn is the mirror image. That's not a
+    ranking — it's two different problems. The realistic best posture for a
+    team today is honestly: <strong>a platform tool for the pipeline, byn for the
+    laptop</strong> — and short-lived credentials (Vault dynamic secrets,
+    aws-vault STS today; byn's planned broker) wherever you can get them.</p>
+    <hr>
+    <p><em>Tool capabilities are re-verified when this page is re-stamped at each
+    byn release. If a vendor ships something that changes a row — or you
+    think a characterization is unfair — open an issue; accuracy outranks
+    advocacy here.</em></p>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#plain-env-files--dotfiles-the-incumbent" class="toc-item">Plain .env files / dotfiles (the incumbent)</a>
+    <a href="#direnv" class="toc-item">direnv</a>
+    <a href="#mise-en-place-mise" class="toc-item">mise-en-place (mise)</a>
+    <a href="#doppler" class="toc-item">Doppler</a>
+    <a href="#infisical" class="toc-item">Infisical</a>
+    <a href="#hashicorp-vault" class="toc-item">HashiCorp Vault</a>
+    <a href="#1password-cli-op-run" class="toc-item">1Password CLI (op run)</a>
+    <a href="#aws-vault" class="toc-item">aws-vault</a>
+    <a href="#byn" class="toc-item">byn</a>
+    <a href="#the-capability-matrix" class="toc-item">The capability matrix</a>
+    <a href="#how-to-read-this-table" class="toc-item">How to read this table</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/tool-comparison.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/">Quickstart</a>
+    <a href="../../../docs/security/">Security model</a>
+  </div>
+</footer>
+
+</body>
+</html>

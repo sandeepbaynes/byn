@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn — Documentation — byn docs</title>
+<meta name="description" content="This directory is the reference for users and contributors. Read whatyou need; everything cross-links.">
+<link rel="stylesheet" href="../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/cli-reference/">CLI reference</a>
+    <a href="../docs/security/">Security</a>
+    <a href="../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Documentation</div>
+      <a href="./" class="sb-item active">byn — Documentation</a>
+      <a href="#for-users" class="sb-item">For users</a>
+      <a href="#for-contributors--curious-users" class="sb-item">For contributors / curious users</a>
+      <a href="#see-also" class="sb-item">See also</a>
+      <a href="#conventions" class="sb-item">Conventions</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Docs</span>
+    </div>
+
+    <h1>byn — Documentation</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/README.md">docs/README.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/README.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>This directory is the reference for users and contributors. Read what
+    you need; everything cross-links.</p>
+    <blockquote>
+    <p><strong>For contracts</strong> (what must always be true), read
+    <a href="spec/"><code>spec.md</code></a>. It's the single source of truth for
+    byn behavior. The files in this directory <strong>explain</strong> that
+    behavior — they don't override it.</p>
+    </blockquote>
+    <h2 id="for-users">For users</h2>
+    <ul>
+    <li><strong><a href="cli-reference/">CLI reference</a></strong> — every command, flag, env var, and exit code.</li>
+    <li><strong><a href="byn-file-format/"><code>.byn</code> file + discovery</a></strong> — auto-scope from the
+    current directory + TOFU trust.</li>
+    <li><strong><a href="file-layout/">File layout</a></strong> — what the byn data root contains, modes,
+    semantics.</li>
+    <li><strong><a href="migration/">Migration &amp; setup</a></strong> — <code>byn setup</code>, <code>byn migrate</code> (relocate
+    vs import), privilege separation, and the data-root override removal upgrade
+    note.</li>
+    <li><strong><a href="troubleshooting/">Troubleshooting</a></strong> — daemon down, vault locked,
+    rate-limited, audit chain broken, etc.</li>
+    <li><strong><a href="glossary/">Glossary</a></strong> — vault, scope, AAD, TOFU, wrapping, fingerprint,
+    audit chain.</li>
+    <li><strong><a href="integrations/">Integrations</a></strong> — VS Code, JetBrains, Eclipse, AI coding agents.</li>
+    </ul>
+    <h2 id="for-contributors--curious-users">For contributors / curious users</h2>
+    <ul>
+    <li><strong><a href="architecture/">Architecture</a></strong> — daemon ↔ CLI IPC, multi-vault state,
+    scope hierarchy, SQLite schema, audit log, request flow.</li>
+    <li><strong><a href="security/">Security model</a></strong> — threat model, crypto primitives,
+    key lifecycle, known weaknesses, deferred hardening.</li>
+    </ul>
+    <h2 id="see-also">See also</h2>
+    <ul>
+    <li><strong><code>README.md</code></strong> (repo root) — quickstart + status.</li>
+    <li><strong><code>features.md</code></strong> — feature inventory at the last release.</li>
+    <li><strong><code>testing.md</code></strong> — how the test suite is structured + manual smoke.</li>
+    <li><strong><code>man/byn.1</code></strong> — install with <code>make install-man</code>, read with <code>man byn</code>.</li>
+    </ul>
+    <h2 id="conventions">Conventions</h2>
+    <ul>
+    <li>A <code>[scope]</code> in this doc means <code>vault → project → env</code>, the four-level
+    hierarchy explained in <a href="architecture/">Architecture</a> and the <a href="glossary/">Glossary</a>.</li>
+    <li>&quot;Daemon&quot; means the long-running background process listening on the byn
+    daemon socket. &quot;CLI&quot; means the <code>byn</code> binary that connects to it.</li>
+    <li>File modes are written in octal (<code>0600</code> = owner read+write, no group/other).</li>
+    <li>On-disk paths are shown relative to the <strong>byn data root</strong>. That root is a
+    fixed system path (<code>/var/lib/byn</code> on Linux, <code>/Library/Application Support/byn</code>
+    on macOS) once the machine is provisioned for privilege separation
+    (<code>byn setup</code>), or the legacy per-user <code>~/.byn</code> when unprovisioned (the default).
+    See <a href="file-layout/">File layout</a>. There is no data-root env override.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <div></div>
+      <a href="./quickstart/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Quickstart</div>
+      </a>
+    </div>
+  </main>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/README.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../index.html">Home</a>
+    <a href="../docs/cli-reference/">CLI Reference</a>
+    <a href="../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>

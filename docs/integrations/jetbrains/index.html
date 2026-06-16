@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn &#43; JetBrains IDEs (IntelliJ, GoLand, PyCharm, WebStorm, …) — byn docs</title>
+<meta name="description" content="Inject vault env-vars into Run/Debug configurations without typingplaintext into the IDE&#39;s &#34;Environment variables&#34; field (which getssaved into workspace.xml and accidentally committed).">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/" class="active">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">JetBrains</div>
+      <a href="./" class="sb-item active">byn &#43; JetBrains IDEs (IntelliJ, GoLand, PyCharm, WebStorm, …)</a>
+      <a href="#prerequisites" class="sb-item">Prerequisites</a>
+      <a href="#approach-1-wrap-the-interpreter--executable" class="sb-item">Approach 1: wrap the interpreter / executable</a>
+      <a href="#approach-2-external-tools" class="sb-item">Approach 2: External Tools</a>
+      <a href="#approach-3-terminal" class="sb-item">Approach 3: terminal</a>
+      <a href="#per-project-scope" class="sb-item">Per-project scope</a>
+      <a href="#storing-env-vars-in-the-run-config--dont" class="sb-item">Storing env vars in the run config — DON&#39;T</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Integrations</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">JetBrains</span>
+    </div>
+
+    <h1>byn &#43; JetBrains IDEs (IntelliJ, GoLand, PyCharm, WebStorm, …)</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/jetbrains.md">docs/integrations/jetbrains.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/integrations/jetbrains.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>Inject vault env-vars into Run/Debug configurations without typing
+    plaintext into the IDE's &quot;Environment variables&quot; field (which gets
+    saved into <code>workspace.xml</code> and accidentally committed).</p>
+    <h2 id="prerequisites">Prerequisites</h2>
+    <ul>
+    <li><code>byn</code> on <code>$PATH</code> and resolvable from the IDE's launcher
+    environment. On macOS, IDEA Launcher inherits a stripped PATH —
+    if <code>byn</code> isn't found, run the IDE from a terminal once, or set
+    <code>Path Variables</code> (Settings → Appearance &amp; Behavior → Path Variables)
+    to include the directory containing <code>byn</code>.</li>
+    <li>Daemon running, vault unlocked.</li>
+    </ul>
+    <h2 id="approach-1-wrap-the-interpreter--executable">Approach 1: wrap the interpreter / executable</h2>
+    <p>Most Run configurations let you change the <strong>interpreter</strong> or
+    <strong>runner</strong> path. Set it to <code>byn</code> with <code>exec --</code> as the prefix.</p>
+    <h3 id="intellij--jvm-based-run-config">IntelliJ — JVM-based run config</h3>
+    <p>Run config doesn't let you replace <code>java</code> directly. Use <strong>External
+    Tools</strong> instead (see Approach 2) or wrap your run script.</p>
+    <h3 id="goland--go-build--run">GoLand — Go build / run</h3>
+    <p>Use a <strong>Shell Script</strong> run configuration with:</p>
+    <ul>
+    <li><strong>Script path</strong>: <code>byn</code></li>
+    <li><strong>Script options</strong>: <code>exec -- go run ${FilePathRelativeToProjectRoot}</code></li>
+    <li><strong>Working directory</strong>: <code>$PROJECT_DIR$</code></li>
+    </ul>
+    <p>For debug, use a <strong>Go Build</strong> configuration and override the binary
+    path to a script that calls <code>byn exec -- ./bin/myapp</code>.</p>
+    <h3 id="pycharm--python-script">PyCharm — Python script</h3>
+    <ul>
+    <li><strong>Interpreter</strong>: <code>/usr/local/bin/byn</code> (full path required by
+    PyCharm)</li>
+    <li><strong>Interpreter options</strong>: <code>exec -- python</code></li>
+    <li><strong>Script path</strong>: as normal</li>
+    </ul>
+    <h3 id="webstorm--nodejs">WebStorm — Node.js</h3>
+    <p>Similarly: set <strong>Node interpreter</strong> to <code>byn</code> and <strong>Node parameters</strong>
+    to <code>exec -- node</code>.</p>
+    <h2 id="approach-2-external-tools">Approach 2: External Tools</h2>
+    <p><code>Settings → Tools → External Tools → +</code>:</p>
+    <ul>
+    <li><strong>Name</strong>: Run via byn</li>
+    <li><strong>Program</strong>: <code>byn</code></li>
+    <li><strong>Arguments</strong>: <code>exec -- $Prompt$</code></li>
+    <li><strong>Working directory</strong>: <code>$ProjectFileDir$</code></li>
+    </ul>
+    <p>Bind a shortcut to it (<code>Keymap → External Tools → Run via byn</code>).
+    Triggering it opens a prompt for the command, then runs it with vault
+    env-vars injected.</p>
+    <h2 id="approach-3-terminal">Approach 3: terminal</h2>
+    <p>The simplest: <code>Alt+F12</code> (or <strong>View → Tool Windows → Terminal</strong>), then:</p>
+    <pre><code>byn exec -- npm test
+byn exec -- ./gradlew bootRun
+</code></pre>
+    <h2 id="per-project-scope">Per-project scope</h2>
+    <p><code>File → Settings → Tools → Terminal → Environment variables</code>:</p>
+    <pre><code>BYN_PROJECT=my-app
+BYN_ENV=dev
+</code></pre>
+    <p>Now the terminal scope is pinned, and so is anything you launch from
+    the IDE's terminal.</p>
+    <h2 id="storing-env-vars-in-the-run-config--dont">Storing env vars in the run config — DON'T</h2>
+    <p>Avoid pasting secrets into the &quot;Environment variables&quot; field of a Run
+    configuration. JetBrains stores them in <code>.idea/workspace.xml</code>. That
+    file is local-by-default but easy to commit by accident. <code>byn exec</code>
+    keeps secrets out of every file the IDE touches.</p>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#prerequisites" class="toc-item">Prerequisites</a>
+    <a href="#approach-1-wrap-the-interpreter--executable" class="toc-item">Approach 1: wrap the interpreter / executable</a>
+    <a href="#intellij--jvm-based-run-config" class="toc-item sub">IntelliJ — JVM-based run config</a>
+    <a href="#goland--go-build--run" class="toc-item sub">GoLand — Go build / run</a>
+    <a href="#pycharm--python-script" class="toc-item sub">PyCharm — Python script</a>
+    <a href="#webstorm--nodejs" class="toc-item sub">WebStorm — Node.js</a>
+    <a href="#approach-2-external-tools" class="toc-item">Approach 2: External Tools</a>
+    <a href="#approach-3-terminal" class="toc-item">Approach 3: terminal</a>
+    <a href="#per-project-scope" class="toc-item">Per-project scope</a>
+    <a href="#storing-env-vars-in-the-run-config--dont" class="toc-item">Storing env vars in the run config — DON&#39;T</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/jetbrains.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>

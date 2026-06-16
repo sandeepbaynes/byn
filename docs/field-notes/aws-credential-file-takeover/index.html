@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AWS credentials file that cost me my account — byn docs</title>
+<meta name="description" content="Field note · from the author · coverage: v0.3.0">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/" class="active">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Field notes</div>
+      <a href="./" class="sb-item active">The AWS credentials file that cost me my account</a>
+      <a href="#what-happened" class="sb-item">What happened</a>
+      <a href="#you-should-have-used-restrictive-iam-policies" class="sb-item">&#34;You should have used restrictive IAM policies&#34;</a>
+      <a href="#the-research-what-i-looked-at-before-building-anything" class="sb-item">The research: what I looked at before building anything</a>
+      <a href="#what-byn-changes-about-this-story" class="sb-item">What byn changes about this story</a>
+      <a href="#honest-limits--what-byn-would-not-have-fixed" class="sb-item">Honest limits — what byn would not have fixed</a>
+      <a href="#the-lesson-i-actually-took" class="sb-item">The lesson I actually took</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Field notes</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">AWS credential takeover</span>
+    </div>
+
+    <h1>The AWS credentials file that cost me my account</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/aws-credential-file-takeover.md">docs/field-notes/aws-credential-file-takeover.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/field-notes/aws-credential-file-takeover.md">Edit on GitHub ↗</a>
+    </div>
+
+    <div class="version-stamp">
+      <span>Coverage:</span>
+      <strong>v0.3.0</strong>
+      <span>·</span>
+      <span>Re-verified at each release</span>
+    </div>
+
+    <p><em>Field note · from the author · coverage: v0.3.0</em></p>
+    <p>This one isn't from a vendor write-up. It happened to me, on my own
+    infrastructure, and it is part of why byn exists.</p>
+    <h2 id="what-happened">What happened</h2>
+    <p>I ran development workloads on a VM. Like every machine the AWS CLI has
+    ever touched, it had a <code>~/.aws/credentials</code> file — plaintext access key
+    and secret, sitting at the best-known path in the industry, readable by
+    any process running as my user.</p>
+    <p>An attacker got access to that file. I still can't tell you with
+    certainty which door they came through — and that detail matters less
+    than people think, because once <em>any</em> code ran as my user, the rest was
+    inevitable: read one file, and they had durable, fully-privileged
+    credentials. They took over my AWS accounts.</p>
+    <p>There was no alarm. No log line on the box that said &quot;your credentials
+    file was read at 03:14.&quot; The first signal was the consequences in the
+    AWS account itself — which means the first signal came <em>after</em> the
+    takeover, not before it.</p>
+    <h2 id="you-should-have-used-restrictive-iam-policies">&quot;You should have used restrictive IAM policies&quot;</h2>
+    <p>Correct — and incomplete. Least-privilege IAM absolutely would have
+    shrunk the blast radius, and you should do it. But here is the tension
+    nobody likes to admit: <strong>I develop with autonomous agents because they
+    are faster than me.</strong> That speed is the point. An agent provisioning
+    infrastructure, debugging a deployment, or experimenting with services
+    needs real permissions <em>now</em> — and every time a policy is one statement
+    too narrow, the fast loop stalls while a human goes clicking through
+    IAM. In practice, dev credentials drift broad because narrow ones tax
+    the workflow you bought the agents for.</p>
+    <p>So the realistic dev-box posture was: broad-ish credentials, in a
+    plaintext file, on a machine operated by processes I don't individually
+    supervise. That posture is the industry default. It is also exactly
+    what the attacker needed.</p>
+    <h2 id="the-research-what-i-looked-at-before-building-anything">The research: what I looked at before building anything</h2>
+    <p>I didn't jump to &quot;build a tool.&quot; I went looking for one. Doppler,
+    Infisical, direnv, mise-en-place, the cloud vaults, the exec-wrappers —
+    the landscape is genuinely good at what it targets, and what it targets
+    is <strong>production</strong>: syncing secrets into deploy pipelines, CI, and
+    runtime environments. The local dev machine — the place where the
+    credentials actually sit while a human and a crowd of agents work — is
+    treated as a solved problem or not a problem at all:</p>
+    <ul>
+    <li><strong>Doppler / Infisical</strong> are built around a cloud workspace pushing
+    values into environments and pipelines. The local CLI is an access
+    path to that cloud, not a defense of the dev box: once the CLI is
+    authenticated, any process running as you can use it, nothing on the
+    machine records per-access, and the auth token itself is cached
+    locally.</li>
+    <li><strong>direnv / mise-en-place</strong> are developer-experience tools: they load
+    env vars from files in your project tree. Those files are plaintext
+    on disk — exactly the artifact the agent-era leak reads. They manage
+    environments; they don't protect secrets from the machine's own
+    processes.</li>
+    <li><strong>The exec-wrappers</strong> (aws-vault and friends) genuinely remove the
+    plaintext file for their slice, but they authorize <em>credential
+    retrieval</em>, not <em>commands</em> — whatever process asks, gets — and keep
+    no local audit trail.</li>
+    </ul>
+    <p>The gap was consistent: <strong>no tool let me keep fast, autonomous, agentic
+    engineering while securing the dev machine itself.</strong> And the gap is
+    widening, not closing: developers debug <em>production</em> from their dev
+    machines all the time — prod SQL creds, SSH keys, service tokens pulled
+    down to where the debugger runs — and AI-assisted debugging multiplies
+    how often that happens and how many processes are present when it does.
+    Trusted tooling on the dev box is the precondition for that workflow to
+    be safe at all. That's the tool I couldn't find, so it's the tool byn
+    is. The full strengths-and-weaknesses comparison — byn's own weaknesses
+    included — is in <a href="tool-comparison/">byn vs the other tools, honestly</a>.</p>
+    <h2 id="what-byn-changes-about-this-story">What byn changes about this story</h2>
+    <p>Replay the incident with the credentials in byn instead of in
+    <code>~/.aws/credentials</code>:</p>
+    <ul>
+    <li><strong>The cheap move finds nothing.</strong> There is no credentials file. The
+    vault on disk yields entry <em>names</em> and ciphertext; the values are
+    AEAD-encrypted and the key lives only in the daemon's memory.</li>
+    <li><strong>Reading a value requires authorization the attacker doesn't
+    have.</strong> Value access needs a per-terminal session or fresh
+    authentication (NU-3). The attacker's shell — a process I never
+    unlocked — gets <code>auth_required</code>, not my keys.</li>
+    <li><strong>Using the credentials requires an <em>approved command</em>.</strong> With a
+    trusted <code>.byn</code> and a pinned <code>[exec] actions</code> list, only the exact
+    commands I authorized run without fresh proof-of-presence. &quot;Whatever
+    command the attacker types, with my creds injected&quot; is not in that
+    list.</li>
+    <li><strong>And the attempt is loud.</strong> Every value access and every exec
+    attempt — including denials — lands in the HMAC-chained audit log.
+    Instead of discovering the takeover from AWS-side damage, the trail
+    starts at the first probe <em>on my box</em>: what was tried, when, from
+    which caller. Detection moves from &quot;after the consequences&quot; to
+    &quot;at the attempt.&quot;</li>
+    </ul>
+    <p>Meanwhile the agents keep their speed: pinned actions run free, the
+    <code>.byn</code> manifest declares what each project may do, and I authorize new
+    actions once instead of babysitting every run. That's the actual
+    resolution of the IAM tension — <strong>authorization on the dev box, per
+    command, instead of permission-starving the cloud role the agents
+    depend on.</strong></p>
+    <h2 id="honest-limits--what-byn-would-not-have-fixed">Honest limits — what byn would <em>not</em> have fixed</h2>
+    <ul>
+    <li>If the attacker had gotten <strong>root</strong> on the VM, or had obtained my
+    <strong>master password</strong>, byn's model is explicit that this is game over
+    for any user-space tool (<a href="../security/">Security model</a>).</li>
+    <li>An attacker patient enough to squat inside a terminal holding a
+    <strong>live session</strong> could use that session until it expired or was
+    locked — per-terminal sessions narrow this drastically, but the
+    same-UID ceiling is real until privilege separation ships (next
+    release).</li>
+    <li>The on-box audit trail of a fully compromised machine can be tampered
+    with by an attacker holding the vault file; <strong>off-box anchoring</strong> of
+    the chain head is planned to close exactly that.</li>
+    <li>And least-privilege IAM is still worth doing. byn is a layer, not a
+    replacement for cloud-side hygiene — short-lived, scoped credentials
+    (a planned byn broker integration) are where the two layers meet.</li>
+    </ul>
+    <h2 id="the-lesson-i-actually-took">The lesson I actually took</h2>
+    <p>The failure wasn't exotic. It was the <strong>default posture of every dev
+    machine</strong>: durable credentials, plaintext, well-known path, zero
+    read-detection — on a box increasingly operated by software I don't
+    watch. Fixing that posture without giving up agent-speed development is
+    byn's job description.</p>
+    <p>For the general version of this analysis, read
+    <a href="how-agents-leak-secrets/">How agents leak secrets</a>; for the
+    industry-wide incidents that rhyme with this one, see
+    <a href="real-world-incidents/">Real-world incidents</a>.</p>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#what-happened" class="toc-item">What happened</a>
+    <a href="#you-should-have-used-restrictive-iam-policies" class="toc-item">&#34;You should have used restrictive IAM policies&#34;</a>
+    <a href="#the-research-what-i-looked-at-before-building-anything" class="toc-item">The research: what I looked at before building anything</a>
+    <a href="#what-byn-changes-about-this-story" class="toc-item">What byn changes about this story</a>
+    <a href="#honest-limits--what-byn-would-not-have-fixed" class="toc-item">Honest limits — what byn would not have fixed</a>
+    <a href="#the-lesson-i-actually-took" class="toc-item">The lesson I actually took</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/aws-credential-file-takeover.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/">Quickstart</a>
+    <a href="../../../docs/security/">Security model</a>
+  </div>
+</footer>
+
+</body>
+</html>

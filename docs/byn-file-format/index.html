@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>.byn file format &amp; discovery — byn docs</title>
+<meta name="description" content="How byn auto-detects the active scope from the current directory,and how the TOFU trust model refuses an unapproved or changed .bynsomeone plants in a project dir (its same-UID ceiling is noted below).">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">`.byn` file format</div>
+      <a href="./" class="sb-item active">.byn file format &amp; discovery</a>
+      <a href="#file-format" class="sb-item">File format</a>
+      <a href="#actions-pattern-placeholders" class="sb-item">Actions pattern placeholders</a>
+      <a href="#aliases-section" class="sb-item">[aliases] section</a>
+      <a href="#discovery-walk" class="sb-item">Discovery walk</a>
+      <a href="#trust-on-first-use-tofu" class="sb-item">Trust-on-First-Use (TOFU)</a>
+      <a href="#skipping-discovery" class="sb-item">Skipping discovery</a>
+      <a href="#examples" class="sb-item">Examples</a>
+      <a href="#known-weaknesses" class="sb-item">Known weaknesses</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">`.byn` file format</span>
+    </div>
+
+    <h1>.byn file format &amp; discovery</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/byn-file-format.md">docs/byn-file-format.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/byn-file-format.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>How byn auto-detects the active scope from the current directory,
+    and how the TOFU trust model refuses an unapproved or changed <code>.byn</code>
+    someone plants in a project dir (its same-UID ceiling is noted below).</p>
+    <hr>
+    <h2 id="file-format">File format</h2>
+    <p><code>.byn</code> is a TOML file with a <code>[scope]</code> table, optional <code>[exec]</code> and
+    <code>[auth]</code> tables, and an optional <code>[aliases]</code> table.</p>
+    <pre><code class="language-toml">[scope]
+vault   = &quot;default&quot;
+project = &quot;myapp&quot;
+env     = &quot;dev&quot;
+
+[exec]
+env     = [&quot;AWS_ACCESS_KEY_ID&quot;, &quot;DATABASE_URL&quot;]   # injection allowlist
+actions = [
+    &quot;pytest {{args}}&quot;,                            # pattern: any pytest invocation
+    &quot;aws s3 cp {{path}} {{path}}&quot;,                # pattern: s3 copy with two paths
+    &quot;make build&quot;,                                  # exact match
+]
+
+[auth]
+get = &quot;none&quot;   # optional: override the session gate per-op
+
+[aliases]
+deploy  = &quot;kubectl apply -f deploy/&quot;
+test    = &quot;cargo test&quot;
+migrate = &quot;python manage.py migrate&quot;
+</code></pre>
+    <ul>
+    <li><code>[scope]</code> fields are all optional. Omitted fields fall through to env
+    vars and then daemon defaults.</li>
+    <li><code>[exec] env</code> is the <strong>env-var injection allowlist</strong> for <code>byn exec</code>:
+    only the listed names are injected into the child. <code>&quot;*&quot;</code> (or <code>[&quot;*&quot;]</code>)
+    injects <strong>all</strong> scope vars — with a warning, since secrets added later
+    are then auto-injected. An <strong>empty or absent</strong> <code>[exec] env</code> injects
+    <strong>nothing</strong> (a project declares the vars it needs). With no <code>.byn</code> at
+    all (ad-hoc run), <code>byn exec</code> injects the whole scope.</li>
+    <li><strong><code>[exec] actions</code></strong> is the <strong>command allowlist</strong>: controls which
+    commands may run without per-call authorization. Three states:
+    <ul>
+    <li><em>Absent or empty</em> (secure default) — every exec requires authorization.</li>
+    <li>Explicit list with optional typed placeholders — matching commands run
+    freely; others require authorization. See <a href="#actions-pattern-placeholders">Actions pattern placeholders</a> below.</li>
+    <li><code>[&quot;*&quot;]</code> — wildcard, all commands run freely (loud warning at
+    <code>byn trust</code> time; avoid in production).
+    Actions policy is read from the MAC-bound trust record (not the live
+    file) — editing the <code>.byn</code> post-trust cannot change the effective
+    policy without re-trusting.</li>
+    </ul>
+    </li>
+    <li><code>[auth]</code> keys (<code>get</code>, <code>update</code>, <code>delete</code>, <code>exec</code>) override the session
+    gate for this scope. Values: <code>&quot;always&quot;</code> (tightens, always requires fresh
+    auth even with an active session), <code>&quot;none&quot;</code> (relaxes, skips the gate
+    entirely), or absent (session gate decides). See <a href="cli-reference/">CLI reference</a>
+    for the full policy semantics.</li>
+    <li><strong><code>[aliases]</code></strong> is a string-to-string map of named entry points for
+    <code>byn exec NAME [ARGS...]</code>. See <a href="#aliases-section"><code>[aliases]</code> section</a> below.</li>
+    <li>Unknown keys are a <strong>strict parse error</strong> — typos and out-of-spec
+    schemas don't silently turn into &quot;default&quot;.</li>
+    <li>An <strong>empty</strong> <code>.byn</code> file is a stop marker; see below.</li>
+    </ul>
+    <blockquote>
+    <p><strong>Assisted authoring:</strong> the portal <code>.byn studio</code> (open via <code>byn web</code>, then
+    click the <strong>.byn</strong> button) is the recommended way to create and edit <code>.byn</code>
+    files. It provides a structured builder form, an inline TOML validator, a
+    command tester (simulate the exec gate before committing to trust), and
+    one-click save+trust — all without hand-writing TOML. See
+    <a href="portal/">portal.md</a> for the studio reference.</p>
+    </blockquote>
+    <hr>
+    <h2 id="actions-pattern-placeholders">Actions pattern placeholders</h2>
+    <p><code>[exec] actions</code> entries are patterns, not just exact strings. A pattern
+    is a whitespace-delimited sequence of tokens. Each token is either a
+    literal string or a <strong>typed placeholder</strong> that matches a class of values.</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Placeholder</th>
+    <th>Matches</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>{{uuid}}</code></td>
+    <td>UUID (any case, with or without hyphens)</td>
+    </tr>
+    <tr>
+    <td><code>{{int}}</code></td>
+    <td>Integer (optional leading minus, then digits only)</td>
+    </tr>
+    <tr>
+    <td><code>{{alnum}}</code></td>
+    <td>Alphanumeric string (letters and digits)</td>
+    </tr>
+    <tr>
+    <td><code>{{str}}</code></td>
+    <td>Any single non-empty token (no whitespace)</td>
+    </tr>
+    <tr>
+    <td><code>{{path}}</code></td>
+    <td>Any single non-empty token without a NUL byte (syntactic only; no filesystem check)</td>
+    </tr>
+    <tr>
+    <td><code>{{url}}</code></td>
+    <td>An HTTP(S) URL</td>
+    </tr>
+    <tr>
+    <td><code>{{re:...}}</code></td>
+    <td>A custom regular expression (anchored to the full token)</td>
+    </tr>
+    <tr>
+    <td><code>{{args}}</code></td>
+    <td>Zero or more remaining tokens (<strong>tail wildcard; must be last</strong>)</td>
+    </tr>
+    </tbody>
+    </table>
+    <p><strong>Examples:</strong></p>
+    <pre><code class="language-toml">actions = [
+    &quot;pytest {{args}}&quot;,            # pytest, pytest -v, pytest tests/foo.py, etc.
+    &quot;aws s3 cp {{path}} {{path}}&quot;, # exactly two path arguments
+    &quot;kubectl get {{alnum}}&quot;,       # kubectl get with any resource type
+    &quot;git commit -m {{str}}&quot;,       # single-token commit message
+    &quot;curl -o {{path}} {{url}}&quot;,    # download to a path
+]
+</code></pre>
+    <p><strong>Defense in depth:</strong> patterns that fail to parse are <strong>non-matching</strong>
+    (they never widen the allowlist). Only malformed patterns are rejected at
+    <code>byn trust</code> time — the daemon validates <code>[exec] actions</code> before recording
+    the trust grant.</p>
+    <p><strong>Footgun:</strong> a placeholder must occupy an <strong>entire whitespace-delimited
+    token</strong>. Partial-token placeholders like <code>--flag={{uuid}}</code> are rejected at
+    <code>byn trust</code> time with a clear error. Use a separate token form if your tool
+    supports it (<code>--flag {{uuid}}</code>), or pin the full flag literally.</p>
+    <hr>
+    <h2 id="aliases-section"><code>[aliases]</code> section</h2>
+    <p>The <code>[aliases]</code> table defines named entry points for <code>byn exec NAME [ARGS...]</code>.</p>
+    <pre><code class="language-toml">[aliases]
+deploy  = &quot;kubectl apply -f deploy/&quot;
+test    = &quot;cargo test&quot;
+migrate = &quot;python manage.py migrate --noinput&quot;
+</code></pre>
+    <p><strong>Invocation:</strong></p>
+    <pre><code class="language-sh">byn exec deploy                # expands to: kubectl apply -f deploy/
+byn exec test -- --nocapture   # expands to: cargo test --nocapture
+</code></pre>
+    <p><strong>Expansion rules:</strong></p>
+    <ol>
+    <li>The daemon looks up <code>NAME</code> in the trust record's <code>[aliases]</code> map.</li>
+    <li>The alias value is split on whitespace to produce the base argv.</li>
+    <li>Any extra args you pass after the alias name are <strong>appended</strong>.</li>
+    <li>The expanded argv is then subject to the same <code>[exec] actions</code> pattern
+    matching as a direct <code>byn exec -- COMMAND</code> call.</li>
+    </ol>
+    <p><strong><code>{{args}}</code> in alias values:</strong> use <code>{{args}}</code> in the corresponding
+    <code>[exec] actions</code> pattern to allow variable extra args:</p>
+    <pre><code class="language-toml">[exec]
+actions = [&quot;cargo test {{args}}&quot;]   # matches &quot;cargo test&quot;, &quot;cargo test -v&quot;, etc.
+
+[aliases]
+test = &quot;cargo test&quot;
+</code></pre>
+    <p>Then <code>byn exec test</code> → <code>cargo test</code> (no extra args, matches <code>{{args}}</code> at zero);
+    <code>byn exec test -- --nocapture</code> → <code>cargo test --nocapture</code> (matches <code>{{args}}</code>
+    with one token).</p>
+    <p><strong>Alias shadowing:</strong> <code>byn exec test</code> (no <code>--</code>) runs the alias; <code>byn exec -- test</code>
+    runs the literal binary <code>test</code>. The <code>--</code> always forces direct form.</p>
+    <p><strong>Alias not found:</strong> if the alias name is not defined in the trust record,
+    the daemon returns an error listing the available aliases (up to 8).</p>
+    <p><strong>Security contract:</strong> aliases are stored in the MAC-bound trust record, not
+    read from the live <code>.byn</code> file at exec time. Editing the <code>.byn</code> after <code>byn trust</code>
+    cannot change the effective aliases without re-trusting (which requires the
+    password). An alias cannot reference another alias — only literal command strings.</p>
+    <h3 id="why-toml">Why TOML</h3>
+    <p>Human-editable. Comment-friendly. Strict-mode parsing via
+    <code>github.com/pelletier/go-toml/v2</code> with <code>DisallowUnknownFields()</code>.</p>
+    <h3 id="generating-one-from-the-portal">Generating one from the portal</h3>
+    <p>Hand-authoring is fine, but the web portal's <strong><code>.byn</code></strong> button writes one for
+    you: enter the project directory, multi-select which of the current scope's
+    env-vars go in the <code>[exec] env</code> allowlist, and optionally <strong>trust now</strong>
+    (password-gated) so <code>byn exec</code> works immediately. It writes <code>[scope]</code> for the
+    portal's active vault/project/env plus the chosen <code>[exec] env</code>.</p>
+    <hr>
+    <h2 id="discovery-walk">Discovery walk</h2>
+    <p>Algorithm — <code>cmd/byn/discovery.go:discoverScope()</code>:</p>
+    <ol>
+    <li>Start at the <strong>current working directory</strong> (<code>os.Getwd</code>).</li>
+    <li>Look for <code>&lt;dir&gt;/.byn</code>.</li>
+    <li>If it exists:
+    <ul>
+    <li><strong>Empty?</strong> STOP — discovery returns no scope. Per-project escape
+    hatch: drop an empty <code>.byn</code> in a subproject's root to shield
+    it from a parent project's <code>.byn</code>.</li>
+    <li><strong>Non-empty?</strong> Run the TOFU check (next section). On success,
+    parse and return the scope.</li>
+    </ul>
+    </li>
+    <li>If not found: walk to parent.</li>
+    <li>Stop conditions:
+    <ul>
+    <li><code>dir == $HOME</code></li>
+    <li><code>dir == /</code> (filesystem root)</li>
+    <li><code>dir == os.UserHomeDir()</code> (we never walk above your home)</li>
+    </ul>
+    </li>
+    </ol>
+    <p>A successful discovery emits a stderr hint:</p>
+    <pre><code>Using scope from /Users/you/proj/.byn: default/proj/dev.
+</code></pre>
+    <p>(suppressed when stderr isn't a TTY or <code>BYN_HINTS=0</code>)</p>
+    <hr>
+    <h2 id="trust-on-first-use-tofu">Trust-on-First-Use (TOFU)</h2>
+    <p>Like SSH's <code>known_hosts</code>. We don't ship a list of &quot;approved&quot;
+    <code>.byn</code> files; we record what <em>you</em> approved, and detect changes
+    after.</p>
+    <h3 id="storage">Storage</h3>
+    <p><code>~/.byn/trusted_byn.json</code>, mode 0600:</p>
+    <pre><code class="language-json">{
+  &quot;records&quot;: [
+    {
+      &quot;path&quot;:   &quot;/Users/you/proj/.byn&quot;,
+      &quot;sha256&quot;: &quot;2a9b0c6c646945c842f48c18c9735188f68088c3d5b51a6174dd2cc237c5ade7&quot;
+    }
+  ]
+}
+</code></pre>
+    <ul>
+    <li><strong>path</strong> — canonical absolute path, run through
+    <code>filepath.EvalSymlinks</code>. (Needed because macOS makes <code>/tmp</code> a
+    symlink to <code>/private/tmp</code>, so the same file appears under two
+    paths.)</li>
+    <li><strong>sha256</strong> — SHA-256 of the file's bytes.</li>
+    <li><strong>mtime</strong> — modification time at trust-grant time (v2 records). A
+    <code>touch</code> that changes only the mtime is flagged as CHANGED, forcing
+    re-trust; use <code>byn trust diff PATH</code> to confirm nothing changed.</li>
+    <li><strong>snapshot</strong> — full file body at grant time, used by <code>byn trust diff</code>.</li>
+    <li><strong>MACs</strong> — machine-fingerprint MAC + vault-key MAC (v2). Detects
+    forged records and records copied from another machine.</li>
+    </ul>
+    <h3 id="discovery-applies-the-scope-byn-exec-enforces-trust">Discovery applies the scope; <code>byn exec</code> enforces trust</h3>
+    <p><strong>Discovery itself does not gate on trust.</strong> It walks for <code>.byn</code>, parses
+    it, and applies the scope for <em>every</em> scoped command (<code>list</code>, <code>get</code>,
+    <code>put</code>, the TUI, …) — an untrusted <code>.byn</code> does <strong>not</strong> block them. A <code>.byn</code>
+    only redirects <em>which</em> secrets a command sees; the dangerous case is
+    injecting them into a child process.</p>
+    <p><strong><code>byn exec</code> is the one command that verifies trust</strong> — the verb that
+    injects secrets into a child. Before injecting, it asks the daemon to
+    MAC-verify the <code>.byn</code> (machine-fingerprint + vault-key MACs, see
+    <a href="security/">security.md</a>) and aborts on anything but <code>trusted</code>:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>State</th>
+    <th>What <code>byn exec</code> does</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Trusted (path + hash match, mtime match, MACs valid)</td>
+    <td><strong>Inject</strong> the allowlisted vars</td>
+    </tr>
+    <tr>
+    <td>Untrusted (no record)</td>
+    <td><strong>Abort</strong> — <code>byn trust PATH</code></td>
+    </tr>
+    <tr>
+    <td>Changed (hash or mtime differs)</td>
+    <td><strong>Abort</strong> — re-approve with <code>byn trust PATH</code> (use <code>byn trust diff PATH</code> to see what changed)</td>
+    </tr>
+    <tr>
+    <td>Tampered (a MAC failed — forged / copied from another machine)</td>
+    <td><strong>Abort</strong> — re-establish with <code>byn trust PATH</code></td>
+    </tr>
+    <tr>
+    <td>Stale (record predates v2 hardening)</td>
+    <td><strong>Abort</strong> — re-trust to add mtime + snapshot protection</td>
+    </tr>
+    </tbody>
+    </table>
+    <h3 id="granting-trust-is-a-separate-password-gated-act">Granting trust is a separate, password-gated act</h3>
+    <p>Discovery never grants trust. You approve a <code>.byn</code> explicitly with
+    <code>byn trust PATH</code>, which <strong>always requires the master password</strong> — proof
+    that <em>you</em> are present, even when the vault is already unlocked. The
+    daemon owns the trust store and verifies the password (against the vault
+    the <code>.byn</code> targets, or <code>default</code>) before recording the approval.</p>
+    <p>This deliberately drops the old interactive <code>trust [y/N]</code> prompt. Two
+    reasons, both from the &quot;owned by you, operated by many&quot; threat model
+    (see <a href="security/">security.md</a>):</p>
+    <ul>
+    <li>A y/N prompt can be answered by the very agent that planted the file
+    — it controls the CLI's stdin. A password it doesn't have cannot be.</li>
+    <li>A previously-trusted <code>.byn</code> that <em>changed</em> would otherwise be silently
+    re-trusted on a &quot;y&quot;. Now a change is <strong>refused</strong> until a human
+    re-approves it with the password.</li>
+    </ul>
+    <p>So the human approves once, in a deliberate password-gated step; the
+    agent uses the result from then on but can never grant — or silently
+    re-grant — trust itself.</p>
+    <p><strong>Ceiling (be honest):</strong> the password gate routes grants through the
+    daemon and closes the <code>byn trust</code> / prompt vectors, but a code-executing
+    same-UID process can still write <code>trusted_byn.json</code> directly — no
+    user-space gate stops that. Tamper-evidence for the store itself
+    (HMAC-signing) is a separate, planned hardening; see security.md.</p>
+    <hr>
+    <h2 id="skipping-discovery">Skipping discovery</h2>
+    <p>When you want to bypass the walk entirely:</p>
+    <ul>
+    <li><code>byn --no-discovery ...</code> — one call.</li>
+    <li><code>BYN_NO_DISCOVERY=1 byn ...</code> — for a session/shell.</li>
+    </ul>
+    <p>Discovery is also auto-skipped for these subcommands (they don't
+    operate on a vault scope, and skipping prevents an untrusted <code>.byn</code>
+    from locking you out of fixing it):</p>
+    <ul>
+    <li><code>byn trust</code> / <code>byn untrust</code></li>
+    <li><code>byn daemon ...</code></li>
+    <li><code>byn doctor</code></li>
+    <li><code>byn help</code> / <code>byn version</code></li>
+    </ul>
+    <hr>
+    <h2 id="examples">Examples</h2>
+    <h3 id="per-project-pinning">Per-project pinning</h3>
+    <pre><code>~/projects/maison/
+├── .byn             # [scope] project = &quot;maison&quot;
+├── ...
+└── src/
+</code></pre>
+    <p>Inside <code>~/projects/maison/</code> and any subdir: <code>byn list</code> →
+    <code>maison/default</code>.</p>
+    <h3 id="per-env-pinning-via-env-var">Per-env pinning via env-var</h3>
+    <p><code>.byn</code> pins project; the engineer pins env per shell:</p>
+    <pre><code class="language-sh">cd ~/projects/maison
+export BYN_ENV=dev      # or staging, etc.
+byn list                # maison/dev
+</code></pre>
+    <h3 id="shielding-a-subproject">Shielding a subproject</h3>
+    <p>Mono-repo with a different vault for one subproject:</p>
+    <pre><code>~/work/
+├── .byn              # [scope] project = &quot;platform&quot;
+└── client-X/
+    └── .byn          # [scope] vault = &quot;client-X&quot;  project = &quot;auth&quot;
+</code></pre>
+    <p>Inside <code>~/work/client-X/</code>: scope = <code>client-X/auth/default</code>. The
+    parent <code>.byn</code> isn't consulted (the walk stops at the first hit).</p>
+    <h3 id="per-project-escape-empty-file">Per-project escape (empty file)</h3>
+    <p>You want a subproject to use the daemon defaults, ignoring the
+    parent <code>.byn</code>:</p>
+    <pre><code>~/work/
+├── .byn              # [scope] project = &quot;platform&quot;
+└── sandbox/
+    └── .byn          # 0 bytes — STOP marker
+</code></pre>
+    <p>Inside <code>~/work/sandbox/</code>: scope = <code>default/default/default</code>.</p>
+    <h3 id="direnv-combo">Direnv combo</h3>
+    <p>Keep secrets in byn; expose only the scope selection in the shell:</p>
+    <pre><code class="language-sh"># .envrc
+export BYN_PROJECT=maison
+export BYN_ENV=dev
+</code></pre>
+    <p>Now every <code>byn</code> invocation in the directory uses
+    <code>maison/dev</code> — no <code>.byn</code> file at all, no TOFU.</p>
+    <hr>
+    <h2 id="known-weaknesses">Known weaknesses</h2>
+    <ul>
+    <li>
+    <p>Granting trust is password-gated and daemon-owned, but the
+    <code>trusted_byn.json</code> file itself is still protected only by UNIX perms
+    (mode 0600 in <code>~</code>). A code-executing same-UID process can write it
+    directly, bypassing the password gate. Tamper-evidence (HMAC-sign the
+    file with a daemon-resident key) is designed and deferred to a
+    separate slice — see <a href="security/">security.md</a>.</p>
+    </li>
+    <li>
+    <p>The discovery walk is CWD-relative. If you <code>cd</code> away mid-task and the
+    parent dir's <code>.byn</code> is malicious, the next <code>byn</code> call would discover
+    it — but a new or changed <code>.byn</code> is <strong>refused</strong> (run <code>byn trust</code> to
+    approve), never auto-trusted, so it can't silently redirect you.</p>
+    </li>
+    <li>
+    <p>No relative paths in <code>.byn</code>. There's no <code>path =</code> field; the
+    file only carries scope (vault/project/env). Workspace-manifest
+    features (per-command env allowlists, file-materialization) are
+    a backlog item.</p>
+    </li>
+    </ul>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="security/">Security model</a> — TOFU rationale + agent mode + deferred hardening.</li>
+    <li><a href="architecture/">Architecture</a> — discovery in the request flow.</li>
+    <li><a href="cli-reference/">CLI reference</a> — <code>byn trust</code> / <code>byn untrust</code>.</li>
+    <li><a href="file-layout/">File layout</a> — where <code>trusted_byn.json</code> lives.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../file-layout/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">File layout</div>
+      </a>
+      <a href="../glossary/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Glossary</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#file-format" class="toc-item">File format</a>
+    <a href="#actions-pattern-placeholders" class="toc-item">Actions pattern placeholders</a>
+    <a href="#aliases-section" class="toc-item">[aliases] section</a>
+    <a href="#why-toml" class="toc-item sub">Why TOML</a>
+    <a href="#generating-one-from-the-portal" class="toc-item sub">Generating one from the portal</a>
+    <a href="#discovery-walk" class="toc-item">Discovery walk</a>
+    <a href="#trust-on-first-use-tofu" class="toc-item">Trust-on-First-Use (TOFU)</a>
+    <a href="#storage" class="toc-item sub">Storage</a>
+    <a href="#discovery-applies-the-scope-byn-exec-enforces-trust" class="toc-item sub">Discovery applies the scope; byn exec enforces trust</a>
+    <a href="#granting-trust-is-a-separate-password-gated-act" class="toc-item sub">Granting trust is a separate, password-gated act</a>
+    <a href="#skipping-discovery" class="toc-item">Skipping discovery</a>
+    <a href="#examples" class="toc-item">Examples</a>
+    <a href="#per-project-pinning" class="toc-item sub">Per-project pinning</a>
+    <a href="#per-env-pinning-via-env-var" class="toc-item sub">Per-env pinning via env-var</a>
+    <a href="#shielding-a-subproject" class="toc-item sub">Shielding a subproject</a>
+    <a href="#per-project-escape-empty-file" class="toc-item sub">Per-project escape (empty file)</a>
+    <a href="#direnv-combo" class="toc-item sub">Direnv combo</a>
+    <a href="#known-weaknesses" class="toc-item">Known weaknesses</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn docs · sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/byn-file-format.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+  </div>
+</footer>
+
+</body>
+</html>
