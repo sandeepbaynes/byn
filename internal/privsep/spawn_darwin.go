@@ -236,9 +236,18 @@ func (s *darwinSpawner) sandboxCommand(req SpawnReq, helperArgs []string) (*exec
 		return nil, noop, fmt.Errorf("privsep: Spawn: close sandbox profile: %w", cerr)
 	}
 
-	// sandbox-exec -f <profile> <helperPath> -- <absTarget> [args...]
-	args := append([]string{"-f", f.Name(), s.cfg.HelperPath}, helperArgs...)
-	return exec.Command(sandboxExecPath, args...), cleanup, nil //nolint:gosec // operator-installed helper, generated profile
+	// <helperPath> -- sandbox-exec -f <profile> <absTarget> [args...]
+	//
+	// We run the SETUID helper DIRECTLY (no outer sandbox). It drops to
+	// _byn-exec, then execs sandbox-exec on the NON-setuid target, so the sandbox
+	// is applied AFTER the privilege drop. macOS REFUSES to exec a setuid binary
+	// while sandboxed (a privilege-escalation guard): wrapping the setuid helper
+	// in sandbox-exec failed with "execvp() ... Operation not permitted".
+	// Sandboxing the target (not the helper) is the supported order; the small,
+	// trusted helper runs briefly unsandboxed only to perform the drop. The
+	// curated child env (fd 3) is inherited through sandbox-exec to the target.
+	hargs := append([]string{"--", sandboxExecPath, "-f", f.Name()}, req.Argv...)
+	return exec.Command(s.cfg.HelperPath, hargs...), cleanup, nil //nolint:gosec // operator-installed helper, generated profile
 }
 
 // resolveSymlinks returns the symlink-free real path for p, or p unchanged if it
