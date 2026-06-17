@@ -19,10 +19,10 @@ func TestExecWritableDirs(t *testing.T) {
 		}
 		return p
 	}
-	cache := mk(".cache")          // existing curated default
-	pnpm := mk("Library", "pnpm")  // existing curated default
-	proj := mk("myproj")           // project dir
-	custom := mk("custom-store")   // declared writable that exists
+	cache := mk(".cache")         // existing curated default
+	pnpm := mk("Library", "pnpm") // existing curated default
+	proj := mk("myproj")          // project dir
+	custom := mk("custom-store")  // declared writable that exists
 	// .cargo is NOT created → a curated default that must be skipped.
 
 	byn := filepath.Join(proj, ".byn")

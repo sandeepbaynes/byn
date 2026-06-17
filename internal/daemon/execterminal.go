@@ -45,7 +45,7 @@ func (d *Daemon) isExecHelperUID(uid uint32) bool {
 	if uid == 0 {
 		return true
 	}
-	return d.execProvisioned.Load() && uid == uint32(d.execUID.Load())
+	return d.execProvisioned.Load() && uid == uint32(d.execUID.Load()) //nolint:gosec // G115: a service-user uid always fits in uint32
 }
 
 // execSandboxProfile returns the Seatbelt profile applied to a terminal-anchored

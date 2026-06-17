@@ -347,6 +347,11 @@ func (s *Server) only(method string, h handlerFunc) handlerFunc {
 //
 // When s.token is empty (tests that do not configure a token), the gate is
 // disabled so tests do not need to thread a token through every call.
+//
+// the session-bootstrap flow, not this middleware. Kept pending a portal-auth
+// review (see follow-ups) rather than silently deleted in an unrelated change.
+//
+//nolint:unused // pre-existing: route wiring currently gates via sameOrigin/only +
 func (s *Server) requireToken(h handlerFunc) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.token != "" {

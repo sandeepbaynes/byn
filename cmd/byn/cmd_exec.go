@@ -451,8 +451,8 @@ func resolveInspect(brk bool, value string) (nodeFlag, hint string, err error) {
 	if brk {
 		flag = "--inspect-brk"
 	}
-	switch {
-	case value == "":
+	switch value {
+	case "":
 		port, ferr := freeTCPPort()
 		if ferr != nil {
 			return flag, "Debugger: inspector on node's default 127.0.0.1:9229 (couldn't allocate a free port; pass --inspect=0 to avoid collisions).", nil
@@ -460,7 +460,7 @@ func resolveInspect(brk bool, value string) (nodeFlag, hint string, err error) {
 		target := "127.0.0.1:" + strconv.Itoa(port)
 		return flag + "=" + target,
 			fmt.Sprintf("Debugger: inspector on %s — attach there (e.g. VS Code \"attach\", port %d).", target, port), nil
-	case value == "0":
+	case "0":
 		return flag + "=0",
 			fmt.Sprintf("Debugger: inspector enabled (%s=0) — each node process self-allocates a free port (node prints it).", flag), nil
 	}
