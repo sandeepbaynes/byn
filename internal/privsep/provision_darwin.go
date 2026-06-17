@@ -99,16 +99,16 @@ func provisionUsers(lookup uidLookup, run runner, idInUse func(int) bool) (Provi
 	return ProvisionResult{}, nil
 }
 
-// chooseFreeID returns the first id in [min,max] that is neither already
+// chooseFreeID returns the first id in [minID,maxID] that is neither already
 // allocated earlier in this run nor present as a UID/GID in the OS directory.
-func chooseFreeID(min, max int, inUse func(int) bool, allocated map[int]bool) (int, error) {
-	for id := min; id <= max; id++ {
+func chooseFreeID(minID, maxID int, inUse func(int) bool, allocated map[int]bool) (int, error) {
+	for id := minID; id <= maxID; id++ {
 		if allocated[id] || inUse(id) {
 			continue
 		}
 		return id, nil
 	}
-	return 0, fmt.Errorf("no free service account id available in %d-%d", min, max)
+	return 0, fmt.Errorf("no free service account id available in %d-%d", minID, maxID)
 }
 
 // createServiceUser creates a hidden, login-disabled service account and its

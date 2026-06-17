@@ -14,13 +14,6 @@ type SandboxOpts struct {
 	NoNetwork  bool   // per-action tightening: deny all network
 }
 
-// seatbeltProfile builds a TARGETED SBPL profile: allow-by-default (so arbitrary
-// approved commands run), with specific denials of byn's own socket + state dir
-// (defense in depth on top of the _byn-exec UID boundary), and an optional
-// network denial. NOT default-deny — that would break real actions (pnpm, etc.).
-//
-// sandbox-exec/SBPL is deprecated-but-ubiquitous (Chromium/Bazel); the UID
-// boundary remains the load-bearing control. See spec §4.
 // ExecSandboxProfile returns the Seatbelt (sandbox-exec) profile string for a
 // terminal-anchored exec child (Option A): allow-by-default, denying byn's own
 // state dir + socket (defense in depth atop the _byn-exec UID boundary).
@@ -37,6 +30,13 @@ func ExecSandboxProfile(stateDir, socketPath string, noNetwork bool) string {
 	return seatbeltProfile(SandboxOpts{StateDir: sd, SocketPath: sp, NoNetwork: noNetwork})
 }
 
+// seatbeltProfile builds a TARGETED SBPL profile: allow-by-default (so arbitrary
+// approved commands run), with specific denials of byn's own socket + state dir
+// (defense in depth on top of the _byn-exec UID boundary), and an optional
+// network denial. NOT default-deny — that would break real actions (pnpm, etc.).
+//
+// sandbox-exec/SBPL is deprecated-but-ubiquitous (Chromium/Bazel); the UID
+// boundary remains the load-bearing control. See spec §4.
 func seatbeltProfile(opts SandboxOpts) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
