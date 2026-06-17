@@ -7,4 +7,4 @@ package privsep
 // platforms (the _byn-exec UID boundary remains the load-bearing control; Linux
 // confinement is future work). The helper, seeing an empty profile, execs the
 // target directly.
-func ExecSandboxProfile(stateDir, socketPath string, noNetwork bool) string { return "" }
+func ExecSandboxProfile(_, _ string, _ bool) string { return "" }
