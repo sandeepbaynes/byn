@@ -62,16 +62,30 @@ func readBynFile(path string) (body []byte, fi os.FileInfo, err error) {
 // callers' os.IsNotExist(err) checks keep working.
 func annotateReadErr(path string, err error) error {
 	if runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM) {
-		return fmt.Errorf("open %s: the byn daemon was denied by macOS privacy protection (TCC). "+
+		return &accessDeniedError{msg: fmt.Sprintf("open %s: the byn daemon was denied by macOS privacy protection (TCC). "+
 			"Fix EITHER by keeping the project outside ~/Documents, ~/Desktop, ~/Downloads and iCloud "+
 			"(e.g. ~/code — no setup needed), OR by granting the byn binary Full Disk Access "+
 			"(System Settings > Privacy & Security > Full Disk Access) and restarting the daemon "+
 			"(sudo launchctl kickstart -k system/com.sandeepbaynes.byn). "+
 			"Full steps incl. free code-signing so the grant persists: "+
-			"`man byn` (macOS Full Disk Access) or docs/troubleshooting.md", path)
+			"`man byn` (macOS Full Disk Access) or docs/troubleshooting.md", path)}
 	}
 	return err
 }
+
+// errDaemonAccessDenied marks a .byn read the daemon was blocked from by the OS
+// (macOS TCC / missing Full Disk Access) — distinct from the file being missing,
+// oversize, or untrusted. Callers (notably exec) test for it with errors.Is to
+// surface the real cause instead of a misleading "untrusted" message.
+var errDaemonAccessDenied = errors.New("daemon denied access to the .byn (e.g. macOS Full Disk Access)")
+
+// accessDeniedError carries the actionable TCC/FDA message while matching
+// errDaemonAccessDenied under errors.Is.
+type accessDeniedError struct{ msg string }
+
+func (e *accessDeniedError) Error() string { return e.msg }
+
+func (e *accessDeniedError) Is(target error) bool { return target == errDaemonAccessDenied }
 
 // handleTrustDiff compares the current on-disk .byn content against the
 // snapshot recorded at grant time. This is a read-only op (no password)

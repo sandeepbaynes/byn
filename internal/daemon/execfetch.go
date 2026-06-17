@@ -202,8 +202,15 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	if req.Path != "" {
 		body, fi, rerr := readBynFile(canon)
 		if rerr != nil {
-			le := ipc.NewError(id, ipc.CodeTrustDenied,
-				canon+" is untrusted (unreadable or oversize)", "byn trust "+canon)
+			// Default: the daemon couldn't read the file → treat as untrusted.
+			// But if the OS BLOCKED the read (macOS TCC / no Full Disk Access),
+			// surface THAT instead of a misleading "untrusted" — the fix is FDA,
+			// not re-trusting. (Same actionable message trust grant already shows.)
+			msg, hint := canon+" is untrusted (unreadable or oversize)", "byn trust "+canon
+			if errors.Is(rerr, errDaemonAccessDenied) {
+				msg, hint = rerr.Error(), "grant the daemon Full Disk Access, or move the project — see the message above"
+			}
+			le := ipc.NewError(id, ipc.CodeTrustDenied, msg, hint)
 			auditExec(le)
 			return nil, nil, false, false, false, le
 		}
