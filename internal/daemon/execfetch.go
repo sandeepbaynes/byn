@@ -312,79 +312,96 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			auditCmd = aliasLabel
 		}
 
-		// Derive exec policy from the trust record's Auth table.
-		execPolicy := rec.Auth["exec"] // "always", "none", "trusted", or ""
-
-		if execPolicy != "always" && execPolicy != "none" {
-			// Default / "trusted" branch: check the actions list.
-			actionsWild := false
-			for _, a := range rec.Actions {
-				if a == "*" {
-					actionsWild = true
-					break
-				}
-			}
-
-			if actionsWild {
-				// Wildcard: all commands run free. Set flag so CLI warns.
-				actionsWildcard = true
-			} else {
-				// Pattern match: compile each record action via ParseActionPattern
-				// and call Match against resolvedArgv. This handles typed
-				// placeholders ({{uuid}}, {{args}}, etc.) as well as plain
-				// literals. DEFENSE IN DEPTH: a record action that fails to parse
-				// (e.g. a hand-MAC'd record with a bad pattern string) is treated
-				// as NON-matching — it never panics, never widens the gate.
-				// Empty resolvedArgv (old CLI / version skew, or alias that
-				// expanded to nothing) is treated as unmatched → fail-closed.
-				matched := false
-				if len(resolvedArgv) > 0 {
-					for _, a := range rec.Actions {
-						if a == "*" {
-							continue // already handled above
-						}
-						pat, perr := bynfile.ParseActionPattern(a)
-						if perr != nil {
-							// Defense in depth: bad pattern → skip (non-matching).
-							continue
-						}
-						if pat.Match(resolvedArgv) {
-							matched = true
-							break
-						}
-					}
-				}
-
-				if !matched {
-					// Unmatched (includes empty actions AND empty resolvedArgv): gate.
-					// authorizeActionAlways is used here — the .byn contract
-					// requires credential verification UNCONDITIONALLY, independent
-					// of session state.
-					msg := "command not pinned in " + canon + " [exec] actions"
-					recoverHint := "add it to [exec] actions and re-trust, or supply the password"
-					if le := d.authorizeActionAlways(ctx, id, vaultName, st, msg, recoverHint,
-						req.Password, req.PresenceToken); le != nil {
-						auditExec(le)
-						return nil, nil, false, false, false, le
-					}
-				}
-				// matched → fall through (free)
-			}
-		} else if execPolicy == "always" {
-			// auth = "always": require fresh auth even for matched/wildcard.
-			// authorizeActionAlways is used here — the [auth] exec="always"
-			// contract requires verification UNCONDITIONALLY, independent of
-			// session state.
-			msg := "[auth] exec = \"always\" requires authorization for every command"
-			recoverHint := "supply the password or presence token"
-			if le := d.authorizeActionAlways(ctx, id, vaultName, st, msg, recoverHint,
+		// --no-privsep (ForceAuth): the child runs as the OWNER, so the injected
+		// env is visible to the owner's `ps -E`. Require the master password EVERY
+		// run — NO blind trusted-file run — overriding the .byn's [exec] actions /
+		// [auth] policy. (Owner decision 2026-06-17: non-privsep/debug runs are
+		// always interactive, so a password per run is acceptable.) Privsep exec
+		// leaves ForceAuth false: the trusted .byn + pinned action is the authority.
+		if req.ForceAuth {
+			if le := d.authorizeActionAlways(ctx, id, vaultName, st,
+				"non-privsep exec requires the master password (the child runs as you, exposing the injected env)",
+				"supply the master password; or run with privsep (default) for credential-free trusted exec",
 				req.Password, req.PresenceToken); le != nil {
 				auditExec(le)
 				return nil, nil, false, false, false, le
 			}
+		} else {
+
+			// Derive exec policy from the trust record's Auth table.
+			execPolicy := rec.Auth["exec"] // "always", "none", "trusted", or ""
+
+			if execPolicy != "always" && execPolicy != "none" {
+				// Default / "trusted" branch: check the actions list.
+				actionsWild := false
+				for _, a := range rec.Actions {
+					if a == "*" {
+						actionsWild = true
+						break
+					}
+				}
+
+				if actionsWild {
+					// Wildcard: all commands run free. Set flag so CLI warns.
+					actionsWildcard = true
+				} else {
+					// Pattern match: compile each record action via ParseActionPattern
+					// and call Match against resolvedArgv. This handles typed
+					// placeholders ({{uuid}}, {{args}}, etc.) as well as plain
+					// literals. DEFENSE IN DEPTH: a record action that fails to parse
+					// (e.g. a hand-MAC'd record with a bad pattern string) is treated
+					// as NON-matching — it never panics, never widens the gate.
+					// Empty resolvedArgv (old CLI / version skew, or alias that
+					// expanded to nothing) is treated as unmatched → fail-closed.
+					matched := false
+					if len(resolvedArgv) > 0 {
+						for _, a := range rec.Actions {
+							if a == "*" {
+								continue // already handled above
+							}
+							pat, perr := bynfile.ParseActionPattern(a)
+							if perr != nil {
+								// Defense in depth: bad pattern → skip (non-matching).
+								continue
+							}
+							if pat.Match(resolvedArgv) {
+								matched = true
+								break
+							}
+						}
+					}
+
+					if !matched {
+						// Unmatched (includes empty actions AND empty resolvedArgv): gate.
+						// authorizeActionAlways is used here — the .byn contract
+						// requires credential verification UNCONDITIONALLY, independent
+						// of session state.
+						msg := "command not pinned in " + canon + " [exec] actions"
+						recoverHint := "add it to [exec] actions and re-trust, or supply the password"
+						if le := d.authorizeActionAlways(ctx, id, vaultName, st, msg, recoverHint,
+							req.Password, req.PresenceToken); le != nil {
+							auditExec(le)
+							return nil, nil, false, false, false, le
+						}
+					}
+					// matched → fall through (free)
+				}
+			} else if execPolicy == "always" {
+				// auth = "always": require fresh auth even for matched/wildcard.
+				// authorizeActionAlways is used here — the [auth] exec="always"
+				// contract requires verification UNCONDITIONALLY, independent of
+				// session state.
+				msg := "[auth] exec = \"always\" requires authorization for every command"
+				recoverHint := "supply the password or presence token"
+				if le := d.authorizeActionAlways(ctx, id, vaultName, st, msg, recoverHint,
+					req.Password, req.PresenceToken); le != nil {
+					auditExec(le)
+					return nil, nil, false, false, false, le
+				}
+			}
+			// execPolicy == "none": no auth for any command — wildcard-equivalent.
+			// The loud warning was shown at grant time (Task 3 displays the policy).
 		}
-		// execPolicy == "none": no auth for any command — wildcard-equivalent.
-		// The loud warning was shown at grant time (Task 3 displays the policy).
 
 		// Capture the authorized argv for the response. The CLI executes
 		// exactly this, giving a single authoritative contract.

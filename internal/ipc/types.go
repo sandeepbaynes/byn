@@ -87,7 +87,15 @@ const (
 	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
 	OpExecFetch Op = "exec.fetch"
-	OpExecSpawn Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5)
+	OpExecSpawn Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5; superseded by authorize+redeem)
+
+	// Terminal-anchored exec (Option A, 2026-06-17). The daemon authorizes the
+	// exec and mints a one-time token; the privsep helper — spawned by the CLI in
+	// the invoking shell's process tree so the child inherits the shell's TCC
+	// grant — redeems it for the curated argv+env+profile. Secrets never reach the
+	// owner-UID CLI. See specs/2026-06-17-terminal-anchored-exec-design.md.
+	OpExecAuthorize Op = "exec.authorize" //nolint:gosec // G101: op name, not a credential
+	OpExecRedeem    Op = "exec.redeem"    //nolint:gosec // G101: op name, not a credential
 
 	// Daemon lifecycle (portal-facing). Reload applies a live config reload and
 	// returns what changed; Restart performs a graceful shutdown so the OS
@@ -140,7 +148,7 @@ var AllOps = []Op{
 	OpAuditTail, OpAuditVerify, OpDoctor,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
-	OpExecFetch, OpExecSpawn,
+	OpExecFetch, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
 	OpDaemonReload, OpDaemonRestart,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
@@ -899,6 +907,14 @@ type ExecFetchReq struct {
 	// portal's passkey-ceremony alternative (one-time, short-lived).
 	Password      []byte `json:"password,omitempty"`
 	PresenceToken []byte `json:"presence_token,omitempty"`
+	// ForceAuth makes the daemon require the master password for EVERY run,
+	// overriding the trusted-.byn credential-free path. The CLI sets it for
+	// `byn exec --no-privsep`: that mode runs the child as the OWNER (env visible
+	// to the owner's `ps -E`), so byn demands explicit presence rather than a
+	// blind trusted-file run. (Owner decision 2026-06-17: non-privsep/debug runs
+	// are always interactive, so a password per run is acceptable.) Privsep exec
+	// leaves this false — the trusted .byn + pinned action is the authorization.
+	ForceAuth bool `json:"force_auth,omitempty"`
 }
 
 // ExecFetchValue is one env var to inject. Callers must zero Value buffers after use.
@@ -947,6 +963,50 @@ type ExecSpawnReq struct {
 // error — the CLI propagates it as its own exit status.
 type ExecSpawnResp struct {
 	ExitCode int `json:"exit_code"`
+}
+
+// ---- Terminal-anchored exec (Option A) -------------------------------------
+
+// ExecAuthorizeReq authorizes a `byn exec` and asks the daemon to mint a
+// one-time token the privsep helper will redeem for the curated child argv+env.
+// It carries the same fields as ExecFetchReq for authorization (via the embedded
+// ExecFetchReq), PLUS the caller's base environment, the CLI-resolved absolute
+// target, and the working directory. Secrets are NEVER returned to the
+// owner-UID CLI — only the token is; the root helper redeems the env directly.
+type ExecAuthorizeReq struct {
+	ExecFetchReq          // embed: Path, Scope, Command, Argv, Alias, Password, PresenceToken
+	BaseEnv      []string `json:"base_env,omitempty"`   // the CLI's environment (owner terminal env, minus sensitive), KEY=VALUE
+	AbsTarget    string   `json:"abs_target,omitempty"` // CLI-resolved ABSOLUTE path of the command (argv[0])
+	Cwd          string   `json:"cwd,omitempty"`        // the CLI's working directory (for audit/binding)
+}
+
+// ExecAuthorizeResp returns the one-time redemption Token plus the allowlist
+// flags the CLI renders (same semantics as ExecFetchResp's flags). The token is
+// a capability the helper exchanges for the env via OpExecRedeem; it carries NO
+// secrets itself.
+type ExecAuthorizeResp struct {
+	Token           []byte `json:"token"` //nolint:gosec // G101: one-time capability, not a static credential
+	Wildcard        bool   `json:"wildcard,omitempty"`
+	NoneDeclared    bool   `json:"none_declared,omitempty"`
+	ActionsWildcard bool   `json:"actions_wildcard,omitempty"`
+}
+
+// ExecRedeemReq is sent by the privsep helper (peercred MUST be root or
+// _byn-exec — never the owner) to exchange a one-time token for the
+// daemon-authorized child argv + complete curated env + sandbox profile.
+type ExecRedeemReq struct {
+	Token []byte `json:"token"` //nolint:gosec // G101: one-time capability, not a static credential
+}
+
+// ExecRedeemResp carries the daemon-authorized spawn argv (argv[0] is the
+// validated absolute target), the COMPLETE curated child environment as
+// KEY=VALUE strings (base env minus dangerous keys, plus injected secrets), and
+// the macOS Seatbelt profile to apply ("" ⇒ run unsandboxed, e.g. on Linux). The
+// helper sets the child env to exactly Env and never leaks its own.
+type ExecRedeemResp struct {
+	Argv           []string `json:"argv"`
+	Env            []string `json:"env"`
+	SandboxProfile string   `json:"sandbox_profile,omitempty"`
 }
 
 // ---- byn.validate ----------------------------------------------------------

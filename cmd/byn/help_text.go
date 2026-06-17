@@ -409,15 +409,60 @@ SEE ALSO
        byn-exec - run a command with vault env-vars injected
 
 SYNOPSIS
-       byn exec -- COMMAND [ARGS...]       (direct form)
-       byn exec NAME [ARGS...]             (alias form)
+       byn exec [--no-privsep] [--inspect[=TARGET]] -- COMMAND [ARGS...]   (direct form)
+       byn exec [--no-privsep] [--inspect[=TARGET]] NAME [ARGS...]         (alias form)
 
 DESCRIPTION
-       Loads all env-var entries from the active vault scope, sets
-       them in a child process's environment, and replaces the
-       current byn process with the child via execve(2). The child
-       runs as the same PID as the byn CLI that invoked it; there
-       is no byn process left in the tree.
+       Loads the .byn-allowlisted env-var entries from the active vault
+       scope, injects them into a child process's environment, and runs
+       the command. HOW it runs depends on the execution mode (see
+       EXECUTION MODES): by default the child runs under privilege
+       separation as the _byn-exec service user — so its injected
+       secrets are hidden from your own 'ps -E' — born in your shell's
+       process tree; with --no-privsep it runs in-process as you.
+
+   EXECUTION MODES
+       byn exec            (default — privilege-separated)
+           The daemon authorizes the exec; the child runs as the
+           _byn-exec service user, born in your shell's process tree.
+           Its injected env is HIDDEN from same-user snooping (your own
+           'ps -E' shows nothing). A trusted .byn with a matching
+           [exec] action runs CREDENTIAL-FREE — no password, even with
+           the vault locked. This is the mode for agents, CI, and
+           autonomous/unattended runs.
+
+       byn exec --no-privsep
+           The child runs IN-PROCESS as YOU (byn execve's into it).
+           Because the injected env is then visible to your own
+           'ps -E', this mode REQUIRES the master password on EVERY run
+           — it does NOT honor the trusted-.byn credential-free path.
+           Use it for interactive debugging: a launch-mode debugger
+           (e.g. VS Code "launch") can attach because the process shares
+           your UID. (A debugger cannot attach across UIDs, so it cannot
+           attach to a privsep child directly — that is the same kernel
+           rule that hides the env from your 'ps -E'.)
+
+       byn exec --inspect[=PORT] | --inspect PORT   (and --inspect-brk)
+           Keeps privilege separation AND enables the Node inspector, so
+           you can debug while the secrets stay hidden. byn sets
+           NODE_OPTIONS so the child opens an inspector; your debugger
+           ATTACHES over loopback TCP (which is UID-agnostic).
+             - no PORT      byn picks the next FREE port (printed), so
+                            concurrent debug sessions don't collide.
+             - PORT given   used only if FREE; otherwise byn fails with a
+                            clear message (not a buried EADDRINUSE).
+                            Accepts 9230 or 127.0.0.1:9230, spaced or '='
+                            (--inspect 9230 / --inspect=9230).
+             - --inspect=0  EACH node process self-allocates a free port
+                            (best for 'tsx watch' and other multi-process
+                            runners; node prints each).
+           --inspect-brk breaks on the first line. Point your editor at an
+           "attach" target.
+
+       Choosing: unattended/agent -> default privsep; interactive
+       step-debugging with a launch config -> --no-privsep (you enter
+       the password); debugging while keeping secrets hidden ->
+       --inspect with an attach config.
 
    DIRECT FORM
        The "--" separator is required to disambiguate exec's own

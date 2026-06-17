@@ -55,6 +55,7 @@
       <a href="#audit-log-file-modes-unexpectedly-permissive" class="sb-item">Audit log file modes unexpectedly permissive</a>
       <a href="#related" class="sb-item">Related</a>
       <a href="#operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc" class="sb-item">&#34;operation not permitted&#34; reading a .byn — macOS Full Disk Access (TCC)</a>
+      <a href="#running-byn-exec-under-privsep-toolchain-tmpdir-debugging" class="sb-item">Running byn exec under privsep (toolchain, TMPDIR, debugging)</a>
     </div>
   </aside>
 
@@ -395,6 +396,61 @@ sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
     binary runs cleanly and Full Disk Access can be pre-granted fleet-wide via an MDM
     PPPC configuration profile. Until then, tell your team to use <strong>Option A</strong> —
     projects outside the protected folders — which needs no signing at all.</p>
+    <hr>
+    <h2 id="running-byn-exec-under-privsep-toolchain-tmpdir-debugging">Running <code>byn exec</code> under privsep (toolchain, TMPDIR, debugging)</h2>
+    <p>By default <code>byn exec</code> runs the child as the <code>_byn-exec</code> service user, so the
+    injected secrets are hidden from your own <code>ps -E</code>. Because the child is a
+    <strong>different UID</strong> than you, it needs filesystem access to what your toolchain
+    reads and writes — <code>byn trust</code> grants that for the <em>project</em>, but not for tools
+    installed in your home. Symptoms and fixes:</p>
+    <h3 id="permission-denied-eacces-running-a-tool--toolchain-not-reachable"><code>Permission denied</code> (EACCES) running a tool — toolchain not reachable</h3>
+    <pre><code>sandbox-exec: execvp() of '.../.nvm/.../bin/pnpm' failed: Permission denied
+</code></pre>
+    <p>This is <strong>POSIX</strong>, not TCC (<code>Permission denied</code>/EACCES, not <code>Operation not permitted</code>/EPERM). The <code>_byn-exec</code> child can't traverse/read the dir the tool
+    lives in. <code>byn trust</code> already grants <code>_byn-exec</code> <em>traverse</em> on your home and the
+    project, so a world-readable toolchain (e.g. nvm's <code>~/.nvm</code>, mode <code>0755</code>) works
+    for free. If the toolchain or its state is in a <strong><code>0700</code></strong> dir (common on macOS,
+    e.g. <code>~/Library</code>), grant the child access there once:</p>
+    <pre><code class="language-sh"># Example: pnpm keeps state under macOS's 0700 ~/Library
+chmod +a &quot;_byn-exec allow execute,search&quot; ~/Library
+chmod +a &quot;_byn-exec allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit&quot; ~/Library/pnpm
+</code></pre>
+    <p><code>execute,search</code> is <em>traverse only</em> (not list/read) — the child passes through to
+    the dir you grant, it can't enumerate the parent. This is the same kind of ACE
+    <code>byn trust</code> adds for your project; re-running <code>byn trust .</code> re-applies the project</p>
+    <ul>
+    <li>home-traverse ACEs if they get cleared.</li>
+    </ul>
+    <blockquote>
+    <p><strong>Why this is safe:</strong> running a tool as <code>_byn-exec</code> is <em>more</em> confined than the
+    baseline — normally <code>make dev</code> runs it as <strong>you</strong>, with full home access.
+    Privsep's value is hiding the injected secrets from same-user snooping, not
+    sandboxing the toolchain. Granting <code>_byn-exec</code> read access to your dev
+    environment is therefore not a new exposure.</p>
+    </blockquote>
+    <h3 id="eacces--mkdir-varfolderst--tmpdir"><code>EACCES … mkdir '/var/folders/…/T/…'</code> — <code>TMPDIR</code></h3>
+    <p>Your <code>$TMPDIR</code> points at a uid-private folder (<code>0700</code>) the child can't write. byn
+    <strong>auto-normalizes</strong> <code>TMPDIR</code>/<code>TMP</code>/<code>TEMP</code> for the child to a writable location, so
+    this is handled automatically on a current build. On an older build, prefix the
+    run with <code>TMPDIR=/tmp</code>.</p>
+    <h3 id="debugging--the-debugger-cant-attach-to-a-privsep-child">Debugging — the debugger can't attach to a privsep child</h3>
+    <p>A debugger running as <strong>you</strong> cannot attach to a <strong>different-UID</strong> (<code>_byn-exec</code>)
+    process: macOS/Linux restrict <code>ptrace</code>/<code>task_for_pid</code> to the same UID. That's the
+    <em>same</em> rule that hides the env from your <code>ps -E</code>. Two ways to debug:</p>
+    <ul>
+    <li><strong><code>byn exec --no-privsep -- …</code></strong> runs the child <strong>as you</strong>, so a launch-mode
+    debugger (VS Code &quot;launch&quot;) attaches normally. Secrets are still injected, but
+    the env is visible to your own <code>ps -E</code>, so this mode <strong>requires the master
+    password every run</strong> (no blind trusted-file run). Best for interactive
+    step-debugging — you're at the machine, so a password per run is fine.</li>
+    <li><strong><code>byn exec --inspect[=PORT] -- …</code></strong> (or <code>--inspect PORT</code>) keeps privsep (env
+    hidden) and enables the Node inspector. Your editor <strong>attaches</strong> over loopback
+    TCP (UID-agnostic). With no PORT byn picks the next free port (printed); an
+    explicit PORT is used only if free, otherwise byn fails clearly (not a buried
+    <code>EADDRINUSE</code>); <code>--inspect=0</code> lets each node self-allocate (for multi-process
+    runners like <code>tsx watch</code>). Configure the editor as an <strong>attach</strong> target, not launch.</li>
+    </ul>
+    <p>See <code>byn exec help</code> for the full mode comparison.</p>
 
     <div class="docs-nav">
       <a href="../glossary/" class="docs-nav-btn">
@@ -430,6 +486,10 @@ sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
     <a href="#option-b--grant-the-daemon-full-disk-access" class="toc-item sub">Option B — grant the daemon Full Disk Access</a>
     <a href="#make-the-full-disk-access-grant-survive-reinstalls-optional-free" class="toc-item sub">Make the Full Disk Access grant survive reinstalls (optional, free)</a>
     <a href="#distributing-byn-to-other-macs-your-team" class="toc-item sub">Distributing byn to other Macs (your team)</a>
+    <a href="#running-byn-exec-under-privsep-toolchain-tmpdir-debugging" class="toc-item">Running byn exec under privsep (toolchain, TMPDIR, debugging)</a>
+    <a href="#permission-denied-eacces-running-a-tool--toolchain-not-reachable" class="toc-item sub">Permission denied (EACCES) running a tool — toolchain not reachable</a>
+    <a href="#eacces--mkdir-varfolderst--tmpdir" class="toc-item sub">EACCES … mkdir &#39;/var/folders/…/T/…&#39; — TMPDIR</a>
+    <a href="#debugging--the-debugger-cant-attach-to-a-privsep-child" class="toc-item sub">Debugging — the debugger can&#39;t attach to a privsep child</a>
   </nav>
 
 </div>

@@ -26,15 +26,21 @@ const connReadTimeout = 30 * time.Second
 func (d *Daemon) handleConn(conn net.Conn) {
 	// Peer-UID enforcement (and capture the peer PID for the audit trail).
 	uid, pid, err := peerCred(conn)
-	if err == nil && uid != d.ownerUID {
-		_ = ipc.WriteFrame(conn, ipc.NewError("", ipc.CodeBadRequest,
-			fmt.Sprintf("connection from uid %d rejected (owner uid is %d)", uid, d.ownerUID),
-			""))
-		return
-	}
 	if err != nil && !errors.Is(err, ErrNotUnix) {
 		_ = ipc.WriteFrame(conn, ipc.NewError("", ipc.CodeInternal,
 			fmt.Sprintf("could not verify peer credentials: %v", err), ""))
+		return
+	}
+	// Two peer classes are allowed: the human OWNER (all data-plane ops), and the
+	// privsep exec HELPER — root or _byn-exec — which may ONLY redeem an exec token
+	// (Option A). ErrNotUnix (in-proc/tests) bypasses the check. Any other UID is
+	// rejected up front.
+	peerKnown := err == nil
+	peerIsHelper := peerKnown && d.isExecHelperUID(uid)
+	if peerKnown && uid != d.ownerUID && !peerIsHelper {
+		_ = ipc.WriteFrame(conn, ipc.NewError("", ipc.CodeBadRequest,
+			fmt.Sprintf("connection from uid %d rejected (owner uid is %d)", uid, d.ownerUID),
+			""))
 		return
 	}
 
@@ -57,6 +63,25 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	// Clear deadline for the rest of this handler; long-running ops
 	// (init, unlock) use Argon2 and shouldn't time out at 30s.
 	_ = conn.SetReadDeadline(time.Time{})
+
+	// Privsep redemption gate (Option A): exec.redeem is reachable ONLY by the
+	// exec helper (root/_byn-exec) — never the owner-UID CLI, which would leak the
+	// curated secrets. Conversely a helper peer may ONLY redeem; it cannot reach
+	// any other op. ErrNotUnix (in-proc/tests) is exempt here — those paths gate on
+	// the caller UID inside handleExecRedeem instead.
+	if peerKnown {
+		isOwner := uid == d.ownerUID
+		if env.Op == ipc.OpExecRedeem && !peerIsHelper {
+			_ = ipc.WriteFrame(conn, ipc.NewError(env.ID, ipc.CodeBadRequest,
+				"exec.redeem is restricted to the privsep exec helper", ""))
+			return
+		}
+		if peerIsHelper && !isOwner && env.Op != ipc.OpExecRedeem {
+			_ = ipc.WriteFrame(conn, ipc.NewError(env.ID, ipc.CodeBadRequest,
+				"this peer may only redeem exec tokens", ""))
+			return
+		}
+	}
 
 	// Per-request context derived from the daemon's root context, so
 	// in-flight SQLite + audit calls observe Shutdown. Falls back to
@@ -208,6 +233,10 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleExecFetch(ctx, env)
 	case ipc.OpExecSpawn:
 		return d.handleExecSpawn(ctx, env)
+	case ipc.OpExecAuthorize:
+		return d.handleExecAuthorize(ctx, env)
+	case ipc.OpExecRedeem:
+		return d.handleExecRedeem(ctx, env)
 
 	case ipc.OpAuditTail:
 		return d.handleAuditTail(ctx, env)

@@ -425,3 +425,70 @@ a **Developer ID Application** certificate plus **notarization**, after which th
 binary runs cleanly and Full Disk Access can be pre-granted fleet-wide via an MDM
 PPPC configuration profile. Until then, tell your team to use **Option A** —
 projects outside the protected folders — which needs no signing at all.
+
+---
+
+## Running `byn exec` under privsep (toolchain, TMPDIR, debugging)
+
+By default `byn exec` runs the child as the `_byn-exec` service user, so the
+injected secrets are hidden from your own `ps -E`. Because the child is a
+**different UID** than you, it needs filesystem access to what your toolchain
+reads and writes — `byn trust` grants that for the *project*, but not for tools
+installed in your home. Symptoms and fixes:
+
+### `Permission denied` (EACCES) running a tool — toolchain not reachable
+
+```
+sandbox-exec: execvp() of '.../.nvm/.../bin/pnpm' failed: Permission denied
+```
+
+This is **POSIX**, not TCC (`Permission denied`/EACCES, not `Operation not
+permitted`/EPERM). The `_byn-exec` child can't traverse/read the dir the tool
+lives in. `byn trust` already grants `_byn-exec` *traverse* on your home and the
+project, so a world-readable toolchain (e.g. nvm's `~/.nvm`, mode `0755`) works
+for free. If the toolchain or its state is in a **`0700`** dir (common on macOS,
+e.g. `~/Library`), grant the child access there once:
+
+```sh
+# Example: pnpm keeps state under macOS's 0700 ~/Library
+chmod +a "_byn-exec allow execute,search" ~/Library
+chmod +a "_byn-exec allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit" ~/Library/pnpm
+```
+
+`execute,search` is *traverse only* (not list/read) — the child passes through to
+the dir you grant, it can't enumerate the parent. This is the same kind of ACE
+`byn trust` adds for your project; re-running `byn trust .` re-applies the project
++ home-traverse ACEs if they get cleared.
+
+> **Why this is safe:** running a tool as `_byn-exec` is *more* confined than the
+> baseline — normally `make dev` runs it as **you**, with full home access.
+> Privsep's value is hiding the injected secrets from same-user snooping, not
+> sandboxing the toolchain. Granting `_byn-exec` read access to your dev
+> environment is therefore not a new exposure.
+
+### `EACCES … mkdir '/var/folders/…/T/…'` — `TMPDIR`
+
+Your `$TMPDIR` points at a uid-private folder (`0700`) the child can't write. byn
+**auto-normalizes** `TMPDIR`/`TMP`/`TEMP` for the child to a writable location, so
+this is handled automatically on a current build. On an older build, prefix the
+run with `TMPDIR=/tmp`.
+
+### Debugging — the debugger can't attach to a privsep child
+
+A debugger running as **you** cannot attach to a **different-UID** (`_byn-exec`)
+process: macOS/Linux restrict `ptrace`/`task_for_pid` to the same UID. That's the
+*same* rule that hides the env from your `ps -E`. Two ways to debug:
+
+- **`byn exec --no-privsep -- …`** runs the child **as you**, so a launch-mode
+  debugger (VS Code "launch") attaches normally. Secrets are still injected, but
+  the env is visible to your own `ps -E`, so this mode **requires the master
+  password every run** (no blind trusted-file run). Best for interactive
+  step-debugging — you're at the machine, so a password per run is fine.
+- **`byn exec --inspect[=PORT] -- …`** (or `--inspect PORT`) keeps privsep (env
+  hidden) and enables the Node inspector. Your editor **attaches** over loopback
+  TCP (UID-agnostic). With no PORT byn picks the next free port (printed); an
+  explicit PORT is used only if free, otherwise byn fails clearly (not a buried
+  `EADDRINUSE`); `--inspect=0` lets each node self-allocate (for multi-process
+  runners like `tsx watch`). Configure the editor as an **attach** target, not launch.
+
+See `byn exec help` for the full mode comparison.
