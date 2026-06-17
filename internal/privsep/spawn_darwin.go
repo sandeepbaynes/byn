@@ -187,10 +187,19 @@ func (s *darwinSpawner) Spawn(req SpawnReq) (int, error) {
 const sandboxExecPath = "/usr/bin/sandbox-exec"
 
 // sandboxCommand builds the *exec.Cmd that runs the helper. When there is
-// something to confine (state dir, socket, or NoNetwork), the helper is wrapped
-// in sandbox-exec with a generated SBPL profile written to a temp file; the
-// returned cleanup removes that file. Otherwise the helper runs directly and
-// cleanup is a no-op.
+// something to confine (state dir, socket, or NoNetwork), the helper is invoked
+// so it execs sandbox-exec on the target with an INLINE SBPL profile (-p);
+// otherwise the helper runs the target directly. The returned cleanup is always
+// a no-op now (kept for signature stability) — there is no temp file to remove.
+//
+// IMPORTANT (why inline -p, not a -f temp file): after the setuid drop,
+// sandbox-exec runs as _byn-exec, but the daemon that would WRITE a profile
+// temp file runs as _byn. The daemon's per-user $TMPDIR is mode 0700 and a temp
+// profile there is 0600 — both owned by _byn — so _byn-exec can neither traverse
+// the dir nor read the file, and sandbox-exec fails with
+// "sandbox-exec: <file>: Permission denied". Passing the profile inline via -p
+// has no cross-UID file-sharing problem at all. The profile contains only paths
+// (state dir, socket) — no secrets — so it is fine on argv.
 //
 // IMPORTANT (Seatbelt path matching): Seatbelt matches the kernel-RESOLVED,
 // symlink-free real path. A deny on e.g. /tmp/x fails to match if /tmp is a
@@ -216,27 +225,7 @@ func (s *darwinSpawner) sandboxCommand(req SpawnReq, helperArgs []string) (*exec
 		NoNetwork:  req.NoNetwork,
 	})
 
-	f, err := os.CreateTemp(os.TempDir(), "byn-sb-*.sb")
-	if err != nil {
-		return nil, noop, fmt.Errorf("privsep: Spawn: create sandbox profile: %w", err)
-	}
-	cleanup := func() { _ = os.Remove(f.Name()) }
-	if cerr := f.Chmod(0o600); cerr != nil {
-		_ = f.Close()
-		cleanup()
-		return nil, noop, fmt.Errorf("privsep: Spawn: chmod sandbox profile: %w", cerr)
-	}
-	if _, werr := f.WriteString(profile); werr != nil {
-		_ = f.Close()
-		cleanup()
-		return nil, noop, fmt.Errorf("privsep: Spawn: write sandbox profile: %w", werr)
-	}
-	if cerr := f.Close(); cerr != nil {
-		cleanup()
-		return nil, noop, fmt.Errorf("privsep: Spawn: close sandbox profile: %w", cerr)
-	}
-
-	// <helperPath> -- sandbox-exec -f <profile> <absTarget> [args...]
+	// <helperPath> -- sandbox-exec -p <profile> <absTarget> [args...]
 	//
 	// We run the SETUID helper DIRECTLY (no outer sandbox). It drops to
 	// _byn-exec, then execs sandbox-exec on the NON-setuid target, so the sandbox
@@ -246,8 +235,10 @@ func (s *darwinSpawner) sandboxCommand(req SpawnReq, helperArgs []string) (*exec
 	// Sandboxing the target (not the helper) is the supported order; the small,
 	// trusted helper runs briefly unsandboxed only to perform the drop. The
 	// curated child env (fd 3) is inherited through sandbox-exec to the target.
-	hargs := append([]string{"--", sandboxExecPath, "-f", f.Name()}, req.Argv...)
-	return exec.Command(s.cfg.HelperPath, hargs...), cleanup, nil //nolint:gosec // operator-installed helper, generated profile
+	// The profile is passed INLINE (-p) so _byn-exec needs no daemon-owned temp
+	// file — see the function doc for the cross-UID reason.
+	hargs := append([]string{"--", sandboxExecPath, "-p", profile}, req.Argv...)
+	return exec.Command(s.cfg.HelperPath, hargs...), noop, nil //nolint:gosec // operator-installed helper, generated profile
 }
 
 // resolveSymlinks returns the symlink-free real path for p, or p unchanged if it
