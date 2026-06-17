@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"runtime"
 	"strings"
@@ -9,7 +10,9 @@ import (
 )
 
 // TestAnnotateReadErr_DarwinEPERM: a TCC denial (EPERM) on macOS becomes an
-// actionable Full Disk Access message; on other platforms it passes through.
+// actionable Full Disk Access message AND is detectable via errDaemonAccessDenied
+// (so exec surfaces the TCC cause instead of "untrusted"); other platforms pass
+// the error through unchanged.
 func TestAnnotateReadErr_DarwinEPERM(t *testing.T) {
 	perr := &os.PathError{Op: "open", Path: "/Users/o/Documents/p/.byn", Err: syscall.EPERM}
 	got := annotateReadErr(perr.Path, perr)
@@ -19,6 +22,9 @@ func TestAnnotateReadErr_DarwinEPERM(t *testing.T) {
 		}
 		if !strings.Contains(got.Error(), perr.Path) {
 			t.Errorf("message should name the path; got %q", got)
+		}
+		if !errors.Is(got, errDaemonAccessDenied) {
+			t.Errorf("EPERM on darwin must match errDaemonAccessDenied so exec can surface it")
 		}
 	} else if got != error(perr) {
 		t.Errorf("non-darwin must return the error unchanged; got %v", got)
