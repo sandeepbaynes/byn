@@ -41,8 +41,8 @@ func TestBootstrapTokens_Expired(t *testing.T) {
 		t.Fatalf("mint: %v", err)
 	}
 
-	// Consume 6 seconds after mint — past the 5s TTL.
-	if b.consume(tok, now.Add(6*time.Second)) {
+	// Consume 31 seconds after mint — past the 30s TTL.
+	if b.consume(tok, now.Add(31*time.Second)) {
 		t.Error("consume: want false for expired token")
 	}
 }

@@ -52,6 +52,20 @@ migrate = "python manage.py migrate"
   Actions policy is read from the MAC-bound trust record (not the live
   file) — editing the `.byn` post-trust cannot change the effective
   policy without re-trusting.
+- **`[exec] writable`** lists **extra tool-state directories** the privsep
+  exec child (`_byn-exec`, a different UID) may read/write — e.g. a package
+  manager's global store under a `0700` home dir. At `byn trust` time byn
+  grants `_byn-exec` access to these (owner-side ACLs) **on top of** a
+  curated set of common defaults (`~/.cache`, `~/.npm`, `~/Library/pnpm`,
+  `~/.cargo`, `~/go`, …). Each entry must resolve **under your home** (a
+  leading `~` is expanded); entries outside home are refused, and naming a
+  credential dir (`~/.ssh`, `~/.aws`, …) prints a warning. Most stacks need
+  nothing here — the defaults cover them. Example:
+  ```toml
+  [exec]
+  actions = ["pnpm dev"]
+  writable = ["~/Library/pnpm"]   # only if your tool uses an uncommon dir
+  ```
 - `[auth]` keys (`get`, `update`, `delete`, `exec`) override the session
   gate for this scope. Values: `"always"` (tightens, always requires fresh
   auth even with an active session), `"none"` (relaxes, skips the gate

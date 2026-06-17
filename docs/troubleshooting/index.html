@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Troubleshooting — byn docs</title>
+<meta name="description" content="Common error states and how to recover from them.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Troubleshooting</div>
+      <a href="./" class="sb-item active">Troubleshooting</a>
+      <a href="#daemon-is-not-running-exit-2" class="sb-item">&#34;daemon is not running&#34; (exit 2)</a>
+      <a href="#vault-is-locked-exit-3" class="sb-item">&#34;vault is locked&#34; (exit 3)</a>
+      <a href="#wrong-password-exit-3" class="sb-item">&#34;wrong password&#34; (exit 3)</a>
+      <a href="#rate-limited-exit-3" class="sb-item">&#34;rate limited&#34; (exit 3)</a>
+      <a href="#audit-chain-broken-at-event-n-exit-3" class="sb-item">&#34;audit chain BROKEN at event #N&#34; (exit 3)</a>
+      <a href="#untrusted-byn" class="sb-item">&#34;untrusted .byn&#34;</a>
+      <a href="#name-already-exists" class="sb-item">&#34;name already exists&#34;</a>
+      <a href="#fingerprint-mismatch-during-doctor-or-open" class="sb-item">&#34;fingerprint mismatch&#34; (during doctor or open)</a>
+      <a href="#byn-not-found-after-running-make-build" class="sb-item">byn not found after running make build</a>
+      <a href="#toml-parse-error-in-byn" class="sb-item">TOML parse error in .byn</a>
+      <a href="#daemon-wont-stop" class="sb-item">Daemon won&#39;t stop</a>
+      <a href="#byn-exec----command-runs-the-wrong-command" class="sb-item">byn exec -- COMMAND runs the wrong command</a>
+      <a href="#hints-arent-showing" class="sb-item">Hints aren&#39;t showing</a>
+      <a href="#audit-log-file-modes-unexpectedly-permissive" class="sb-item">Audit log file modes unexpectedly permissive</a>
+      <a href="#related" class="sb-item">Related</a>
+      <a href="#operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc" class="sb-item">&#34;operation not permitted&#34; reading a .byn — macOS Full Disk Access (TCC)</a>
+      <a href="#running-byn-exec-under-privsep-toolchain-tmpdir-debugging" class="sb-item">Running byn exec under privsep (toolchain, TMPDIR, debugging)</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Troubleshooting</span>
+    </div>
+
+    <h1>Troubleshooting</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/troubleshooting.md">docs/troubleshooting.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/troubleshooting.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>Common error states and how to recover from them.</p>
+    <p>If something here is wrong or out of date, the source of truth is
+    <code>internal/daemon/dispatch.go</code> (the per-op error codes) and
+    <code>internal/vault/store.go</code> (sentinel errors).</p>
+    <hr>
+    <h2 id="daemon-is-not-running-exit-2">&quot;daemon is not running&quot; (exit 2)</h2>
+    <pre><code>$ byn list
+Error: daemon is not running
+Try: byn daemon start
+</code></pre>
+    <p>The CLI couldn't reach <code>~/.byn/daemon.sock</code>. Either the daemon
+    hasn't been started or it crashed.</p>
+    <p><strong>Fix:</strong></p>
+    <pre><code class="language-sh">byn daemon start
+</code></pre>
+    <p><strong>If it won't start:</strong></p>
+    <ul>
+    <li>Check <code>~/.byn/daemon.log</code> for the previous run's exit reason.</li>
+    <li>Look for a stale pidfile: <code>cat ~/.byn/daemon.pid</code> then
+    <code>ps -p &lt;PID&gt;</code>. The daemon detects stale pidfiles automatically
+    (signal-0 probe), but if <code>daemon.sock</code> is a stranded file from a
+    crash, <code>rm ~/.byn/daemon.sock</code> and retry.</li>
+    <li>On macOS, <code>sun_path</code> is 104 bytes — the daemon's socket path must fit within
+    it. byn's fixed data-root paths are chosen to fit; this only bites if you point
+    a test build at a long directory via the <code>BYN_TEST_DIR</code> seam.</li>
+    </ul>
+    <hr>
+    <h2 id="vault-is-locked-exit-3">&quot;vault is locked&quot; (exit 3)</h2>
+    <pre><code>$ byn get DB_URL
+Error: vault is locked [locked]; byn unlock
+</code></pre>
+    <p>The daemon is up; the vault key isn't in memory.</p>
+    <p><strong>Fix:</strong></p>
+    <pre><code class="language-sh">byn unlock
+</code></pre>
+    <p>If you wanted to do something that <em>doesn't</em> need the value (list
+    keys, delete by name, rename), you can — those are allowed while
+    locked.</p>
+    <hr>
+    <h2 id="wrong-password-exit-3">&quot;wrong password&quot; (exit 3)</h2>
+    <pre><code>$ byn unlock
+Error: could not unlock vault [wrong_password]; verify password and retry
+</code></pre>
+    <p>The Argon2id unwrap produced bytes that failed the AEAD auth tag.
+    Either you mistyped, or your <code>wrapped.key</code> is corrupted/swapped.</p>
+    <p><strong>Fix:</strong></p>
+    <ul>
+    <li>Re-try the password.</li>
+    <li>If it persists, run <code>byn doctor</code>. If <code>vault[X].open</code> fails with a
+    fingerprint mismatch, restore <code>wrapped.key</code> from backup.</li>
+    <li>If you've genuinely forgotten the password: there is <strong>no
+    recovery</strong>. The vault key is unrecoverable. <code>rm -rf ~/.byn/vaults/&lt;name&gt;</code>
+    and re-init.</li>
+    </ul>
+    <p>This message is the same whether the password is wrong or the vault
+    doesn't exist — by design (existence-oracle defense).</p>
+    <hr>
+    <h2 id="rate-limited-exit-3">&quot;rate limited&quot; (exit 3)</h2>
+    <pre><code>$ byn unlock
+Error: too many failed attempts; retry after 5m [rate_limited]
+</code></pre>
+    <p>The persistent failed-unlock backoff is active. State lives in
+    <code>~/.byn/auth-state.json</code>. Restarting the daemon doesn't reset it.</p>
+    <p><strong>Fix:</strong> wait.</p>
+    <p>If you genuinely need to reset (e.g., you mistyped 6 times and don't
+    want to wait): <code>rm ~/.byn/auth-state.json</code>. Note that an attacker
+    who can do this also has write access to <code>~/.byn/</code>, which is its
+    own larger problem.</p>
+    <hr>
+    <h2 id="audit-chain-broken-at-event-n-exit-3">&quot;audit chain BROKEN at event #N&quot; (exit 3)</h2>
+    <pre><code>$ byn audit verify
+FAIL: audit chain BROKEN at event #42 (of 117)
+  someone or something modified or truncated the log on disk
+  inspect ~/.byn/audit/&lt;vault&gt;/*.log and treat the vault as compromised
+</code></pre>
+    <p>The on-disk audit log has been tampered with or truncated.</p>
+    <p><strong>What this means:</strong> at event #42, the recorded <code>hmac_chain</code> doesn't
+    match the expected chain. Could be:</p>
+    <ul>
+    <li>An attacker modifying or deleting log entries to cover their tracks</li>
+    <li>A botched manual edit</li>
+    <li>Disk corruption (rare)</li>
+    </ul>
+    <p><strong>Fix:</strong></p>
+    <ol>
+    <li>Stop the daemon: <code>byn daemon stop</code>.</li>
+    <li>Copy the log files for forensics: <code>cp -a ~/.byn/audit/ /safe/backup/</code>.</li>
+    <li>Inspect the logs manually around event #42.</li>
+    <li>Treat the vault as compromised: rotate secrets, re-issue tokens
+    that lived in it.</li>
+    <li>After rotation, you can recover by deleting the log files (the
+    daemon will re-seed). <strong>You lose history.</strong> Tampering already
+    destroyed it.</li>
+    </ol>
+    <hr>
+    <h2 id="untrusted-byn">&quot;untrusted .byn&quot;</h2>
+    <pre><code>$ byn list
+Error: /Users/you/proj/.byn: untrusted .byn; run `byn trust /Users/you/proj/.byn` to allow it
+</code></pre>
+    <p>The CLI walked up from CWD, found a <code>.byn</code>, and either:</p>
+    <ul>
+    <li>Hasn't seen it before, AND stdin isn't a TTY (so it can't prompt)</li>
+    <li>Has seen it before, but the SHA-256 has changed (tampering or edit)</li>
+    <li>You're in agent mode (<code>--json</code> set) which never prompts</li>
+    </ul>
+    <p><strong>Fix:</strong></p>
+    <p>If you want this scope:</p>
+    <pre><code class="language-sh">byn trust /Users/you/proj/.byn
+</code></pre>
+    <p>If you don't, but you're trying to run something:</p>
+    <pre><code class="language-sh">byn --no-discovery &lt;your command&gt;
+</code></pre>
+    <p>If you opened the file, edited it, and re-trust it:</p>
+    <pre><code class="language-sh">byn trust /Users/you/proj/.byn   # re-records the new hash
+</code></pre>
+    <p>See <a href="byn-file-format/"><code>.byn</code> file format</a> for the full TOFU
+    model.</p>
+    <hr>
+    <h2 id="name-already-exists">&quot;name already exists&quot;</h2>
+    <pre><code>$ echo new | byn put DB_URL --create-only
+Error: secret already exists [already_exists]
+</code></pre>
+    <p><code>--create-only</code> refuses to overwrite. Without <code>--create-only</code>, <code>put</code>
+    overwrites silently.</p>
+    <p><strong>Fix:</strong> drop <code>--create-only</code>, or delete the existing entry first.</p>
+    <hr>
+    <h2 id="fingerprint-mismatch-during-doctor-or-open">&quot;fingerprint mismatch&quot; (during <code>doctor</code> or open)</h2>
+    <p>The wrapped key's fingerprint stored in <code>meta.json</code> doesn't match
+    the actual <code>wrapped.key</code> file's hash.</p>
+    <p><strong>What this means:</strong> someone (or some process) replaced the wrapped
+    key with a different one. The replacement could be:</p>
+    <ul>
+    <li>An attacker swapping in a wrapped key they control</li>
+    <li>A botched restore that copied only <code>wrapped.key</code> but not
+    <code>meta.json</code></li>
+    <li>Accidental overwrite</li>
+    </ul>
+    <p><strong>Fix:</strong></p>
+    <ul>
+    <li>If you restored from backup: also restore <code>meta.json</code> from the same
+    backup.</li>
+    <li>If you swapped vaults: copy the matching <code>meta.json</code>.</li>
+    <li>If you're not sure: treat as compromised.</li>
+    </ul>
+    <hr>
+    <h2 id="byn-not-found-after-running-make-build"><code>byn</code> not found after running <code>make build</code></h2>
+    <p>The binary is at <code>bin/byn</code>, not on PATH.</p>
+    <p><strong>Fix one of:</strong></p>
+    <pre><code class="language-sh"># Symlink for convenience
+sudo ln -sf &quot;$(pwd)/bin/byn&quot; /usr/local/bin/byn
+
+# Or copy
+sudo cp bin/byn /usr/local/bin/byn
+
+# Or add to PATH for this shell
+export PATH=&quot;$(pwd)/bin:$PATH&quot;
+</code></pre>
+    <p>Then <code>hash -r</code> (or open a new shell) so zsh picks up the new path.</p>
+    <hr>
+    <h2 id="toml-parse-error-in-byn">TOML parse error in <code>.byn</code></h2>
+    <pre><code>$ byn list
+Error: /Users/you/proj/.byn: parse: ...
+</code></pre>
+    <p>The strict parser fails on:</p>
+    <ul>
+    <li>Syntax errors (unbalanced quotes, missing <code>]</code>, etc.)</li>
+    <li><strong>Unknown keys</strong> at the top level or inside <code>[scope]</code></li>
+    <li>Anything that's not exactly <code>[scope] { vault?, project?, env? }</code></li>
+    </ul>
+    <p><strong>Fix:</strong> match the format in
+    <a href="byn-file-format/"><code>.byn</code> file format</a>. Common gotchas:</p>
+    <ul>
+    <li>Outer keys (other than <code>[scope]</code>) are not allowed yet.</li>
+    <li>Empty <code>.byn</code> is not a parse error — it's a stop marker.</li>
+    <li><code>vault = &quot;&quot;</code> is the same as omitting <code>vault</code> entirely.</li>
+    </ul>
+    <hr>
+    <h2 id="daemon-wont-stop">Daemon won't stop</h2>
+    <p><code>byn daemon stop</code> should be instant. If it hangs:</p>
+    <ol>
+    <li>Check <code>daemon.log</code> for a stuck shutdown.</li>
+    <li>As a last resort: <code>kill $(cat ~/.byn/daemon.pid)</code>. SIGTERM
+    triggers the same shutdown path. Use <code>kill -9</code> only if SIGTERM
+    has been ignored for a minute+.</li>
+    </ol>
+    <hr>
+    <h2 id="byn-exec----command-runs-the-wrong-command"><code>byn exec -- COMMAND</code> runs the wrong command</h2>
+    <pre><code>$ byn exec --vault foo -- python app.py    # WRONG — flags after `--` only
+$ byn exec -- python app.py --vault foo    # OK — scope from session
+</code></pre>
+    <p>The <code>--</code> separator is critical. <strong>Anything before <code>--</code></strong> belongs to
+    <code>byn</code>; <strong>anything after <code>--</code></strong> is the child's argv.</p>
+    <p>Common mistakes:</p>
+    <ul>
+    <li>Forgetting <code>--</code>: byn eats the child's flags</li>
+    <li>Mixing flags in the child position: <code>byn exec python --vault foo</code>
+    fails — there's no <code>--</code></li>
+    </ul>
+    <hr>
+    <h2 id="hints-arent-showing">Hints aren't showing</h2>
+    <pre><code>$ echo s | byn put X
+$
+</code></pre>
+    <p>Hints are suppressed when:</p>
+    <ul>
+    <li><code>BYN_HINTS=0</code> is set (and <code>false</code>/<code>off</code>/<code>no</code>)</li>
+    <li>stderr isn't a TTY (piped, redirected, captured)</li>
+    </ul>
+    <p>Force them by un-redirecting stderr or unsetting the variable:</p>
+    <pre><code class="language-sh">unset BYN_HINTS
+echo s | byn put X
+# → Stored &quot;X&quot; in default/default/default.
+</code></pre>
+    <hr>
+    <h2 id="audit-log-file-modes-unexpectedly-permissive">Audit log file modes unexpectedly permissive</h2>
+    <p>The daemon creates audit files mode 0600. If you see anything else,
+    something outside byn widened them. Run:</p>
+    <pre><code class="language-sh">chmod -R go-rwx ~/.byn/
+</code></pre>
+    <p>…and audit <em>how</em> they got widened (bad umask in shell init, a <code>cp</code>
+    from another machine, etc.).</p>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="cli-reference/">CLI reference</a> — every error code by command.</li>
+    <li><a href="security/">Security model</a> — why we use existence-oracle
+    responses for <code>wrong_password</code> / <code>not_init</code>.</li>
+    <li><a href="file-layout/">File layout</a> — every file's intended mode +
+    recovery procedure.</li>
+    </ul>
+    <hr>
+    <h2 id="operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc">&quot;operation not permitted&quot; reading a <code>.byn</code> — macOS Full Disk Access (TCC)</h2>
+    <pre><code>$ byn trust .
+  x .../.byn: open .../.byn: operation not permitted
+</code></pre>
+    <p>or, surfaced through the daemon:</p>
+    <pre><code>Error: open .../.byn: the byn daemon was denied by macOS privacy
+protection (TCC). Grant Full Disk Access ...
+</code></pre>
+    <p><strong>Cause.</strong> Under privilege separation the daemon runs as the <code>_byn</code> service
+    user via launchd. macOS <strong>TCC</strong> (Transparency, Consent &amp; Control) blocks any
+    process from reading files in protected folders — <strong><code>~/Documents</code>,
+    <code>~/Desktop</code>, <code>~/Downloads</code>, iCloud Drive</strong>, and removable/network volumes —
+    unless it has <strong>Full Disk Access</strong>. <strong>TCC overrides POSIX permissions and
+    ACLs</strong>, so this is not something <code>chmod</code>/<code>setfacl</code> can fix. Your CLI reads the
+    file fine (it inherits Terminal's access); the daemon, a separate user, does
+    not. The tell is the errno: <strong><code>operation not permitted</code></strong> (EPERM = TCC) versus
+    <strong><code>permission denied</code></strong> (EACCES = ordinary permissions).</p>
+    <h3 id="option-a--keep-projects-out-of-the-protected-folders-recommended-free">Option A — keep projects out of the protected folders (recommended, free)</h3>
+    <p>The simplest fix needs no Full Disk Access and no code signing: keep
+    byn-managed projects <strong>outside</strong> <code>~/Documents</code>, <code>~/Desktop</code>, <code>~/Downloads</code> and
+    iCloud Drive. Anything under e.g. <code>~/code</code>, <code>~/dev</code>, <code>~/src</code>, <code>/opt</code>,
+    <code>/Users/Shared</code> is not TCC-protected, and the daemon reads it normally.</p>
+    <pre><code class="language-sh">mkdir -p ~/code
+mv ~/Documents/my-project ~/code/my-project
+cd ~/code/my-project
+byn trust .
+</code></pre>
+    <p>A symlink does <strong>not</strong> help — TCC checks the real path. Move the real directory.</p>
+    <h3 id="option-b--grant-the-daemon-full-disk-access">Option B — grant the daemon Full Disk Access</h3>
+    <p>Keep projects where they are and authorize the daemon once.</p>
+    <ol>
+    <li>Confirm the daemon binary path (the LaunchDaemon's program):
+    <pre><code class="language-sh">grep -A1 ProgramArguments /Library/LaunchDaemons/com.sandeepbaynes.byn.plist
+# usually /usr/local/bin/byn
+</code></pre>
+    </li>
+    <li>Open <strong>System Settings → Privacy &amp; Security → Full Disk Access</strong>:
+    <pre><code class="language-sh">open &quot;x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles&quot;
+</code></pre>
+    </li>
+    <li>Click <strong>+</strong>. In the file picker press <strong>⌘⇧G</strong>, type <code>/usr/local/bin/byn</code>,
+    press Return, then <strong>Open</strong>. Toggle the new <strong>byn</strong> entry <strong>on</strong>.</li>
+    <li>Restart the daemon so it picks up the grant:
+    <pre><code class="language-sh">sudo launchctl kickstart -k system/com.sandeepbaynes.byn
+</code></pre>
+    </li>
+    <li>Verify (no password needed) against any already-trusted <code>.byn</code>:
+    <pre><code class="language-sh">byn trust diff /path/to/a/trusted/.byn
+# success (a diff or &quot;no changes&quot;) = the daemon can read it
+</code></pre>
+    </li>
+    </ol>
+    <h3 id="make-the-full-disk-access-grant-survive-reinstalls-optional-free">Make the Full Disk Access grant survive reinstalls (optional, free)</h3>
+    <p>byn ships <strong>ad-hoc signed</strong> (Go's default), so TCC ties the grant to that exact
+    build — after <code>make install</code> of a new build you must re-grant. To make it
+    persist, sign the binary with a <strong>stable identity</strong>. A <strong>free</strong> Apple ID is
+    enough; you do <strong>not</strong> need the paid Developer Program for your own machine.</p>
+    <ol>
+    <li>Add your Apple ID in <strong>Xcode → Settings → Accounts</strong> (creates a free
+    &quot;Personal Team&quot; and an <strong>Apple Development</strong> certificate in your login
+    keychain). Xcode or the Command Line Tools must be installed.</li>
+    <li>Find the signing identity:
+    <pre><code class="language-sh">security find-identity -v -p codesigning
+# e.g. &quot;Apple Development: you@example.com (TEAMID1234)&quot;
+</code></pre>
+    </li>
+    <li>Install <strong>and sign in one step</strong> (the Makefile signs when <code>CODESIGN_IDENTITY</code>
+    is set, using stable identifiers so the grant persists):
+    <pre><code class="language-sh">sudo make install CODESIGN_IDENTITY=&quot;Apple Development: you@example.com (TEAMID1234)&quot;
+</code></pre>
+    Or sign an already-installed binary by hand (keep the <code>--identifier</code> constant
+    across rebuilds — TCC keys on identifier + identity):
+    <pre><code class="language-sh">sudo codesign --force --identifier com.sandeepbaynes.byn \
+  --sign &quot;Apple Development: you@example.com (TEAMID1234)&quot; /usr/local/bin/byn
+sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
+  --sign &quot;Apple Development: you@example.com (TEAMID1234)&quot; /usr/local/bin/byn-exec-helper
+</code></pre>
+    </li>
+    <li>Re-add <code>/usr/local/bin/byn</code> to Full Disk Access <strong>once</strong> (the identity changed
+    from ad-hoc), then restart the daemon. Every later reinstall signed with the
+    same identity keeps the grant.</li>
+    </ol>
+    <h3 id="distributing-byn-to-other-macs-your-team">Distributing byn to other Macs (your team)</h3>
+    <p>A free Apple ID development certificate works on <strong>your</strong> machine but is not
+    valid on other people's Macs — Gatekeeper blocks it and FDA can't be attributed.
+    To ship byn to a team you need the <strong>paid Apple Developer Program</strong> ($99/yr) for
+    a <strong>Developer ID Application</strong> certificate plus <strong>notarization</strong>, after which the
+    binary runs cleanly and Full Disk Access can be pre-granted fleet-wide via an MDM
+    PPPC configuration profile. Until then, tell your team to use <strong>Option A</strong> —
+    projects outside the protected folders — which needs no signing at all.</p>
+    <hr>
+    <h2 id="running-byn-exec-under-privsep-toolchain-tmpdir-debugging">Running <code>byn exec</code> under privsep (toolchain, TMPDIR, debugging)</h2>
+    <p>By default <code>byn exec</code> runs the child as the <code>_byn-exec</code> service user, so the
+    injected secrets are hidden from your own <code>ps -E</code>. Because the child is a
+    <strong>different UID</strong> than you, it needs filesystem access to what your toolchain
+    reads and writes — <code>byn trust</code> grants that for the <em>project</em>, but not for tools
+    installed in your home. Symptoms and fixes:</p>
+    <h3 id="permission-denied-eacces-running-a-tool--toolchain-not-reachable"><code>Permission denied</code> (EACCES) running a tool — toolchain not reachable</h3>
+    <pre><code>sandbox-exec: execvp() of '.../.nvm/.../bin/pnpm' failed: Permission denied
+</code></pre>
+    <p>This is <strong>POSIX</strong>, not TCC (<code>Permission denied</code>/EACCES, not <code>Operation not permitted</code>/EPERM). The <code>_byn-exec</code> child can't traverse/read the dir the tool
+    lives in. <code>byn trust</code> already grants <code>_byn-exec</code> <em>traverse</em> on your home and the
+    project, so a world-readable toolchain (e.g. nvm's <code>~/.nvm</code>, mode <code>0755</code>) works
+    for free.</p>
+    <p><strong>Most tool-state dirs are auto-granted.</strong> At <code>byn trust</code> time byn also grants
+    <code>_byn-exec</code> read/write on a <strong>curated set of common tool-state dirs</strong> that exist
+    on your machine — <code>~/.cache</code>, <code>~/.npm</code>, <code>~/Library/pnpm</code>, <code>~/.cargo</code>, <code>~/.rustup</code>,
+    <code>~/go</code>, <code>~/.gradle</code>, <code>~/.m2</code>, <code>~/.config</code>, … — so pnpm/npm/cargo/etc. work without
+    manual steps. If your tool keeps state somewhere uncommon, declare it in the
+    <code>.byn</code>:</p>
+    <pre><code class="language-toml">[exec]
+actions = [&quot;pnpm dev&quot;]
+writable = [&quot;~/Library/pnpm&quot;, &quot;~/.my-tool&quot;]   # extra dirs, granted at trust time
+</code></pre>
+    <p>Entries must be <strong>under your home</strong> (<code>~</code> is expanded); ones outside are refused,
+    and a credential dir (<code>~/.ssh</code>, <code>~/.aws</code>, …) prints a warning. As a last resort
+    you can grant a dir by hand (the same kind of ACE <code>byn trust</code> adds):</p>
+    <pre><code class="language-sh">chmod +a &quot;_byn-exec allow execute,search&quot; ~/Library
+chmod +a &quot;_byn-exec allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit&quot; ~/Library/pnpm
+</code></pre>
+    <p><code>execute,search</code> is <em>traverse only</em> (not list/read) — the child passes through to
+    the dir you grant, it can't enumerate the parent. Re-running <code>byn trust .</code>
+    re-applies the project + home-traverse + tool-state ACEs if they get cleared.</p>
+    <blockquote>
+    <p><strong>Why this is safe:</strong> running a tool as <code>_byn-exec</code> is <em>more</em> confined than the
+    baseline — normally <code>make dev</code> runs it as <strong>you</strong>, with full home access.
+    Privsep's value is hiding the injected secrets from same-user snooping, not
+    sandboxing the toolchain. Granting <code>_byn-exec</code> read access to your dev
+    environment is therefore not a new exposure.</p>
+    </blockquote>
+    <h3 id="eacces--mkdir-varfolderst--tmpdir"><code>EACCES … mkdir '/var/folders/…/T/…'</code> — <code>TMPDIR</code></h3>
+    <p>Your <code>$TMPDIR</code> points at a uid-private folder (<code>0700</code>) the child can't write. byn
+    <strong>auto-normalizes</strong> <code>TMPDIR</code>/<code>TMP</code>/<code>TEMP</code> for the child to a writable location, so
+    this is handled automatically on a current build. On an older build, prefix the
+    run with <code>TMPDIR=/tmp</code>.</p>
+    <h3 id="debugging--the-debugger-cant-attach-to-a-privsep-child">Debugging — the debugger can't attach to a privsep child</h3>
+    <p>A debugger running as <strong>you</strong> cannot attach to a <strong>different-UID</strong> (<code>_byn-exec</code>)
+    process: macOS/Linux restrict <code>ptrace</code>/<code>task_for_pid</code> to the same UID. That's the
+    <em>same</em> rule that hides the env from your <code>ps -E</code>. Two ways to debug:</p>
+    <ul>
+    <li><strong><code>byn exec --no-privsep -- …</code></strong> runs the child <strong>as you</strong>, so a launch-mode
+    debugger (VS Code &quot;launch&quot;) attaches normally. Secrets are still injected, but
+    the env is visible to your own <code>ps -E</code>, so this mode <strong>requires the master
+    password every run</strong> (no blind trusted-file run). Best for interactive
+    step-debugging — you're at the machine, so a password per run is fine.</li>
+    <li><strong><code>byn exec --inspect[=PORT] -- …</code></strong> (or <code>--inspect PORT</code>) keeps privsep (env
+    hidden) and enables the Node inspector. Your editor <strong>attaches</strong> over loopback
+    TCP (UID-agnostic). With no PORT byn picks the next free port (printed); an
+    explicit PORT is used only if free, otherwise byn fails clearly (not a buried
+    <code>EADDRINUSE</code>); <code>--inspect=0</code> lets each node self-allocate (for multi-process
+    runners like <code>tsx watch</code>). Configure the editor as an <strong>attach</strong> target, not launch.</li>
+    </ul>
+    <p>See <code>byn exec help</code> for the full mode comparison.</p>
+
+    <div class="docs-nav">
+      <a href="../glossary/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Glossary</div>
+      </a>
+      <a href="../why-not-containers/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Why not containers?</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#daemon-is-not-running-exit-2" class="toc-item">&#34;daemon is not running&#34; (exit 2)</a>
+    <a href="#vault-is-locked-exit-3" class="toc-item">&#34;vault is locked&#34; (exit 3)</a>
+    <a href="#wrong-password-exit-3" class="toc-item">&#34;wrong password&#34; (exit 3)</a>
+    <a href="#rate-limited-exit-3" class="toc-item">&#34;rate limited&#34; (exit 3)</a>
+    <a href="#audit-chain-broken-at-event-n-exit-3" class="toc-item">&#34;audit chain BROKEN at event #N&#34; (exit 3)</a>
+    <a href="#untrusted-byn" class="toc-item">&#34;untrusted .byn&#34;</a>
+    <a href="#name-already-exists" class="toc-item">&#34;name already exists&#34;</a>
+    <a href="#fingerprint-mismatch-during-doctor-or-open" class="toc-item">&#34;fingerprint mismatch&#34; (during doctor or open)</a>
+    <a href="#byn-not-found-after-running-make-build" class="toc-item">byn not found after running make build</a>
+    <a href="#toml-parse-error-in-byn" class="toc-item">TOML parse error in .byn</a>
+    <a href="#daemon-wont-stop" class="toc-item">Daemon won&#39;t stop</a>
+    <a href="#byn-exec----command-runs-the-wrong-command" class="toc-item">byn exec -- COMMAND runs the wrong command</a>
+    <a href="#hints-arent-showing" class="toc-item">Hints aren&#39;t showing</a>
+    <a href="#audit-log-file-modes-unexpectedly-permissive" class="toc-item">Audit log file modes unexpectedly permissive</a>
+    <a href="#related" class="toc-item">Related</a>
+    <a href="#operation-not-permitted-reading-a-byn--macos-full-disk-access-tcc" class="toc-item">&#34;operation not permitted&#34; reading a .byn — macOS Full Disk Access (TCC)</a>
+    <a href="#option-a--keep-projects-out-of-the-protected-folders-recommended-free" class="toc-item sub">Option A — keep projects out of the protected folders (recommended, free)</a>
+    <a href="#option-b--grant-the-daemon-full-disk-access" class="toc-item sub">Option B — grant the daemon Full Disk Access</a>
+    <a href="#make-the-full-disk-access-grant-survive-reinstalls-optional-free" class="toc-item sub">Make the Full Disk Access grant survive reinstalls (optional, free)</a>
+    <a href="#distributing-byn-to-other-macs-your-team" class="toc-item sub">Distributing byn to other Macs (your team)</a>
+    <a href="#running-byn-exec-under-privsep-toolchain-tmpdir-debugging" class="toc-item">Running byn exec under privsep (toolchain, TMPDIR, debugging)</a>
+    <a href="#permission-denied-eacces-running-a-tool--toolchain-not-reachable" class="toc-item sub">Permission denied (EACCES) running a tool — toolchain not reachable</a>
+    <a href="#eacces--mkdir-varfolderst--tmpdir" class="toc-item sub">EACCES … mkdir &#39;/var/folders/…/T/…&#39; — TMPDIR</a>
+    <a href="#debugging--the-debugger-cant-attach-to-a-privsep-child" class="toc-item sub">Debugging — the debugger can&#39;t attach to a privsep child</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/troubleshooting.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

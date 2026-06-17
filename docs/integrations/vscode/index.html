@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn &#43; VS Code — byn docs</title>
+<meta name="description" content="Inject vault env-vars into the process VS Code launches withoutplaintext leaking into launch.json, the terminal, or scrollback.">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/" class="active">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">VS Code</div>
+      <a href="./" class="sb-item active">byn &#43; VS Code</a>
+      <a href="#prerequisites" class="sb-item">Prerequisites</a>
+      <a href="#approach-1-launchjson-debug" class="sb-item">Approach 1: launch.json (debug)</a>
+      <a href="#approach-2-tasksjson-universal" class="sb-item">Approach 2: tasks.json (universal)</a>
+      <a href="#approach-3-integrated-terminal" class="sb-item">Approach 3: integrated terminal</a>
+      <a href="#per-project-scope" class="sb-item">Per-project scope</a>
+      <a href="#gotchas" class="sb-item">Gotchas</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Integrations</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">VS Code</span>
+    </div>
+
+    <h1>byn &#43; VS Code</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/vscode.md">docs/integrations/vscode.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/integrations/vscode.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>Inject vault env-vars into the process VS Code launches without
+    plaintext leaking into <code>launch.json</code>, the terminal, or scrollback.</p>
+    <hr>
+    <h2 id="prerequisites">Prerequisites</h2>
+    <ul>
+    <li><code>byn</code> on <code>$PATH</code></li>
+    <li>Daemon running: <code>byn daemon start</code></li>
+    <li>Vault unlocked: <code>byn unlock</code></li>
+    <li>The vault has the env-vars you need: <code>echo s3cr3t | byn put DB_URL</code></li>
+    </ul>
+    <hr>
+    <h2 id="approach-1-launchjson-debug">Approach 1: launch.json (debug)</h2>
+    <p>Use <code>byn exec</code> as the wrapped command. The debugger attaches to the
+    spawned process, which inherits the injected env vars.</p>
+    <h3 id="nodejs--typescript">Node.js / TypeScript</h3>
+    <pre><code class="language-jsonc">{
+  &quot;version&quot;: &quot;0.2.0&quot;,
+  &quot;configurations&quot;: [
+    {
+      &quot;name&quot;: &quot;Node — via byn&quot;,
+      &quot;type&quot;: &quot;node&quot;,
+      &quot;request&quot;: &quot;launch&quot;,
+      &quot;runtimeExecutable&quot;: &quot;byn&quot;,
+      &quot;runtimeArgs&quot;: [&quot;exec&quot;, &quot;--&quot;, &quot;node&quot;],
+      &quot;program&quot;: &quot;${workspaceFolder}/src/index.js&quot;,
+      &quot;console&quot;: &quot;integratedTerminal&quot;
+    }
+  ]
+}
+</code></pre>
+    <h3 id="python">Python</h3>
+    <pre><code class="language-jsonc">{
+  &quot;name&quot;: &quot;Python — via byn&quot;,
+  &quot;type&quot;: &quot;debugpy&quot;,
+  &quot;request&quot;: &quot;launch&quot;,
+  &quot;python&quot;: &quot;byn&quot;,
+  &quot;pythonArgs&quot;: [&quot;exec&quot;, &quot;--&quot;],
+  &quot;program&quot;: &quot;${workspaceFolder}/app.py&quot;,
+  &quot;console&quot;: &quot;integratedTerminal&quot;
+}
+</code></pre>
+    <p>Some Python extensions reject a non-Python <code>python</code> field. If so, use
+    the <code>args</code> field with a python interpreter directly:</p>
+    <pre><code class="language-jsonc">{
+  &quot;name&quot;: &quot;Python — via byn (alt)&quot;,
+  &quot;type&quot;: &quot;debugpy&quot;,
+  &quot;request&quot;: &quot;launch&quot;,
+  &quot;module&quot;: &quot;your_app&quot;,
+  &quot;console&quot;: &quot;integratedTerminal&quot;,
+  &quot;preLaunchTask&quot;: &quot;byn-exec-prep&quot;
+}
+</code></pre>
+    <p>…and define a task that exports the env (<code>byn exec</code> doesn't work
+    for inline debugger attach in all extensions; see Approach 2 for the
+    universal fallback).</p>
+    <h3 id="go">Go</h3>
+    <pre><code class="language-jsonc">{
+  &quot;name&quot;: &quot;Go — via byn&quot;,
+  &quot;type&quot;: &quot;go&quot;,
+  &quot;request&quot;: &quot;launch&quot;,
+  &quot;mode&quot;: &quot;exec&quot;,
+  &quot;program&quot;: &quot;byn&quot;,
+  &quot;args&quot;: [&quot;exec&quot;, &quot;--&quot;, &quot;${workspaceFolder}/bin/myapp&quot;],
+  &quot;console&quot;: &quot;integratedTerminal&quot;
+}
+</code></pre>
+    <p>For <code>mode: &quot;debug&quot;</code> (delve attaches by source), Go's launch.json runs
+    <code>go build</code> itself — <code>byn exec</code> doesn't fit there. Use Approach 2.</p>
+    <hr>
+    <h2 id="approach-2-tasksjson-universal">Approach 2: tasks.json (universal)</h2>
+    <p>Generic launcher that works for any language without quirks. Define a
+    task that runs <code>byn exec</code>, then bind it to a keyboard shortcut.</p>
+    <pre><code class="language-jsonc">{
+  &quot;version&quot;: &quot;2.0.0&quot;,
+  &quot;tasks&quot;: [
+    {
+      &quot;label&quot;: &quot;byn: run current entry&quot;,
+      &quot;type&quot;: &quot;shell&quot;,
+      &quot;command&quot;: &quot;byn&quot;,
+      &quot;args&quot;: [&quot;exec&quot;, &quot;--&quot;, &quot;${input:cmd}&quot;],
+      &quot;presentation&quot;: { &quot;reveal&quot;: &quot;always&quot;, &quot;panel&quot;: &quot;dedicated&quot; },
+      &quot;problemMatcher&quot;: []
+    }
+  ],
+  &quot;inputs&quot;: [
+    { &quot;id&quot;: &quot;cmd&quot;, &quot;type&quot;: &quot;promptString&quot;, &quot;description&quot;: &quot;Command to run&quot; }
+  ]
+}
+</code></pre>
+    <hr>
+    <h2 id="approach-3-integrated-terminal">Approach 3: integrated terminal</h2>
+    <p>Open a VS Code integrated terminal and run:</p>
+    <pre><code>byn exec -- npm run dev
+byn exec -- python app.py
+byn exec -- ./bin/server
+</code></pre>
+    <p>Values appear in the child process; nothing is written to history or
+    shell variables.</p>
+    <hr>
+    <h2 id="per-project-scope">Per-project scope</h2>
+    <p>Pin a project + env to the workspace so <code>byn exec</code> uses the right
+    secrets without flags:</p>
+    <p><code>.vscode/settings.json</code>:</p>
+    <pre><code class="language-jsonc">{
+  &quot;terminal.integrated.env.linux&quot;: {
+    &quot;BYN_PROJECT&quot;: &quot;${workspaceFolderBasename}&quot;,
+    &quot;BYN_ENV&quot;: &quot;dev&quot;
+  },
+  &quot;terminal.integrated.env.osx&quot;: {
+    &quot;BYN_PROJECT&quot;: &quot;${workspaceFolderBasename}&quot;,
+    &quot;BYN_ENV&quot;: &quot;dev&quot;
+  }
+}
+</code></pre>
+    <p>Then <code>byn exec -- ...</code> inside the terminal scopes to that project
+    and env automatically.</p>
+    <hr>
+    <h2 id="gotchas">Gotchas</h2>
+    <ul>
+    <li>The values are injected into the <strong>child</strong> process. They do <strong>not</strong>
+    appear in your interactive shell. This is intentional.</li>
+    <li><code>byn exec</code> requires <code>--</code> before the child command. Without it,
+    flags meant for the child are eaten by <code>byn</code>.</li>
+    <li>The daemon must be running and the vault unlocked. The CLI prints a
+    clear error and exit code 2 (daemon down) or 3 (vault locked) so the
+    IDE shows them inline.</li>
+    </ul>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#prerequisites" class="toc-item">Prerequisites</a>
+    <a href="#approach-1-launchjson-debug" class="toc-item">Approach 1: launch.json (debug)</a>
+    <a href="#nodejs--typescript" class="toc-item sub">Node.js / TypeScript</a>
+    <a href="#python" class="toc-item sub">Python</a>
+    <a href="#go" class="toc-item sub">Go</a>
+    <a href="#approach-2-tasksjson-universal" class="toc-item">Approach 2: tasks.json (universal)</a>
+    <a href="#approach-3-integrated-terminal" class="toc-item">Approach 3: integrated terminal</a>
+    <a href="#per-project-scope" class="toc-item">Per-project scope</a>
+    <a href="#gotchas" class="toc-item">Gotchas</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/vscode.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -39,7 +39,12 @@ func systemdUnit(execPath string) string {
 		"[Service]\n" +
 		"Type=simple\n" +
 		"User=" + DaemonUser + "\n" +
-		"ExecStart=" + execPath + " daemon start\n" +
+		// --foreground is load-bearing: systemd Type=simple supervises the started
+		// process directly, so the daemon must stay in the foreground and NOT
+		// self-detach. Without it `daemon start` forks a detached daemon and the
+		// tracked process exits, which systemd reads as the service dying →
+		// Restart=on-failure respawns endlessly against the detached daemon's pidfile.
+		"ExecStart=" + execPath + " daemon start --foreground\n" +
 		"Restart=on-failure\n" +
 		"\n" +
 		"# StateDirectory makes systemd create and own " + paths.SystemDataDir() + " as\n" +

@@ -61,7 +61,7 @@ func newClient(dir, vault string) *ipc.Client {
 	}
 	c := ipc.NewClient(sock)
 	key := vaultSessionKey(vault)
-	if tok := loadSessionToken(dir, key); len(tok) > 0 {
+	if tok := loadSessionToken(sessionStoreDir(dir), key); len(tok) > 0 {
 		c.Session = tok
 	}
 	return c

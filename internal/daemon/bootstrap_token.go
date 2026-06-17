@@ -7,11 +7,14 @@ import (
 	"time"
 )
 
-// bootstrapTokenTTL is the lifetime of a one-time portal bootstrap token.
-// Short enough that a ps-captured value is useless by the time an attacker
-// could act on it. 5s is generous for a local browser open while being
-// tight enough that a captured token is stale before an attacker can act.
-const bootstrapTokenTTL = 5 * time.Second
+// bootstrapTokenTTL is the lifetime of a one-time portal bootstrap token. It
+// must outlast a COLD browser launch (opening the browser app + loading the SPA
+// + the exchange round-trip), which routinely exceeds 5s on first open — too
+// tight a TTL fails the handshake with "this browser isn't authorised". 30s is
+// comfortably enough for a cold start while staying short-lived; the token is
+// also single-use and only mintable by the owner over the peercred-gated socket,
+// so a ps-captured-but-unused value must still win a race against the legit SPA.
+const bootstrapTokenTTL = 30 * time.Second
 
 // bootstrapToken is one pending bootstrap exchange.
 type bootstrapToken struct {

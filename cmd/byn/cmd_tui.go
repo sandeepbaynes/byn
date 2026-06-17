@@ -89,7 +89,7 @@ func runTUI(args []string, scope cliScope) int {
 		if len(tok) > 0 {
 			client.Session = tok
 			vaultKey := vaultSessionKey(targetVault)
-			if serr := saveSessionToken(dir, vaultKey, tok); serr != nil {
+			if serr := saveSessionToken(sessionStoreDir(dir), vaultKey, tok); serr != nil {
 				// Non-fatal: TUI already has the session; file is convenience.
 				fmt.Fprintf(os.Stderr, "warning: could not save session token: %v\n", serr)
 			}

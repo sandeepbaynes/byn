@@ -349,7 +349,7 @@ async function renderFromLocation() {
 // to receive the persistent portal token, stores the persistent token in
 // localStorage, and strips ?auth= from the URL via replaceState — so the
 // persistent token never appears in browser history or server logs.
-// A ps-captured bootstrap token is single-use and expires in 5s.
+// A ps-captured bootstrap token is single-use and expires in 30s.
 //
 // If no token is in localStorage and an API call returns 401
 // {error:"portal_token_required"}, the SPA renders a full-screen notice
@@ -2353,6 +2353,14 @@ async function revealValue(s) {
   return data.value;
 }
 async function reveal(s, valEl) {
+  if (vaultLocked(state.scope.vault)) {
+    // A value cannot be decrypted while the vault is locked: a one-shot password
+    // can authorize the read but does not load the vault key, so the daemon
+    // returns "vault is locked". Unlock the vault first — that loads the key for
+    // this session — then values reveal normally (no per-value password prompt).
+    await unlockVault(state.scope.vault);
+    return;
+  }
   try {
     const value = await revealValue(s);
     valEl.classList.add("revealed"); valEl.textContent = value;
@@ -2370,6 +2378,7 @@ function toggleReveal(s, valEl) {
   if (valEl.classList.contains("revealed")) hideReveal(s, valEl); else reveal(s, valEl);
 }
 async function copyValue(s) {
+  if (vaultLocked(state.scope.vault)) { await unlockVault(state.scope.vault); return; }
   try { const value = await revealValue(s); await navigator.clipboard.writeText(value); toast("copied " + s.name); }
   catch (e) { toast(e.message || "copy failed", true); }
 }

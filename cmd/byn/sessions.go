@@ -6,11 +6,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/sandeepbaynes/byn/internal/paths"
 )
 
 // sessionDir returns the sessions subdirectory: <data-dir>/sessions/
 func sessionDir(dataDir string) string {
 	return filepath.Join(dataDir, "sessions")
+}
+
+// sessionStoreDir returns the directory the session-token functions should use.
+// Session tokens are a CLIENT-side, per-terminal artifact written by the OWNER's
+// CLI (the daemon receives the token over IPC — it never reads the file). On a
+// PROVISIONED install the data dir is the _byn-owned system tree the owner can't
+// write, so tokens go under the owner's ~/.byn instead. Non-provisioned installs
+// (data dir already owner-writable) keep using the data dir, preserving behavior
+// — including a custom BYN_DIR. Falls back to dataDir if the home is unknown.
+func sessionStoreDir(dataDir string) string {
+	if provisioned, _ := paths.ProvisionedIn(dataDir); provisioned {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".byn")
+		}
+	}
+	return dataDir
 }
 
 // sessionFileNameFor returns the hex-encoded SHA-256[:16] (32 hex chars) of

@@ -316,3 +316,193 @@ from another machine, etc.).
   responses for `wrong_password` / `not_init`.
 - [File layout](file-layout.md) — every file's intended mode +
   recovery procedure.
+
+---
+
+## "operation not permitted" reading a `.byn` — macOS Full Disk Access (TCC)
+
+```
+$ byn trust .
+  x .../.byn: open .../.byn: operation not permitted
+```
+
+or, surfaced through the daemon:
+
+```
+Error: open .../.byn: the byn daemon was denied by macOS privacy
+protection (TCC). Grant Full Disk Access ...
+```
+
+**Cause.** Under privilege separation the daemon runs as the `_byn` service
+user via launchd. macOS **TCC** (Transparency, Consent & Control) blocks any
+process from reading files in protected folders — **`~/Documents`,
+`~/Desktop`, `~/Downloads`, iCloud Drive**, and removable/network volumes —
+unless it has **Full Disk Access**. **TCC overrides POSIX permissions and
+ACLs**, so this is not something `chmod`/`setfacl` can fix. Your CLI reads the
+file fine (it inherits Terminal's access); the daemon, a separate user, does
+not. The tell is the errno: **`operation not permitted`** (EPERM = TCC) versus
+**`permission denied`** (EACCES = ordinary permissions).
+
+### Option A — keep projects out of the protected folders (recommended, free)
+
+The simplest fix needs no Full Disk Access and no code signing: keep
+byn-managed projects **outside** `~/Documents`, `~/Desktop`, `~/Downloads` and
+iCloud Drive. Anything under e.g. `~/code`, `~/dev`, `~/src`, `/opt`,
+`/Users/Shared` is not TCC-protected, and the daemon reads it normally.
+
+```sh
+mkdir -p ~/code
+mv ~/Documents/my-project ~/code/my-project
+cd ~/code/my-project
+byn trust .
+```
+
+A symlink does **not** help — TCC checks the real path. Move the real directory.
+
+### Option B — grant the daemon Full Disk Access
+
+Keep projects where they are and authorize the daemon once.
+
+1. Confirm the daemon binary path (the LaunchDaemon's program):
+   ```sh
+   grep -A1 ProgramArguments /Library/LaunchDaemons/com.sandeepbaynes.byn.plist
+   # usually /usr/local/bin/byn
+   ```
+2. Open **System Settings → Privacy & Security → Full Disk Access**:
+   ```sh
+   open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+   ```
+3. Click **+**. In the file picker press **⌘⇧G**, type `/usr/local/bin/byn`,
+   press Return, then **Open**. Toggle the new **byn** entry **on**.
+4. Restart the daemon so it picks up the grant:
+   ```sh
+   sudo launchctl kickstart -k system/com.sandeepbaynes.byn
+   ```
+5. Verify (no password needed) against any already-trusted `.byn`:
+   ```sh
+   byn trust diff /path/to/a/trusted/.byn
+   # success (a diff or "no changes") = the daemon can read it
+   ```
+
+### Make the Full Disk Access grant survive reinstalls (optional, free)
+
+byn ships **ad-hoc signed** (Go's default), so TCC ties the grant to that exact
+build — after `make install` of a new build you must re-grant. To make it
+persist, sign the binary with a **stable identity**. A **free** Apple ID is
+enough; you do **not** need the paid Developer Program for your own machine.
+
+1. Add your Apple ID in **Xcode → Settings → Accounts** (creates a free
+   "Personal Team" and an **Apple Development** certificate in your login
+   keychain). Xcode or the Command Line Tools must be installed.
+2. Find the signing identity:
+   ```sh
+   security find-identity -v -p codesigning
+   # e.g. "Apple Development: you@example.com (TEAMID1234)"
+   ```
+3. Install **and sign in one step** (the Makefile signs when `CODESIGN_IDENTITY`
+   is set, using stable identifiers so the grant persists):
+   ```sh
+   sudo make install CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID1234)"
+   ```
+   Or sign an already-installed binary by hand (keep the `--identifier` constant
+   across rebuilds — TCC keys on identifier + identity):
+   ```sh
+   sudo codesign --force --identifier com.sandeepbaynes.byn \
+     --sign "Apple Development: you@example.com (TEAMID1234)" /usr/local/bin/byn
+   sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
+     --sign "Apple Development: you@example.com (TEAMID1234)" /usr/local/bin/byn-exec-helper
+   ```
+4. Re-add `/usr/local/bin/byn` to Full Disk Access **once** (the identity changed
+   from ad-hoc), then restart the daemon. Every later reinstall signed with the
+   same identity keeps the grant.
+
+### Distributing byn to other Macs (your team)
+
+A free Apple ID development certificate works on **your** machine but is not
+valid on other people's Macs — Gatekeeper blocks it and FDA can't be attributed.
+To ship byn to a team you need the **paid Apple Developer Program** ($99/yr) for
+a **Developer ID Application** certificate plus **notarization**, after which the
+binary runs cleanly and Full Disk Access can be pre-granted fleet-wide via an MDM
+PPPC configuration profile. Until then, tell your team to use **Option A** —
+projects outside the protected folders — which needs no signing at all.
+
+---
+
+## Running `byn exec` under privsep (toolchain, TMPDIR, debugging)
+
+By default `byn exec` runs the child as the `_byn-exec` service user, so the
+injected secrets are hidden from your own `ps -E`. Because the child is a
+**different UID** than you, it needs filesystem access to what your toolchain
+reads and writes — `byn trust` grants that for the *project*, but not for tools
+installed in your home. Symptoms and fixes:
+
+### `Permission denied` (EACCES) running a tool — toolchain not reachable
+
+```
+sandbox-exec: execvp() of '.../.nvm/.../bin/pnpm' failed: Permission denied
+```
+
+This is **POSIX**, not TCC (`Permission denied`/EACCES, not `Operation not
+permitted`/EPERM). The `_byn-exec` child can't traverse/read the dir the tool
+lives in. `byn trust` already grants `_byn-exec` *traverse* on your home and the
+project, so a world-readable toolchain (e.g. nvm's `~/.nvm`, mode `0755`) works
+for free.
+
+**Most tool-state dirs are auto-granted.** At `byn trust` time byn also grants
+`_byn-exec` read/write on a **curated set of common tool-state dirs** that exist
+on your machine — `~/.cache`, `~/.npm`, `~/Library/pnpm`, `~/.cargo`, `~/.rustup`,
+`~/go`, `~/.gradle`, `~/.m2`, `~/.config`, … — so pnpm/npm/cargo/etc. work without
+manual steps. If your tool keeps state somewhere uncommon, declare it in the
+`.byn`:
+
+```toml
+[exec]
+actions = ["pnpm dev"]
+writable = ["~/Library/pnpm", "~/.my-tool"]   # extra dirs, granted at trust time
+```
+
+Entries must be **under your home** (`~` is expanded); ones outside are refused,
+and a credential dir (`~/.ssh`, `~/.aws`, …) prints a warning. As a last resort
+you can grant a dir by hand (the same kind of ACE `byn trust` adds):
+
+```sh
+chmod +a "_byn-exec allow execute,search" ~/Library
+chmod +a "_byn-exec allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit" ~/Library/pnpm
+```
+
+`execute,search` is *traverse only* (not list/read) — the child passes through to
+the dir you grant, it can't enumerate the parent. Re-running `byn trust .`
+re-applies the project + home-traverse + tool-state ACEs if they get cleared.
+
+> **Why this is safe:** running a tool as `_byn-exec` is *more* confined than the
+> baseline — normally `make dev` runs it as **you**, with full home access.
+> Privsep's value is hiding the injected secrets from same-user snooping, not
+> sandboxing the toolchain. Granting `_byn-exec` read access to your dev
+> environment is therefore not a new exposure.
+
+### `EACCES … mkdir '/var/folders/…/T/…'` — `TMPDIR`
+
+Your `$TMPDIR` points at a uid-private folder (`0700`) the child can't write. byn
+**auto-normalizes** `TMPDIR`/`TMP`/`TEMP` for the child to a writable location, so
+this is handled automatically on a current build. On an older build, prefix the
+run with `TMPDIR=/tmp`.
+
+### Debugging — the debugger can't attach to a privsep child
+
+A debugger running as **you** cannot attach to a **different-UID** (`_byn-exec`)
+process: macOS/Linux restrict `ptrace`/`task_for_pid` to the same UID. That's the
+*same* rule that hides the env from your `ps -E`. Two ways to debug:
+
+- **`byn exec --no-privsep -- …`** runs the child **as you**, so a launch-mode
+  debugger (VS Code "launch") attaches normally. Secrets are still injected, but
+  the env is visible to your own `ps -E`, so this mode **requires the master
+  password every run** (no blind trusted-file run). Best for interactive
+  step-debugging — you're at the machine, so a password per run is fine.
+- **`byn exec --inspect[=PORT] -- …`** (or `--inspect PORT`) keeps privsep (env
+  hidden) and enables the Node inspector. Your editor **attaches** over loopback
+  TCP (UID-agnostic). With no PORT byn picks the next free port (printed); an
+  explicit PORT is used only if free, otherwise byn fails clearly (not a buried
+  `EADDRINUSE`); `--inspect=0` lets each node self-allocate (for multi-process
+  runners like `tsx watch`). Configure the editor as an **attach** target, not launch.
+
+See `byn exec help` for the full mode comparison.

@@ -14,6 +14,22 @@ type SandboxOpts struct {
 	NoNetwork  bool   // per-action tightening: deny all network
 }
 
+// ExecSandboxProfile returns the Seatbelt (sandbox-exec) profile string for a
+// terminal-anchored exec child (Option A): allow-by-default, denying byn's own
+// state dir + socket (defense in depth atop the _byn-exec UID boundary).
+// noNetwork additionally denies all network. The privsep helper applies it via
+// `sandbox-exec -p <profile>` AFTER dropping to _byn-exec. Paths are
+// symlink-resolved so the Seatbelt deny matches the kernel real path. Returns ""
+// when there is nothing to confine, so the helper runs the target directly.
+func ExecSandboxProfile(stateDir, socketPath string, noNetwork bool) string {
+	sd := resolveSymlinks(stateDir)
+	sp := resolveSymlinks(socketPath)
+	if sd == "" && sp == "" && !noNetwork {
+		return ""
+	}
+	return seatbeltProfile(SandboxOpts{StateDir: sd, SocketPath: sp, NoNetwork: noNetwork})
+}
+
 // seatbeltProfile builds a TARGETED SBPL profile: allow-by-default (so arbitrary
 // approved commands run), with specific denials of byn's own socket + state dir
 // (defense in depth on top of the _byn-exec UID boundary), and an optional

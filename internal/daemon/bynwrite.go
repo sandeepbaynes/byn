@@ -71,7 +71,7 @@ type trustGrantPolicy struct {
 //
 // os.Stat failure after a successful ReadFile ⇒ the grant is also refused (no
 // mtime=0 v2 records; fail closed — the caller should retry).
-func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byte) (canon, hash string, changed bool, policy trustGrantPolicy, err error) {
+func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vaultName, path string, body, vkKey, password []byte) (canon, hash string, changed bool, policy trustGrantPolicy, err error) {
 	// Parse and validate BEFORE writing anything to the trust store.
 	parsed, perr := bynfile.Parse(body)
 	if perr != nil {
@@ -96,7 +96,7 @@ func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byt
 
 	// os.Stat must succeed: a zero mtime would silently degrade to a v1
 	// record. Fail closed so the caller can retry (the file just vanished).
-	fi, serr := os.Stat(path) // #nosec G304 -- user-named; daemon runs as the same user
+	fi, serr := os.Stat(path) // #nosec G304 -- user-named; daemon reaches it via owner-granted ACL under privsep
 	if serr != nil {
 		return "", "", false, trustGrantPolicy{},
 			fmt.Errorf("stat %s after read: %w (file may have been removed)", path, serr)
@@ -131,6 +131,20 @@ func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byt
 		ScopeProject:  parsed.Scope.Project,
 		ScopeEnv:      parsed.Scope.Env,
 	}
+	// Capture + seal the autonomous-exec capability — the allowlisted vars' row
+	// keys wrapped under the machine-fingerprint K_cap — so trusted exec can
+	// inject them with NO password/unlock (survives restart). Best-effort: nil
+	// when there's no [exec] env allowlist or no machine fingerprint, in which
+	// case exec falls back to a password. Set BEFORE SetMACs so it is MAC-bound.
+	capScope := vault.Scope{
+		Project: defaultIfEmpty(parsed.Scope.Project, vault.DefaultProjectName),
+		Env:     defaultIfEmpty(parsed.Scope.Env, vault.DefaultEnvName),
+	}
+	capBlob, cerr := d.sealExecCapability(ctx, st, capScope, []string(parsed.Exec.Env), parsed.AllowsAll(), password)
+	if cerr != nil {
+		return "", "", false, trustGrantPolicy{}, fmt.Errorf("seal exec capability: %w", cerr)
+	}
+	rec.ExecCapability = capBlob
 	rec.SetMACs(d.fpMACKey, vkKey)
 	changed, err = trust.Put(d.cfg.Dir, rec)
 	policy = trustGrantPolicy{
@@ -141,6 +155,66 @@ func (d *Daemon) putTrustRecordWithKey(vaultName, path string, body, vkKey []byt
 		ActionsWildcard: parsed.ActionsAllowAll(),
 	}
 	return canon, hash, changed, policy, err
+}
+
+// sealExecCapability captures the per-row keys for a .byn's allowlisted vars and
+// seals them under the machine-fingerprint K_cap, producing the blob stored in
+// the trust record for autonomous trusted exec. Returns nil (no capability —
+// exec will require a password) when there are no allowlisted vars or the
+// machine fingerprint is unavailable. A wildcard (env="*") allowlist captures
+// every var currently in scope. Uses the password when supplied (locked grant),
+// else the in-memory key (passkey grant — vault unlocked).
+func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope vault.Scope, allow []string, wildcard bool, password []byte) ([]byte, error) {
+	if d.fpMACKey == nil {
+		return nil, nil // no machine fingerprint → no cold capability
+	}
+	names := allow
+	if wildcard {
+		infos, err := st.ListEnvVars(ctx, scope)
+		if err != nil {
+			return nil, scopeOptional(err)
+		}
+		names = make([]string, 0, len(infos))
+		for _, m := range infos {
+			names = append(names, m.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil // nothing to inject → no capability
+	}
+
+	var rowKeys map[string][]byte
+	var err error
+	if len(password) > 0 {
+		rowKeys, err = st.CaptureRowKeysWithPassword(ctx, password, scope, names)
+	} else {
+		rowKeys, err = st.CaptureRowKeys(ctx, scope, names)
+	}
+	if err != nil {
+		return nil, scopeOptional(err)
+	}
+	defer func() {
+		for _, k := range rowKeys {
+			zeroBytes(k)
+		}
+	}()
+
+	capKey, err := vcrypto.DeriveCapKey(d.fpMACKey)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroBytes(capKey)
+	return vcrypto.SealCapability(capKey, rowKeys)
+}
+
+// scopeOptional maps a "scope doesn't exist yet" error (no such project/env in
+// the vault) to nil — that scope simply has no vars to capture, so the .byn gets
+// no capability rather than failing the grant. Other errors pass through.
+func scopeOptional(err error) error {
+	if errors.Is(err, vault.ErrProjectNotFound) || errors.Is(err, vault.ErrEnvNotFound) {
+		return nil
+	}
+	return err
 }
 
 // aclRunner returns a runner that executes an ACL command (setfacl / chmod)
@@ -398,7 +472,7 @@ func (d *Daemon) handleBynWrite(ctx context.Context, env *ipc.Envelope) *ipc.Env
 				fmt.Sprintf(".byn exceeds 64KB (size=%d bytes)", len(content)),
 				"reduce the .byn size before trusting it")
 		}
-		_, _, _, policy, terr := d.putTrustRecordWithKey(name, path, []byte(content), vkKey)
+		_, _, _, policy, terr := d.putTrustRecordWithKey(ctx, st, name, path, []byte(content), vkKey, req.Password)
 		if terr != nil {
 			canon := trust.Canonicalize(path)
 			d.auditEmit(ctx, name, audit.Event{

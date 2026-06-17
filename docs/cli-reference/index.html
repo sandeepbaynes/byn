@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLI reference — byn docs</title>
+<meta name="description" content="Every command, every flag, every env var, every exit code.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/">Docs</a>
+    <a href="../../docs/cli-reference/" class="active">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">CLI reference</div>
+      <a href="./" class="sb-item active">CLI reference</a>
+      <a href="#global-flags-work-before-or-after-the-subcommand" class="sb-item">Global flags (work before OR after the subcommand)</a>
+      <a href="#exit-codes" class="sb-item">Exit codes</a>
+      <a href="#lifecycle" class="sb-item">Lifecycle</a>
+      <a href="#system-setup-privilege-separation" class="sb-item">System setup (privilege separation)</a>
+      <a href="#structure-crud" class="sb-item">Structure CRUD</a>
+      <a href="#env-vars-active-scope" class="sb-item">Env-vars (active scope)</a>
+      <a href="#bulk-io" class="sb-item">Bulk I/O</a>
+      <a href="#execution" class="sb-item">Execution</a>
+      <a href="#diagnostics" class="sb-item">Diagnostics</a>
+      <a href="#trust-byn-tofu" class="sb-item">Trust (.byn TOFU)</a>
+      <a href="#misc" class="sb-item">Misc</a>
+      <a href="#config-file-bynconfig" class="sb-item">Config file (~/.byn/config)</a>
+      <a href="#environment-variables" class="sb-item">Environment variables</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">CLI Reference</span>
+    </div>
+
+    <h1>CLI reference</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">docs/cli-reference.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/cli-reference.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>Every command, every flag, every env var, every exit code.</p>
+    <p>Per-command help is also reachable from the binary itself:</p>
+    <pre><code>byn &lt;command&gt; --help
+byn help &lt;command&gt;
+byn &lt;command&gt; -h
+</code></pre>
+    <p>Help output pages through <code>$PAGER</code> (default <code>less -RFX</code>) when stdout
+    is a TTY. See <a href="#pager-and-hint-env-vars">Pager / hint env vars</a>.</p>
+    <hr>
+    <h2 id="global-flags-work-before-or-after-the-subcommand">Global flags (work before OR after the subcommand)</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Flag</th>
+    <th>Env var</th>
+    <th>Default</th>
+    <th>Meaning</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>--vault NAME</code></td>
+    <td><code>BYN_VAULT</code></td>
+    <td><code>default</code></td>
+    <td>Target vault</td>
+    </tr>
+    <tr>
+    <td><code>--project NAME</code></td>
+    <td><code>BYN_PROJECT</code></td>
+    <td><code>default</code></td>
+    <td>Target project</td>
+    </tr>
+    <tr>
+    <td><code>--env NAME</code></td>
+    <td><code>BYN_ENV</code></td>
+    <td><code>default</code></td>
+    <td>Target env</td>
+    </tr>
+    <tr>
+    <td><code>--no-discovery</code></td>
+    <td><code>BYN_NO_DISCOVERY=1</code></td>
+    <td>off</td>
+    <td>Skip <code>.byn</code> walk for this call</td>
+    </tr>
+    <tr>
+    <td><code>--json</code></td>
+    <td>n/a</td>
+    <td>off</td>
+    <td>Agent mode: machine-readable output AND no interactive prompts; untrusted <code>.byn</code> hard-fails</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Conflicting duplicate values are a <strong>hard error</strong>:</p>
+    <pre><code>$ byn --vault a --vault b list
+Error: --vault specified twice with different values: &quot;a&quot; vs &quot;b&quot;
+</code></pre>
+    <p>Resolution precedence (highest first): CLI flag &gt; env var &gt; <code>.byn</code>
+    discovery &gt; daemon default.</p>
+    <hr>
+    <h2 id="exit-codes">Exit codes</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Code</th>
+    <th>Meaning</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>0</code></td>
+    <td>Success</td>
+    </tr>
+    <tr>
+    <td><code>1</code></td>
+    <td>Generic error (bad input, runtime failure, lint-style problem)</td>
+    </tr>
+    <tr>
+    <td><code>2</code></td>
+    <td>Daemon unreachable — recovery hint printed to stderr</td>
+    </tr>
+    <tr>
+    <td><code>3</code></td>
+    <td>Daemon returned a typed error (wrong password, locked, not found, audit chain broken, etc.)</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Use these for scripting:</p>
+    <pre><code class="language-sh">byn get DB_URL || case $? in
+    2) echo &quot;start the daemon&quot; ;;
+    3) echo &quot;unlock the vault&quot; ;;
+esac
+</code></pre>
+    <hr>
+    <h2 id="lifecycle">Lifecycle</h2>
+    <h3 id="byn-init---password-stdin"><code>byn init [--password-stdin]</code></h3>
+    <p>Create a new vault under <code>~/.byn/vaults/&lt;scope.Vault&gt;/</code> (defaults to
+    <code>default</code>).</p>
+    <ul>
+    <li>Prompts for the master password twice in TTY mode (confirms typo).</li>
+    <li><code>--password-stdin</code> reads one line, no confirm.</li>
+    <li>Implicitly creates <code>default</code> project + <code>default</code> env.</li>
+    </ul>
+    <p>Errors:</p>
+    <ul>
+    <li><code>already_init</code> if the vault directory already exists.</li>
+    </ul>
+    <h3 id="byn-unlock---password-stdin"><code>byn unlock [--password-stdin]</code></h3>
+    <p>Unwrap the vault key into the daemon's memory.</p>
+    <ul>
+    <li>Subject to the failed-unlock backoff (<code>auth-state.json</code>).</li>
+    <li>On success, starts the per-vault idle timer.</li>
+    </ul>
+    <h3 id="byn-lock"><code>byn lock</code></h3>
+    <p>Zero the in-memory vault key for <code>--vault</code> (or <code>--all</code> to lock every
+    unlocked vault). <code>--session</code> ends only this terminal's session and
+    leaves the vault unlocked.</p>
+    <h3 id="byn-daemon-start---foreground"><code>byn daemon start [--foreground]</code></h3>
+    <p>Start the long-lived daemon.</p>
+    <ul>
+    <li>Default: detached via <code>Setsid: true</code>, logs to <code>~/.byn/daemon.log</code>.</li>
+    <li><code>--foreground</code> runs in the current terminal; ctrl-C signals shutdown.</li>
+    <li>Refuses if a daemon is already responding (stale pidfile is
+    detected via signal-0 probe and ignored).</li>
+    </ul>
+    <h3 id="byn-daemon-stop"><code>byn daemon stop</code></h3>
+    <p>SIGTERM via pidfile. Idempotent.</p>
+    <h3 id="byn-daemon-status-alias-byn-status---json"><code>byn daemon status</code> (alias: <code>byn status [--json]</code>)</h3>
+    <p>Print:</p>
+    <ul>
+    <li>Daemon running state + version + protocol range</li>
+    <li>Socket path + uptime</li>
+    <li>Every vault on disk + locked/unlocked + last-active timestamp
+    (last-active is suppressed when the vault is locked — see
+    <a href="security/">security.md</a>)</li>
+    </ul>
+    <p><code>--json</code> emits the full <code>StatusResp</code> for agent harnesses.</p>
+    <hr>
+    <h2 id="system-setup-privilege-separation">System setup (privilege separation)</h2>
+    <p>These commands provision and migrate the <strong>opt-in</strong> <a href="security/#privilege-separation-the-three-uid-model-opt-in-nu-56">three-UID privilege
+    separation</a>
+    (daemon as <code>_byn</code>, exec children as <code>_byn-exec</code>, you as the owner). Both require
+    root. Privsep is off by default; enable it with <code>[security] privsep = true</code> in
+    the config and restart the daemon. See the <a href="migration/">migration guide</a>.</p>
+    <h3 id="byn-setup---uninstall---purge"><code>byn setup [--uninstall [--purge]]</code></h3>
+    <p>Provision the full privsep install in one idempotent, root-required step. With no
+    flags, <code>byn setup</code>:</p>
+    <ol>
+    <li>Creates the <code>_byn</code> and <code>_byn-exec</code> service accounts and installs the prebuilt
+    privileged spawn helper (<code>byn-exec-helper</code>) + its root-owned UID/GID config.</li>
+    <li>Installs and loads the system service that runs the daemon as <code>_byn</code> (a
+    systemd system unit on Linux, a LaunchDaemon on macOS) — <strong>not</strong> the human
+    owner.</li>
+    <li>Relocates any legacy <code>~/.byn</code> vault into the fixed system data path, chowned
+    to <code>_byn</code> (trust + passkeys preserved — same machine); skipped on a fresh
+    install.</li>
+    <li>Records the <strong>owner UID</strong> (the human who ran sudo, read from <code>SUDO_UID</code>) as
+    the single UID the daemon allowlists on its peercred-gated socket.</li>
+    <li>Verifies the post-conditions.</li>
+    </ol>
+    <ul>
+    <li>Must run via <strong>sudo</strong> (<code>sudo byn setup</code>) so <code>SUDO_UID</code> is set. Running as real
+    root (not via sudo) fails rather than recording root as the owner.</li>
+    <li><strong>Idempotent</strong> — re-running on a provisioned host reinstalls the helper +
+    service, re-records the owner, and exits 0 (safe on every install and upgrade).</li>
+    <li>The prebuilt <code>byn-exec-helper</code> must sit beside the <code>byn</code> binary.</li>
+    <li>Linux uses <code>systemd-sysusers(8)</code>; macOS uses <code>sysadminctl(8)</code>. Other platforms
+    are unsupported.</li>
+    <li>Setup <strong>provisions</strong> privsep; it does not <strong>enable</strong> it. Engage it with
+    <code>[security] privsep = true</code> in the config + a daemon restart. With privsep
+    enabled but <strong>not</strong> provisioned, the daemon warns and trusted-<code>.byn</code> exec
+    <strong>fails closed</strong> — it never silently runs as the owner UID.</li>
+    <li><code>--uninstall</code> reverses a previous setup (uninstall the service, remove the
+    helper + config + owner record). It <strong>leaves the vault intact</strong> by default. Add
+    <code>--purge</code> to also delete the system data dir and every secret in it — a
+    destructive, irreversible action gated behind a typed <code>yes</code> confirmation. The
+    vault is <strong>never</strong> removed without <code>--purge</code>.</li>
+    </ul>
+    <h3 id="byn-migrate---from-path---force"><code>byn migrate [--from PATH] [--force]</code></h3>
+    <p>Adopt a byn vault tree into the fixed system data path with the correct structure
+    and ownership (<code>_byn</code>, mode 0700). The source is verified <strong>without its
+    password</strong> — every <code>vault.db</code> must open as a well-formed, correctly-versioned
+    vault whose <code>wrapped.key</code>/<code>meta.json</code> fingerprint matches and whose audit chain
+    is intact — before anything is adopted; a malformed, truncated, or tampered
+    source is rejected and the destination is left untouched. The adopt is atomic and
+    re-runnable; it never half-migrates.</p>
+    <ul>
+    <li>Must run as root (it writes the <code>_byn</code>-owned system path and chowns the tree).
+    The <code>_byn</code> account must already exist; if not, run <code>byn setup</code> first — migrate
+    adopts with the correct ownership, it does not create users.</li>
+    <li><strong>No <code>--from</code> (relocate / upgrade path):</strong> moves the legacy <code>~/.byn</code> into the
+    system path. Same machine, so the trust store and passkey enrollments are
+    <strong>kept</strong>, and the old <code>~/.byn</code> is removed only <strong>after</strong> the destination is
+    fully adopted.</li>
+    <li><strong><code>--from PATH</code> (import):</strong> copies an external vault in (a backup, a mounted
+    disk, a synced dir) and <strong>never deletes the source</strong>. An import brings vault
+    <strong>data only</strong> — the trust store and passkey enrollments are <strong>dropped</strong> (trust
+    is never silently carried across a machine boundary), so afterwards you <strong>must</strong>
+    re-trust your <code>.byn</code> files with <code>byn trust</code> and re-enroll passkeys on this
+    machine. A non-empty destination is refused unless <code>--force</code> is given.</li>
+    </ul>
+    <hr>
+    <h2 id="structure-crud">Structure CRUD</h2>
+    <h3 id="byn-vault-list---json"><code>byn vault list [--json]</code></h3>
+    <p>List every vault present under <code>~/.byn/vaults/</code>. Human output
+    shows name + state (<code>unlocked</code>/<code>locked</code>/<code>uninitialized</code>).</p>
+    <h3 id="byn-vault-delete-name---password-stdin"><code>byn vault delete NAME [--password-stdin]</code></h3>
+    <p>Cascade-delete: removes the vault directory and all entries. Refuses
+    <code>default</code>. Password required when locked or when no session is present.</p>
+    <h3 id="byn-vault-rename-old-new---password-stdin"><code>byn vault rename OLD NEW [--password-stdin]</code></h3>
+    <p>Rename a vault and its audit trail. Refuses <code>default</code> and an existing
+    destination. The vault is left <strong>locked</strong> after the rename. Password
+    required when locked or when no session is present.</p>
+    <h3 id="byn-vault-initunlocklock"><code>byn vault {init,unlock,lock}</code></h3>
+    <p>Aliases for the top-level lifecycle commands (<code>byn init</code>, etc.).
+    Provided so muscle memory works either way.</p>
+    <h3 id="byn-project-list---json"><code>byn project list [--json]</code></h3>
+    <p>List projects in the active vault.</p>
+    <h3 id="byn-project-create-name"><code>byn project create NAME</code></h3>
+    <p>Create a project. Implicitly creates a <code>default</code> env for it.</p>
+    <ul>
+    <li><code>NAME</code> can be a positional or <code>--project NAME</code> (the scope flag).</li>
+    </ul>
+    <h3 id="byn-project-delete-name---password-stdin"><code>byn project delete NAME [--password-stdin]</code></h3>
+    <p>Cascade-delete: removes the project + every env + every entry +
+    every entry_version. Refuses <code>default</code>. Password required when locked
+    or when no session is present.</p>
+    <h3 id="byn-project-rename-old-new"><code>byn project rename OLD NEW</code></h3>
+    <p>Rename. Refuses to rename to <code>default</code> or rename <code>default</code> away.</p>
+    <h3 id="byn-env-list---json"><code>byn env list [--json]</code></h3>
+    <p>List envs in the active project. The default env is pinned first; the
+    rest are alphabetical.</p>
+    <h3 id="byn-env-create-name"><code>byn env create NAME</code></h3>
+    <p>Create a non-default env in the active project.</p>
+    <h3 id="byn-env-delete-name---password-stdin"><code>byn env delete NAME [--password-stdin]</code></h3>
+    <p>Delete a non-default env. Refuses <code>default</code>. Cascades to its entries</p>
+    <ul>
+    <li>entry versions. Password required when locked or when no session is
+    present.</li>
+    </ul>
+    <h3 id="byn-env-rename-old-new"><code>byn env rename OLD NEW</code></h3>
+    <p>Rename. Refuses <code>default</code>.</p>
+    <hr>
+    <h2 id="env-vars-active-scope">Env-vars (active scope)</h2>
+    <h3 id="byn-put-name---create-only---password-stdin"><code>byn put NAME [--create-only] [--password-stdin]</code></h3>
+    <p>Store an env-var entry under <code>(scope.Project, scope.Env)</code>.</p>
+    <ul>
+    <li>Value comes from <strong>stdin only</strong>. <code>byn put NAME VALUE</code> is
+    rejected — values in argv leak to ps and shell history.</li>
+    <li><code>--create-only</code> fails with <code>already_exists</code> if the name is taken
+    (used by <code>import --skip-existing</code>).</li>
+    <li>Hint on success: <code>Stored &quot;NAME&quot; in vault/project/env.</code></li>
+    <li>Overwriting an existing entry requires the master password when no session
+    is present. New entries (first put of a name, or <code>--create-only</code>) do not.</li>
+    <li><code>--password-stdin</code> contract: the <strong>first line</strong> of stdin is always
+    the master password; the <strong>remainder</strong> (after the first <code>\n</code>) is the
+    secret value. The first line is always consumed when <code>--password-stdin</code>
+    is set, even if the daemon never requests authorization:
+    <pre><code class="language-sh">{ echo &quot;$BYN_PW&quot;; printf 'new-val'; } | byn put key --password-stdin
+</code></pre>
+    </li>
+    <li>Locked vault with <code>--password-stdin</code>: hard fail (&quot;byn unlock&quot;) — a
+    password alone cannot decrypt a locked vault for a write.</li>
+    </ul>
+    <p>Examples:</p>
+    <pre><code class="language-sh">echo 's3cr3t' | byn put DB_PASSWORD
+byn put TLS_CERT &lt; server.crt
+</code></pre>
+    <h3 id="byn-get-name---json---password-stdin-alias-byn-cat-name"><code>byn get NAME [--json] [--password-stdin]</code> (alias: <code>byn cat NAME</code>)</h3>
+    <p>Print the decrypted value to stdout.</p>
+    <ul>
+    <li>Inheritance: if the name doesn't exist in <code>scope.Env</code>, the daemon
+    falls back to the project's <code>default</code> env.</li>
+    <li>TTY: appends a trailing newline so the next prompt doesn't run on.</li>
+    <li>Non-TTY: raw bytes, no trailing newline (safe for piping/redirection).</li>
+    <li><code>--json</code> emits <code>{&quot;name&quot;: ..., &quot;value&quot;: ...}</code> — use only in trusted
+    harnesses; values land in your agent's context.</li>
+    <li>The master password is required when no session is present.
+    <code>--password-stdin</code> reads the entire stdin as the password (no newline
+    split — contrast with <code>put</code>).</li>
+    <li>Locked vault: always a hard fail (&quot;byn unlock&quot;); a password cannot
+    decrypt a locked vault.</li>
+    </ul>
+    <h3 id="byn-list---json-alias-byn-ls"><code>byn list [--json]</code> (alias: <code>byn ls</code>)</h3>
+    <p>List entry names + per-entry metadata. JSON emits:</p>
+    <pre><code class="language-json">[
+  {
+    &quot;name&quot;: &quot;DB_URL&quot;,
+    &quot;source&quot;: &quot;scope&quot;,       // or &quot;default&quot; if inherited from default env
+    &quot;created_at&quot;: &quot;...&quot;,
+    &quot;updated_at&quot;: &quot;...&quot;
+  }
+]
+</code></pre>
+    <p>Allowed while locked (names are not secret). Not gated by the session matrix.</p>
+    <h3 id="byn-delete-name---password-stdin-alias-byn-rm-name"><code>byn delete NAME [--password-stdin]</code> (alias: <code>byn rm NAME</code>)</h3>
+    <p>Remove an entry. No inheritance — must exist in <code>scope.Env</code>.
+    Allowed while locked (names only, no values touched).</p>
+    <ul>
+    <li>When the vault is locked or no session is present, the master password
+    is required. <code>--password-stdin</code> reads entire stdin as the password.</li>
+    <li>A locked vault accepts <code>delete</code> with the password (unlike <code>get</code>/<code>put</code>
+    which require unlock for value operations).</li>
+    </ul>
+    <h3 id="byn-rename-old-new---password-stdin-alias-byn-mv-old-new"><code>byn rename OLD NEW [--password-stdin]</code> (alias: <code>byn mv OLD NEW</code>)</h3>
+    <p>Move within <code>scope.Env</code>. Daemon re-encrypts under the new AAD.
+    Requires unlock (re-encryption needs the vault key).</p>
+    <ul>
+    <li>The master password is required when no session is present.
+    <code>--password-stdin</code> reads entire stdin as the password.</li>
+    <li>Locked vault: hard fail (&quot;byn unlock&quot;) — re-encryption requires the
+    vault key.</li>
+    </ul>
+    <hr>
+    <h2 id="bulk-io">Bulk I/O</h2>
+    <h3 id="byn-import---format-envyamljson---dry-run---skip-existing----replace---yes-path---"><code>byn import [--format env|yaml|json] [--dry-run] [--skip-existing | --replace [--yes]] [PATH | -]</code></h3>
+    <p>Bulk-load key→value entries.</p>
+    <ul>
+    <li>Format inferred from extension first (<code>.env</code>, <code>.yaml</code>, <code>.yml</code>,
+    <code>.json</code>), then sniffed (leading <code>{</code> → JSON), then <code>--format</code>
+    override required.</li>
+    <li>Stdin: <code>-</code> or no positional. Pipeable: <code>cat .env | byn import</code>.</li>
+    <li>Nested data is rejected with <code>key %q: nested or unsupported type %T — only flat string/scalar maps are accepted</code>.</li>
+    <li><code>--dry-run</code> prints <code>Would import N entries into vault/project/env:</code>
+    <ul>
+    <li>key + byte length (never values). With <code>--replace</code>, also shows
+    deletions.</li>
+    </ul>
+    </li>
+    </ul>
+    <p>Three explicit modes (mutually exclusive):</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Mode</th>
+    <th>Effect</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><strong>merge</strong> (default)</td>
+    <td>Add new keys; overwrite matching ones; leave other keys in scope untouched.</td>
+    </tr>
+    <tr>
+    <td><code>--skip-existing</code></td>
+    <td>Add-only. Existing keys count as &quot;skipped&quot;; nothing overwritten.</td>
+    </tr>
+    <tr>
+    <td><code>--replace</code></td>
+    <td><strong>Destructive.</strong> Wipe every existing key in the scope first, then import. Prompts for confirmation; pass <code>--yes</code> to skip. Required in non-TTY/agent mode.</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Examples:</p>
+    <pre><code class="language-sh">byn import .env                              # merge — today's default
+byn import --skip-existing config.env        # add only
+byn import --replace --yes config.env        # wipe scope, then import
+byn import --replace --dry-run config.env    # preview deletions + adds
+</code></pre>
+    <p>Dotenv parser understands:</p>
+    <ul>
+    <li><code>export PREFIX</code> strips the prefix</li>
+    <li>Double-quoted values with <code>\n</code>/<code>\t</code>/<code>\\</code>/<code>\&quot;</code> escapes</li>
+    <li>Single-quoted values (literal, no interpolation)</li>
+    <li>Unquoted values with trailing <code> # comment</code> stripped</li>
+    <li><code>#</code> line comments</li>
+    <li>Empty lines</li>
+    </ul>
+    <p>YAML/JSON values are coerced: bool → <code>&quot;true&quot;</code>/<code>&quot;false&quot;</code>, numbers →
+    printed, null → empty string.</p>
+    <h3 id="byn-export---format-envyamljson---output-path---password-stdin"><code>byn export [--format env|yaml|json] [--output PATH] [--password-stdin]</code></h3>
+    <p>Dump active scope as a flat key→value document.</p>
+    <ul>
+    <li>Default format: <code>env</code> (dotenv quoting).</li>
+    <li><code>--output PATH</code> writes mode 0600.</li>
+    <li><code>-</code> (or default) writes to stdout.</li>
+    <li>Keys sorted alphabetically.</li>
+    <li>Dotenv quoting: values containing <code>\s\n#=&quot;</code> get wrapped in
+    <code>&quot;...&quot;</code> with <code>\n</code>/<code>\\</code>/<code>\&quot;</code> escapes.</li>
+    <li><code>--password-stdin</code>: read the master password once from stdin and
+    reuse it for every get (non-interactive path). Without the flag, the
+    CLI prompts once interactively on the first <code>auth_required</code> and reuses
+    the same password for the rest. With an active session, no prompts fire.
+    Each sessionless get re-verifies via Argon2id — run <code>byn unlock</code> first
+    for large exports.</li>
+    </ul>
+    <p><strong>Caveat:</strong> this materializes plaintext. Treat the output like a
+    <code>.env</code> file — never commit, never share. Same warning as <code>byn get</code>.</p>
+    <hr>
+    <h2 id="execution">Execution</h2>
+    <h3 id="byn-exec----command-args-direct-form"><code>byn exec -- COMMAND [ARGS]</code> (direct form)</h3>
+    <h3 id="byn-exec-name-args-alias-form"><code>byn exec NAME [ARGS]</code> (alias form)</h3>
+    <p>Replace the CLI process with COMMAND (direct form) or with the command
+    expanded from the <code>.byn</code> <code>[aliases]</code> table (alias form), injecting vault
+    env-vars into its environment.</p>
+    <p><strong>Two grammars:</strong></p>
+    <ul>
+    <li><code>byn exec -- COMMAND [ARGS]</code> — direct form. The <code>--</code> separator is
+    <strong>required</strong> to disambiguate byn's own flags from the child's flags.</li>
+    <li><code>byn exec NAME [ARGS]</code> — alias form. <code>NAME</code> must be defined in the
+    trusted <code>.byn</code>'s <code>[aliases]</code> table. The alias value is the base
+    command; extra <code>ARGS</code> are appended before exec. A <code>.byn</code> must be in
+    scope.</li>
+    </ul>
+    <p><strong>Strict passthrough for alias form:</strong> everything after <code>NAME</code> (including
+    <code>--flag</code>, <code>--help</code>, <code>--vault</code>, etc.) is passed opaquely to the child — byn
+    does NOT scan those tokens for its own flags.</p>
+    <p>Examples:</p>
+    <pre><code class="language-sh">byn exec -- /usr/bin/env                      # direct: exec /usr/bin/env
+byn exec deploy                               # alias: expands from .byn [aliases]
+byn exec deploy --env prod                    # alias + extra args (passthrough)
+byn --vault myv exec deploy                   # globals before subcommand still work
+byn exec --no-privsep -- node server.js       # run as YOU + password (debugger can attach)
+byn exec --inspect -- node server.js          # privsep + inspector on a free port (attach)
+byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each picks a free port
+</code></pre>
+    <h4 id="execution-modes--privsep-default---no-privsep---inspect">Execution modes — privsep (default), <code>--no-privsep</code>, <code>--inspect</code></h4>
+    <p>How the child runs — and whether it needs a password — depends on the mode:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Mode</th>
+    <th>Child runs as</th>
+    <th>Env hidden from your <code>ps -E</code>?</th>
+    <th>Auth for a trusted <code>.byn</code></th>
+    <th>Use for</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>byn exec</code> (default)</td>
+    <td><code>_byn-exec</code> (privilege-separated), born in your shell's tree</td>
+    <td><strong>Yes</strong></td>
+    <td><strong>None</strong> — credential-free, even locked</td>
+    <td>agents, CI, unattended/autonomous runs</td>
+    </tr>
+    <tr>
+    <td><code>byn exec --no-privsep</code></td>
+    <td><strong>you</strong> (in-process via <code>execve</code>)</td>
+    <td>No (same UID)</td>
+    <td><strong>Master password every run</strong></td>
+    <td>interactive step-debugging (launch-mode debuggers)</td>
+    </tr>
+    <tr>
+    <td><code>byn exec --inspect[=TARGET]</code></td>
+    <td><code>_byn-exec</code> (privilege-separated)</td>
+    <td><strong>Yes</strong></td>
+    <td>None (same as default)</td>
+    <td>debugging <strong>while</strong> keeping secrets hidden</td>
+    </tr>
+    </tbody>
+    </table>
+    <ul>
+    <li><strong>Default (privsep):</strong> the daemon authorizes the exec and a setuid helper — spawned in <em>your shell's</em> process tree — drops the child to the <code>_byn-exec</code> service user. The injected secrets are hidden from same-user snooping (your own <code>ps -E</code> shows nothing), and a trusted <code>.byn</code> with a matching <code>[exec]</code> action runs with <strong>no password</strong> — the autonomous path for agents.</li>
+    <li><strong><code>--no-privsep</code>:</strong> byn <code>execve</code>'s into the child <strong>as you</strong>, so its injected env is visible to your own <code>ps -E</code>. Because of that exposure it <strong>requires the master password on every run</strong> — it does <em>not</em> honor the trusted-<code>.byn</code> credential-free path. Use it for interactive debugging: a launch-mode debugger (VS Code &quot;launch&quot;) attaches because the process shares your UID. A debugger <strong>cannot attach across UIDs</strong> — the same kernel rule that hides the env from your <code>ps -E</code> blocks attaching to a privsep child.</li>
+    <li><strong><code>--inspect[=PORT]</code> / <code>--inspect PORT</code> / <code>--inspect-brk</code>:</strong> keeps privsep <strong>and</strong> enables the Node inspector, so you debug while secrets stay hidden. byn sets <code>NODE_OPTIONS</code> and your debugger <strong>attaches</strong> over loopback TCP (UID-agnostic). Port handling:
+    <ul>
+    <li><strong>no PORT</strong> → byn picks the <strong>next free port</strong> (printed), so concurrent debug sessions don't collide.</li>
+    <li><strong>explicit PORT</strong> (<code>--inspect 9230</code> or <code>--inspect=9230</code>, also <code>127.0.0.1:9230</code>) → used <strong>only if free</strong>; otherwise byn <strong>fails with a clear message</strong> instead of a buried <code>EADDRINUSE</code>.</li>
+    <li><strong><code>--inspect=0</code></strong> → <strong>each</strong> node process self-allocates a free port — best for multi-process runners (<code>tsx watch</code>).</li>
+    <li><code>--inspect-brk</code> breaks on the first line. Configure your editor as an <strong>attach</strong> target.</li>
+    </ul>
+    </li>
+    </ul>
+    <blockquote>
+    <p>Under privsep the <code>_byn-exec</code> child also needs filesystem access to your toolchain + tool-state dirs and a writable <code>TMPDIR</code> — see <a href="troubleshooting/#running-byn-exec-under-privsep-toolchain-tmpdir-debugging">Troubleshooting → Running <code>byn exec</code> under privsep</a>.</p>
+    </blockquote>
+    <ul>
+    <li>In <strong><code>--no-privsep</code></strong> mode the child is <code>execve</code>'d in place (same PID as the
+    CLI); under <strong>privsep</strong> byn stays as the parent of the setuid helper + child.</li>
+    <li><strong>Server-side authorization (one round-trip):</strong> the CLI sends a
+    single <code>OpExecFetch</code> request. The daemon reads, trust-verifies, and
+    parses the <code>.byn</code> itself, then returns <strong>only</strong> the entries listed in
+    <code>[exec] env</code>. A compromised client cannot widen the allowlist — the
+    daemon owns the entire path from trust check to env assembly.</li>
+    <li><strong>Alias not found:</strong> if the alias name is not in the trust record, the
+    daemon returns an error listing up to 8 available alias names.</li>
+    <li><strong>Alias shadowing:</strong> <code>byn exec test</code> (no <code>--</code>) runs the alias if one is
+    defined; <code>byn exec -- test</code> always runs the literal binary <code>test</code>.</li>
+    <li>Denial messages (untrusted / changed / tampered / stale) come from
+    the daemon with a <code>byn trust</code> recovery hint.</li>
+    <li><strong><code>[exec] actions</code> — command allowlist (three states):</strong>
+    Controls which commands may run without per-call authorization. For the
+    alias form, matching is performed against the <em>resolved</em> argv (alias
+    base + extra args) — the same as the direct form.
+    <ul>
+    <li><em>Absent or empty:</em> every exec requires authorization (password/token).</li>
+    <li><code>actions = [&quot;/usr/bin/env&quot;, &quot;/usr/local/bin/make&quot;]</code>: listed commands
+    run freely (authorization is the act of pinning); unlisted commands
+    require authorization on each run. Entries may use typed placeholders
+    (<code>{{uuid}}</code>, <code>{{args}}</code>, etc.) — see
+    <a href="byn-file-format/#actions-pattern-placeholders">byn-file-format.md</a>.</li>
+    <li><code>actions = [&quot;*&quot;]</code> or <code>actions = &quot;*&quot;</code>: all commands run freely
+    (wildcard — shown as a warning at <code>byn trust</code> time; use with care).
+    Actions policy is read from the MAC-bound trust record, not the live
+    file — editing the <code>.byn</code> post-trust cannot change the effective policy
+    without re-trusting (which requires the master password). Actions
+    enforcement is <strong>independent</strong> of session state.</li>
+    </ul>
+    </li>
+    <li>Every exec attempt — allowed or denied, including locked-vault
+    failures — is audited with the full command line. Alias execs are
+    audited as <code>alias &lt;name&gt; → &lt;resolved command&gt;</code>.</li>
+    <li><strong>Vault locked:</strong> always a hard failure (&quot;vault is locked&quot;). Unlike
+    <code>delete</code>, exec cannot proceed with a password; <code>byn unlock</code> first.</li>
+    <li>Stage 1: <code>exec.LookPath</code> to vet the binary</li>
+    <li>Stage 2: parent's environ + injected vars (last value wins, so
+    vault values shadow shell exports)</li>
+    <li>Stage 3: <code>syscall.Exec</code></li>
+    </ul>
+    <p><strong>Limitations:</strong></p>
+    <ul>
+    <li>Values briefly live as Go strings in heap between OpExecFetch and exec</li>
+    <li>Shell builtins (<code>cd</code>, <code>source</code>) can't be exec'd — wrap via
+    <code>bash -c '...'</code></li>
+    </ul>
+    <h3 id="byn-edit--byn-view--byn-no-args"><code>byn edit</code> / <code>byn view</code> / <code>byn</code> (no args)</h3>
+    <p>Open the modal vi-style TUI, with a left rail to navigate the
+    vault → project → env tree.</p>
+    <hr>
+    <h2 id="diagnostics">Diagnostics</h2>
+    <h3 id="byn-doctor---json"><code>byn doctor [--json]</code></h3>
+    <p>Run a battery of self-checks against every vault on disk:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Check</th>
+    <th>What it verifies</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>daemon</code></td>
+    <td>Daemon responding to status</td>
+    </tr>
+    <tr>
+    <td><code>vaults.list</code></td>
+    <td>Vault directories enumerable; warn if none</td>
+    </tr>
+    <tr>
+    <td><code>vault[X].open</code></td>
+    <td>Schema version current + meta.json fingerprint matches</td>
+    </tr>
+    <tr>
+    <td><code>vault[X].audit</code></td>
+    <td>HMAC chain walk reports no broken links</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Severity is <code>ok</code> / <code>warn</code> / <code>fail</code>. Exit code is non-zero if any
+    <code>fail</code>. <code>--json</code> emits <code>[]DoctorCheck{Name, Severity, Detail}</code>.</p>
+    <h3 id="byn-audit-tail--n-n--f---json"><code>byn audit tail [-n N] [-f] [--json]</code></h3>
+    <p>Print the most recent N events from the active vault's audit log
+    (like <code>tail(1)</code>). Default N = 10 (<code>--lines</code> is an alias for <code>-n</code>);
+    <code>-f</code> follows the log.</p>
+    <p>Allowed while locked — audit metadata is not secret. See
+    <a href="security/">security.md</a> for what's captured per event.</p>
+    <p>Human format: timestamp + op + scope + entry name + outcome:</p>
+    <pre><code>2026-06-02 12:34:56Z  put        default/billing/staging  DB_URL    ok
+2026-06-02 12:35:01Z  vault.lock default                  -         ok
+</code></pre>
+    <p>With <code>--json</code>, a snapshot is a single <strong>JSON array</strong> of event objects (so
+    <code>byn audit tail --json | jq</code> works, like every other <code>--json</code> command). Add
+    <code>-f</code> to follow: that streams <strong>NDJSON</strong> (one object per line) so new events
+    can be appended live.</p>
+    <h3 id="byn-audit-verify---json"><code>byn audit verify [--json]</code></h3>
+    <p>Re-walk the active vault's audit log; recompute the HMAC chain;
+    report the first bad index.</p>
+    <ul>
+    <li>Exit 0 + <code>audit chain intact — N events verified</code> if clean.</li>
+    <li>Exit 3 + <code>FAIL: audit chain BROKEN at event #M (of N)</code> otherwise,
+    with a treat-as-compromised hint.</li>
+    </ul>
+    <hr>
+    <h2 id="trust-byn-tofu">Trust (<code>.byn</code> TOFU)</h2>
+    <h3 id="byn-trust-path"><code>byn trust [PATH]</code></h3>
+    <p>Approve a <code>.byn</code> file (default: <code>./.byn</code>). <strong>Always prompts for the
+    master password</strong> — granting trust is a proof-of-presence action, so it
+    requires the password even when the vault is unlocked. The daemon (which
+    owns <code>~/.byn/trusted_byn.json</code>) verifies the password against the vault
+    the <code>.byn</code> targets, then records the canonical path + SHA-256 + mtime
+    snapshot + vault-key MAC (v2 trust record).</p>
+    <p>If the <code>.byn</code> already exists in the store with a <em>different</em> hash (it
+    changed since you trusted it), <code>byn trust</code> warns loudly before
+    re-approving. Discovery itself never auto-trusts — a new or changed
+    <code>.byn</code> is refused until you run this command.</p>
+    <p><strong>At grant time</strong>, the daemon also displays the effective <code>[auth]</code> policy
+    and <code>[exec] actions</code> from the file so you can confirm what you're
+    approving.</p>
+    <p><strong>64KB cap:</strong> <code>.byn</code> files larger than 65536 bytes are refused at both
+    grant time and exec.</p>
+    <p><strong>Malformed <code>.byn</code>:</strong> invalid TOML is rejected at grant time with a parse
+    error; the file is not recorded in the trust store.</p>
+    <ul>
+    <li><code>--password-stdin</code> — read the password from stdin (for scripts), e.g.
+    <code>printf '%s' &quot;$PW&quot; | byn trust --password-stdin ./.byn</code>.</li>
+    <li><code>--paths &quot;a,b,c&quot;</code> — comma-separated list of paths to trust at once.</li>
+    <li><code>--recursive DIR</code> — trust every <code>.byn</code> under DIR.</li>
+    </ul>
+    <h3 id="auth-table--per-scope-per-action-authorization-policy"><code>[auth]</code> table — per-scope per-action authorization policy</h3>
+    <p>A <code>.byn</code> may carry an <code>[auth]</code> table that overrides the session gate for
+    operations in this file's scope:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Key</th>
+    <th>Value</th>
+    <th>Effect</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>get</code> / <code>update</code> / <code>delete</code> / <code>exec</code></td>
+    <td><code>&quot;always&quot;</code></td>
+    <td>Fresh auth required unconditionally, even with an active session</td>
+    </tr>
+    <tr>
+    <td><code>get</code> / <code>update</code> / <code>delete</code> / <code>exec</code></td>
+    <td><code>&quot;none&quot;</code></td>
+    <td>Gate skipped entirely for the matched scope</td>
+    </tr>
+    <tr>
+    <td>(absent)</td>
+    <td>—</td>
+    <td>Session gate decides</td>
+    </tr>
+    </tbody>
+    </table>
+    <p><code>update</code> covers overwrite-put and rename. <code>delete</code> covers delete, env
+    clear/delete, project delete, vault delete.</p>
+    <p><strong>Ad-hoc exec exclusion:</strong> the <code>[auth] exec</code> key applies only to
+    trusted-<code>.byn</code> exec (Path ≠ &quot;&quot;). Ad-hoc exec (no <code>.byn</code>) is always
+    subject to the session gate.</p>
+    <p><strong>Structural-ops note:</strong> vault-level ops (<code>vault.delete</code>, <code>vault.rename</code>)
+    pass an empty Scope (no project/env) to the policy gate. A record scoped
+    broadly to an entire vault matches and therefore gates those ops.</p>
+    <p>Policy is MAC-bound at grant time — editing the <code>.byn</code> post-trust cannot
+    change the effective policy without re-trusting.</p>
+    <h3 id="byn-trust-diff-path"><code>byn trust diff PATH</code></h3>
+    <p>Compare the current <code>.byn</code> content against the snapshot recorded at
+    trust time, and print a unified diff.</p>
+    <ul>
+    <li><strong>Exit 0</strong> — content and mtime are both identical (still trusted).</li>
+    <li><strong>Exit 1</strong> — content differs OR mtime-only changed (re-trust required
+    either way). For mtime-only: prints &quot;content identical; modification
+    time changed&quot;.</li>
+    <li><strong>Exit 2</strong> — daemon not running.</li>
+    <li><strong>Exit 3</strong> — daemon error (path not trusted, file exceeds 64KB, etc.).</li>
+    </ul>
+    <h3 id="byn-untrust-path"><code>byn untrust [PATH]</code></h3>
+    <p>Revoke trust (default: <code>./.byn</code>). Idempotent. Routed through the daemon.</p>
+    <h3 id="byn-trust-list---json"><code>byn trust list [--json]</code></h3>
+    <p>Print every trusted path and the first 12 hex chars of its hash.
+    With <code>--json</code>, emit a JSON array of trust records.</p>
+    <p>See <a href="byn-file-format/"><code>.byn</code> file format</a> for the discovery
+    algorithm.</p>
+    <hr>
+    <h2 id="misc">Misc</h2>
+    <h3 id="byn-version-also---version--v"><code>byn version</code> (also: <code>--version</code>, <code>-v</code>)</h3>
+    <p>Print the binary version.</p>
+    <h3 id="byn-help-command-also---help--h"><code>byn help [command]</code> (also: <code>--help</code>, <code>-h</code>)</h3>
+    <p>Print the top-level usage or per-command help. Routed through
+    <code>$PAGER</code> when stdout is a TTY.</p>
+    <hr>
+    <h2 id="config-file-bynconfig">Config file (<code>~/.byn/config</code>)</h2>
+    <p>Optional TOML file (no extension). A missing file uses built-in
+    defaults. Unknown keys are rejected with an error. Changes to
+    <code>[security]</code> and <code>[daemon]</code> hot-apply via <code>byn daemon reload</code> without
+    restart; <code>[ui]</code> changes also hot-apply.</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Key</th>
+    <th>Default</th>
+    <th>Effect</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>[ui] enabled</code></td>
+    <td><code>true</code></td>
+    <td>Enable/disable the web portal</td>
+    </tr>
+    <tr>
+    <td><code>[ui] port</code></td>
+    <td><code>2967</code></td>
+    <td>Port for the local admin portal</td>
+    </tr>
+    <tr>
+    <td><code>[daemon] idle_timeout</code></td>
+    <td><code>&quot;15m&quot;</code></td>
+    <td>Auto-relock after inactivity; <code>&quot;0s&quot;</code> to disable</td>
+    </tr>
+    <tr>
+    <td><code>[security] session_ttl</code></td>
+    <td><code>&quot;12h&quot;</code></td>
+    <td>Absolute session lifetime; <code>&quot;0s&quot;</code> = no TTL limit</td>
+    </tr>
+    <tr>
+    <td><code>[security] session_idle</code></td>
+    <td><code>&quot;0s&quot;</code></td>
+    <td>Sliding idle window; <code>&quot;0s&quot;</code> = inherit <code>idle_timeout</code></td>
+    </tr>
+    <tr>
+    <td><code>[security] privsep</code></td>
+    <td>(absent → <code>false</code>)</td>
+    <td>Opt into privilege separation (run trusted-<code>.byn</code> exec children as <code>_byn-exec</code>). Requires <code>byn setup</code> first and a <strong>daemon restart</strong> to engage — see <a href="migration/">migration guide</a>. When enabled but unprovisioned, trusted-<code>.byn</code> exec fails closed.</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>Example:</p>
+    <pre><code class="language-toml">[daemon]
+idle_timeout = &quot;30m&quot;
+
+[security]
+session_ttl  = &quot;12h&quot;
+session_idle = &quot;0s&quot;
+
+[ui]
+port = 2967
+enabled = true
+</code></pre>
+    <hr>
+    <h2 id="environment-variables">Environment variables</h2>
+    <h3 id="scope">Scope</h3>
+    <table>
+    <thead>
+    <tr>
+    <th>Var</th>
+    <th>Effect</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>BYN_VAULT</code></td>
+    <td>Default vault (CLI flag wins)</td>
+    </tr>
+    <tr>
+    <td><code>BYN_PROJECT</code></td>
+    <td>Default project</td>
+    </tr>
+    <tr>
+    <td><code>BYN_ENV</code></td>
+    <td>Default env</td>
+    </tr>
+    </tbody>
+    </table>
+    <h3 id="discovery--trust">Discovery / trust</h3>
+    <table>
+    <thead>
+    <tr>
+    <th>Var</th>
+    <th>Effect</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>BYN_NO_DISCOVERY=1</code></td>
+    <td>Skip the <code>.byn</code> walk entirely</td>
+    </tr>
+    </tbody>
+    </table>
+    <blockquote>
+    <p><strong>No data-root override.</strong> There is no environment variable to repoint byn's
+    data root. It is a fixed system path once provisioned (<code>byn setup</code>), or
+    <code>~/.byn</code> when unprovisioned — see <a href="file-layout/">File layout</a>. (Tests use a
+    <code>byntest</code>-build-tag-only <code>BYN_TEST_DIR</code> seam that is never compiled into a
+    release binary.)</p>
+    </blockquote>
+    <h3 id="pager-and-hint-env-vars">Pager and hint env vars</h3>
+    <table>
+    <thead>
+    <tr>
+    <th>Var</th>
+    <th>Effect</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>PAGER</code></td>
+    <td>Pager binary for help (default: <code>less -RFX</code>, fallback: <code>more</code>)</td>
+    </tr>
+    <tr>
+    <td><code>PAGER=cat</code></td>
+    <td>Disable paging</td>
+    </tr>
+    <tr>
+    <td><code>BYN_NO_PAGER=1</code></td>
+    <td>Disable paging (alternative to <code>PAGER=cat</code>)</td>
+    </tr>
+    <tr>
+    <td><code>BYN_HINTS=0</code></td>
+    <td>Suppress mutating-op echoes (also off on non-TTY stderr)</td>
+    </tr>
+    <tr>
+    <td><code>NO_COLOR</code></td>
+    <td>Disable ANSI color (community convention; honored)</td>
+    </tr>
+    <tr>
+    <td><code>FORCE_COLOR</code></td>
+    <td>Force ANSI color even when stderr isn't a TTY</td>
+    </tr>
+    </tbody>
+    </table>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="architecture/">Architecture</a> — IPC ops list + dispatch flow.</li>
+    <li><a href="byn-file-format/"><code>.byn</code> + discovery</a> — TOFU details.</li>
+    <li><a href="file-layout/">File layout</a> — where each env var's effects land
+    on disk.</li>
+    <li><a href="glossary/">Glossary</a> — <code>scope</code>, <code>AAD</code>, <code>TOFU</code>, <code>fingerprint</code>,
+    <code>audit chain</code>.</li>
+    <li><a href="troubleshooting/">Troubleshooting</a> — common errors with each command.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../quickstart/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Quickstart</div>
+      </a>
+      <a href="../security/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Security model</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#global-flags-work-before-or-after-the-subcommand" class="toc-item">Global flags (work before OR after the subcommand)</a>
+    <a href="#exit-codes" class="toc-item">Exit codes</a>
+    <a href="#lifecycle" class="toc-item">Lifecycle</a>
+    <a href="#byn-init---password-stdin" class="toc-item sub">byn init [--password-stdin]</a>
+    <a href="#byn-unlock---password-stdin" class="toc-item sub">byn unlock [--password-stdin]</a>
+    <a href="#byn-lock" class="toc-item sub">byn lock</a>
+    <a href="#byn-daemon-start---foreground" class="toc-item sub">byn daemon start [--foreground]</a>
+    <a href="#byn-daemon-stop" class="toc-item sub">byn daemon stop</a>
+    <a href="#byn-daemon-status-alias-byn-status---json" class="toc-item sub">byn daemon status (alias: byn status [--json])</a>
+    <a href="#system-setup-privilege-separation" class="toc-item">System setup (privilege separation)</a>
+    <a href="#byn-setup---uninstall---purge" class="toc-item sub">byn setup [--uninstall [--purge]]</a>
+    <a href="#byn-migrate---from-path---force" class="toc-item sub">byn migrate [--from PATH] [--force]</a>
+    <a href="#structure-crud" class="toc-item">Structure CRUD</a>
+    <a href="#byn-vault-list---json" class="toc-item sub">byn vault list [--json]</a>
+    <a href="#byn-vault-delete-name---password-stdin" class="toc-item sub">byn vault delete NAME [--password-stdin]</a>
+    <a href="#byn-vault-rename-old-new---password-stdin" class="toc-item sub">byn vault rename OLD NEW [--password-stdin]</a>
+    <a href="#byn-vault-initunlocklock" class="toc-item sub">byn vault {init,unlock,lock}</a>
+    <a href="#byn-project-list---json" class="toc-item sub">byn project list [--json]</a>
+    <a href="#byn-project-create-name" class="toc-item sub">byn project create NAME</a>
+    <a href="#byn-project-delete-name---password-stdin" class="toc-item sub">byn project delete NAME [--password-stdin]</a>
+    <a href="#byn-project-rename-old-new" class="toc-item sub">byn project rename OLD NEW</a>
+    <a href="#byn-env-list---json" class="toc-item sub">byn env list [--json]</a>
+    <a href="#byn-env-create-name" class="toc-item sub">byn env create NAME</a>
+    <a href="#byn-env-delete-name---password-stdin" class="toc-item sub">byn env delete NAME [--password-stdin]</a>
+    <a href="#byn-env-rename-old-new" class="toc-item sub">byn env rename OLD NEW</a>
+    <a href="#env-vars-active-scope" class="toc-item">Env-vars (active scope)</a>
+    <a href="#byn-put-name---create-only---password-stdin" class="toc-item sub">byn put NAME [--create-only] [--password-stdin]</a>
+    <a href="#byn-get-name---json---password-stdin-alias-byn-cat-name" class="toc-item sub">byn get NAME [--json] [--password-stdin] (alias: byn cat NAME)</a>
+    <a href="#byn-list---json-alias-byn-ls" class="toc-item sub">byn list [--json] (alias: byn ls)</a>
+    <a href="#byn-delete-name---password-stdin-alias-byn-rm-name" class="toc-item sub">byn delete NAME [--password-stdin] (alias: byn rm NAME)</a>
+    <a href="#byn-rename-old-new---password-stdin-alias-byn-mv-old-new" class="toc-item sub">byn rename OLD NEW [--password-stdin] (alias: byn mv OLD NEW)</a>
+    <a href="#bulk-io" class="toc-item">Bulk I/O</a>
+    <a href="#byn-import---format-envyamljson---dry-run---skip-existing----replace---yes-path---" class="toc-item sub">byn import [--format env|yaml|json] [--dry-run] [--skip-existing | --replace [--yes]] [PATH | -]</a>
+    <a href="#byn-export---format-envyamljson---output-path---password-stdin" class="toc-item sub">byn export [--format env|yaml|json] [--output PATH] [--password-stdin]</a>
+    <a href="#execution" class="toc-item">Execution</a>
+    <a href="#byn-exec----command-args-direct-form" class="toc-item sub">byn exec -- COMMAND [ARGS] (direct form)</a>
+    <a href="#byn-exec-name-args-alias-form" class="toc-item sub">byn exec NAME [ARGS] (alias form)</a>
+    <a href="#byn-edit--byn-view--byn-no-args" class="toc-item sub">byn edit / byn view / byn (no args)</a>
+    <a href="#diagnostics" class="toc-item">Diagnostics</a>
+    <a href="#byn-doctor---json" class="toc-item sub">byn doctor [--json]</a>
+    <a href="#byn-audit-tail--n-n--f---json" class="toc-item sub">byn audit tail [-n N] [-f] [--json]</a>
+    <a href="#byn-audit-verify---json" class="toc-item sub">byn audit verify [--json]</a>
+    <a href="#trust-byn-tofu" class="toc-item">Trust (.byn TOFU)</a>
+    <a href="#byn-trust-path" class="toc-item sub">byn trust [PATH]</a>
+    <a href="#auth-table--per-scope-per-action-authorization-policy" class="toc-item sub">[auth] table — per-scope per-action authorization policy</a>
+    <a href="#byn-trust-diff-path" class="toc-item sub">byn trust diff PATH</a>
+    <a href="#byn-untrust-path" class="toc-item sub">byn untrust [PATH]</a>
+    <a href="#byn-trust-list---json" class="toc-item sub">byn trust list [--json]</a>
+    <a href="#misc" class="toc-item">Misc</a>
+    <a href="#byn-version-also---version--v" class="toc-item sub">byn version (also: --version, -v)</a>
+    <a href="#byn-help-command-also---help--h" class="toc-item sub">byn help [command] (also: --help, -h)</a>
+    <a href="#config-file-bynconfig" class="toc-item">Config file (~/.byn/config)</a>
+    <a href="#environment-variables" class="toc-item">Environment variables</a>
+    <a href="#scope" class="toc-item sub">Scope</a>
+    <a href="#discovery--trust" class="toc-item sub">Discovery / trust</a>
+    <a href="#pager-and-hint-env-vars" class="toc-item sub">Pager and hint env vars</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/">Quickstart</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

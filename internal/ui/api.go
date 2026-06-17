@@ -679,6 +679,17 @@ func (s *Server) handleConfigRoute(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "cross-origin request refused")
 			return
 		}
+		// Config WRITES require a single-use, sudo-verified token (minted by
+		// `byn config-auth`), sent in X-Byn-Config-Auth. This is the gate that
+		// stops a plain portal session (reachable by any same-UID process) from
+		// changing security settings like [security] privsep. A nil consumer
+		// (tests) disables the gate. The token is consumed (burned) here.
+		if s.configAuth != nil {
+			if !s.configAuth.ConsumeConfigAuth(r.Header.Get("X-Byn-Config-Auth")) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "config_auth_required"})
+				return
+			}
+		}
 		s.handleConfigSet(w, r)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")

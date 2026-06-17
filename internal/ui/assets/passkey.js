@@ -64,6 +64,12 @@
   // ---- API ---------------------------------------------------------------
   async function api(path, body) {
     const opt = { headers: { "Content-Type": "application/json" } };
+    // Every /api/passkey/* route is requireToken-gated, so attach the portal
+    // owner-token exactly like app.js's api(). Read localStorage directly (key
+    // "byn.portal_token") so this file stays self-contained. Without this the
+    // daemon answers 401 "portal_token_required" and enroll/auth fail.
+    const tok = localStorage.getItem("byn.portal_token") || "";
+    if (tok) opt.headers["X-Byn-Portal-Token"] = tok;
     if (body !== undefined) {
       opt.method = "POST";
       opt.body = JSON.stringify(body);
