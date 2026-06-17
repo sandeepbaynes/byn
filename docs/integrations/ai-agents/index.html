@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>byn &#43; AI coding agents — byn docs</title>
+<meta name="description" content="This document shows how an AI coding agent can use byn to read, write,and consume vault secrets safely — agents can see key names andstructure, but values only land in the child process spawned viabyn exec, not in agent context or scrollback.">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/" class="active">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">AI coding agents</div>
+      <a href="./" class="sb-item active">byn &#43; AI coding agents</a>
+      <a href="#why-byn-for-agents" class="sb-item">Why byn for agents</a>
+      <a href="#recommended-agent-harness-rules" class="sb-item">Recommended agent harness rules</a>
+      <a href="#example-agent-flow-bootstrap-a-project" class="sb-item">Example agent flow: bootstrap a project</a>
+      <a href="#example-harness-allowdeny-rules" class="sb-item">Example: harness allow/deny rules</a>
+      <a href="#patterns-to-know" class="sb-item">Patterns to know</a>
+      <a href="#scoping-what-an-agent-can-do" class="sb-item">Scoping what an agent can do</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Integrations</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">AI coding agents</span>
+    </div>
+
+    <h1>byn &#43; AI coding agents</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/ai-agents.md">docs/integrations/ai-agents.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/integrations/ai-agents.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>This document shows how an AI coding agent can use byn to read, write,
+    and consume vault secrets safely — agents can see <strong>key names</strong> and
+    <strong>structure</strong>, but values only land in the child process spawned via
+    <code>byn exec</code>, not in agent context or scrollback.</p>
+    <hr>
+    <h2 id="why-byn-for-agents">Why byn for agents</h2>
+    <p>A code agent often has the following problem:</p>
+    <ul>
+    <li>It needs to know <strong>what env vars exist</strong> (to build a <code>.env.example</code>,
+    configure a script, write tests).</li>
+    <li>It must <strong>not</strong> read raw secret values into its conversational
+    context — once in the agent's working memory, they can leak to logs,
+    remote tracing, or model providers.</li>
+    <li>It needs to <strong>run</strong> real commands that use those secrets.</li>
+    </ul>
+    <p>byn addresses all three:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Need</th>
+    <th>byn command</th>
+    <th>Returns to agent?</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>Discover vaults</td>
+    <td><code>byn vault list --json</code></td>
+    <td>yes (names only)</td>
+    </tr>
+    <tr>
+    <td>Discover projects</td>
+    <td><code>byn project list --json</code></td>
+    <td>yes (names only)</td>
+    </tr>
+    <tr>
+    <td>Discover envs</td>
+    <td><code>byn env list --json</code></td>
+    <td>yes (names only)</td>
+    </tr>
+    <tr>
+    <td>Discover keys in current scope</td>
+    <td><code>byn list --json</code></td>
+    <td>yes (names only)</td>
+    </tr>
+    <tr>
+    <td>Read a secret value</td>
+    <td><code>byn get NAME</code></td>
+    <td><strong>NO</strong> — block this in your harness</td>
+    </tr>
+    <tr>
+    <td>Run a command with secrets injected</td>
+    <td><code>byn exec -- CMD ARGS</code></td>
+    <td>child's stdout; values never sent back to agent</td>
+    </tr>
+    <tr>
+    <td>Bulk-write keys (from .env / .json / yaml)</td>
+    <td><code>byn import [PATH | -]</code></td>
+    <td>yes (counts only)</td>
+    </tr>
+    <tr>
+    <td>Export entire scope (dangerous)</td>
+    <td><code>byn export --format env</code></td>
+    <td><strong>NO</strong> — block this in your harness</td>
+    </tr>
+    </tbody>
+    </table>
+    <hr>
+    <h2 id="recommended-agent-harness-rules">Recommended agent harness rules</h2>
+    <p>In your agent harness (hooks, permission rules, or system prompt), allow:</p>
+    <pre><code>byn daemon status
+byn status
+byn status --json
+byn vault list --json
+byn project list --json
+byn env list --json
+byn list --json
+byn --vault X --project Y --env Z list --json
+byn import …       # writes only
+byn project create NAME
+byn env create NAME --project P
+byn put NAME       # value comes from agent-provided stdin; ok
+byn exec -- ANY    # values land in child; never bubble back to agent context
+</code></pre>
+    <p>Deny:</p>
+    <pre><code>byn get NAME             # leaks plaintext into agent transcript
+byn export …             # bulk leak
+</code></pre>
+    <p>(Deny <code>cat NAME</code> and <code>byn cat NAME</code> similarly — <code>cat</code> is an alias
+    for <code>get</code>.)</p>
+    <hr>
+    <h2 id="example-agent-flow-bootstrap-a-project">Example agent flow: bootstrap a project</h2>
+    <ol>
+    <li>
+    <p><strong>Agent</strong>: lists current state.</p>
+    <pre><code class="language-sh">byn status --json
+byn project list --json
+byn --project myapp-agent env list --json
+byn --project myapp-agent list --json
+</code></pre>
+    </li>
+    <li>
+    <p><strong>User (before the agent is active)</strong>: import any existing <code>.env</code>
+    into the vault and delete the file, so the agent never has a
+    plaintext file to read in the first place:</p>
+    <pre><code class="language-sh">byn --project myapp-agent import .env.local
+rm .env.local   # values now live in the vault only
+</code></pre>
+    <p>Do this step <em>yourself</em>. If the agent runs the import, the values
+    pass through the agent's own process — which defeats the point.</p>
+    </li>
+    <li>
+    <p><strong>Agent</strong>: writes a runner that uses byn for any command that
+    needs secrets:</p>
+    <pre><code class="language-sh">#!/usr/bin/env bash
+exec byn --project myapp-agent exec -- &quot;$@&quot;
+</code></pre>
+    </li>
+    <li>
+    <p><strong>Agent</strong>: now runs the user's tests via that wrapper:</p>
+    <pre><code class="language-sh">./scripts/with-secrets npm test
+</code></pre>
+    </li>
+    </ol>
+    <p>The agent never sees <code>DATABASE_URL=postgres://…</code> — only <code>DATABASE_URL</code>.
+    The test runner gets the URL via environ from <code>byn exec</code>.</p>
+    <hr>
+    <h2 id="example-harness-allowdeny-rules">Example: harness allow/deny rules</h2>
+    <p>Most agent harnesses read an allow/deny rule file. Configure it with
+    rules like:</p>
+    <pre><code class="language-jsonc">{
+  &quot;permissions&quot;: {
+    &quot;allow&quot;: [
+      &quot;Bash(byn status*)&quot;,
+      &quot;Bash(byn list*)&quot;,
+      &quot;Bash(byn project*)&quot;,
+      &quot;Bash(byn env*)&quot;,
+      &quot;Bash(byn vault list*)&quot;,
+      &quot;Bash(byn import*)&quot;,
+      &quot;Bash(byn put*)&quot;,
+      &quot;Bash(byn exec --*)&quot;
+    ],
+    &quot;deny&quot;: [
+      &quot;Bash(byn get*)&quot;,
+      &quot;Bash(byn cat*)&quot;,
+      &quot;Bash(byn export*)&quot;
+    ]
+  }
+}
+</code></pre>
+    <p>(Tighten or loosen as fits your trust model. For a fully sandboxed
+    project, you may want to allow <code>get</code> too — but only if the agent's
+    output is not piped anywhere the user wouldn't otherwise see.)</p>
+    <blockquote>
+    <p><strong>Important — these deny rules are best-effort, not a guarantee.</strong>
+    Agent-harness permission rules have a documented history of not being
+    reliably enforced — e.g.
+    <a href="https://github.com/anthropics/claude-code/issues/24846">anthropics/claude-code#24846</a>,
+    where a <code>read.deny</code> rule failed to block <code>.env</code> reads. Do <strong>not</strong> treat
+    the deny list as byn's security boundary. byn's real protections are:
+    (1) there is <strong>no plaintext <code>.env</code> on disk</strong> for the agent to read —
+    values live only in the vault; and (2) <strong>every value access is
+    audited</strong> (<code>byn audit</code>), so a leak is <em>detectable</em> even when a deny
+    rule fails. Prevention is best-effort; detection is the guarantee.</p>
+    </blockquote>
+    <hr>
+    <h2 id="patterns-to-know">Patterns to know</h2>
+    <h3 id="pin-a-per-project-scope">Pin a per-project scope</h3>
+    <p>Add to your project's <code>.envrc</code> (direnv) or shell init:</p>
+    <pre><code class="language-sh">export BYN_PROJECT=myapp-agent
+export BYN_ENV=dev
+</code></pre>
+    <p>The agent then needs no flags — every <code>byn</code> command picks the right
+    scope.</p>
+    <h3 id="read-only-agent-on-a-remote-vm">Read-only agent on a remote VM</h3>
+    <p>When you ssh a long-running agent into a dev VM:</p>
+    <ol>
+    <li>The agent gets <code>byn</code> and the daemon dir read access.</li>
+    <li>The vault unlock password lives on YOUR laptop only.</li>
+    <li>Agent runs <code>byn exec -- whatever</code> — values are injected only
+    when you're connected and have unlocked the vault from your client.</li>
+    <li>An idle vault auto-relocks after <code>[daemon] idle_timeout</code> (default
+    15m); run <code>byn lock</code> (or <code>byn lock --session</code>) to drop access
+    immediately.</li>
+    </ol>
+    <h3 id="audit-trail">Audit trail</h3>
+    <p>Every <code>byn</code> op writes an HMAC-chained entry to the vault's audit
+    log. The agent's actions are reviewable with <code>byn audit</code>
+    (<code>tail</code>, <code>view</code>, <code>verify</code>).</p>
+    <hr>
+    <h2 id="scoping-what-an-agent-can-do">Scoping what an agent can do</h2>
+    <p>Per-command secret scoping is shipped via the <code>.byn</code> manifest:</p>
+    <ul>
+    <li><code>[exec] env</code> lists exactly which vars <code>byn exec</code> injects — the agent
+    never sees the rest of the scope.</li>
+    <li><code>[exec] actions</code> pins which commands run without per-call
+    authorization; everything else is gated.</li>
+    </ul>
+    <p>See the <a href="../byn-file-format/"><code>.byn</code> file format</a>.</p>
+    <h3 id="not-yet-shipped">Not yet shipped</h3>
+    <ul>
+    <li>Push-based unlock approval (laptop receives a notification when an
+    agent on a remote VM tries to read; user taps to allow). Deferred.</li>
+    </ul>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#why-byn-for-agents" class="toc-item">Why byn for agents</a>
+    <a href="#recommended-agent-harness-rules" class="toc-item">Recommended agent harness rules</a>
+    <a href="#example-agent-flow-bootstrap-a-project" class="toc-item">Example agent flow: bootstrap a project</a>
+    <a href="#example-harness-allowdeny-rules" class="toc-item">Example: harness allow/deny rules</a>
+    <a href="#patterns-to-know" class="toc-item">Patterns to know</a>
+    <a href="#pin-a-per-project-scope" class="toc-item sub">Pin a per-project scope</a>
+    <a href="#read-only-agent-on-a-remote-vm" class="toc-item sub">Read-only agent on a remote VM</a>
+    <a href="#audit-trail" class="toc-item sub">Audit trail</a>
+    <a href="#scoping-what-an-agent-can-do" class="toc-item">Scoping what an agent can do</a>
+    <a href="#not-yet-shipped" class="toc-item sub">Not yet shipped</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/ai-agents.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

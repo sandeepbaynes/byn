@@ -136,6 +136,14 @@ func runTrustAdd(args []string) int {
 		// Daemon down: nothing can be trusted — surface the standard error.
 		return handleCallError(derr)
 	}
+	// Under privsep the daemon runs as _byn and cannot read a user-owned .byn,
+	// so the owner (this CLI) grants it read access before each grant call and
+	// rolls that back for any path the daemon rejects (see grantTrustACLs).
+	// Gated on whether _byn EXISTS locally — the file-access problem is a
+	// property of the daemon's UID (provisioned), not the [security] privsep
+	// config flag, and this works regardless of the running daemon's version.
+	privsepOn := cliPrivsepProvisioned()
+	home, _ := os.UserHomeDir()
 	// Partition the vault groups: any group whose target vault is NOT in the
 	// initialized set is rejected here (no prompt). When initSet is nil we
 	// treat every group as "initialized" so the grant is attempted as before.
@@ -164,11 +172,33 @@ func runTrustAdd(args []string) int {
 			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
 			return exitErr
 		}
+		// Privsep: grant the daemon read access to every .byn in this group
+		// BEFORE it validates them (it reads the REAL file — never the CLI's
+		// content). Granted on the canonical path so the ACE lands on the real
+		// inode. Tracked so a rejected path's grant is rolled back below.
+		var grantedCanon []string
+		if privsepOn {
+			for _, p := range byVault[v] {
+				cp := trust.Canonicalize(p)
+				if gerr := grantTrustACLs(cp, home); gerr != nil {
+					fmt.Fprintf(os.Stderr, "  %s %s: granting daemon read access failed: %v\n",
+						yellow("!"), p, gerr)
+				}
+				grantedCanon = append(grantedCanon, cp)
+			}
+		}
 		var resp ipc.TrustGrantBulkResp
 		cerr := newClient(dir, v).Call(ipc.OpTrustGrantBulk,
 			ipc.TrustGrantBulkReq{Paths: byVault[v], Vault: v, Password: pw}, &resp)
 		wipe()
 		if cerr != nil {
+			// The whole call failed — nothing in this group was trusted, so roll
+			// back every ACL we granted for it (leaving the shared home traversal).
+			if privsepOn {
+				for _, cp := range grantedCanon {
+					revokeTrustACLs(cp, home)
+				}
+			}
 			// Single vault group with no pre-flight rejection: keep the original
 			// exit-code semantics — a daemon error (wrong password, not-init,
 			// down) maps straight through handleCallError so scripts see the
@@ -192,6 +222,12 @@ func runTrustAdd(args []string) int {
 		}
 		for _, r := range resp.Results {
 			if r.Error != "" {
+				// This path was rejected (malformed, oversize, …) — roll back the
+				// ACL we granted for it. r.Path is the daemon's canonical record
+				// path, matching the canonical path we granted on.
+				if privsepOn {
+					revokeTrustACLs(r.Path, home)
+				}
 				fmt.Fprintf(os.Stderr, "  %s %s: %s\n", red("x"), r.Path, r.Error)
 				failed++
 				continue
@@ -346,6 +382,10 @@ func runUntrust(args []string, _ cliScope) int {
 	}
 
 	client := newClient(dir, "")
+	// Under privsep, mirror trust: revoke the daemon/exec ACLs the owner granted
+	// at trust time once a record is actually removed (best-effort).
+	privsepOn := cliPrivsepProvisioned()
+	home, _ := os.UserHomeDir()
 	multi := len(paths) > 1
 	removed, absent := 0, 0
 	for _, p := range paths {
@@ -353,6 +393,9 @@ func runUntrust(args []string, _ cliScope) int {
 		var resp ipc.TrustRemoveResp
 		if cerr := client.Call(ipc.OpTrustRemove, ipc.TrustRemoveReq{Path: canon}, &resp); cerr != nil {
 			return handleCallError(cerr)
+		}
+		if resp.Removed && privsepOn {
+			revokeTrustACLs(canon, home)
 		}
 		switch {
 		case resp.Removed && multi:
@@ -688,5 +731,17 @@ Usage:
 Bulk trust groups files by their target vault and asks each vault's password
 once (so a monorepo's .byn files across vaults need only one prompt per vault).
 
-Note: .byn files exceeding 64KB are refused at grant and exec.`)
+Note: .byn files exceeding 64KB are refused at grant and exec.
+
+macOS — "operation not permitted" (not "permission denied"): the daemon runs
+as _byn and macOS privacy protection (TCC) blocks it from reading .byn files
+under ~/Documents, ~/Desktop, ~/Downloads or iCloud Drive. TCC overrides file
+ACLs. Fix EITHER by keeping projects outside those folders (e.g. ~/code — no
+setup needed), OR by granting the byn binary Full Disk Access (System Settings
+> Privacy & Security > Full Disk Access) and restarting the daemon:
+  sudo launchctl kickstart -k system/com.sandeepbaynes.byn
+The grant is tied to the build unless you sign with a (free) Apple ID identity:
+  make install CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)"
+Full steps incl. signing: man byn ("macOS Full Disk Access") or
+docs/troubleshooting.md.`)
 }

@@ -13,3 +13,14 @@ func GrantProjectACL(_ func(name string, args ...string) error, _, _ string) err
 func RevokeProjectACL(_ func(name string, args ...string) error, _, _ string) error {
 	return nil
 }
+
+// GrantBynReadACL is a no-op on platforms with no supported ACL mechanism.
+// See GrantProjectACL.
+func GrantBynReadACL(_ func(name string, args ...string) error, _, _ string) error {
+	return nil
+}
+
+// RevokeBynReadACL is a no-op on unsupported platforms. See GrantBynReadACL.
+func RevokeBynReadACL(_ func(name string, args ...string) error, _, _ string) error {
+	return nil
+}

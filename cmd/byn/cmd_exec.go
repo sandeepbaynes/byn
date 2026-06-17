@@ -3,13 +3,16 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
+	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
-	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/privsep"
 )
 
 // runExec loads env-var entries from the vault and replaces the
@@ -62,6 +65,22 @@ func runExec(args []string, scope cliScope) int {
 	// the child's argv and is never scanned for it. When set, it forces the
 	// legacy in-process path regardless of [security] privsep.
 	args, noPrivsep := stripNoPrivsep(args)
+
+	// `--inspect[=TARGET | <space>TARGET]` / `--inspect-brk` enable the Node
+	// inspector for the child WHILE KEEPING privsep (child runs as _byn-exec, env
+	// hidden; the debugger attaches over loopback TCP, which is uid-agnostic). With
+	// no TARGET, byn allocates the next FREE port (so concurrent debug processes
+	// don't collide). An explicit port (`--inspect 9230` or `--inspect=9230`) is
+	// used only if FREE — otherwise byn fails with a clear message instead of
+	// letting node die with EADDRINUSE. `=0` lets each process self-allocate.
+	// Injected via NODE_OPTIONS so it reaches node/tsx/etc.
+	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
+	if hasInspect {
+		if err := applyInspect(inspectBrk, inspectVal); err != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
+			return exitErr
+		}
+	}
 
 	// Dispatch: alias form vs direct form.
 	// Alias form: first arg is non-empty, does not start with "-", and is not "--".
@@ -118,15 +137,18 @@ func runExec(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, "")
 
-	// The CLI is a separate process from the daemon, so it learns whether
-	// privsep is enabled by reading the SAME ~/.byn/config the daemon reads
-	// (config.Load on the data dir). A missing/invalid file yields defaults
-	// (privsep OFF) — we never want a config read error to block exec, so a
-	// load failure degrades to the legacy in-process path silently.
+	// Learn whether privsep is engaged from the DAEMON (authoritative) over the
+	// UID-gated socket — not by reading the config file. Under privsep the config
+	// lives in the _byn-owned data dir and the owner-UID CLI cannot read it; a
+	// misread would set privsepOn=false and silently downgrade exec to the legacy
+	// in-process path (child runs as the OWNER, not _byn-exec), defeating the
+	// isolation. A status-call failure means the daemon is unreachable, in which
+	// case the exec round-trip below fails anyway, so degrading here is harmless.
 	privsepOn := !noPrivsep
 	if privsepOn {
-		cfg, cerr := config.Load(config.Path(dir))
-		privsepOn = cerr == nil && cfg.PrivsepEnabled()
+		var st ipc.StatusResp
+		serr := client.Call(ipc.OpStatus, ipc.StatusReq{}, &st)
+		privsepOn = serr == nil && st.Privsep
 	}
 
 	// One round-trip: the daemon verifies trust, enforces the .byn's
@@ -160,6 +182,12 @@ func runExec(args []string, scope cliScope) int {
 			Argv:    childArgv,
 		}
 	}
+
+	// --no-privsep runs the child as the OWNER (env visible to the owner's
+	// `ps -E`), so it demands the master password every run — no blind trusted-.byn
+	// run. ForceAuth makes the daemon require it regardless of [exec] actions. The
+	// privsep path (default) leaves it false: a trusted .byn is the authorization.
+	req.ForceAuth = noPrivsep
 
 	// PRIVSEP ROUTING (NU-5). When [security] privsep is enabled and this is a
 	// trusted-.byn DIRECT exec, the daemon spawns the child SERVER-side under the
@@ -334,14 +362,157 @@ func stripNoPrivsep(args []string) ([]string, bool) {
 	return out, found
 }
 
-// runExecPrivsep drives the SERVER-side privsep spawn for a trusted-.byn DIRECT
-// exec. It resolves the child binary, builds the ExecSpawnReq (the SAME
-// ExecFetchReq the legacy path would send, PLUS BaseEnv + the resolved
-// AbsTarget), and calls CallWithFDs passing the child's three stdio fds via
-// SCM_RIGHTS. The daemon authorizes (shared gate with exec.fetch), drops the
-// child to _byn-exec, and returns its exit code.
+// stripInspect removes a `--inspect` / `--inspect-brk` flag from the BYN side of
+// args (before the `--` separator or the alias NAME), mirroring stripNoPrivsep's
+// boundary handling. The TARGET may be attached (`--inspect=9230`) OR be the next
+// token (`--inspect 9230`) — the space form is consumed only when that token
+// looks like a port (so `byn exec --inspect deploy` keeps `deploy` as the alias).
+// brk reports --inspect-brk; value is the TARGET (empty for the bare flag); found
+// reports presence. Tokens at/after the boundary are the child's argv, untouched.
+func stripInspect(args []string) (out []string, brk bool, value string, found bool) {
+	out = make([]string, 0, len(args))
+	boundary := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if boundary {
+			out = append(out, a)
+			continue
+		}
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		isInspect := a == "--inspect" || strings.HasPrefix(a, "--inspect=")
+		isBrk := a == "--inspect-brk" || strings.HasPrefix(a, "--inspect-brk=")
+		if !isInspect && !isBrk {
+			out = append(out, a)
+			continue
+		}
+		found, brk = true, isBrk
+		if eq := strings.IndexByte(a, '='); eq >= 0 {
+			value = a[eq+1:] // attached form: --inspect=TARGET
+		} else if i+1 < len(args) && looksLikePort(args[i+1]) {
+			value = args[i+1] // space form: --inspect TARGET
+			i++               // consume the port token
+		}
+	}
+	return out, brk, value, found
+}
+
+// looksLikePort reports whether s is a bare port number or a host:port whose port
+// part is all digits — used to decide if the token after a bare `--inspect` is its
+// TARGET vs the start of the child command / alias name.
+func looksLikePort(s string) bool {
+	if s == "" || strings.HasPrefix(s, "-") {
+		return false
+	}
+	if i := strings.LastIndexByte(s, ':'); i >= 0 {
+		s = s[i+1:] // host:PORT → PORT
+	}
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// applyInspect resolves the inspector flag (allocating or validating the port),
+// sets NODE_OPTIONS (merging any existing value), and prints where to attach.
+// Returns an error when an explicit port is invalid or already in use.
+func applyInspect(brk bool, value string) error {
+	nodeFlag, hint, err := resolveInspect(brk, value)
+	if err != nil {
+		return err
+	}
+	if existing := os.Getenv("NODE_OPTIONS"); existing != "" {
+		_ = os.Setenv("NODE_OPTIONS", existing+" "+nodeFlag)
+	} else {
+		_ = os.Setenv("NODE_OPTIONS", nodeFlag)
+	}
+	fmt.Fprintln(os.Stderr, dim(hint))
+	return nil
+}
+
+// resolveInspect builds the node inspector flag + a human attach hint:
+//   - no TARGET → allocate the next FREE loopback port (concurrent sessions don't
+//     collide on 9229).
+//   - "0"       → pass through so EACH node process self-allocates a free port
+//     (best for multi-process runners like `tsx watch`).
+//   - explicit port / host:port → use it ONLY if free; otherwise return an error
+//     (invalid range or already in use) so byn fails clearly rather than letting
+//     node die with EADDRINUSE.
+func resolveInspect(brk bool, value string) (nodeFlag, hint string, err error) {
+	flag := "--inspect"
+	if brk {
+		flag = "--inspect-brk"
+	}
+	switch value {
+	case "":
+		port, ferr := freeTCPPort()
+		if ferr != nil {
+			return flag, "Debugger: inspector on node's default 127.0.0.1:9229 (couldn't allocate a free port; pass --inspect=0 to avoid collisions).", nil
+		}
+		target := "127.0.0.1:" + strconv.Itoa(port)
+		return flag + "=" + target,
+			fmt.Sprintf("Debugger: inspector on %s — attach there (e.g. VS Code \"attach\", port %d).", target, port), nil
+	case "0":
+		return flag + "=0",
+			fmt.Sprintf("Debugger: inspector enabled (%s=0) — each node process self-allocates a free port (node prints it).", flag), nil
+	}
+	host, portStr := "127.0.0.1", value
+	if i := strings.LastIndexByte(value, ':'); i >= 0 {
+		host, portStr = value[:i], value[i+1:]
+	}
+	port, perr := strconv.Atoi(portStr)
+	if perr != nil || port < 1 || port > 65535 {
+		return "", "", fmt.Errorf("invalid debug port %q (must be 1-65535)", value)
+	}
+	if !portIsFree(host, port) {
+		return "", "", fmt.Errorf("debug port %s is already in use — choose another (--inspect <port>) or use --inspect for the next free one",
+			net.JoinHostPort(host, strconv.Itoa(port)))
+	}
+	target := net.JoinHostPort(host, strconv.Itoa(port))
+	return flag + "=" + target, fmt.Sprintf("Debugger: inspector on %s — attach there.", target), nil
+}
+
+// freeTCPPort asks the OS for a free loopback TCP port by binding :0 and reading
+// the assigned port back. Small TOCTOU window before the child's bind; acceptable
+// for a dev-time debug convenience.
+func freeTCPPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = l.Close() }()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// portIsFree reports whether host:port can be bound right now (a best-effort
+// pre-flight so an explicit --inspect port fails fast if already taken).
+func portIsFree(host string, port int) bool {
+	l, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
+}
+
+// runExecPrivsep drives the TERMINAL-ANCHORED privsep exec for a trusted-.byn
+// DIRECT exec (Option A). It resolves the child binary, asks the daemon to
+// AUTHORIZE the exec (the SAME ExecFetchReq the legacy path would send, PLUS
+// BaseEnv + the resolved AbsTarget + cwd) and mint a one-time token. The owner-UID
+// CLI receives ONLY that token — never the secret env. It then spawns the setuid
+// helper IN THIS PROCESS TREE (so the child inherits the shell's TCC grant), the
+// helper redeems the token directly with the daemon, drops to _byn-exec, and execs
+// the (sandbox-wrapped) target with the curated env.
 //
-// handled=false means the daemon does not know exec.spawn (unknown_op) — an
+// handled=false means the daemon does not know exec.authorize (unknown_op) — an
 // older daemon — and the caller should fall back to the legacy in-process path.
 // In every other case handled=true and rc is the final exit code.
 //
@@ -358,15 +529,15 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 		return exitErr, true
 	}
 
-	spawnReq := ipc.ExecSpawnReq{
+	cwd, _ := os.Getwd()
+	authReq := ipc.ExecAuthorizeReq{
 		ExecFetchReq: req,
 		BaseEnv:      os.Environ(),
 		AbsTarget:    absTarget,
+		Cwd:          cwd,
 	}
-	stdio := []int{int(os.Stdin.Fd()), int(os.Stdout.Fd()), int(os.Stderr.Fd())}
-
-	var resp ipc.ExecSpawnResp
-	callErr := client.CallWithFDs(ipc.OpExecSpawn, spawnReq, &resp, client.Session, stdio)
+	var authResp ipc.ExecAuthorizeResp
+	callErr := client.Call(ipc.OpExecAuthorize, authReq, &authResp)
 
 	// Auth retry: an auth_required reply on a TTY prompts once and retries with
 	// the password attached. Same UX as the legacy exec.fetch path.
@@ -386,16 +557,17 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 			return exitErr, true
 		}
 		defer wipe()
-		spawnReq.Password = pw
-		callErr = client.CallWithFDs(ipc.OpExecSpawn, spawnReq, &resp, client.Session, stdio)
+		authReq.Password = pw
+		callErr = client.Call(ipc.OpExecAuthorize, authReq, &authResp)
 	}
 
 	switch {
 	case callErr == nil:
-		// The child ran SERVER-side and exited; propagate its exit code as our
-		// own. We return it (rather than os.Exit) so run()/main does the exit —
-		// keeps runExec testable and matches every other command handler.
-		return resp.ExitCode, true
+		// Render the same allowlist/actions notes the legacy path shows, then hand
+		// the one-time token to the helper, which redeems + runs the child in this
+		// process tree. The child's exit code becomes our own.
+		renderAuthorizeNotes(authResp, req.Path)
+		return execHelperRunner(authResp.Token), true
 	case isNotProvisionedErr(callErr):
 		// Privsep was explicitly requested but `byn setup` never provisioned the
 		// service users. This is actionable and must NOT silently fall back to an
@@ -405,10 +577,102 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 			dim("(or disable [security] privsep, or pass --no-privsep)"))
 		return exitDaemonErr, true
 	case isUnknownOpErr(callErr):
-		// Daemon predates exec.spawn — signal the caller to use the legacy path.
+		// Daemon predates exec.authorize — signal the caller to use the legacy path.
 		return 0, false
 	default:
 		return handleExecFetchError(callErr), true
+	}
+}
+
+// execHelperRunner invokes the privsep helper to redeem the token and run the
+// child, returning the child's exit code. Package var so tests can stub it: the
+// real helper is a setuid-root binary that cannot run in unit tests.
+var execHelperRunner = invokeExecHelper
+
+// invokeExecHelper spawns the installed setuid helper with --redeem, passing the
+// one-time token on fd 3 (an inherited pipe — never argv/env, so it is invisible
+// to `ps`). The helper redeems the token with the daemon, drops to _byn-exec, and
+// execs the target; because we spawn it here (in the owner's shell tree) the child
+// inherits the shell's TCC grant. We attach the child to our tty (so dev servers
+// get a real terminal), forward termination signals, and propagate its exit code.
+func invokeExecHelper(token []byte) int {
+	helperPath := privsep.HelperDestPath()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
+		return exitErr
+	}
+	// The token is 32 bytes — far under the pipe buffer — so a synchronous write
+	// before Start never blocks. Closing the write end gives the helper EOF after
+	// the token.
+	if _, werr := w.Write(token); werr != nil {
+		_ = r.Close()
+		_ = w.Close()
+		fmt.Fprintf(os.Stderr, "%s writing exec token: %v\n", boldRed("Error:"), werr)
+		return exitErr
+	}
+	_ = w.Close()
+
+	cmd := exec.Command(helperPath, "--redeem") //nolint:gosec // operator-installed setuid helper at a fixed path
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.ExtraFiles = []*os.File{r} // ExtraFiles[0] → fd 3 in the helper
+
+	if err := cmd.Start(); err != nil {
+		_ = r.Close()
+		fmt.Fprintf(os.Stderr, "%s starting privsep helper: %v\n", boldRed("Error:"), err)
+		return exitErr
+	}
+	_ = r.Close() // the child holds its own copy now
+
+	// Forward termination/hangup signals to the child (which becomes the target
+	// after it execs). The child shares our tty + process group, so tty-generated
+	// signals reach it directly too; forwarding additionally covers signals sent to
+	// byn specifically.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	defer signal.Stop(sigCh)
+	go func() {
+		for s := range sigCh {
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(s)
+			}
+		}
+	}()
+
+	werr := cmd.Wait()
+	if werr == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(werr, &ee) {
+		if code := ee.ExitCode(); code >= 0 {
+			return code
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s privsep helper: %v\n", boldRed("Error:"), werr)
+	return exitErr
+}
+
+// renderAuthorizeNotes prints the wildcard / empty-allowlist / actions-wildcard
+// notes the daemon flagged at authorize time (same wording as renderAllowlistNotes,
+// minus the injected-var count which the CLI no longer sees under token redemption).
+func renderAuthorizeNotes(resp ipc.ExecAuthorizeResp, sourcePath string) {
+	if sourcePath == "" {
+		return
+	}
+	if resp.Wildcard {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%s permits ALL scoped vars via \"*\" — any secret added later is auto-injected.", sourcePath)))
+	} else if resp.NoneDeclared {
+		fmt.Fprintf(os.Stderr, "%s\n",
+			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", sourcePath)))
+	}
+	if resp.ActionsWildcard {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%s pins NO specific actions — \"*\" lets ANY command run re-auth-free.", sourcePath)))
 	}
 }
 

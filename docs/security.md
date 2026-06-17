@@ -58,7 +58,7 @@ We protect a user's secrets against the following adversaries.
 | Adversary | What they have | What we prevent |
 |---|---|---|
 | **Another local user** on a shared machine | Their own UID's permissions | Reading or modifying our vault, our socket, our audit log. Enforced by file modes (0600) and peer-UID check on the socket. |
-| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret **value**. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with `Argon2id(master password)` — **the password is the only barrier**. The vault file is deliberately **portable** (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id (default 64 MiB / time=2, ~1s on the *defender's* laptop) slows each guess, but it is not a high wall against a funded attacker with GPUs/ASICs, and a weak password falls regardless. **What the file does NOT hide:** entry/project/env *names*, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see "Audit & forensics" below); and the audit chain's HMAC seed travels in the file, so the *thief's copy* of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). |
+| **A passive thief** with `vault.db` | A copy of the encrypted DB | Reading any secret **value**. Values are AEAD-encrypted under the vault key, and the vault key is wrapped with `Argon2id(master password)` — **the password is the only barrier**. The vault file is deliberately **portable** (no machine binding — an owner decision so forensics/recovery work on other hardware), so a thief can mount an offline guessing attack at leisure; Argon2id (default 64 MiB / time=2, ~1s on the *defender's* laptop) slows each guess, but it is not a high wall against a funded attacker with GPUs/ASICs, and a weak password falls regardless. **What the file does NOT hide:** entry/project/env *names*, timestamps, version counts, and file metadata are readable from the DB without any key (an accepted trade-off — see "Audit & forensics" below); and the audit chain's HMAC seed travels in the file, so the *thief's copy* of the log can be silently rewritten (off-box anchoring is the planned fix). A generated break-glass recovery key that replaces the memorable password as the portability root is planned (PH-1). **One scoped exception to "the password is the only barrier":** vars that a trusted `.byn` has allowlisted for *autonomous (password-free) exec* are additionally recoverable **on the original machine** via a machine-fingerprint-wrapped capability stored in the trust record (see "Known limitations" and "Row encryption") — for those specific vars, machine + service-user isolation is the at-rest floor, not the password. Every other value stays password-only at rest. |
 | **A shoulder-surfer** of the user's terminal | Visual access to scrollback, history, `ps` | Seeing secret values — they never appear in argv, environment, prompts, history, or scrollback. |
 | **A careless or semi-trusted agent** (coding agent, evil VSCode extension, compromised CI) running as the user | Can run `byn` commands | (a) **Detection over prevention:** a same-UID agent *can* invoke `get`/`exec`, so the guarantee is that **every value access is audited** (`byn audit`) — harness deny rules are best-effort and not relied upon. The primary win is that there is no plaintext `.env` on disk to read accidentally. (b) `byn exec` injects vars only into the child it spawns; the parent shell sees nothing. With **`[security] privsep` enabled** (opt-in this release; set up via `byn setup`), a trusted-`.byn` *pinned* exec runs its child as the dedicated `_byn-exec` service user, so a same-(owner)-UID **non-root** process **cannot** read the child's `/proc/<pid>/environ` (the kernel's ptrace-mode check denies a cross-uid read) — verified by the privsep integration test. **Honest ceiling:** root / `CAP_SYS_PTRACE` can still read that environ — that is the documented limit. With privsep **off (the default)**, or for **ad-hoc exec** (no `.byn`), the child runs in-process as the owner and a same-UID process *can* read its environ (an accepted limitation, not concealment from it). (c) Untrusted `.byn` files hard-fail in agent mode (`--json`) so the agent can't be silently redirected. |
 | **IDE code-completion / inline-suggestion models** (Copilot, Cursor Tab, JetBrains AI, …) running as you | A continuous read of your editor buffer + neighbouring tabs, streamed to (usually cloud) inference on every keystroke | A secret typed as a *literal into source* is ingested the instant it lands in the buffer — and with cloud inference it has **already left the machine before you finish the line** (the model suggesting the cred back, or offering to move it, is proof it read it; it may then propagate it into other files/commits). byn's mitigation is structural: secrets live in the vault and are referenced by *name* / injected at runtime via `byn exec`, so there is no literal in the buffer to slurp. byn can't intercept the IDE itself — keeping literals out of source is the control byn makes practical. |
@@ -153,6 +153,41 @@ of your file with a guessable password — the real boundaries are **a strong
 passphrase, host full-disk encryption, and isolating untrusted code to a
 different OS user.** Those three are not byn features; they are the controls
 byn depends on.
+
+---
+
+## Known limitations (this release)
+
+byn is a **development-time** secrets tool, not a production secrets manager.
+With privilege separation enabled it runs your commands under a dedicated
+service user and injects secrets there, so other processes running **as you**
+cannot read those secrets from the environment, and every access is audited.
+That is the win it is built for. These are the limits that come with it — read
+them before you rely on byn for anything that matters.
+
+- **Concurrent commands share one service user.** Two byn-run commands running
+  at the same time are **not** isolated from each other — both children run as
+  the single `_byn-exec` service user, so one could read the other's injected
+  secrets from its environment. Don't run mutually-distrusting commands in
+  parallel under byn.
+- **No defense against root or a compromised byn service.** Anyone who can run
+  code as root, as `_byn`, or as `_byn-exec` can read secrets. byn guards your
+  dev workflow against ordinary same-user processes (agents, scripts, IDE
+  extensions); it is **not** a hardware vault.
+- **Autonomous (password-free) exec lowers the at-rest floor for the vars it
+  covers.** Secrets that a trusted `.byn` allowlists for password-free exec are
+  stored so the daemon can inject them **without** your master password; their
+  at-rest protection is then the machine fingerprint + service-user isolation,
+  not your password. This applies **only** to the vars your trusted `.byn` files
+  allowlist (a `env = "*"` `.byn` opts its whole scope in); everything else
+  stays password-protected at rest.
+- **Physical and memory attacks are out of scope** — cold-boot, swap, and
+  memory dumps can recover an unlocked key or injected secrets; byn does not
+  defend against them.
+
+The bottom line: byn is **not** a production secrets manager. It shrinks and
+audits the agent-era leak on your own machine; it does not replace a hardware
+HSM, a cloud secrets service, or OS/VM isolation.
 
 ---
 
@@ -251,11 +286,17 @@ realistically reach.
 
 ### 3. Row encryption
 
-Every entry value is AEAD-sealed individually:
+Every entry value is AEAD-sealed individually under a **per-row key**
+derived from the vault key:
 
 ```
+K_row      = HKDF-SHA256(
+    secret = vault_key,
+    info   = vault_id || 0x1F || kind || 0x1F || name,
+)
+
 ciphertext = XChaCha20-Poly1305-Seal(
-    key   = vault_key,
+    key   = K_row,
     nonce = random 24 bytes,
     plain = value bytes,
     aad   = vault_id || 0x1F || kind || 0x1F || name,
@@ -264,10 +305,27 @@ ciphertext = XChaCha20-Poly1305-Seal(
 
 Stored format: `nonce || ciphertext_with_tag`.
 
+**Why per-row keys (v2):** because each row is sealed under its own
+`K_row = HKDF(vault_key, vaultID‖kind‖name)` (plus a fresh per-write nonce and
+the AAD binding), the daemon can hand out **decryption capability for one
+specific var** — by capturing just that var's `K_row` — without ever exposing
+the vault key. This is what makes autonomous trusted-`.byn` exec possible: a
+trusted `.byn`'s allowlisted vars have their per-row keys captured and wrapped
+under a machine-fingerprint key (`K_cap`) in the trust record, so the daemon can
+inject them with the vault **locked** and no password (see "Known limitations").
+Everything not allowlisted stays sealed under a `K_row` only the unlocked vault
+key can re-derive.
+
+**Legacy v1 rows still decrypt.** Rows written before per-row keys were sealed
+**directly** with the vault key (no HKDF step). Those `v1` rows are still read
+correctly, and migrate to `v2` (HKDF per-row key) on the next write, rename, or
+trust-capture of that entry — there is no bulk re-encryption.
+
 **Why AAD includes vault_id, kind, name:** a row literally cut from
 one vault and pasted into another (or one entry's bytes copied onto
-another's row) fails to decrypt. This catches both DB-level tampering
-and accidental row-swap bugs.
+another's row) fails to decrypt — and with per-row keys the `K_row` itself no
+longer even matches. This catches both DB-level tampering and accidental
+row-swap bugs.
 
 **Why per-row nonces (not deterministic):** two entries with the same
 plaintext have unrelated ciphertexts. Also avoids any need for nonce

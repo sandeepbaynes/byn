@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glossary — byn docs</title>
+<meta name="description" content="Terms used throughout the docs and code.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Glossary</div>
+      <a href="./" class="sb-item active">Glossary</a>
+      <a href="#related" class="sb-item">Related</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Glossary</span>
+    </div>
+
+    <h1>Glossary</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/glossary.md">docs/glossary.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/glossary.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>Terms used throughout the docs and code.</p>
+    <hr>
+    <h3 id="aad--additional-authenticated-data">AAD — Additional Authenticated Data</h3>
+    <p>In AEAD (XChaCha20-Poly1305), the AAD is a byte string that is NOT
+    encrypted but IS covered by the auth tag. Any change to the AAD makes
+    decryption fail.</p>
+    <p>byn uses AAD to bind ciphertext to context:</p>
+    <ul>
+    <li><strong>Row values:</strong> AAD = <code>vault_id ‖ 0x1F ‖ kind ‖ 0x1F ‖ name</code>. Means
+    a row literally copied between vaults or onto another entry's slot
+    fails to decrypt.</li>
+    <li><strong>Wrapped key:</strong> AAD = full header bytes (version + salt + Argon2
+    params + nonce). Means tampering with the header (e.g., downgrading
+    Argon2 params) fails to unwrap.</li>
+    </ul>
+    <h3 id="aead">AEAD</h3>
+    <p>Authenticated Encryption with Associated Data. The primitive family
+    that gives you both confidentiality (encryption) and integrity (a
+    tag verifying the message + AAD haven't been touched). byn uses
+    XChaCha20-Poly1305 throughout.</p>
+    <h3 id="agent-mode">Agent mode</h3>
+    <p>When <code>--json</code> appears in the CLI args (before any <code>--</code>), byn:</p>
+    <ul>
+    <li>Emits machine-readable output where applicable</li>
+    <li><strong>Refuses to prompt</strong> for anything (no <code>trust [y/N]:</code>)</li>
+    <li>Hard-fails on untrusted <code>.byn</code> instead of asking</li>
+    <li>Hard-fails on tampered <code>.byn</code></li>
+    </ul>
+    <p>Lets CI, scripts, and AI coding agents interact with
+    byn safely.</p>
+    <h3 id="argon2id">Argon2id</h3>
+    <p>The memory-hard password-hashing function we use to derive a vault
+    key's wrapping key from the master password.</p>
+    <p>Default parameters (<code>DefaultArgon2Params</code>): time=2, memory=64 MiB,
+    threads=4, key length=32 — tuned for ~1s on a laptop. Bounds: time ∈
+    [1, 16], memory ∈ [8 MiB, 1 GiB], threads ∈ [1, 16] — the upper limits
+    prevent DoS via malicious headers, the lower limits reject trivial
+    attacker-supplied params.</p>
+    <h3 id="audit-chain">Audit chain</h3>
+    <p>A sequence of HMAC-SHA256 hashes, where each event's hash depends on
+    the previous event's. Any insertion, deletion, or modification
+    breaks the chain at the first affected event.</p>
+    <p>Seed: 32 random bytes stored in the vault meta. Head (latest hash):
+    also in meta, so the daemon can resume cleanly on cold start.</p>
+    <h3 id="daemon">Daemon</h3>
+    <p>The long-running background process. Owns the vault key (only while
+    unlocked), the SQLite handles, the audit logger, and the socket
+    listener. Started as <code>byn daemon start</code>.</p>
+    <h3 id="discovery">Discovery</h3>
+    <p>The walk from CWD upward looking for a <code>.byn</code> file. See
+    <a href="byn-file-format/"><code>.byn</code> file format</a>.</p>
+    <h3 id="entry">Entry</h3>
+    <p>A single key→value pair within a <code>(vault, project, env)</code> scope. The
+    canonical secret unit. Today: env-vars. Phase 5 adds files.</p>
+    <h3 id="env-within-a-vault">Env (within a vault)</h3>
+    <p>The leaf level of the scope hierarchy. Examples: <code>default</code>, <code>dev</code>,
+    <code>staging</code>, <code>prod</code>.</p>
+    <p>Non-default envs <strong>inherit</strong> from the project's default env: if
+    <code>STAGING.DB_URL</code> doesn't exist, <code>byn get DB_URL --env staging</code>
+    falls back to <code>DEFAULT.DB_URL</code>.</p>
+    <h3 id="fingerprint-machine-fingerprint">Fingerprint (machine fingerprint)</h3>
+    <p>A SHA-256 of stable hardware identifiers (CPU ID, board serial,
+    primary MAC). It keys the <strong>trust-store fp-MAC</strong> (tamper-evidence for
+    <code>.byn</code> trust records) and does <strong>not</strong> touch the vault key. The vault
+    is <strong>portable by design</strong>: <code>wrapped.key</code> is wrapped with the master
+    password only — no machine binding — so a copy unwraps on other
+    hardware with the same password.</p>
+    <h3 id="fingerprint-wrapped-key-fingerprint-in-metajson">Fingerprint (wrapped-key fingerprint, in <code>meta.json</code>)</h3>
+    <p>SHA-256 of the <code>wrapped.key</code> file bytes. The daemon checks this on
+    every vault open. Catches an attacker who swaps the wrapped key for
+    one they control (e.g., from another vault they unlocked).</p>
+    <h3 id="hint">Hint</h3>
+    <p>A short stderr echo after a mutating op. <code>Stored &quot;DB_URL&quot; in default/billing/staging.</code> Gated by <code>BYN_HINTS</code> and TTY status.
+    Written via <code>cmd/byn/hints.go:hintf</code>.</p>
+    <h3 id="ipc">IPC</h3>
+    <p>Inter-process communication. The daemon ↔ CLI link over a Unix
+    socket using length-prefixed JSON envelopes. See
+    <a href="architecture/#ipc-envelope">architecture.md</a>.</p>
+    <h3 id="kind">Kind</h3>
+    <p>The type discriminator on an entry: <code>env_var</code> today, <code>file</code> reserved.
+    Part of the row AAD so an env-var blob can't be confused with a file
+    blob.</p>
+    <h3 id="meta-table">Meta table</h3>
+    <p>A SQLite table of <code>(key, value)</code> strings inside each vault.db. Holds:
+    schema version, vault UUID, audit-chain seed/head, entries state
+    hash, reserved TOTP slot.</p>
+    <p>The meta table is <strong>unencrypted</strong> — it's bootstrap data. The
+    sensitive bits live in encrypted columns of other tables.</p>
+    <h3 id="mlock">mlock</h3>
+    <p>A syscall that pins a memory page so it never goes to swap. byn
+    uses it in <code>internal/secmem</code> for the master password and Argon2
+    workspace. Doesn't help against root, but does prevent accidental
+    on-disk exposure on memory pressure.</p>
+    <h3 id="multi-vault">Multi-vault</h3>
+    <p>The daemon's state model: a map from vault name to per-vault entry
+    (store + audit logger + idle timer). Many vaults can be unlocked
+    simultaneously; they don't share state.</p>
+    <h3 id="nonce">Nonce</h3>
+    <p>A unique-per-encryption number that AEAD requires. byn uses 24-byte
+    random nonces (XChaCha20) generated by <code>crypto/rand</code> per write.</p>
+    <h3 id="pre-parser">Pre-parser</h3>
+    <p><code>cmd/byn/cliscope.go:preParseGlobals</code> — a single linear scan over
+    argv that pulls out <code>--vault/--project/--env</code> regardless of position,
+    then returns the scrubbed argv for the subcommand FlagSet. Lets
+    <code>byn --vault X put NAME</code> AND <code>byn put --vault X NAME</code> both work.</p>
+    <h3 id="project">Project</h3>
+    <p>The middle level of the scope hierarchy. A grouping of envs.
+    Example: <code>myapp</code> (with envs <code>dev</code>, <code>staging</code>, <code>prod</code>).</p>
+    <h3 id="scope">Scope</h3>
+    <p>Shorthand for <code>(vault, project, env)</code> — the 4-tuple that addresses an
+    entry. Resolution: CLI flag &gt; env var &gt; <code>.byn</code> &gt; daemon default.</p>
+    <h3 id="secmem">Secmem</h3>
+    <p><code>internal/secmem</code> — <code>mlock</code>'d byte buffers for sensitive workspace.</p>
+    <h3 id="sentinel-error">Sentinel error</h3>
+    <p>A pre-declared error value matched with <code>errors.Is</code>. byn exports
+    sentinels like <code>vault.ErrLocked</code>, <code>vault.ErrNotFound</code>,
+    <code>vault.ErrAlreadyInit</code> so callers can branch on the cause without
+    parsing error strings.</p>
+    <h3 id="slice">Slice</h3>
+    <p>A self-contained chunk of work, like a sprint deliverable. byn slices are tracked on the internal roadmap and task list.</p>
+    <h3 id="tofu--trust-on-first-use">TOFU — Trust On First Use</h3>
+    <p>A trust model where the first time you see a thing, you approve it,
+    and subsequent uses must match what you approved. byn uses TOFU
+    for <code>.byn</code> files: SHA-256 of contents recorded on approval; any
+    content change fails the check until you re-trust.</p>
+    <h3 id="tui">TUI</h3>
+    <p>Text-based user interface. byn has a modal vi-style editor at
+    <code>cmd/byn/cmd_tui.go</code>. Slice 7 redesigns it with a left-rail
+    navigator for vault/project/env/files.</p>
+    <h3 id="vault">Vault</h3>
+    <p>The top-level container. One SQLite DB + one wrapped key + one
+    audit log per vault. Default name: <code>default</code>. You can have many
+    (<code>work</code>, <code>personal</code>, <code>client-X</code>).</p>
+    <h3 id="vault-key">Vault key</h3>
+    <p>The 32-byte random key that AEAD-encrypts every row value in a
+    vault. Generated at <code>init</code>, persisted only in <code>wrapped.key</code>,
+    unwrapped only in daemon memory while unlocked.</p>
+    <h3 id="wrapping-key-wrapping">Wrapping (key wrapping)</h3>
+    <p>The act of encrypting a key with another key. byn wraps the vault
+    key with <code>Argon2id(password)</code>-derived material so the master password
+    is the only way back to the key.</p>
+    <hr>
+    <h2 id="related">Related</h2>
+    <ul>
+    <li><a href="architecture/">Architecture</a> — where each term shows up in the system.</li>
+    <li><a href="security/">Security model</a> — formal threat model and primitives.</li>
+    <li><a href="cli-reference/">CLI reference</a> — every command surface using these terms.</li>
+    </ul>
+
+    <div class="docs-nav">
+      <a href="../byn-file-format/" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">`.byn` file format</div>
+      </a>
+      <a href="../troubleshooting/" class="docs-nav-btn" style="text-align:right;">
+        <div class="nav-btn-label">Next →</div>
+        <div class="nav-btn-title">Troubleshooting</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#aad--additional-authenticated-data" class="toc-item sub">AAD — Additional Authenticated Data</a>
+    <a href="#aead" class="toc-item sub">AEAD</a>
+    <a href="#agent-mode" class="toc-item sub">Agent mode</a>
+    <a href="#argon2id" class="toc-item sub">Argon2id</a>
+    <a href="#audit-chain" class="toc-item sub">Audit chain</a>
+    <a href="#daemon" class="toc-item sub">Daemon</a>
+    <a href="#discovery" class="toc-item sub">Discovery</a>
+    <a href="#entry" class="toc-item sub">Entry</a>
+    <a href="#env-within-a-vault" class="toc-item sub">Env (within a vault)</a>
+    <a href="#fingerprint-machine-fingerprint" class="toc-item sub">Fingerprint (machine fingerprint)</a>
+    <a href="#fingerprint-wrapped-key-fingerprint-in-metajson" class="toc-item sub">Fingerprint (wrapped-key fingerprint, in meta.json)</a>
+    <a href="#hint" class="toc-item sub">Hint</a>
+    <a href="#ipc" class="toc-item sub">IPC</a>
+    <a href="#kind" class="toc-item sub">Kind</a>
+    <a href="#meta-table" class="toc-item sub">Meta table</a>
+    <a href="#mlock" class="toc-item sub">mlock</a>
+    <a href="#multi-vault" class="toc-item sub">Multi-vault</a>
+    <a href="#nonce" class="toc-item sub">Nonce</a>
+    <a href="#pre-parser" class="toc-item sub">Pre-parser</a>
+    <a href="#project" class="toc-item sub">Project</a>
+    <a href="#scope" class="toc-item sub">Scope</a>
+    <a href="#secmem" class="toc-item sub">Secmem</a>
+    <a href="#sentinel-error" class="toc-item sub">Sentinel error</a>
+    <a href="#slice" class="toc-item sub">Slice</a>
+    <a href="#tofu--trust-on-first-use" class="toc-item sub">TOFU — Trust On First Use</a>
+    <a href="#tui" class="toc-item sub">TUI</a>
+    <a href="#vault" class="toc-item sub">Vault</a>
+    <a href="#vault-key" class="toc-item sub">Vault key</a>
+    <a href="#wrapping-key-wrapping" class="toc-item sub">Wrapping (key wrapping)</a>
+    <a href="#related" class="toc-item">Related</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/glossary.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

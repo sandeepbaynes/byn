@@ -47,6 +47,14 @@ type File struct {
 		// action's INTERIOR is approved — byn does not police what a
 		// listed command does (spec §1a).
 		Actions EnvList `toml:"actions,omitempty"`
+		// Writable lists extra tool-state directories the privsep exec child
+		// (_byn-exec, a different UID) may read/write — e.g. a package manager's
+		// global store/cache under a 0700 home dir. byn grants `_byn-exec` access
+		// to these at trust time (owner-side ACLs), ON TOP OF a curated set of
+		// common defaults. Each entry must resolve UNDER the owner's home (a
+		// leading "~" is expanded); entries outside home are refused. Optional;
+		// absent ⇒ only the curated defaults are granted.
+		Writable []string `toml:"writable,omitempty"`
 	} `toml:"exec"`
 	// Aliases is the top-level [aliases] table: named entry points for
 	// `byn exec`. Each key is an alias name (^[A-Za-z0-9_][A-Za-z0-9_-]*$);

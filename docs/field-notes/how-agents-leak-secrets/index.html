@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How agents and bots leak your secrets — byn docs</title>
+<meta name="description" content="Field note · coverage: v0.3.0 · updated with each release">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/" class="active">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Field notes</div>
+      <a href="./" class="sb-item active">How agents and bots leak your secrets</a>
+      <a href="#vector-1--the-agent-reads-a-secret-file-off-disk" class="sb-item">Vector 1 — The agent reads a secret file off disk</a>
+      <a href="#vector-2--the-secret-ends-up-in-the-agents-context-anyway" class="sb-item">Vector 2 — The secret ends up in the agent&#39;s context anyway</a>
+      <a href="#vector-3--ide-inline-completion-ingests-the-secret-as-you-type-it" class="sb-item">Vector 3 — IDE inline completion ingests the secret as you type it</a>
+      <a href="#vector-4--the-secret-gets-committed-and-pushed" class="sb-item">Vector 4 — The secret gets committed and pushed</a>
+      <a href="#vector-5--supply-chain-malware-wearing-your-uid-harvests-credentials" class="sb-item">Vector 5 — Supply-chain malware wearing your UID harvests credentials</a>
+      <a href="#vector-6--prompt-injection-turns-a-good-agent-rogue" class="sb-item">Vector 6 — Prompt injection turns a good agent rogue</a>
+      <a href="#vector-7--long-lived-credentials-on-dev-vms-and-remote-boxes" class="sb-item">Vector 7 — Long-lived credentials on dev VMs and remote boxes</a>
+      <a href="#the-honest-summary-default-vs-opt-in-privsep" class="sb-item">The honest summary: default vs opt-in privsep</a>
+      <a href="#best-practices-for-agentic-development" class="sb-item">Best practices for agentic development</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Field notes</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">How agents leak secrets</span>
+    </div>
+
+    <h1>How agents and bots leak your secrets</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/how-agents-leak-secrets.md">docs/field-notes/how-agents-leak-secrets.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/field-notes/how-agents-leak-secrets.md">Edit on GitHub ↗</a>
+    </div>
+
+    <div class="version-stamp">
+      <span>Coverage:</span>
+      <strong>v0.3.0</strong>
+      <span>·</span>
+      <span>Re-verified at each release</span>
+    </div>
+
+    <p><em>Field note · coverage: v0.3.0 · updated with each release</em></p>
+    <p>Most credential leaks in agentic development are not attacks. They are
+    <strong>accidents with your permissions</strong>: an agent debugging a build reads the
+    <code>.env</code> and quotes it in its explanation; an inline-completion model
+    ingests a key as you type it; a post-install script wearing your UID
+    harvests <code>~/.aws/credentials</code>. The common root cause is that the entire
+    dev ecosystem assumes secrets sit in <strong>plaintext files any process
+    running as you can read</strong> — and your machine is now operated by a crowd
+    of such processes.</p>
+    <p>This field note catalogs the leak vectors one by one. For each: how the
+    leak happens, what byn does about it <strong>today (v0.3.0)</strong>, where byn
+    <strong>cannot</strong> protect, and what is <strong>coming</strong> that will close more of the
+    gap. It is updated every release. For verified incidents in the wild,
+    see <a href="real-world-incidents/">Real-world incidents</a>; for the author's
+    own, see <a href="aws-credential-file-takeover/">The AWS credentials file that cost me my
+    account</a>.</p>
+    <hr>
+    <h2 id="vector-1--the-agent-reads-a-secret-file-off-disk">Vector 1 — The agent reads a secret file off disk</h2>
+    <p><strong>How it happens.</strong> Agents explore. Debugging a connection failure, an
+    agent reads <code>.env</code>, <code>~/.aws/credentials</code>, or an SSH key &quot;to check the
+    config&quot; — then the value appears in its reasoning, its chat transcript,
+    a log line, or a generated file. With cloud-hosted models the secret has
+    left your machine the moment it enters the context window. In-harness
+    deny rules are best-effort: a recurring pattern of reports documents
+    agents reading <code>.env</code> files past configured guardrails — see the
+    deny-rule entry in <a href="real-world-incidents/">Real-world incidents</a> for
+    the linked reports and the honest caveats.</p>
+    <ul>
+    <li><strong>byn today:</strong> the file doesn't exist. Values live AEAD-encrypted in
+    the vault; the agent can list <em>names</em> but reading a <em>value</em> requires a
+    per-terminal session or fresh authorization (NU-3), and <strong>every value
+    access is audited</strong>. <code>byn exec</code> injects vars only into the child it
+    spawns.</li>
+    <li><strong>Where byn can't protect:</strong> a half-migration — if a plaintext copy
+    still sits next to the vault, byn protects nothing about it. And an
+    agent running in a terminal <em>you unlocked</em> can use that session
+    (see Vector 6).</li>
+    <li><strong>Now (opt-in) + coming:</strong> privilege separation — shipped opt-in in
+    v0.3.0 (<code>[security] privsep</code> + <code>sudo byn setup</code>) — puts the daemon and
+    exec children on their own service UIDs, so a same-UID agent can't
+    ptrace the daemon or read an injected child's <code>/proc/&lt;pid&gt;/environ</code>.
+    Still on the roadmap: Phase 3 shims (<code>aws</code>, <code>ssh</code>, …) to remove more
+    plaintext files, and FUSE-gated crown-jewel files behind them.</li>
+    </ul>
+    <hr>
+    <h2 id="vector-2--the-secret-ends-up-in-the-agents-context-anyway">Vector 2 — The secret ends up in the agent's context anyway</h2>
+    <p><strong>How it happens.</strong> A test prints the connection string on failure; a
+    verbose flag dumps the env; an error message embeds the token. The agent
+    faithfully reads the output — and now the secret is in the transcript.</p>
+    <ul>
+    <li><strong>byn today:</strong> structural reduction — when secrets are referenced by
+    <em>name</em> and injected at runtime, they stop appearing in source, config,
+    and most output paths. The audit log timestamps which secrets flowed
+    into which command, so a suspect transcript can be correlated with
+    exactly what was exposed.</li>
+    <li><strong>Where byn can't protect:</strong> a workload that <em>prints</em> an injected
+    value prints it. byn injects credentials for the child to use; it
+    cannot control what the child does with them. Detection (audit) is
+    the honest guarantee here, not concealment.</li>
+    <li><strong>Coming:</strong> leak-pattern scanning over the audit log (risky command
+    shapes, secrets piped to terminals) is under exploration as a
+    rule-based, pluggable detector.</li>
+    </ul>
+    <hr>
+    <h2 id="vector-3--ide-inline-completion-ingests-the-secret-as-you-type-it">Vector 3 — IDE inline completion ingests the secret as you type it</h2>
+    <p><strong>How it happens.</strong> Inline completion (Copilot, Cursor Tab, JetBrains
+    AI, …) streams your buffer to an inference endpoint on every keystroke.
+    Type a real credential into a source file and it has been read — and,
+    with cloud inference, has left the machine — before you finish the line.
+    The tell-tale is completion <em>suggesting your own secret back to you</em>.</p>
+    <p>And the buffer is only the smallest context these tools read.
+    Prediction quality scales with context, so the engines pull in
+    neighboring tabs, recently-edited files, and — for codebase-aware
+    assistants — an <strong>index of the entire project tree</strong>, built by scanning
+    files you never opened and shipping content (or embeddings) to the
+    vendor's servers. A <code>.env</code> that merely <em>sits in the project</em> is
+    eligible context for such systems, typed or not. The controls are
+    weaker than people assume: exclusion mechanisms (Copilot content
+    exclusions, <code>.cursorignore</code>, and similar) are vendor-specific, often
+    plan-gated, and documented as <strong>best-effort</strong> — product features, not
+    security boundaries. There is no universal, enforceable &quot;do not read
+    this&quot; contract an editor extension must honor — and every extension
+    runs with your full user permissions, able to read anything your UID
+    can, with no technical way for you to verify what it read or sent.</p>
+    <ul>
+    <li><strong>byn today:</strong> the same structural answer — there is no reason for a
+    literal to sit in a buffer <em>or in the project tree at all</em>. Reference
+    by name, inject with <code>byn exec</code>; nothing for the buffer, the
+    neighboring tabs, or the project index to collect.</li>
+    <li><strong>Where byn can't protect:</strong> byn cannot police the editor. If you do
+    type a literal, completion sees it. &quot;No secret literals in source&quot; is
+    the discipline byn makes practical, not one it can enforce. Treat any
+    suggested-back secret as compromised and rotate it.</li>
+    <li><strong>Coming:</strong> nothing can intercept the editor from user space without
+    becoming the IDE; this vector stays a discipline byn enables.</li>
+    </ul>
+    <hr>
+    <h2 id="vector-4--the-secret-gets-committed-and-pushed">Vector 4 — The secret gets committed and pushed</h2>
+    <p><strong>How it happens.</strong> A <code>.env</code> slips past <code>.gitignore</code>; a config with an
+    embedded token gets committed by you or generated-and-committed by an
+    agent. Public-repo secret sprawl is measured in the millions of new
+    leaked secrets per year (see <a href="real-world-incidents/">Real-world
+    incidents</a>).</p>
+    <ul>
+    <li><strong>byn today:</strong> the repo carries <em>names</em>, not values. The <code>.byn</code>
+    manifest is safe to commit by design — it declares which variables a
+    project needs, never what they are.</li>
+    <li><strong>Where byn can't protect:</strong> values pasted into code anyway, or
+    pre-byn history. Scrub history and rotate; byn prevents the next one,
+    not the last one.</li>
+    <li><strong>Coming:</strong> —</li>
+    </ul>
+    <hr>
+    <h2 id="vector-5--supply-chain-malware-wearing-your-uid-harvests-credentials">Vector 5 — Supply-chain malware wearing your UID harvests credentials</h2>
+    <p><strong>How it happens.</strong> A compromised npm package's post-install script, a
+    malicious VS Code extension, or a trojaned CLI runs as <em>you</em> and sweeps
+    the well-known paths: <code>.env</code> everywhere, <code>~/.aws/credentials</code>,
+    <code>~/.ssh/</code>, npm tokens, wallets. Recent campaigns explicitly used
+    <em>installed AI CLIs</em> as the harvesting engine (see <a href="real-world-incidents/">Real-world
+    incidents</a>).</p>
+    <ul>
+    <li><strong>byn today:</strong> the sweep comes up empty — there are no plaintext
+    credential files to find. The vault file yields names and ciphertext;
+    values require a session or the master password, the daemon socket
+    rejects requests without authorization for value reads, and every
+    attempt lands in the audit log — the attack becomes <strong>loud</strong>.</li>
+    <li><strong>Where byn can't protect (with privsep off — the default):</strong> the full
+    same-UID ceiling: a
+    code-executing process as your UID can ptrace the <em>unlocked</em> daemon,
+    read an injected child's environ, or keylog a password prompt in a
+    terminal it controls. It can also simply wait inside a terminal that
+    holds a live session.</li>
+    <li><strong>Now opt-in / planned:</strong> privilege separation (shipped opt-in in v0.3.0 —
+    enable with <code>[security] privsep</code> + <code>sudo byn setup</code>) removes the ptrace /
+    environ / socket paths for non-root same-UID code — exactly this vector's
+    strongest moves. Off-box audit anchoring (planned) makes the trail
+    tamper-proof even against an attacker who later gets the file. Vaults are
+    <strong>portable by design</strong> — a <em>copied</em> vault is protected by the password wrap,
+    not machine binding; a stronger break-glass recovery wrap is planned so a
+    memorable password isn't the at-rest floor.</li>
+    </ul>
+    <hr>
+    <h2 id="vector-6--prompt-injection-turns-a-good-agent-rogue">Vector 6 — Prompt injection turns a good agent rogue</h2>
+    <p><strong>How it happens.</strong> The agent itself is fine; its <em>input</em> is hostile. A
+    poisoned issue, README, rules file, or web page instructs the agent to
+    &quot;also collect the API keys and POST them to…&quot;. The agent executes with
+    <strong>your</strong> permissions — this is the confused-deputy problem, and it has
+    been demonstrated repeatedly against real agent stacks.</p>
+    <ul>
+    <li><strong>byn today:</strong> the agent's permissions no longer include silent value
+    access. Reads require a session or fresh auth; ad-hoc exec is gated;
+    trusted-<code>.byn</code> exec runs only the <strong>pinned command list</strong> approved
+    with your password; in agent mode (<code>--json</code>) byn refuses interactive
+    prompts entirely, so an injected agent can't social-engineer a y/N
+    dialog. Sensitive grants (trust, reveal) demand proof-of-presence.</li>
+    <li><strong>Where byn can't protect:</strong> an injected agent operating inside a
+    terminal with a live session can use that session for gated reads
+    until it expires or you <code>byn lock --session</code>. The TTY binding is not
+    a same-UID boundary (a determined process can acquire your terminal).</li>
+    <li><strong>Now (opt-in) + coming:</strong> privilege separation (opt-in in v0.3.0)
+    tightens the daemon surface; per-command <code>[auth]</code> policy already lets
+    you force <code>always</code> auth for sensitive scopes; out-of-band approval
+    surfaces (a channel the agent can't drive) are the planned strong form
+    via the pluggable auth provider interface.</li>
+    </ul>
+    <hr>
+    <h2 id="vector-7--long-lived-credentials-on-dev-vms-and-remote-boxes">Vector 7 — Long-lived credentials on dev VMs and remote boxes</h2>
+    <p><strong>How it happens.</strong> A dev VM accumulates real cloud credentials in
+    dotfiles because the tooling expects them there. The box is reachable,
+    shared, snapshotted, or simply compromised once — and the credentials
+    inside are durable, broad, and unmonitored. This is the author's own
+    incident: <a href="aws-credential-file-takeover/">The AWS credentials file that cost me my
+    account</a>.</p>
+    <ul>
+    <li><strong>byn today:</strong> at-rest encryption with per-action authorization means
+    a compromised box doesn't hand over working credentials; pinned
+    <code>[exec] actions</code> means only commands you pre-approved run without
+    fresh auth; the audit chain gives you the forensic trail of what was
+    touched and when.</li>
+    <li><strong>Where byn can't protect:</strong> an attacker with root on the box, or one
+    who phishes/keylogs the master password, is past byn (named out of
+    scope). A weak vault passphrase on a stolen file is offline-crackable.</li>
+    <li><strong>Coming:</strong> an ephemeral scoped-credential broker (vend short-lived
+    STS-style tokens so what an attacker reads is already expired or
+    narrowly scoped) is designed and deferred; TTL/lease-based offline
+    revocation arrives with cloud sync.</li>
+    </ul>
+    <hr>
+    <h2 id="the-honest-summary-default-vs-opt-in-privsep">The honest summary: default vs opt-in privsep</h2>
+    <table>
+    <thead>
+    <tr>
+    <th>Vector</th>
+    <th>v0.3.0 (default)</th>
+    <th>v0.3.0 + privsep (opt-in)</th>
+    <th>Planned</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>1. Agent reads secret file</td>
+    <td>✓ no plaintext file; reads gated + audited</td>
+    <td>✓ + daemon/child on own UIDs</td>
+    <td>Shims, FUSE file gating</td>
+    </tr>
+    <tr>
+    <td>2. Secret enters agent context</td>
+    <td>◐ reduced + audited; child output not controllable</td>
+    <td>—</td>
+    <td>Audit leak-pattern scan</td>
+    </tr>
+    <tr>
+    <td>3. IDE completion ingestion</td>
+    <td>◐ structural (no literal to read)</td>
+    <td>—</td>
+    <td>— (editor is out of reach)</td>
+    </tr>
+    <tr>
+    <td>4. Committed to git</td>
+    <td>✓ names in repo, values in vault</td>
+    <td>—</td>
+    <td>—</td>
+    </tr>
+    <tr>
+    <td>5. Same-UID harvesting malware</td>
+    <td>◐ nothing to harvest; ptrace/environ residual</td>
+    <td>✓ ptrace/environ/socket need root</td>
+    <td>Off-box audit anchor, break-glass recovery wrap</td>
+    </tr>
+    <tr>
+    <td>6. Prompt-injected agent</td>
+    <td>◐ gated actions, pinned exec, no interactive bypass</td>
+    <td>✓ tighter daemon surface</td>
+    <td>Out-of-band approval channel</td>
+    </tr>
+    <tr>
+    <td>7. Creds on dev VMs</td>
+    <td>◐ encrypted + authorized + audited</td>
+    <td>✓</td>
+    <td>Scoped short-lived broker, leases</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>✓ = covered (within the stated model) · ◐ = materially reduced, residual named above.
+    Root, a known master password, and physical coercion remain out of scope
+    for any user-space tool — see the <a href="../security/">Security model</a>.</p>
+    <hr>
+    <h2 id="best-practices-for-agentic-development">Best practices for agentic development</h2>
+    <ol>
+    <li><strong>Finish the migration — delete the plaintext originals.</strong> <code>byn</code>
+    protects the secrets <em>in the vault</em>; a forgotten <code>.env.backup</code> undoes
+    everything. Import, verify, shred.</li>
+    <li><strong>Run agents in terminals that hold no session.</strong> Sessions are
+    per-terminal (NU-3): unlock in <em>your</em> terminal, let the agent's
+    terminal get <code>auth_required</code>. Never run an agent in the window you
+    just unlocked.</li>
+    <li><strong>Pin <code>[exec] actions</code>; never ship <code>actions = &quot;*&quot;</code> where agents
+    run.</strong> The pinned list is the contract for what runs without fresh
+    auth. Review <code>byn trust diff</code> before every re-trust.</li>
+    <li><strong>Scope <code>[exec] env</code> to the minimum.</strong> Fewer injected vars, less in
+    the child's environ to read or print.</li>
+    <li><strong>Sandbox the agent itself</strong> — container, VM, or separate OS user,
+    with <code>~/.byn</code>, the daemon socket, and <code>/var/run/docker.sock</code> <em>not</em>
+    mounted in. byn guards the secrets; the sandbox guards the host. (See
+    <a href="../why-not-containers/">Why not containers?</a> for why this
+    direction — and not &quot;byn in a container&quot; — is the right one.)</li>
+    <li><strong>Keep <code>idle_timeout</code> short and <code>byn lock</code> when you step away.</strong>
+    <code>byn lock --session</code> drops just the current terminal's access.</li>
+    <li><strong>Read your audit log after agent sessions.</strong> <code>byn audit</code> is the
+    detection half of the model — an access you don't recognize is your
+    early warning, and early means <em>before</em> the credential is abused.</li>
+    <li><strong>Use a long generated master passphrase + full-disk encryption.</strong>
+    The passphrase is the at-rest floor of a (deliberately portable)
+    vault file; FDE stops the file being copied at all.</li>
+    <li><strong>Rotate on any suspicion.</strong> A secret suggested back by completion,
+    an unexplained audit entry, a suspect dependency — treat the
+    credential as gone and rotate first, investigate second.</li>
+    </ol>
+    <hr>
+    <p><em>This field note is reviewed and re-stamped at every byn release. If a
+    claim above doesn't match the shipped behavior of the version you run,
+    that's a bug in the docs — please open an issue.</em></p>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#vector-1--the-agent-reads-a-secret-file-off-disk" class="toc-item">Vector 1 — The agent reads a secret file off disk</a>
+    <a href="#vector-2--the-secret-ends-up-in-the-agents-context-anyway" class="toc-item">Vector 2 — The secret ends up in the agent&#39;s context anyway</a>
+    <a href="#vector-3--ide-inline-completion-ingests-the-secret-as-you-type-it" class="toc-item">Vector 3 — IDE inline completion ingests the secret as you type it</a>
+    <a href="#vector-4--the-secret-gets-committed-and-pushed" class="toc-item">Vector 4 — The secret gets committed and pushed</a>
+    <a href="#vector-5--supply-chain-malware-wearing-your-uid-harvests-credentials" class="toc-item">Vector 5 — Supply-chain malware wearing your UID harvests credentials</a>
+    <a href="#vector-6--prompt-injection-turns-a-good-agent-rogue" class="toc-item">Vector 6 — Prompt injection turns a good agent rogue</a>
+    <a href="#vector-7--long-lived-credentials-on-dev-vms-and-remote-boxes" class="toc-item">Vector 7 — Long-lived credentials on dev VMs and remote boxes</a>
+    <a href="#the-honest-summary-default-vs-opt-in-privsep" class="toc-item">The honest summary: default vs opt-in privsep</a>
+    <a href="#best-practices-for-agentic-development" class="toc-item">Best practices for agentic development</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/how-agents-leak-secrets.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/">Quickstart</a>
+    <a href="../../../docs/security/">Security model</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

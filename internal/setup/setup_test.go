@@ -83,8 +83,9 @@ func TestProvision_HappyPath_FreshInstall_NoMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	// Fresh install: no Relocate.
-	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "InstallService", "LegacyDir", "WriteOwnerRecord", "Verify"}
+	// Fresh install: no Relocate. The service is installed/started LAST, after the
+	// owner record — only Verify follows it.
+	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "WriteOwnerRecord", "InstallService", "Verify"}
 	assertSeq(t, r.calls, want)
 	if res.Migrated {
 		t.Error("Migrated = true on a fresh install (no legacy dir)")
@@ -108,7 +109,8 @@ func TestProvision_HappyPath_LegacyPresent_CallsRelocate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "InstallService", "LegacyDir", "Relocate", "WriteOwnerRecord", "Verify"}
+	// Relocate runs BEFORE the service starts; the service is installed/started LAST.
+	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "Relocate", "WriteOwnerRecord", "InstallService", "Verify"}
 	assertSeq(t, r.calls, want)
 	if !res.Migrated {
 		t.Error("Migrated = false despite a present legacy dir")

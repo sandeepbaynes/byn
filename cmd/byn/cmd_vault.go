@@ -123,7 +123,7 @@ func runUnlock(args []string, scope cliScope) int {
 		vaultKey := vaultSessionKey(scope.Vault)
 		dev := ttyRdev()
 		if dev != 0 {
-			if serr := saveSessionTokenWithDev(dir, dev, vaultKey, tok); serr != nil {
+			if serr := saveSessionTokenWithDev(sessionStoreDir(dir), dev, vaultKey, tok); serr != nil {
 				// Non-fatal: vault is already unlocked; session file is convenience only.
 				fmt.Fprintf(os.Stderr, "warning: could not save session token: %v\n", serr)
 			} else {
@@ -203,7 +203,7 @@ func runLock(args []string, scope cliScope) int {
 			ipc.OpSessionEnd, ipc.SessionEndReq{}, &ipc.SessionEndResp{})); rc != exitOK {
 			return rc
 		}
-		deleteSessionToken(dir, vaultKey)
+		deleteSessionToken(sessionStoreDir(dir), vaultKey)
 		hintf("session ended for this terminal — vault remains unlocked")
 		return exitOK
 	}
@@ -218,11 +218,11 @@ func runLock(args []string, scope cliScope) int {
 		return rc
 	}
 	if *all {
-		deleteAllSessionTokens(dir)
+		deleteAllSessionTokens(sessionStoreDir(dir))
 		hintf("Locked %d vault(s).", resp.Locked)
 	} else {
 		vaultKey := vaultSessionKey(scope.Vault)
-		deleteSessionToken(dir, vaultKey)
+		deleteSessionToken(sessionStoreDir(dir), vaultKey)
 	}
 	return exitOK
 }

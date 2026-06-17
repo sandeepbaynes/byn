@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-world incidents byn is built for — byn docs</title>
+<meta name="description" content="Field note · coverage: v0.3.0 · updated with each release">
+<link rel="stylesheet" href="../../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../../docs/">Docs</a>
+    <a href="../../../docs/cli-reference/">CLI reference</a>
+    <a href="../../../docs/security/">Security</a>
+    <a href="../../../docs/field-notes/" class="active">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Field notes</div>
+      <a href="./" class="sb-item active">Real-world incidents byn is built for</a>
+      <a href="#1-s1ngularity--the-nx-supply-chain-attack-that-weaponized-ai-clis--byn-" class="sb-item">1. &#34;s1ngularity&#34; — the Nx supply-chain attack that weaponized AI CLIs — byn: ✓/◐</a>
+      <a href="#2-shai-hulud--the-self-replicating-npm-worm-running-trufflehog-on-your-disk--byn-" class="sb-item">2. Shai-Hulud — the self-replicating npm worm running TruffleHog on your disk — byn: ✓/◐</a>
+      <a href="#3-amazon-q-extension-shipped-with-a-wiper-prompt-aimed-at-local-aws-credentials--byn-" class="sb-item">3. Amazon Q extension shipped with a wiper prompt aimed at local AWS credentials — byn: ◐</a>
+      <a href="#4-the-pattern-of-agents-reading-env-despite-deny-rules--byn-" class="sb-item">4. The pattern of agents reading .env despite deny rules — byn: ✓</a>
+      <a href="#5-gitguardians-secret-sprawl-numbers--the-background-radiation--byn-" class="sb-item">5. GitGuardian&#39;s secret-sprawl numbers — the background radiation — byn: ◐</a>
+      <a href="#the-wider-pattern-honest-byn-is-not-the-control-here" class="sb-item">The wider pattern (honest: byn is not the control here)</a>
+      <a href="#how-byn-compares-when-the-adversary-is-on-your-dev-machine" class="sb-item">How byn compares when the adversary is on your dev machine</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Field notes</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Real-world incidents</span>
+    </div>
+
+    <h1>Real-world incidents byn is built for</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/real-world-incidents.md">docs/field-notes/real-world-incidents.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/field-notes/real-world-incidents.md">Edit on GitHub ↗</a>
+    </div>
+
+    <div class="version-stamp">
+      <span>Coverage:</span>
+      <strong>v0.3.0</strong>
+      <span>·</span>
+      <span>Re-verified at each release</span>
+    </div>
+
+    <p><em>Field note · coverage: v0.3.0 · updated with each release</em></p>
+    <p>Every incident below is real, verified, and linked to primary or
+    reputable secondary sources. For each one we answer three questions
+    <strong>honestly</strong>:</p>
+    <ol>
+    <li><strong>Would byn (v0.3.0) have changed the outcome?</strong></li>
+    <li><strong>Would another credential manager have helped too?</strong> If yes, we say
+    so — several good tools remove plaintext files, and pretending
+    otherwise would be marketing, not security.</li>
+    <li><strong>What is byn's specific edge in this scenario</strong>, if any?</li>
+    </ol>
+    <p>Verdict key: ✓ prevented/defanged · ◐ materially reduced or detected ·
+    ✗ byn would not have helped (kept here for honesty — these incidents
+    shape the roadmap).</p>
+    <p>See also: <a href="aws-credential-file-takeover/">the author's own incident</a>,
+    and the vector-by-vector analysis in
+    <a href="how-agents-leak-secrets/">How agents leak secrets</a>.</p>
+    <hr>
+    <h2 id="1-s1ngularity--the-nx-supply-chain-attack-that-weaponized-ai-clis--byn-">1. &quot;s1ngularity&quot; — the Nx supply-chain attack that weaponized AI CLIs — <strong>byn: ✓/◐</strong></h2>
+    <p><strong>August 2025.</strong> Compromised versions of the popular <code>nx</code> npm package
+    shipped a post-install payload that scanned victims' disks for GitHub
+    tokens, npm keys, SSH private keys, API keys, <code>.env</code>-style secrets, and
+    crypto wallets — and, notably, drove <strong>locally installed AI CLIs</strong>
+    (Claude Code, Gemini CLI, Amazon Q) with flags like
+    <code>--dangerously-skip-permissions</code> to do the filesystem hunting. Loot was
+    pushed to 1,400+ public GitHub repos; GitGuardian counted ~2,349 leaked
+    credentials from ~1,079 machines, and stolen tokens powered a second
+    wave that flipped victims' private repos public.
+    (<a href="https://thehackernews.com/2025/08/malicious-nx-packages-in-s1ngularity.html">The Hacker News</a> ·
+    <a href="https://www.wiz.io/blog/s1ngularity-supply-chain-attack">Wiz</a>)</p>
+    <ul>
+    <li><strong>byn?</strong> ✓ for the env/API-key sweep: there is no <code>.env</code> to find, the
+    vault yields ciphertext, and a value read from the malware's shell has
+    no session → <code>auth_required</code>. ◐ overall: the attempted reads land in
+    the <strong>audit log</strong>, turning a silent harvest into a loud one. Honest
+    gap: byn v0.3.0 does not hide <code>~/.ssh</code> keys or other tools' token
+    files (the <code>ssh</code> shim and file-gating are roadmap) — those slices of
+    the loot were reachable regardless of which env-secret manager you
+    used.</li>
+    <li><strong>Other managers?</strong> Yes, partly. Anything that gets secrets out of
+    plaintext dotfiles (1Password CLI, doppler, Infisical, keychain-backed
+    tools) shrinks this sweep too.</li>
+    <li><strong>byn's edge:</strong> the attack literally ran <em>agents</em> against the disk —
+    byn's gates are agent-aware: agent mode (<code>--json</code>) hard-fails rather
+    than prompting, sessions are per-terminal so a malware shell holds
+    none, and every attempted access is audited. Most injection tools
+    have no per-access audit trail at all.</li>
+    </ul>
+    <hr>
+    <h2 id="2-shai-hulud--the-self-replicating-npm-worm-running-trufflehog-on-your-disk--byn-">2. Shai-Hulud — the self-replicating npm worm running TruffleHog on your disk — <strong>byn: ✓/◐</strong></h2>
+    <p><strong>September 2025</strong> (resurgence Nov 2025). A worm compromised 500+ npm
+    packages; on install it downloaded TruffleHog, scanned the entire
+    filesystem for credentials (npm tokens, GitHub credentials, cloud
+    keys), exfiltrated them to attacker GitHub repos — then used the
+    victim's own npm token to backdoor up to 100 of the victim's packages
+    and propagate.
+    (<a href="https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem">CISA</a> ·
+    <a href="https://unit42.paloaltonetworks.com/npm-supply-chain-attack/">Unit 42</a>)</p>
+    <ul>
+    <li><strong>byn?</strong> ✓ for secrets in the vault: TruffleHog finds plaintext, and
+    there isn't any. ◐ for the propagation step: the worm needed the
+    <code>.npmrc</code> token — held in byn and injected only for pinned commands,
+    the token isn't sitting in a dotfile to copy. Audit shows the attempt.</li>
+    <li><strong>Other managers?</strong> Yes for the storage half — any vault beats a
+    dotfile. The worm's success depended entirely on credentials being
+    <em>findable files</em>.</li>
+    <li><strong>byn's edge:</strong> local-first matters here. The worm ran on dev
+    machines, offline-capable; a cloud-vault CLI that caches a token on
+    disk to authenticate (ironically, an <code>.npmrc</code>-style file) re-creates
+    the problem. byn's daemon holds keys in memory, gated per action,
+    with nothing reusable on disk.</li>
+    </ul>
+    <hr>
+    <h2 id="3-amazon-q-extension-shipped-with-a-wiper-prompt-aimed-at-local-aws-credentials--byn-">3. Amazon Q extension shipped with a wiper prompt aimed at local AWS credentials — <strong>byn: ◐</strong></h2>
+    <p><strong>July 2025.</strong> An attacker slipped a malicious system prompt into the
+    officially released Amazon Q VS Code extension (v1.84.0), instructing
+    the embedded agent to wipe local files and destroy AWS cloud resources
+    <strong>using the developer's locally configured AWS CLI credentials</strong>.
+    Formatting errors kept the payload from executing; AWS shipped a clean
+    v1.85.0.
+    (<a href="https://www.theregister.com/2025/07/24/amazon_q_ai_prompt/">The Register</a> ·
+    <a href="https://www.scworld.com/news/amazon-q-extension-for-vs-code-reportedly-injected-with-wiper-prompt">SC World</a>)</p>
+    <ul>
+    <li><strong>byn?</strong> ◐. The destructive path assumed <code>aws</code> <em>just works</em> because
+    <code>~/.aws/credentials</code> is ambient. With AWS creds in byn, an arbitrary
+    <code>aws ec2 terminate-instances …</code> from a hijacked agent is not a pinned
+    action — it hits the authorization gate and fails loudly in agent
+    mode. Honest limits: if you pinned broad destructive commands
+    yourself, the gate is open; and an agent in a terminal with a live
+    session can use it until it expires.</li>
+    <li><strong>Other managers?</strong> Partly. <code>aws-vault</code> also removes the plaintext
+    file and vends short-lived session creds — genuinely good here. But
+    <code>aws-vault exec</code> hands a working environment to <em>whatever command is
+    named</em>; it has no concept of which commands are approved.</li>
+    <li><strong>byn's edge:</strong> the pinned <code>[exec] actions</code> allowlist is per-command
+    authorization, not just credential storage — exactly the control that
+    separates &quot;agent runs the build&quot; from &quot;agent nukes the account.&quot; Plus
+    the audit trail of what was attempted.</li>
+    </ul>
+    <hr>
+    <h2 id="4-the-pattern-of-agents-reading-env-despite-deny-rules--byn-">4. The pattern of agents reading <code>.env</code> despite deny rules — <strong>byn: ✓</strong></h2>
+    <p><strong>2025–2026.</strong> Multiple reports document coding agents reading <code>.env</code>
+    files and displaying credentials despite configured guardrails —
+    e.g. <a href="https://github.com/anthropics/claude-code/issues/24846">anthropics/claude-code#24846</a>
+    (deny patterns for <code>.env*</code>, <code>*.pem</code>, <code>.aws/</code> not enforced — note the
+    reporter used a non-documented config schema and the issue was closed
+    as a duplicate of a recurring series) and independent write-ups showing
+    <code>.env</code> contents landing in transcripts despite explicit instructions
+    (<a href="https://eve.gd/2026/04/19/claude-code-can-consume-transmit-and-compromise-your-env-files-even-if-you-tell-it-not-to/">Martin Paul Eve</a> ·
+    <a href="https://www.knostic.ai/blog/claude-loads-secrets-without-permission">Knostic</a>).
+    The fair conclusion is not &quot;agent X is broken&quot; — it is that
+    <strong>in-harness deny rules are advisory, misconfiguration-prone, and not a
+    security boundary.</strong></p>
+    <ul>
+    <li><strong>byn?</strong> ✓ — this is byn's core case. The control moves from the
+    agent's configuration (which the agent vendor, a typo, or the agent
+    itself can defeat) to the OS/daemon: there is no plaintext file, and
+    value reads require authorization the agent doesn't have.</li>
+    <li><strong>Other managers?</strong> Yes — any runtime-injection tool (<code>op run</code>,
+    <code>doppler run</code>, Infisical) that lets you delete the <code>.env</code> achieves
+    the same first step.</li>
+    <li><strong>byn's edge:</strong> the <em>audit trail</em> and the agent-aware gates. With
+    <code>op run</code> or <code>doppler run</code>, the injected process tree — and anything
+    the agent runs inside it — sees the secrets, and no per-access log
+    exists locally. byn logs every value access with caller context, so
+    &quot;did the agent touch the prod key?&quot; has an answer.</li>
+    </ul>
+    <hr>
+    <h2 id="5-gitguardians-secret-sprawl-numbers--the-background-radiation--byn-">5. GitGuardian's secret-sprawl numbers — the background radiation — <strong>byn: ◐</strong></h2>
+    <p><strong>March 2026 report (2025 data).</strong> GitGuardian counted <strong>29 million</strong>
+    new hardcoded secrets pushed to public GitHub in 2025 (+34% YoY, the
+    largest jump recorded), with AI-service secrets up 81%; the prior-year
+    report found ~70% of secrets leaked years earlier were <em>still active</em>.
+    (<a href="https://www.gitguardian.com/state-of-secrets-sprawl-report-2026">Report</a> ·
+    <a href="https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/">GitGuardian blog</a>)</p>
+    <ul>
+    <li><strong>byn?</strong> ◐ structurally: a repo built on byn carries <em>names</em> (the
+    committable <code>.byn</code> manifest), not values — there is no literal to
+    commit. It cannot fix what's already in history or what someone
+    hardcodes anyway.</li>
+    <li><strong>Other managers?</strong> Yes — this is an ecosystem problem, and every
+    inject-by-reference tool helps. Pre-commit scanners (gitleaks,
+    GitGuardian itself) attack it from the detection side.</li>
+    <li><strong>byn's edge:</strong> byn aims at the <em>workflow that generates</em> these
+    commits — agents and humans writing config with live values in the
+    buffer. No literal in the buffer (see vector 3 in
+    <a href="how-agents-leak-secrets/">How agents leak secrets</a>), nothing to
+    commit.</li>
+    </ul>
+    <hr>
+    <h2 id="the-wider-pattern-honest-byn-is-not-the-control-here">The wider pattern (honest: byn is not the control here)</h2>
+    <p>These verified incidents shape the threat landscape and byn's roadmap,
+    but a local secrets vault would <strong>not</strong> have been the decisive control —
+    listed so the comparison stays honest:</p>
+    <ul>
+    <li><strong>tj-actions/changed-files (CVE-2025-30066), March 2025 — byn: ✗.</strong>
+    A compromised GitHub Action dumped CI-runner memory, printing
+    workflow secrets (AWS keys, PATs, npm tokens) into public build logs
+    for 23,000+ repos. That's GitHub's runner, not your dev box — byn's
+    domain ends at your machine. The transferable lesson is the same one
+    driving byn's roadmap: long-lived ambient credentials are the fuel;
+    short-lived scoped credentials (planned broker) shrink the blast
+    radius.
+    (<a href="https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-tj-actionschanged-files-cve-2025-30066-and-reviewdogaction">CISA</a> ·
+    <a href="https://www.wiz.io/blog/github-action-tj-actions-changed-files-supply-chain-attack-cve-2025-30066">Wiz</a>)</li>
+    <li><strong>GitHub MCP prompt injection (Invariant Labs), May 2025 — byn: ✗/◐.</strong>
+    A poisoned public issue made an agent leak private-repo data through
+    its own over-scoped PAT. The fix is token scoping; byn's contribution
+    is only that tokens stored by name aren't <em>additionally</em> lying around
+    in config files for the agent to quote.
+    (<a href="https://invariantlabs.ai/blog/mcp-github-vulnerability">Invariant Labs</a> ·
+    <a href="https://devclass.com/2025/05/27/researchers-warn-of-prompt-injection-vulnerability-in-github-mcp-with-no-obvious-fix/">DevClass</a>)</li>
+    <li><strong>EchoLeak (CVE-2025-32711), June 2025 — byn: ✗.</strong> Zero-click prompt
+    injection made M365 Copilot exfiltrate mailbox/SharePoint content.
+    Workplace SaaS data, not local dev credentials — included as proof
+    that <em>zero-interaction agent exfiltration is real</em>, which is the
+    class of adversary byn assumes.
+    (<a href="https://thehackernews.com/2025/06/zero-click-ai-vulnerability-exposes.html">The Hacker News</a> ·
+    <a href="https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-32711">MSRC</a>)</li>
+    <li><strong>Rules File Backdoor (Pillar Security), March 2025 — byn: ◐.</strong>
+    Invisible Unicode in <code>.cursor/rules</code> / Copilot instruction files can
+    steer agents with instructions human reviewers can't see — including,
+    in principle, &quot;collect the keys.&quot; byn doesn't stop the injection; it
+    removes the easy payoff (no plaintext to collect) and logs the
+    attempt.
+    (<a href="https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents">Pillar Security</a> ·
+    <a href="https://thehackernews.com/2025/03/new-rules-file-backdoor-attack-lets.html">The Hacker News</a>)</li>
+    <li><strong>Samsung ↔ ChatGPT leaks, April 2023 — byn: ✗.</strong> Engineers pasted
+    proprietary source code into ChatGPT; Samsung banned generative AI
+    on company devices. Human-pasted <em>IP</em>, not credential files — the
+    earliest mainstream proof that &quot;the AI tool saw it&quot; equals &quot;it left
+    the building.&quot;
+    (<a href="https://www.bloomberg.com/news/articles/2023-05-02/samsung-bans-chatgpt-and-other-generative-ai-use-by-staff-after-leak">Bloomberg</a> ·
+    <a href="https://fortune.com/2023/05/02/samsung-bans-employee-use-chatgpt-data-leak/">Fortune</a>)</li>
+    </ul>
+    <hr>
+    <h2 id="how-byn-compares-when-the-adversary-is-on-your-dev-machine">How byn compares when the adversary is on your dev machine</h2>
+    <p>Honest framing first: <strong>several tools solve the storage problem.</strong>
+    1Password CLI (<code>op run</code>), Doppler, Infisical, and <code>aws-vault</code> all get
+    secrets out of plaintext dotfiles and inject at runtime — adopting any
+    of them beats <code>.env</code> files. (Full per-tool strengths and weaknesses —
+    byn's included — in <a href="tool-comparison/">byn vs the other tools,
+    honestly</a>.) The 2026 prior-art research behind byn
+    found no tool, however, that combines all of the following for the
+    <em>dev-time agent</em> threat — which is exactly the combination the
+    incidents above exploit the absence of:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Capability</th>
+    <th>Plaintext files</th>
+    <th>Cloud secret managers (op/doppler/Infisical)</th>
+    <th>aws-vault</th>
+    <th><strong>byn</strong></th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td>No plaintext secret files at rest</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>✓ (keychain)</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Runtime injection by name</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>✓ (AWS only)</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td><strong>Per-access audit trail on the dev box</strong></td>
+    <td>✗</td>
+    <td>✗ (server-side org logs at best)</td>
+    <td>✗</td>
+    <td>✓ every value access, HMAC-chained</td>
+    </tr>
+    <tr>
+    <td><strong>Per-terminal session gating</strong> (an unlock in your shell grants the agent's shell nothing)</td>
+    <td>✗</td>
+    <td>✗ (authorized CLI session is ambient to the user)</td>
+    <td>✗</td>
+    <td>✓ NU-3</td>
+    </tr>
+    <tr>
+    <td><strong>Pinned per-command allowlist</strong> (only approved commands run without fresh auth)</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓ <code>[exec] actions</code></td>
+    </tr>
+    <tr>
+    <td>Agent-mode hard-fail (no interactive prompt an agent can game)</td>
+    <td>—</td>
+    <td>✗</td>
+    <td>✗</td>
+    <td>✓ <code>--json</code></td>
+    </tr>
+    <tr>
+    <td>Local-first (works offline, no account, no cloud dependency holding your keys)</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>✓</td>
+    </tr>
+    <tr>
+    <td>Committable manifest of <em>names</em> (<code>.byn</code>) with tamper-evident trust</td>
+    <td>✗</td>
+    <td>partial (project config)</td>
+    <td>✗</td>
+    <td>✓ TOFU + MAC</td>
+    </tr>
+    </tbody>
+    </table>
+    <p>The pattern across s1ngularity, Shai-Hulud, the Amazon Q wiper, and the
+    <code>.env</code>-reading agents is the same: <strong>the attacker's cheapest move is a
+    same-UID read of an ambient credential, and nothing on the machine
+    records that it happened.</strong> byn's design goal is that the cheap move
+    finds nothing, the expensive moves require authorization the agent
+    doesn't hold, and <em>every</em> move leaves a trail.</p>
+    <hr>
+    <p><em>Sources verified at time of writing (2026-06). This page is reviewed
+    and extended at every byn release — incident suggestions welcome via
+    GitHub issues.</em></p>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#1-s1ngularity--the-nx-supply-chain-attack-that-weaponized-ai-clis--byn-" class="toc-item">1. &#34;s1ngularity&#34; — the Nx supply-chain attack that weaponized AI CLIs — byn: ✓/◐</a>
+    <a href="#2-shai-hulud--the-self-replicating-npm-worm-running-trufflehog-on-your-disk--byn-" class="toc-item">2. Shai-Hulud — the self-replicating npm worm running TruffleHog on your disk — byn: ✓/◐</a>
+    <a href="#3-amazon-q-extension-shipped-with-a-wiper-prompt-aimed-at-local-aws-credentials--byn-" class="toc-item">3. Amazon Q extension shipped with a wiper prompt aimed at local AWS credentials — byn: ◐</a>
+    <a href="#4-the-pattern-of-agents-reading-env-despite-deny-rules--byn-" class="toc-item">4. The pattern of agents reading .env despite deny rules — byn: ✓</a>
+    <a href="#5-gitguardians-secret-sprawl-numbers--the-background-radiation--byn-" class="toc-item">5. GitGuardian&#39;s secret-sprawl numbers — the background radiation — byn: ◐</a>
+    <a href="#the-wider-pattern-honest-byn-is-not-the-control-here" class="toc-item">The wider pattern (honest: byn is not the control here)</a>
+    <a href="#how-byn-compares-when-the-adversary-is-on-your-dev-machine" class="toc-item">How byn compares when the adversary is on your dev machine</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/field-notes/real-world-incidents.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../../index.html">Home</a>
+    <a href="../../../docs/">Quickstart</a>
+    <a href="../../../docs/security/">Security model</a>
+    <a href="../../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>

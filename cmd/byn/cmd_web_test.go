@@ -38,17 +38,14 @@ func TestRunWeb_DaemonDown(t *testing.T) {
 	}
 }
 
-// TestRunWeb_UIDisabled: when the config disables the UI runWeb returns
-// exitErr with an actionable message.
+// TestRunWeb_UIDisabled: when the daemon reports the portal disabled, runWeb
+// returns exitErr with an actionable message. The CLI learns this over IPC
+// (StatusResp.UIEnabled), not from the config file — under privsep the config
+// lives in the _byn-owned data dir and is unreadable by the owner-UID CLI.
 func TestRunWeb_UIDisabled(t *testing.T) {
 	stubBrowser(t)
-	dir := t.TempDir()
-	t.Setenv("BYN_TEST_DIR", dir)
-	// Write a config with UI disabled.
-	if err := os.WriteFile(filepath.Join(dir, "config"),
-		[]byte("[ui]\nenabled = false\nport = 2967\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{UIEnabled: false})
 	stderr := captureStderr(t, func() {
 		if got := runWeb(nil); got != exitErr {
 			t.Errorf("runWeb (UI disabled) = %d, want %d", got, exitErr)
@@ -67,7 +64,7 @@ func TestRunWeb_BootstrapTokenPassedToBrowser(t *testing.T) {
 	fd := startFakeDaemon(t)
 
 	const fakeBootstrapToken = "aabbccdd11223344aabbccdd11223344aabbccdd11223344aabbccdd11223344"
-	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{UIEnabled: true, UIPort: 2967})
 	fd.onOK(ipc.OpWebBootstrap, ipc.WebBootstrapResp{Token: fakeBootstrapToken})
 
 	// Capture stdout to verify the base URL (no token) is printed.
@@ -119,7 +116,7 @@ func TestRunWeb_BootstrapTokenPassedToBrowser(t *testing.T) {
 func TestRunWeb_BootstrapFallback(t *testing.T) {
 	opened := stubBrowser(t)
 	fd := startFakeDaemon(t)
-	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{UIEnabled: true, UIPort: 2967})
 	// No handler for OpWebBootstrap → fake daemon returns unknown_op error.
 
 	stderr := captureStderr(t, func() {
@@ -144,7 +141,7 @@ func TestRunWeb_BootstrapFallback(t *testing.T) {
 func TestRunWeb_TokenFileCreated(t *testing.T) {
 	stubBrowser(t)
 	fd := startFakeDaemon(t)
-	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{UIEnabled: true, UIPort: 2967})
 	fd.onOK(ipc.OpWebBootstrap, ipc.WebBootstrapResp{Token: "aaaaaabbbbbbccccccddddddeeeeeeffffffff0000000011111111222222223333"})
 
 	dir := fd.dir
@@ -172,7 +169,7 @@ func TestRunWeb_TokenFileCreated(t *testing.T) {
 func TestRunWeb_StdoutNoToken(t *testing.T) {
 	stubBrowser(t)
 	fd := startFakeDaemon(t)
-	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{UIEnabled: true, UIPort: 2967})
 	const tok = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	fd.onOK(ipc.OpWebBootstrap, ipc.WebBootstrapResp{Token: tok})
 
@@ -211,7 +208,7 @@ func TestRunWeb_StdoutNoToken(t *testing.T) {
 func TestRunWeb_WebBootstrapReq_HasNoFields(t *testing.T) {
 	stubBrowser(t)
 	fd := startFakeDaemon(t)
-	fd.onOK(ipc.OpStatus, ipc.StatusResp{})
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{UIEnabled: true, UIPort: 2967})
 	fd.onOK(ipc.OpWebBootstrap, ipc.WebBootstrapResp{Token: "aabb"})
 	_ = runWeb(nil)
 	calls := fd.callsFor(ipc.OpWebBootstrap)

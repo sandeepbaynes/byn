@@ -2,11 +2,20 @@
 
 package privsep
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
-// helperConfigPathLinux is the compiled-in path for the root-owned config holding
-// the target UID/GID. Matches the constant in cmd/byn-exec-helper/drop_linux.go EXACTLY.
-const helperConfigPathLinux = "/var/lib/byn/exec-helper.conf"
+// helperConfigPathLinux is the compiled-in path for the root-owned config
+// holding the target UID/GID. It lives BESIDE the helper binary in the root-owned
+// /usr/local/libexec — NOT inside the _byn-owned /var/lib/byn state dir — so the
+// helper's "all parent dirs root-owned" invariant holds (systemd's StateDirectory
+// makes /var/lib/byn _byn-owned), the daemon user cannot rewrite the config the
+// setuid helper trusts, and it does not collide with `byn migrate` adopting the
+// vault into the state dir. Matches the constant in
+// cmd/byn-exec-helper/drop_linux.go EXACTLY.
+const helperConfigPathLinux = "/usr/local/libexec/byn-exec-helper.conf"
 
 // helperDestPathLinux is the installed location of the privileged spawn helper on Linux.
 const helperDestPathLinux = "/usr/local/libexec/byn-exec-helper"
@@ -63,13 +72,21 @@ func provisionUsers(lookup uidLookup, run runner) (ProvisionResult, error) {
 // writable UID/GID config the helper reads. The helper is shipped in the release
 // — NOT built here. configPath is the helper's compiled-in path.
 func installHelper(run runner, srcHelperPath, destPath, configPath string, execUID, execGID int) error {
+	// Ensure the helper's parent dir exists first: /usr/local/libexec is not
+	// present by default on many distros, and `install <src> <dest>` does not
+	// create it (it stages a temp file IN the dest dir → ENOENT if absent).
+	if err := run("install", "-d", "-o", "root", "-g", "root", "-m", "0755", filepath.Dir(destPath)); err != nil {
+		return fmt.Errorf("create helper dir: %w", err)
+	}
 	if err := run("install", "-o", "root", "-g", "root", "-m", "0755", srcHelperPath, destPath); err != nil {
 		return fmt.Errorf("install helper: %w", err)
 	}
 	if err := run("setcap", "cap_setuid,cap_setgid+ep", destPath); err != nil {
 		return fmt.Errorf("setcap helper: %w", err)
 	}
-	// State dir root-owned (parent-dir integrity for the helper's config read).
+	// Pre-create the state dir so the owner record + relocate target exist before
+	// the service starts; systemd's StateDirectory re-owns /var/lib/byn to
+	// _byn:_byn 0700 when the unit starts.
 	if err := run("install", "-d", "-o", "root", "-g", "root", "-m", "0711", "/var/lib/byn"); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}

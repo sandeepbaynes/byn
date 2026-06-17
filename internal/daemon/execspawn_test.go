@@ -404,9 +404,9 @@ func TestExecSpawn_AbsTargetNotRegularFile(t *testing.T) {
 	}
 }
 
-// ---- locked vault denied (not spawned, audited) ----------------------------
+// ---- locked vault: a trusted PINNED action still runs (autonomous) ----------
 
-func TestExecSpawn_LockedVault_Denied(t *testing.T) {
+func TestExecSpawn_LockedTrustedPinned_RunsAutonomously(t *testing.T) {
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -416,6 +416,8 @@ func TestExecSpawn_LockedVault_Denied(t *testing.T) {
 		"[scope]\n\n[exec]\nactions = [\"mytool run\"]\n")
 	grantBynFile(t, c, byn, pw)
 
+	// Lock the vault — a trusted, PINNED action must still run (autonomous exec;
+	// this .byn injects no secrets, so it needs no vault key at all).
 	lockVaultStore(t, d, "default")
 
 	fs := &fakeSpawner{}
@@ -427,23 +429,20 @@ func TestExecSpawn_LockedVault_Denied(t *testing.T) {
 		AbsTarget:    target,
 	}
 	resp := d.handleExecSpawn(ctxWithPipeFDs(t), spawnEnvelope(t, req))
-	if resp.Err == nil || resp.Err.Code != ipc.CodeLocked {
-		t.Fatalf("want locked, got %+v", resp.Err)
+	if resp.Err != nil {
+		t.Fatalf("pinned action should run while locked, got %+v", resp.Err)
 	}
-	if fs.called {
-		t.Error("spawner must NOT be called when the vault is locked")
+	if !fs.called {
+		t.Error("spawner must be called for an authorized pinned action while locked")
 	}
 
-	// Authorization denial must be audited (by authorizeExec).
+	// The autonomous exec is audited as a success.
 	ev := findExecAudit(t, c, cmd)
 	if ev == nil {
-		t.Fatal("no exec audit event for locked-vault spawn denial")
+		t.Fatal("no exec audit event for the autonomous spawn")
 	}
-	if ev.Outcome != "denied" {
-		t.Errorf("outcome = %q, want denied", ev.Outcome)
-	}
-	if ev.ErrorCode != string(ipc.CodeLocked) {
-		t.Errorf("error_code = %q, want %q", ev.ErrorCode, string(ipc.CodeLocked))
+	if ev.Outcome != "ok" {
+		t.Errorf("outcome = %q, want ok", ev.Outcome)
 	}
 	if ev.BynPath != trust.Canonicalize(byn) {
 		t.Errorf("byn_path = %q, want %q", ev.BynPath, trust.Canonicalize(byn))
