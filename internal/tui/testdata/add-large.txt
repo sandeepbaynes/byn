@@ -1,7 +1,7 @@
 BYN                        default / billing / staging                                             unlocked API_KEY                         
 ▼ default                                                                                                   ────────────────────────────────
-  ▼ billing                ENV-VARS (3)                                                           + add (a)  Created  2026-06-02 12:00      
-    ○ default              ────────────────────────────────────────────────────────────────────────────────  Updated  2026-06-02 12:00      
+  ▼ billing                ENV-VARS (3)                                                           + add (a)  Created  2026-06-02 08:41      
+    ○ default              ────────────────────────────────────────────────────────────────────────────────  Updated  2026-06-02 08:41      
     ● staging                 ↓ inherited   ⤴ overrides default   ✦ new in env                               Source   scope                 
   ▶ default                  ⤴ API_KEY                                         ●●●●●●●●●●●●●●●●  2026-06-02                                 
 ▶ work                       ⤴ DB_URL                                          ●●●●●●●●●●●●●●●●  2026-06-02                                 
@@ -22,8 +22,8 @@ BYN                        default / billing / staging                          
                                                                                                                                             
                            RECENT AUDIT                                                       view all (ga)                                 
                            ────────────────────────────────────────────────────────────────────────────────                                 
-                             08:41  get          DB_URL            ok                                                                       
-                             08:41  put          STRIPE_SK         ok                                                                       
+                             11:41  get          DB_URL            ok                                                                       
+                             11:41  put          STRIPE_SK         ok                                                                       
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
