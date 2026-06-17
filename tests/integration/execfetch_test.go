@@ -350,9 +350,13 @@ func assertNoSecretInDir(t *testing.T, dir, secret string) {
 }
 
 // --------------------------------------------------------------------------
-// Test 5 — Locked exec is denied
+// Test 5 — Unpinned exec on a trusted .byn is denied (no TTY to authorize)
 //
-// Trust a .byn, lock the vault, then exec must exit 3 with "locked" in stderr.
+// The .byn pins NO [exec] actions, so every command needs per-action auth. With
+// a locked vault and no TTY there is no way to supply the password, so exec exits
+// 3 with the "not pinned / [exec] actions" reason. (Under the autonomous-exec
+// model a PINNED command runs even while locked via the capability path, so
+// "locked" alone no longer denies a trusted exec — the actions gate does.)
 // --------------------------------------------------------------------------
 
 func TestE2E_ExecFetch_LockedExecDenied(t *testing.T) {
@@ -374,16 +378,17 @@ func TestE2E_ExecFetch_LockedExecDenied(t *testing.T) {
 		t.Fatalf("lock: code=%d stderr=%q", code, se)
 	}
 
-	// exec on a trusted .byn with a locked vault must fail.
+	// exec of an UNPINNED command on a trusted .byn (no [exec] actions), locked,
+	// non-TTY → denied: there is no way to authorize the unpinned command.
 	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
 	if code == 0 {
-		t.Fatal("exec with locked vault should fail; got code 0")
+		t.Fatal("unpinned exec with locked vault should fail; got code 0")
 	}
 	if code != exitDaemonErrCode {
-		t.Errorf("exec locked: code = %d, want %d", code, exitDaemonErrCode)
+		t.Errorf("exec denied: code = %d, want %d", code, exitDaemonErrCode)
 	}
-	if !strings.Contains(stderr, "locked") {
-		t.Errorf("stderr should mention vault locked:\n%s", stderr)
+	if !strings.Contains(stderr, "[exec] actions") {
+		t.Errorf("stderr should mention the unpinned-actions denial:\n%s", stderr)
 	}
 }
 
