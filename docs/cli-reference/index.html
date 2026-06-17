@@ -483,10 +483,64 @@ byn import --replace --dry-run config.env    # preview deletions + adds
 byn exec deploy                               # alias: expands from .byn [aliases]
 byn exec deploy --env prod                    # alias + extra args (passthrough)
 byn --vault myv exec deploy                   # globals before subcommand still work
+byn exec --no-privsep -- node server.js       # run as YOU + password (debugger can attach)
+byn exec --inspect -- node server.js          # privsep + inspector on a free port (attach)
+byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each picks a free port
 </code></pre>
+    <h4 id="execution-modes--privsep-default---no-privsep---inspect">Execution modes — privsep (default), <code>--no-privsep</code>, <code>--inspect</code></h4>
+    <p>How the child runs — and whether it needs a password — depends on the mode:</p>
+    <table>
+    <thead>
+    <tr>
+    <th>Mode</th>
+    <th>Child runs as</th>
+    <th>Env hidden from your <code>ps -E</code>?</th>
+    <th>Auth for a trusted <code>.byn</code></th>
+    <th>Use for</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+    <td><code>byn exec</code> (default)</td>
+    <td><code>_byn-exec</code> (privilege-separated), born in your shell's tree</td>
+    <td><strong>Yes</strong></td>
+    <td><strong>None</strong> — credential-free, even locked</td>
+    <td>agents, CI, unattended/autonomous runs</td>
+    </tr>
+    <tr>
+    <td><code>byn exec --no-privsep</code></td>
+    <td><strong>you</strong> (in-process via <code>execve</code>)</td>
+    <td>No (same UID)</td>
+    <td><strong>Master password every run</strong></td>
+    <td>interactive step-debugging (launch-mode debuggers)</td>
+    </tr>
+    <tr>
+    <td><code>byn exec --inspect[=TARGET]</code></td>
+    <td><code>_byn-exec</code> (privilege-separated)</td>
+    <td><strong>Yes</strong></td>
+    <td>None (same as default)</td>
+    <td>debugging <strong>while</strong> keeping secrets hidden</td>
+    </tr>
+    </tbody>
+    </table>
     <ul>
-    <li>Implemented via <code>syscall.Exec</code>: the child gets the same PID as the
-    CLI that invoked it.</li>
+    <li><strong>Default (privsep):</strong> the daemon authorizes the exec and a setuid helper — spawned in <em>your shell's</em> process tree — drops the child to the <code>_byn-exec</code> service user. The injected secrets are hidden from same-user snooping (your own <code>ps -E</code> shows nothing), and a trusted <code>.byn</code> with a matching <code>[exec]</code> action runs with <strong>no password</strong> — the autonomous path for agents.</li>
+    <li><strong><code>--no-privsep</code>:</strong> byn <code>execve</code>'s into the child <strong>as you</strong>, so its injected env is visible to your own <code>ps -E</code>. Because of that exposure it <strong>requires the master password on every run</strong> — it does <em>not</em> honor the trusted-<code>.byn</code> credential-free path. Use it for interactive debugging: a launch-mode debugger (VS Code &quot;launch&quot;) attaches because the process shares your UID. A debugger <strong>cannot attach across UIDs</strong> — the same kernel rule that hides the env from your <code>ps -E</code> blocks attaching to a privsep child.</li>
+    <li><strong><code>--inspect[=PORT]</code> / <code>--inspect PORT</code> / <code>--inspect-brk</code>:</strong> keeps privsep <strong>and</strong> enables the Node inspector, so you debug while secrets stay hidden. byn sets <code>NODE_OPTIONS</code> and your debugger <strong>attaches</strong> over loopback TCP (UID-agnostic). Port handling:
+    <ul>
+    <li><strong>no PORT</strong> → byn picks the <strong>next free port</strong> (printed), so concurrent debug sessions don't collide.</li>
+    <li><strong>explicit PORT</strong> (<code>--inspect 9230</code> or <code>--inspect=9230</code>, also <code>127.0.0.1:9230</code>) → used <strong>only if free</strong>; otherwise byn <strong>fails with a clear message</strong> instead of a buried <code>EADDRINUSE</code>.</li>
+    <li><strong><code>--inspect=0</code></strong> → <strong>each</strong> node process self-allocates a free port — best for multi-process runners (<code>tsx watch</code>).</li>
+    <li><code>--inspect-brk</code> breaks on the first line. Configure your editor as an <strong>attach</strong> target.</li>
+    </ul>
+    </li>
+    </ul>
+    <blockquote>
+    <p>Under privsep the <code>_byn-exec</code> child also needs filesystem access to your toolchain + tool-state dirs and a writable <code>TMPDIR</code> — see <a href="troubleshooting/#running-byn-exec-under-privsep-toolchain-tmpdir-debugging">Troubleshooting → Running <code>byn exec</code> under privsep</a>.</p>
+    </blockquote>
+    <ul>
+    <li>In <strong><code>--no-privsep</code></strong> mode the child is <code>execve</code>'d in place (same PID as the
+    CLI); under <strong>privsep</strong> byn stays as the parent of the setuid helper + child.</li>
     <li><strong>Server-side authorization (one round-trip):</strong> the CLI sends a
     single <code>OpExecFetch</code> request. The daemon reads, trust-verifies, and
     parses the <code>.byn</code> itself, then returns <strong>only</strong> the entries listed in

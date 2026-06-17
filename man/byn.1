@@ -194,10 +194,12 @@ env\-vars injected" below.
 .TP
 .B exec \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS...\fR]
 \fBDirect form:\fR Loads env\-var entries from the active vault scope
-and replaces the current byn process with \fICOMMAND\fR via
-\fBexecve\fR(2), passing the loaded entries plus the existing
-environment to the child. The child's PID is the same as the byn CLI
-that invoked it. Values never appear in the parent shell or argv.
+and runs \fICOMMAND\fR with them injected alongside the existing
+environment. HOW it runs depends on the mode (see \fBExecution modes\fR
+below): by default the child runs privilege\-separated as
+\fB_byn\-exec\fR (born in your shell's tree); with \fB\-\-no\-privsep\fR
+byn \fBexecve\fR(2)s into it in\-process. Values never appear in the
+parent shell or argv.
 The "\fB\-\-\fR" separator is required to disambiguate exec's own
 flags from the child command's flags.
 .TP
@@ -224,6 +226,34 @@ after it).
 alias "test"; \fBbyn exec \-\- test\fR runs the literal binary "test".
 Requires a trusted \fB.byn\fR in scope; using the alias form without
 a \fB.byn\fR is a usage error.
+.IP
+\fBExecution modes:\fR By default \fBbyn exec\fR runs the child under
+privilege separation as the \fB_byn\-exec\fR service user, born in your
+shell's process tree \(em its injected env is hidden from your own
+\fBps \-E\fR, and a trusted \fB.byn\fR with a matching \fB[exec]\fR
+action runs credential\-free (no password, even with the vault locked).
+This is the mode for agents, CI, and unattended runs.
+.IP
+\fB\-\-no\-privsep\fR runs the child IN\-PROCESS as YOU (\fBexecve\fR(2)),
+so its injected env is visible to your own \fBps \-E\fR; therefore this
+mode REQUIRES the master password on EVERY run (no blind trusted\-file
+run). Use it for interactive step\-debugging: a launch\-mode debugger
+(e.g. VS Code "launch") can attach because the process shares your UID.
+A debugger cannot attach across UIDs \(em the same kernel rule that
+hides the env from your \fBps \-E\fR \(em so it cannot attach to a
+privsep child directly.
+.IP
+\fB\-\-inspect\fR[=\fIPORT\fR] / \fB\-\-inspect\fR \fIPORT\fR (and
+\fB\-\-inspect\-brk\fR) keeps privsep AND enables the Node inspector so
+you can debug while secrets stay hidden: byn sets \fBNODE_OPTIONS\fR and
+your debugger ATTACHES over loopback TCP (UID\-agnostic). With no
+\fIPORT\fR byn picks the next FREE port (printed) so concurrent debug
+sessions don't collide. An explicit \fIPORT\fR (\fB9230\fR or
+\fB127.0.0.1:9230\fR, spaced or \fB=\fR) is used only if FREE \(em
+otherwise byn fails with a clear message instead of a buried
+EADDRINUSE. \fB\-\-inspect=0\fR lets each node process self\-allocate a
+free port (best for multi\-process runners like \fBtsx watch\fR). Point
+your editor at an "attach" target.
 .IP
 \fBServer\-side authorization (one round\-trip):\fR the daemon reads,
 trust\-verifies, and parses the \fB.byn\fR itself and returns ONLY the

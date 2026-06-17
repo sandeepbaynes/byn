@@ -190,6 +190,22 @@ type Daemon struct {
 	// fake Spawner directly.
 	spawner privsep.Spawner
 
+	// execTokens holds one-time terminal-anchored exec tokens (Option A). Minted by
+	// handleExecAuthorize AFTER the trust/auth gate; redeemed by the privsep helper
+	// (peercred root/_byn-exec) via handleExecRedeem. The owner-UID CLI only ever
+	// holds the token — never the curated secret env.
+	execTokens *execTokenStore
+
+	// execUID is the resolved _byn-exec service-user UID. It gates exec.redeem
+	// (peercred MUST be root or _byn-exec) and, with execProvisioned, tells
+	// exec.authorize whether terminal-anchored exec can run. execProvisioned is
+	// false when the service user is absent — authorize then returns a clean
+	// fallback error so the CLI runs the child in-process. Set once in New (before
+	// Start); atomic because handleConn reads them on every accepted connection
+	// (and tests mutate them after Start). Tests set these via Store.
+	execUID         atomic.Int64
+	execProvisioned atomic.Bool
+
 	// testACLRunner, when non-nil, replaces the real exec.Command-based ACL
 	// runner returned by aclRunner(). Tests inject a recording function here to
 	// verify that grantProjectACL / revokeProjectACL reach the ACL code path
@@ -282,6 +298,7 @@ func New(cfg Config) (*Daemon, error) {
 		bootstrapTokens:  newBootstrapTokens(),
 		configAuthTokens: newConfigAuthTokens(),
 		sessions:         newSessionStore(cfg.SessionTTL, sessionIdle),
+		execTokens:       newExecTokenStore(),
 	}
 	d.idleNanos.Store(int64(cfg.IdleTimeout))
 	d.limiter = auth.NewRateLimiter(d.limiterPath)
@@ -334,6 +351,18 @@ func New(cfg Config) (*Daemon, error) {
 				"install is not provisioned; run `sudo byn setup` to engage privilege separation "+
 				"(until then trusted-.byn exec fails closed rather than running owner-UID).")
 		}
+	}
+
+	// Resolve the _byn-exec service UID for the terminal-anchored exec path
+	// (Option A token redemption). Best-effort + independent of cfg.Privsep (which
+	// gated the now-superseded server-side spawner): when the service user exists,
+	// exec.authorize can mint tokens and exec.redeem accepts the helper's
+	// connection (peercred root/_byn-exec). When it is absent, execProvisioned
+	// stays false and exec.authorize returns a clean fallback error so the CLI
+	// runs the child in-process.
+	if st, lerr := privsep.LookupState(); lerr == nil && st.Provisioned {
+		d.execUID.Store(int64(st.ExecUID))
+		d.execProvisioned.Store(true)
 	}
 	return d, nil
 }

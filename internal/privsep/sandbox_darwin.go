@@ -21,6 +21,22 @@ type SandboxOpts struct {
 //
 // sandbox-exec/SBPL is deprecated-but-ubiquitous (Chromium/Bazel); the UID
 // boundary remains the load-bearing control. See spec §4.
+// ExecSandboxProfile returns the Seatbelt (sandbox-exec) profile string for a
+// terminal-anchored exec child (Option A): allow-by-default, denying byn's own
+// state dir + socket (defense in depth atop the _byn-exec UID boundary).
+// noNetwork additionally denies all network. The privsep helper applies it via
+// `sandbox-exec -p <profile>` AFTER dropping to _byn-exec. Paths are
+// symlink-resolved so the Seatbelt deny matches the kernel real path. Returns ""
+// when there is nothing to confine, so the helper runs the target directly.
+func ExecSandboxProfile(stateDir, socketPath string, noNetwork bool) string {
+	sd := resolveSymlinks(stateDir)
+	sp := resolveSymlinks(socketPath)
+	if sd == "" && sp == "" && !noNetwork {
+		return ""
+	}
+	return seatbeltProfile(SandboxOpts{StateDir: sd, SocketPath: sp, NoNetwork: noNetwork})
+}
+
 func seatbeltProfile(opts SandboxOpts) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n")

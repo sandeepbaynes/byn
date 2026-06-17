@@ -99,6 +99,21 @@ func readTargetIDs() (uid, gid int, err error) {
 }
 
 func main() {
+	// Option A (Terminal-anchored exec): the CLI invokes us with --redeem and the
+	// one-time token on fd 3. We redeem it with the daemon for the authorized
+	// argv+env, then drop + exec. The legacy server-side `-- TARGET` mode (the
+	// daemon spawns us with the child env on fd 3) is kept for handleExecSpawn.
+	if redeemRequested(os.Args) {
+		redeemMain()
+		return
+	}
+	legacyMain()
+}
+
+// legacyMain is the original server-side spawn contract (daemon → helper with
+// `-- TARGET [ARGS]` and the child env on fd 3). Superseded by redeemMain for the
+// owner-facing exec path; retained while handleExecSpawn exists.
+func legacyMain() {
 	uid, gid, err := readTargetIDs()
 	if err != nil {
 		fatal("reading target ids: %v", err)
