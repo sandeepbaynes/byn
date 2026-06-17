@@ -117,6 +117,20 @@ migrate = &quot;python manage.py migrate&quot;
     policy without re-trusting.</li>
     </ul>
     </li>
+    <li><strong><code>[exec] writable</code></strong> lists <strong>extra tool-state directories</strong> the privsep
+    exec child (<code>_byn-exec</code>, a different UID) may read/write — e.g. a package
+    manager's global store under a <code>0700</code> home dir. At <code>byn trust</code> time byn
+    grants <code>_byn-exec</code> access to these (owner-side ACLs) <strong>on top of</strong> a
+    curated set of common defaults (<code>~/.cache</code>, <code>~/.npm</code>, <code>~/Library/pnpm</code>,
+    <code>~/.cargo</code>, <code>~/go</code>, …). Each entry must resolve <strong>under your home</strong> (a
+    leading <code>~</code> is expanded); entries outside home are refused, and naming a
+    credential dir (<code>~/.ssh</code>, <code>~/.aws</code>, …) prints a warning. Most stacks need
+    nothing here — the defaults cover them. Example:
+    <pre><code class="language-toml">[exec]
+actions = [&quot;pnpm dev&quot;]
+writable = [&quot;~/Library/pnpm&quot;]   # only if your tool uses an uncommon dir
+</code></pre>
+    </li>
     <li><code>[auth]</code> keys (<code>get</code>, <code>update</code>, <code>delete</code>, <code>exec</code>) override the session
     gate for this scope. Values: <code>&quot;always&quot;</code> (tightens, always requires fresh
     auth even with an active session), <code>&quot;none&quot;</code> (relaxes, skips the gate

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 
+	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
 
@@ -48,7 +51,66 @@ func grantTrustACLs(canonBynPath, home string) error {
 	if err := privsep.GrantBynReadACL(ownerACLRun, canonBynPath, home); err != nil {
 		return err
 	}
-	return privsep.GrantProjectACL(ownerACLRun, filepath.Dir(canonBynPath), home)
+	if err := privsep.GrantProjectACL(ownerACLRun, filepath.Dir(canonBynPath), home); err != nil {
+		return err
+	}
+	// Tool-state auto-grant (Hybrid): grant _byn-exec read/write on the curated
+	// multi-language toolchain dirs that exist + any [exec] writable the .byn
+	// declares. Best-effort — a tool-state hiccup must NOT fail trusting the .byn.
+	if dirs := execWritableDirs(canonBynPath, home); len(dirs) > 0 {
+		_ = privsep.GrantExecDirsACL(ownerACLRun, dirs, home)
+	}
+	return nil
+}
+
+// execWritableDirs resolves the absolute tool-state directories to grant the
+// _byn-exec child read/write access at trust time: the curated multi-language
+// defaults (ExecToolchainDefaults) PLUS the .byn's [exec] writable list. Entries
+// are ~-expanded + validated UNDER home, and filtered to those that EXIST
+// (chmod on a missing dir fails; a missing curated default is normal). A declared
+// writable that is missing, escapes home, or names a credential dir is surfaced
+// to the user (the grant is password-gated, so it proceeds, but visibly).
+func execWritableDirs(canonBynPath, home string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(abs string, declared bool) {
+		if abs == "" || seen[abs] {
+			return
+		}
+		if _, err := os.Stat(abs); err != nil {
+			if declared {
+				fmt.Fprintf(os.Stderr, "  %s [exec] writable %q does not exist — skipping\n", yellow("!"), abs)
+			}
+			return
+		}
+		seen[abs] = true
+		out = append(out, abs)
+	}
+	// Curated defaults (silently skip those that don't exist on this machine).
+	for _, rel := range privsep.ExecToolchainDefaults {
+		add(filepath.Join(home, rel), false)
+	}
+	// Declared [exec] writable from the .byn.
+	body, err := os.ReadFile(canonBynPath) //nolint:gosec // owner-owned .byn the owner just trusted
+	if err != nil {
+		return out
+	}
+	f, perr := bynfile.Parse(body)
+	if perr != nil {
+		return out
+	}
+	for _, w := range f.Exec.Writable {
+		abs, verr := privsep.ResolveWritableUnderHome(w, home)
+		if verr != nil {
+			fmt.Fprintf(os.Stderr, "  %s [exec] writable %q refused: %v\n", yellow("!"), w, verr)
+			continue
+		}
+		if privsep.IsSensitiveHomeDir(abs, home) {
+			fmt.Fprintf(os.Stderr, "  %s granting _byn-exec access to a credential dir (%s) — declared in [exec] writable\n", boldYellow("Warning:"), abs)
+		}
+		add(abs, true)
+	}
+	return out
 }
 
 // revokeTrustACLs removes the daemon-read ACE AND the _byn-exec project ACE that

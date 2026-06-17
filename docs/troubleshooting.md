@@ -446,19 +446,33 @@ This is **POSIX**, not TCC (`Permission denied`/EACCES, not `Operation not
 permitted`/EPERM). The `_byn-exec` child can't traverse/read the dir the tool
 lives in. `byn trust` already grants `_byn-exec` *traverse* on your home and the
 project, so a world-readable toolchain (e.g. nvm's `~/.nvm`, mode `0755`) works
-for free. If the toolchain or its state is in a **`0700`** dir (common on macOS,
-e.g. `~/Library`), grant the child access there once:
+for free.
+
+**Most tool-state dirs are auto-granted.** At `byn trust` time byn also grants
+`_byn-exec` read/write on a **curated set of common tool-state dirs** that exist
+on your machine — `~/.cache`, `~/.npm`, `~/Library/pnpm`, `~/.cargo`, `~/.rustup`,
+`~/go`, `~/.gradle`, `~/.m2`, `~/.config`, … — so pnpm/npm/cargo/etc. work without
+manual steps. If your tool keeps state somewhere uncommon, declare it in the
+`.byn`:
+
+```toml
+[exec]
+actions = ["pnpm dev"]
+writable = ["~/Library/pnpm", "~/.my-tool"]   # extra dirs, granted at trust time
+```
+
+Entries must be **under your home** (`~` is expanded); ones outside are refused,
+and a credential dir (`~/.ssh`, `~/.aws`, …) prints a warning. As a last resort
+you can grant a dir by hand (the same kind of ACE `byn trust` adds):
 
 ```sh
-# Example: pnpm keeps state under macOS's 0700 ~/Library
 chmod +a "_byn-exec allow execute,search" ~/Library
 chmod +a "_byn-exec allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit" ~/Library/pnpm
 ```
 
 `execute,search` is *traverse only* (not list/read) — the child passes through to
-the dir you grant, it can't enumerate the parent. This is the same kind of ACE
-`byn trust` adds for your project; re-running `byn trust .` re-applies the project
-+ home-traverse ACEs if they get cleared.
+the dir you grant, it can't enumerate the parent. Re-running `byn trust .`
+re-applies the project + home-traverse + tool-state ACEs if they get cleared.
 
 > **Why this is safe:** running a tool as `_byn-exec` is *more* confined than the
 > baseline — normally `make dev` runs it as **you**, with full home access.
