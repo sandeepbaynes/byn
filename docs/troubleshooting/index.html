@@ -409,18 +409,26 @@ sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
     <p>This is <strong>POSIX</strong>, not TCC (<code>Permission denied</code>/EACCES, not <code>Operation not permitted</code>/EPERM). The <code>_byn-exec</code> child can't traverse/read the dir the tool
     lives in. <code>byn trust</code> already grants <code>_byn-exec</code> <em>traverse</em> on your home and the
     project, so a world-readable toolchain (e.g. nvm's <code>~/.nvm</code>, mode <code>0755</code>) works
-    for free. If the toolchain or its state is in a <strong><code>0700</code></strong> dir (common on macOS,
-    e.g. <code>~/Library</code>), grant the child access there once:</p>
-    <pre><code class="language-sh"># Example: pnpm keeps state under macOS's 0700 ~/Library
-chmod +a &quot;_byn-exec allow execute,search&quot; ~/Library
+    for free.</p>
+    <p><strong>Most tool-state dirs are auto-granted.</strong> At <code>byn trust</code> time byn also grants
+    <code>_byn-exec</code> read/write on a <strong>curated set of common tool-state dirs</strong> that exist
+    on your machine — <code>~/.cache</code>, <code>~/.npm</code>, <code>~/Library/pnpm</code>, <code>~/.cargo</code>, <code>~/.rustup</code>,
+    <code>~/go</code>, <code>~/.gradle</code>, <code>~/.m2</code>, <code>~/.config</code>, … — so pnpm/npm/cargo/etc. work without
+    manual steps. If your tool keeps state somewhere uncommon, declare it in the
+    <code>.byn</code>:</p>
+    <pre><code class="language-toml">[exec]
+actions = [&quot;pnpm dev&quot;]
+writable = [&quot;~/Library/pnpm&quot;, &quot;~/.my-tool&quot;]   # extra dirs, granted at trust time
+</code></pre>
+    <p>Entries must be <strong>under your home</strong> (<code>~</code> is expanded); ones outside are refused,
+    and a credential dir (<code>~/.ssh</code>, <code>~/.aws</code>, …) prints a warning. As a last resort
+    you can grant a dir by hand (the same kind of ACE <code>byn trust</code> adds):</p>
+    <pre><code class="language-sh">chmod +a &quot;_byn-exec allow execute,search&quot; ~/Library
 chmod +a &quot;_byn-exec allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit&quot; ~/Library/pnpm
 </code></pre>
     <p><code>execute,search</code> is <em>traverse only</em> (not list/read) — the child passes through to
-    the dir you grant, it can't enumerate the parent. This is the same kind of ACE
-    <code>byn trust</code> adds for your project; re-running <code>byn trust .</code> re-applies the project</p>
-    <ul>
-    <li>home-traverse ACEs if they get cleared.</li>
-    </ul>
+    the dir you grant, it can't enumerate the parent. Re-running <code>byn trust .</code>
+    re-applies the project + home-traverse + tool-state ACEs if they get cleared.</p>
     <blockquote>
     <p><strong>Why this is safe:</strong> running a tool as <code>_byn-exec</code> is <em>more</em> confined than the
     baseline — normally <code>make dev</code> runs it as <strong>you</strong>, with full home access.
