@@ -41,15 +41,18 @@ See
 .BR byn-init (1).
 .TP
 .B unlock
-Unlock the vault and start a per\-terminal session.  Prompts for the
+Authorise value access (\fBget\fR/\fBput\fR/\fBupdate\fR/\fBdelete\fR) for
+\fBthis terminal's session only\fR \(em NOT a global unlock.  Prompts for the
 master password.  On success, a session token is saved to
 .I <data-dir>/sessions/
-(keyed by the controlling terminal device number) so subsequent
-commands in the same terminal window are authorised without
-re\-prompting.  When stdout is not a terminal the vault is still
-unlocked but no session file is written.
-Run \fBbyn lock \-\-session\fR to clear the token for the current
-terminal without locking the vault for other callers.
+(keyed by the controlling terminal device number) so subsequent commands in the
+same terminal window are authorised without re\-prompting; other terminals,
+scripts, the portal, and background agents each authorise separately (one
+session never grants another).  When stdout is not a terminal the vault is still
+unlocked but no session file is written.  It does NOT affect \fBbyn exec\fR \(em
+exec is governed by the trusted \fB.byn\fR + per\-action auth, independent of
+unlock/session.  Run \fBbyn lock \-\-session\fR to clear the token for the
+current terminal without locking the vault for other callers.
 See
 .BR byn-unlock (1).
 .TP
@@ -265,9 +268,12 @@ denials \(em is written to the vault's audit log with the full
 command line. Alias execs are logged as "alias NAME \(-> resolved argv"
 (capped at 200 chars).
 .IP
-\fBVault locked:\fR exec always fails with "vault is locked". Unlike
-the delete family, exec cannot proceed with a password alone; the
-vault must be unlocked first (\fBbyn unlock\fR).
+\fBLock state and exec:\fR \fBbyn unlock\fR / sessions do NOT authorize exec. A
+trusted \fB.byn\fR runs exec by its own \fB[exec] actions\fR + per\-action auth:
+a \fIpinned\fR command runs autonomously (no unlock, no password \(em even while
+the vault is locked) via its sealed capability; an \fIunpinned\fR one prompts for
+the master password. Only \fBad\-hoc exec\fR (no \fB.byn\fR) requires the vault
+unlocked.
 .IP
 Only exec verifies the \fB.byn\fR is trusted (machine + vault\-key MAC)
 before injecting; an untrusted, changed, or tampered \fB.byn\fR aborts

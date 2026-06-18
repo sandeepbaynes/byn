@@ -101,20 +101,26 @@ SEE ALSO
 `,
 
 	"unlock": `NAME
-       byn-unlock - unlock the vault for this daemon session
+       byn-unlock - authorize value access for THIS terminal's session (not global)
 
 SYNOPSIS
        byn unlock [--password-stdin]
 
 DESCRIPTION
-       Prompts for the master password and asks the daemon to derive
-       the vault key. On success, future put/get/rename calls succeed
-       until "byn lock" or the daemon is stopped.
+       Prompts for the master password and authorizes value access
+       (get / put / update / delete) for THIS terminal's session ONLY —
+       it is NOT a global unlock. A per-terminal session token (bound to
+       this TTY + UID) is saved to disk so subsequent commands in the
+       SAME terminal skip re-prompting; other terminals, scripts, the
+       portal, and background agents each authorize separately — one
+       session never grants another. Run "byn lock --session" to clear
+       this terminal's token without locking the vault for other callers.
 
-       A per-terminal session token is saved to disk so subsequent
-       commands in the same terminal window skip re-prompting. Run
-       "byn lock --session" to clear the token for the current
-       terminal without locking the vault for other callers.
+       It does NOT affect "byn exec": a trusted .byn authorizes exec via
+       its own [exec] actions + per-action auth, independent of the
+       unlock/session state. (Internally the daemon also unwraps the
+       vault key into memory, but value access still requires a valid
+       session.)
 
        Failed unlock attempts trigger exponential backoff. The state is
        persisted across daemon restarts so killing the daemon does not
