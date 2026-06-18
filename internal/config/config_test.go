@@ -382,9 +382,10 @@ func TestParse_EmptyBytes(t *testing.T) {
 //	uiEnabled=true, uiPort=2967, revealHideAfter="15s", idleTimeout="15m0s"
 func TestSerializeCfgDefaultForm(t *testing.T) {
 	// This is the verbatim output of serializeCfg({
-	//   uiEnabled:true, uiPort:2967, revealHideAfter:"15s", idleTimeout:"15m0s"
-	// }) as of the last sync with app.js.
-	jsSerialized := "[ui]\nenabled = true\nport    = 2967\nreveal_hide_after = \"15s\"\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n"
+	//   uiEnabled:true, uiPort:2967, revealHideAfter:"15s", idleTimeout:"15m0s",
+	//   sessionTTL:"12h0m0s", sessionIdle:"0s", privsep:false
+	// }) as of the last sync with app.js. privsep is omitted when off (the default).
+	jsSerialized := "[ui]\nenabled = true\nport    = 2967\nreveal_hide_after = \"15s\"\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n[security]\nsession_ttl  = \"12h0m0s\"\nsession_idle = \"0s\"\n\n"
 
 	got, err := Parse([]byte(jsSerialized))
 	if err != nil {
@@ -401,6 +402,15 @@ func TestSerializeCfgDefaultForm(t *testing.T) {
 	}
 	if time.Duration(got.Daemon.IdleTimeout) != DefaultIdleTimeout {
 		t.Errorf("Daemon.IdleTimeout = %v, want %v", time.Duration(got.Daemon.IdleTimeout), DefaultIdleTimeout)
+	}
+	if time.Duration(got.Security.SessionTTL) != DefaultSessionTTL {
+		t.Errorf("Security.SessionTTL = %v, want %v", time.Duration(got.Security.SessionTTL), DefaultSessionTTL)
+	}
+	if time.Duration(got.Security.SessionIdle) != 0 {
+		t.Errorf("Security.SessionIdle = %v, want 0 (inherit)", time.Duration(got.Security.SessionIdle))
+	}
+	if got.PrivsepEnabled() {
+		t.Errorf("PrivsepEnabled() = true, want false (privsep omitted from the default form)")
 	}
 }
 

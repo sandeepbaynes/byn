@@ -14,6 +14,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -167,6 +168,7 @@ func (d *Daemon) handleBynValidate(ctx context.Context, env *ipc.Envelope) *ipc.
 			p.EnvWildcard = f.AllowsAll()
 			p.Actions = []string(f.Exec.Actions)
 			p.ActionsWildcard = f.ActionsAllowAll()
+			p.Writable = f.Exec.Writable
 			if len(f.Aliases) > 0 {
 				p.Aliases = f.Aliases
 			}
@@ -385,6 +387,15 @@ func (d *Daemon) handleBynRead(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 			BynPath:   canon,
 			ErrorCode: string(ipc.CodeBadRequest),
 		})
+		// Make a macOS TCC / Full Disk Access denial actionable instead of a bare
+		// "operation not permitted" — the same annotation the exec path uses. The
+		// portal surfaces this message verbatim so the user gets the grant-FDA /
+		// move-project workflow.
+		rerr = annotateReadErr(canon, rerr)
+		if errors.Is(rerr, errDaemonAccessDenied) {
+			return ipc.NewError(env.ID, ipc.CodeBadRequest, rerr.Error(),
+				"grant the byn daemon Full Disk Access, or move the project — see the message above")
+		}
 		return ipc.NewError(env.ID, ipc.CodeBadRequest,
 			fmt.Sprintf("read %s: %v", canon, rerr), "check the path and retry")
 	}
@@ -434,6 +445,7 @@ func (d *Daemon) handleBynRead(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 			p.EnvWildcard = f.AllowsAll()
 			p.Actions = []string(f.Exec.Actions)
 			p.ActionsWildcard = f.ActionsAllowAll()
+			p.Writable = f.Exec.Writable
 			if len(f.Aliases) > 0 {
 				p.Aliases = f.Aliases
 			}
@@ -507,6 +519,9 @@ func configParsedFromConfig(c config.Config) *ipc.ConfigParsed {
 		UIPort:          c.UI.Port,
 		IdleTimeout:     time.Duration(c.Daemon.IdleTimeout).String(),
 		RevealHideAfter: time.Duration(c.UI.RevealHideAfter).String(),
+		SessionTTL:      time.Duration(c.Security.SessionTTL).String(),
+		SessionIdle:     time.Duration(c.Security.SessionIdle).String(),
+		Privsep:         c.Security.Privsep,
 	}
 }
 

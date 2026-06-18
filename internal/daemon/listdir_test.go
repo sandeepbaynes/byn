@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -83,14 +85,36 @@ func TestListDir_IncludeFiles(t *testing.T) {
 }
 
 func TestListDir_DefaultsToHome(t *testing.T) {
-	_, c := startTestDaemon(t)
+	d, c := startTestDaemon(t)
 	var resp ipc.ListDirResp
 	if err := c.Call(ipc.OpFSListDir, ipc.ListDirReq{}, &resp); err != nil {
 		t.Fatalf("listdir home: %v", err)
 	}
+	// An empty path must default to the OWNER's home (resolveOwnerHome), not the
+	// daemon process's home — which under privsep is the _byn user's /var/empty.
+	want := filepath.Clean(d.resolveOwnerHome())
+	if resp.Path != want {
+		t.Errorf("default path = %q, want owner home %q", resp.Path, want)
+	}
+}
+
+func TestResolveOwnerHome(t *testing.T) {
+	uid := os.Getuid()
+	u, err := user.LookupId(strconv.Itoa(uid))
+	if err != nil {
+		t.Skipf("LookupId(%d): %v", uid, err)
+	}
+	// Owner UID set → resolves the OWNER's passwd home (the privsep case: the
+	// daemon runs as _byn but must point pickers at the owner's real home).
+	d := &Daemon{ownerUID: uint32(uid)} //nolint:gosec // G115: a real uid is a small non-negative int.
+	if got := d.resolveOwnerHome(); got != u.HomeDir {
+		t.Errorf("resolveOwnerHome(ownerUID=%d) = %q, want %q", uid, got, u.HomeDir)
+	}
+	// Owner UID unset (0, e.g. privsep off) → falls back to the process home.
 	home, _ := os.UserHomeDir()
-	if resp.Path != filepath.Clean(home) {
-		t.Errorf("default path = %q, want home %q", resp.Path, filepath.Clean(home))
+	d0 := &Daemon{ownerUID: 0}
+	if got := d0.resolveOwnerHome(); got != home {
+		t.Errorf("resolveOwnerHome(ownerUID=0) = %q, want %q", got, home)
 	}
 }
 
