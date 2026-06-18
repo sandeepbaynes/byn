@@ -179,15 +179,24 @@ esac
     <li><code>already_init</code> if the vault directory already exists.</li>
     </ul>
     <h3 id="byn-unlock---password-stdin"><code>byn unlock [--password-stdin]</code></h3>
-    <p>Unwrap the vault key into the daemon's memory.</p>
+    <p>Authorize value access (<code>get</code> / <code>put</code> / <code>update</code> / <code>delete</code>) for <strong>this
+    terminal's session only</strong> — <strong>not</strong> a global unlock. It mints a session token
+    bound to your TTY + UID so subsequent commands in <em>this</em> terminal don't
+    re-prompt; other terminals, scripts, the portal, and background agents each
+    authenticate separately (one session never grants another). It does <strong>not</strong>
+    affect <code>byn exec</code> — exec is governed by the trusted <code>.byn</code> + per-action auth,
+    independent of unlock/session state. (Internally it also unwraps the vault key
+    into the daemon's memory, but value access still requires a valid session.)</p>
     <ul>
     <li>Subject to the failed-unlock backoff (<code>auth-state.json</code>).</li>
-    <li>On success, starts the per-vault idle timer.</li>
+    <li>On success, starts the per-vault idle timer. End this terminal's session with
+    <code>byn lock --session</code>.</li>
     </ul>
     <h3 id="byn-lock"><code>byn lock</code></h3>
     <p>Zero the in-memory vault key for <code>--vault</code> (or <code>--all</code> to lock every
-    unlocked vault). <code>--session</code> ends only this terminal's session and
-    leaves the vault unlocked.</p>
+    unlocked vault) — this affects <strong>all</strong> sessions. <code>--session</code> instead ends
+    <strong>only this terminal's</strong> session (drops its token) and leaves the vault
+    unlocked for other callers. Neither affects <code>byn exec</code> authorization.</p>
     <h3 id="byn-daemon-start---foreground"><code>byn daemon start [--foreground]</code></h3>
     <p>Start the long-lived daemon.</p>
     <ul>
@@ -494,7 +503,7 @@ byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each 
     <tr>
     <th>Mode</th>
     <th>Child runs as</th>
-    <th>Env hidden from your <code>ps -E</code>?</th>
+    <th>Env hidden from same-UID snooping?</th>
     <th>Auth for a trusted <code>.byn</code></th>
     <th>Use for</th>
     </tr>
@@ -524,8 +533,8 @@ byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each 
     </tbody>
     </table>
     <ul>
-    <li><strong>Default (privsep):</strong> the daemon authorizes the exec and a setuid helper — spawned in <em>your shell's</em> process tree — drops the child to the <code>_byn-exec</code> service user. The injected secrets are hidden from same-user snooping (your own <code>ps -E</code> shows nothing), and a trusted <code>.byn</code> with a matching <code>[exec]</code> action runs with <strong>no password</strong> — the autonomous path for agents.</li>
-    <li><strong><code>--no-privsep</code>:</strong> byn <code>execve</code>'s into the child <strong>as you</strong>, so its injected env is visible to your own <code>ps -E</code>. Because of that exposure it <strong>requires the master password on every run</strong> — it does <em>not</em> honor the trusted-<code>.byn</code> credential-free path. Use it for interactive debugging: a launch-mode debugger (VS Code &quot;launch&quot;) attaches because the process shares your UID. A debugger <strong>cannot attach across UIDs</strong> — the same kernel rule that hides the env from your <code>ps -E</code> blocks attaching to a privsep child.</li>
+    <li><strong>Default (privsep):</strong> the daemon authorizes the exec and a setuid helper — spawned in <em>your shell's</em> process tree — drops the child to the <code>_byn-exec</code> service user. The injected secrets are hidden from same-UID snooping (a different UID can't read the child's env — <code>ps -E</code> on macOS, <code>/proc/&lt;pid&gt;/environ</code> on Linux), and a trusted <code>.byn</code> with a matching <code>[exec]</code> action runs with <strong>no password</strong> — the autonomous path for agents.</li>
+    <li><strong><code>--no-privsep</code>:</strong> byn <code>execve</code>'s into the child <strong>as you</strong>, so its injected env is visible to any same-UID process (your own <code>ps -E</code> on macOS, <code>/proc/&lt;pid&gt;/environ</code> on Linux). Because of that exposure it <strong>requires the master password on every run</strong> — it does <em>not</em> honor the trusted-<code>.byn</code> credential-free path. Use it for interactive debugging: a launch-mode debugger (VS Code &quot;launch&quot;) attaches because the process shares your UID. A debugger <strong>cannot attach across UIDs</strong> — the same kernel rule that hides the child's env from a same-UID process blocks attaching to a privsep child.</li>
     <li><strong><code>--inspect[=PORT]</code> / <code>--inspect PORT</code> / <code>--inspect-brk</code>:</strong> keeps privsep <strong>and</strong> enables the Node inspector, so you debug while secrets stay hidden. byn sets <code>NODE_OPTIONS</code> and your debugger <strong>attaches</strong> over loopback TCP (UID-agnostic). Port handling:
     <ul>
     <li><strong>no PORT</strong> → byn picks the <strong>next free port</strong> (printed), so concurrent debug sessions don't collide.</li>
@@ -571,11 +580,18 @@ byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each 
     enforcement is <strong>independent</strong> of session state.</li>
     </ul>
     </li>
-    <li>Every exec attempt — allowed or denied, including locked-vault
-    failures — is audited with the full command line. Alias execs are
-    audited as <code>alias &lt;name&gt; → &lt;resolved command&gt;</code>.</li>
-    <li><strong>Vault locked:</strong> always a hard failure (&quot;vault is locked&quot;). Unlike
-    <code>delete</code>, exec cannot proceed with a password; <code>byn unlock</code> first.</li>
+    <li><strong><code>[exec] writable</code> — tool-state dirs for the privsep child (optional):</strong>
+    extra directories the <code>_byn-exec</code> child may read/write (e.g. a package
+    manager's global store under a <code>0700</code> home dir), granted at <code>byn trust</code> time
+    on top of a curated default set. Most stacks need nothing here. See
+    <a href="byn-file-format/">byn-file-format.md</a>.</li>
+    <li>Every exec attempt — allowed or denied — is audited with the full
+    command line. Alias execs are audited as <code>alias &lt;name&gt; → &lt;resolved command&gt;</code>.</li>
+    <li><strong>Lock state and exec:</strong> <code>byn unlock</code> / sessions do <strong>not</strong> authorize exec. A
+    trusted <code>.byn</code> runs exec by its own <code>[exec] actions</code> + per-action auth: a
+    <strong>pinned</strong> command runs autonomously (no unlock, no password — even while
+    locked) via its sealed capability; an <strong>unpinned</strong> one prompts for the master
+    password. Only <strong>ad-hoc exec</strong> (no <code>.byn</code>) requires the vault unlocked.</li>
     <li>Stage 1: <code>exec.LookPath</code> to vet the binary</li>
     <li>Stage 2: parent's environ + injected vars (last value wins, so
     vault values shadow shell exports)</li>
@@ -965,7 +981,7 @@ enabled = true
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn <a href="../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.3.1</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>

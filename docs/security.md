@@ -602,10 +602,16 @@ entire path from trust check to env assembly. Denial messages
 Every exec attempt — including locked-vault and trust failures — is
 written to the audit log with the full command line.
 
-`byn exec` on a locked vault is a hard failure ("vault is locked").
-Unlike the delete family, exec cannot proceed with a password alone;
-the vault must be unlocked first. This is intentional: a compromised
-client should not be able to use exec to partially bypass lock state.
+`byn exec` does **not** draw on the unlock / session state the way
+`get`/`put`/`update` do. A trusted `.byn` with a matching `[exec] actions`
+entry runs **autonomously** — no unlock, no password, **even while the vault
+is locked** — decrypting only its allowlisted vars via a capability sealed in
+the trust record (machine-fingerprint-wrapped, no in-memory vault key). An
+**unpinned** command on a trusted `.byn` requires a fresh master password per
+run (still no unlock). Only **ad-hoc exec** (no `.byn`, which injects the whole
+scope via the in-memory vault key) requires the vault unlocked. An active
+unlock session never authorizes exec — so `byn unlock` governs
+`get`/`put`/`update`, not `exec`.
 
 ### [exec] actions: which commands may run free
 
@@ -945,12 +951,20 @@ automatically load and forward the token without re-prompting.
 **Interactive use (daily driver):**
 
 ```sh
-# Unlock once per terminal window.
+# Unlock once per terminal window. This authorizes get/put/update/delete for
+# THIS terminal's session only (not other terminals, the portal, or scripts).
+# It does NOT affect exec — exec is governed by the trusted .byn + per-action
+# auth, independent of unlock/session state.
 byn unlock
 
-# Work normally — every command in this terminal carries the session token.
+# get/put/update in this terminal now carry the session token — no re-auth.
 byn get DB_URL
-byn exec -- make migrate
+
+# exec is separate from unlock: a trusted-.byn PINNED command runs free
+# regardless of lock state; an unpinned command (or ad-hoc exec with no .byn)
+# prompts for the master password. The `byn unlock` above neither helps nor is
+# required for it.
+byn exec -- make migrate      # runs free iff 'make migrate' is pinned in the .byn
 
 # When done, revoke this terminal's session without locking the vault
 # for other callers (e.g. the portal).
