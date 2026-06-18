@@ -437,16 +437,20 @@ DESCRIPTION
            the vault locked. This is the mode for agents, CI, and
            autonomous/unattended runs.
 
-       byn exec --no-privsep
-           The child runs IN-PROCESS as YOU (byn execve's into it).
-           Because the injected env is then visible to your own
-           'ps -E', this mode REQUIRES the master password on EVERY run
-           — it does NOT honor the trusted-.byn credential-free path.
-           Use it for interactive debugging: a launch-mode debugger
-           (e.g. VS Code "launch") can attach because the process shares
-           your UID. (A debugger cannot attach across UIDs, so it cannot
-           attach to a privsep child directly — that is the same kernel
-           rule that hides the env from your 'ps -E'.)
+       byn exec --no-privsep   (for HUMAN debugging)
+           The child runs IN-PROCESS as YOU (byn execve's into it), so a
+           launch-mode debugger (e.g. VS Code "launch") can attach — it
+           shares your UID. (A debugger cannot attach across UIDs, the
+           same kernel rule that hides a privsep child's env, so it can't
+           attach to the _byn-exec child directly.) The cost: the child's
+           injected env is then visible to any same-UID process ('ps -E'
+           on macOS, /proc/<pid>/environ on Linux). So this mode REQUIRES
+           the master password on EVERY run and a trusted .byn does NOT
+           authorize it (no credential-free path here). That password gate
+           is the safeguard: it stops a rogue agent or attacker from using
+           --no-privsep to inject your secrets into an owner-UID process
+           they could then read — a human can type the password, an
+           unattended agent cannot.
 
        byn exec --inspect[=PORT] | --inspect PORT   (and --inspect-brk)
            Keeps privilege separation AND enables the Node inspector, so
