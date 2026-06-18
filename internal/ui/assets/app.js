@@ -25,9 +25,10 @@ const ICONS = {
   // revert: a counter-clockwise "undo" arrow — head on the left, tail curving
   // down-right. Used to drop an env's override back to the inherited default.
   revert:  "M6.5 3.5 4 6l2.5 2.5|M4 6h5a4 4 0 014 4v.6",
-  // persist: a down-arrow landing on a baseline — "push this value down into
-  // the default env" (echoes the ↓ inherit badge). Promotes a value to default.
-  persist: "M8 3v6.2|M5.6 6.8 8 9.2l2.4-2.4|M4 12h8",
+  // persist: a floppy-disk "save" glyph (shell with a notched top-right corner,
+  // a label block at the bottom, a shutter at the top). The standard save icon —
+  // used here to mean "save this value to the default env".
+  persist: "M3.5 3.5h7l2 2v7h-9z|M6 12.5V9h4v3.5|M6.5 3.5v2.5h3V3.5",
 };
 function icon(name) {
   const svg = document.createElementNS(SVGNS, "svg");
