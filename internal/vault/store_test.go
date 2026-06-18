@@ -465,6 +465,75 @@ func TestInheritance_ListMerges(t *testing.T) {
 	}
 }
 
+// TestInheritance_RevertAndPersistTransitions guards the exact data
+// transitions the portal's revert/persist actions ride on:
+//
+//	revert  — deleting an override in a non-default env makes the var fall
+//	          back to the default value (Source flips Scope → Default).
+//	persist — writing a value into default and deleting the env-local copy
+//	          makes the env (and any inheriting env) resolve to it (Default).
+func TestInheritance_RevertAndPersistTransitions(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.CreateEnv(ctx, DefaultProjectName, "local"); err != nil {
+		t.Fatalf("CreateEnv: %v", err)
+	}
+	defaultS := defaultScope()
+	localS := Scope{Project: DefaultProjectName, Env: "local"}
+
+	// --- revert: default + local override, then delete the override. ---
+	if err := st.PutEnvVar(ctx, defaultS, "API_URL", []byte("base"), PutOpt{}); err != nil {
+		t.Fatalf("put default API_URL: %v", err)
+	}
+	if err := st.PutEnvVar(ctx, localS, "API_URL", []byte("local"), PutOpt{}); err != nil {
+		t.Fatalf("override API_URL: %v", err)
+	}
+	got, err := st.GetEnvVar(ctx, localS, "API_URL")
+	if err != nil || got.Source != SourceScope {
+		t.Fatalf("before revert: Source=%v err=%v, want SourceScope", got.Source, err)
+	}
+	if err := st.DeleteEnvVar(ctx, localS, "API_URL"); err != nil {
+		t.Fatalf("revert (delete override): %v", err)
+	}
+	got, err = st.GetEnvVar(ctx, localS, "API_URL")
+	if err != nil {
+		t.Fatalf("get after revert: %v", err)
+	}
+	if got.Source != SourceDefault || string(got.Value) != "base" {
+		t.Fatalf("after revert: Source=%v value=%q, want SourceDefault/\"base\"", got.Source, got.Value)
+	}
+
+	// --- persist: a local-only var promoted into default, local copy dropped. ---
+	if err := st.PutEnvVar(ctx, localS, "TOKEN", []byte("secret"), PutOpt{}); err != nil {
+		t.Fatalf("new local TOKEN: %v", err)
+	}
+	if got, _ := st.GetEnvVar(ctx, localS, "TOKEN"); got.Source != SourceScope {
+		t.Fatalf("before persist: TOKEN Source=%v, want SourceScope", got.Source)
+	}
+	// Promote into default, then delete the env-local copy.
+	if err := st.PutEnvVar(ctx, defaultS, "TOKEN", []byte("secret"), PutOpt{}); err != nil {
+		t.Fatalf("persist (put default TOKEN): %v", err)
+	}
+	if err := st.DeleteEnvVar(ctx, localS, "TOKEN"); err != nil {
+		t.Fatalf("persist (drop local TOKEN): %v", err)
+	}
+	got, err = st.GetEnvVar(ctx, localS, "TOKEN")
+	if err != nil {
+		t.Fatalf("get after persist: %v", err)
+	}
+	if got.Source != SourceDefault || string(got.Value) != "secret" {
+		t.Fatalf("after persist: Source=%v value=%q, want SourceDefault/\"secret\"", got.Source, got.Value)
+	}
+	// A sibling env with no override of its own also inherits the promoted value.
+	if err := st.CreateEnv(ctx, DefaultProjectName, "ci"); err != nil {
+		t.Fatalf("CreateEnv ci: %v", err)
+	}
+	got, err = st.GetEnvVar(ctx, Scope{Project: DefaultProjectName, Env: "ci"}, "TOKEN")
+	if err != nil || got.Source != SourceDefault || string(got.Value) != "secret" {
+		t.Fatalf("sibling env TOKEN: Source=%v value=%q err=%v, want SourceDefault/\"secret\"", got.Source, got.Value, err)
+	}
+}
+
 // ---- project / env management ------------------------------------------
 
 func TestCreateProject_AndDefaults(t *testing.T) {

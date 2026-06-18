@@ -22,6 +22,12 @@ const ICONS = {
   lock:   "M3.6 7.4h8.8v6H3.6z|M5.6 7.4V5a2.4 2.4 0 014.8 0v2.4",
   unlock: "M3.6 7.4h8.8v6H3.6z|M5.6 7.4V5a2.4 2.4 0 014.7-.6",
   key:    "M10 3a3 3 0 102.6 4.5L14 9l-1 1 1 1-1.5 1.5L11 11l-1 1-1.4-1.4A3 3 0 0010 3z|M9.4 6.6h.01",
+  // revert: a counter-clockwise "undo" arrow — head on the left, tail curving
+  // down-right. Used to drop an env's override back to the inherited default.
+  revert:  "M6.5 3.5 4 6l2.5 2.5|M4 6h5a4 4 0 014 4v.6",
+  // persist: a down-arrow landing on a baseline — "push this value down into
+  // the default env" (echoes the ↓ inherit badge). Promotes a value to default.
+  persist: "M8 3v6.2|M5.6 6.8 8 9.2l2.4-2.4|M4 12h8",
 };
 function icon(name) {
   const svg = document.createElementNS(SVGNS, "svg");
@@ -2304,7 +2310,21 @@ function entryRow(s, i) {
   acts.appendChild(iconBtn("eye", "reveal", "reveal value", () => reveal(s, val)));
   acts.appendChild(iconBtn("copy", "copy", "copy value", () => copyValue(s)));
   acts.appendChild(iconBtn("pencil", "edit", inherited ? "override in this env" : "edit value", () => editValue(s, val)));
-  if (!inherited) acts.appendChild(iconBtn("trash", "danger", "delete", () => doDelete(s)));
+  // Action set depends on the row's inheritance state (bd is null in the
+  // default env, where every row is just deletable; see badgeFor):
+  //   override (⤴) → revert (drop override → default) + persist (set as default)
+  //   new (✦)      → delete + persist (promote to default, available to all envs)
+  //   inherited (↓)→ no destructive/promote action (edit overrides in place)
+  //   default env  → delete (unchanged)
+  if (bd && bd.cls === "bdg-override") {
+    acts.appendChild(iconBtn("revert", "revert", "revert to the default value", () => revertOverride(s)));
+    acts.appendChild(iconBtn("persist", "persist", "set this value as the default (all envs)", () => persistToDefault(s)));
+  } else if (bd && bd.cls === "bdg-new") {
+    acts.appendChild(iconBtn("trash", "danger", "delete", () => doDelete(s)));
+    acts.appendChild(iconBtn("persist", "persist", "save this value to default (all envs)", () => persistToDefault(s)));
+  } else if (!inherited) {
+    acts.appendChild(iconBtn("trash", "danger", "delete", () => doDelete(s)));
+  }
   row.appendChild(acts);
   return row;
 }
@@ -2649,6 +2669,82 @@ async function doDelete(s) {
   if (!c) return;
   try { await apiWithAuth("POST", "/api/entry/delete", { scope: curScope(), name: s.name, password: c.password }, state.scope.vault); toast("deleted " + s.name); await loadEntries(); }
   catch (e) { toast(e.message, true); }
+}
+
+// revertOverride drops this (non-default) env's override so the var falls back
+// to the default value. It is just a delete of the current-scope row — the
+// name still exists in default, so the row re-renders as inherited (↓).
+//   Unlocked: instant, no modal. The value is captured first (one reveal) so
+//     the "undo" toast can re-apply it as an override.
+//   Locked: the value cannot be decrypted to capture, so there is no undo; a
+//     password-prompted confirm authorizes the delete (the vault stays locked).
+async function revertOverride(s) {
+  const vault = state.scope.vault;
+  if (vaultLocked(vault)) {
+    const r = await openDialog({
+      title: "Revert override", danger: true, okText: "revert",
+      message: `Revert “${s.name}” to its default value? This env's override is removed; the default env is kept.` +
+        "\n\nThis vault is locked — enter the master password to authorize it. The vault stays locked.",
+      fields: [{ key: "password", label: "master password", type: "password", placeholder: "password",
+        validate: (v) => (v ? null : "password required") }],
+    });
+    if (!r) return;
+    try {
+      await apiWithAuth("POST", "/api/entry/delete", { scope: curScope(), name: s.name, password: r.password }, vault);
+      toast("reverted " + s.name + " to default");
+      await loadEntries();
+    } catch (e) { toast(e.message, true); }
+    return;
+  }
+  // Unlocked: capture the override value first so the undo can restore it.
+  let old;
+  try { old = await revealValue(s); } catch (e) { toast(e.message, true); return; }
+  try { await apiWithAuth("POST", "/api/entry/delete", { scope: curScope(), name: s.name }, vault); }
+  catch (e) { toast(e.message, true); return; }
+  await loadEntries();
+  const scope = curScope(); // pin the scope for the undo closure
+  toastUndo("reverted " + s.name + " to default", async () => {
+    try {
+      await apiWithAuth("POST", "/api/entries", { scope, name: s.name, value: old, create_only: true }, vault);
+      toast("restored override " + s.name);
+      await loadEntries();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+// persistToDefault promotes this (non-default) env's value into the default
+// env, then drops the local copy so this env — and every env inheriting
+// default — resolves to it (the row re-renders as inherited ↓).
+//   Requires the vault unlocked: writing to default must encrypt with the
+//   in-memory key (mirrors edit/add). A confirm precedes it because, unlike
+//   revert, it mutates the SHARED default and changes what sibling envs see —
+//   and for an override it replaces default's existing value.
+async function persistToDefault(s) {
+  const vault = state.scope.vault;
+  if (vaultLocked(vault)) { toast("unlock the vault to set a default", true); return; }
+  const isOverride = state.defaultNames.has(s.name);
+  const ok = await openDialog({
+    title: isOverride ? "Set as default" : "Save to default", okText: "persist",
+    message: isOverride
+      ? `Set “${s.name}”'s default to this env's value? Every env inheriting default will use it — the current default value is replaced.`
+      : `Save “${s.name}” to the default env? It becomes available to every env that inherits default.`,
+  });
+  if (!ok) return;
+  let value;
+  try { value = await revealValue(s); } catch (e) { toast(e.message, true); return; }
+  const defScope = { vault, project: state.scope.project, env: "default" };
+  try { await apiWithAuth("POST", "/api/entries", { scope: defScope, name: s.name, value }, vault); }
+  catch (e) { toast("could not write default: " + e.message, true); return; }
+  // Drop the local copy so this env inherits the new default. If this fails the
+  // promote already succeeded — surface it rather than silently leaving a dupe.
+  try { await apiWithAuth("POST", "/api/entry/delete", { scope: curScope(), name: s.name }, vault); }
+  catch (e) {
+    await loadEntries();
+    toast(s.name + " saved to default, but its " + state.scope.env + " copy remains — remove it manually", true);
+    return;
+  }
+  await loadEntries();
+  toast(isOverride ? ("set " + s.name + " as default") : ("saved " + s.name + " to default — available to all envs"));
 }
 
 // ---- .byn studio --------------------------------------------------------
@@ -4803,6 +4899,19 @@ function toast(msg, isErr, dur) {
   t.hidden = false; clearTimeout(toastTimer);
   const ms = dur != null ? dur : (isErr ? 4200 : 2000);
   toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+// toastUndo shows an "ok" toast with a clickable "undo" affordance; clicking it
+// dismisses the toast and runs undoFn. Uses a longer default window (6s) so
+// there is time to react. Built from child nodes (not textContent) so the
+// button survives — the ✓ prefix still comes from .toast.ok::before.
+function toastUndo(msg, undoFn, dur) {
+  const t = $("#toast"); t.className = "toast ok"; t.textContent = "";
+  t.appendChild(document.createTextNode(msg + "  "));
+  const u = el("button", "toast-undo", "undo");
+  u.onclick = () => { t.hidden = true; clearTimeout(toastTimer); undoFn(); };
+  t.appendChild(u);
+  t.hidden = false; clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, dur != null ? dur : 6000);
 }
 function isTyping() { const a = document.activeElement; return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable); }
 function toggleHelp() { const p = $("#help-pop"); p.hidden = !p.hidden; }
