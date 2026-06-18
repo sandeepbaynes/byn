@@ -14,11 +14,17 @@ import (
 // can render deterministic frames at each tier.
 type fakeClient struct{}
 
+// fakeNow is a FIXED timestamp used everywhere fakeClient needs a time, so the
+// rendered snapshots written to testdata/ are deterministic — previously the
+// status LastActive and the RECENT AUDIT events used time.Now(), which made the
+// committed snapshots churn (a dirty tree) on every test run.
+var fakeNow = time.Date(2026, 6, 2, 8, 41, 0, 0, time.UTC)
+
 func (fakeClient) Call(op ipc.Op, req any, resp any) error {
 	switch op {
 	case ipc.OpStatus:
 		if r, ok := resp.(*ipc.StatusResp); ok {
-			now := time.Now()
+			now := fakeNow
 			*r = ipc.StatusResp{
 				Vaults: []ipc.VaultSummary{
 					{Name: "default", Initialized: true, Locked: false, LastActive: &now},
@@ -46,7 +52,7 @@ func (fakeClient) Call(op ipc.Op, req any, resp any) error {
 		}
 	case ipc.OpList:
 		if r, ok := resp.(*ipc.ListResp); ok {
-			now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+			now := fakeNow
 			*r = ipc.ListResp{
 				Secrets: []ipc.SecretMeta{
 					{Name: "API_KEY", Source: "scope", CreatedAt: now, UpdatedAt: now},
@@ -59,8 +65,8 @@ func (fakeClient) Call(op ipc.Op, req any, resp any) error {
 		if r, ok := resp.(*ipc.AuditTailResp); ok {
 			*r = ipc.AuditTailResp{
 				Events: []ipc.AuditEvent{
-					{Op: "put", EntryName: "STRIPE_SK", Outcome: "ok", TS: time.Now().UnixNano()},
-					{Op: "get", EntryName: "DB_URL", Outcome: "ok", TS: time.Now().UnixNano()},
+					{Op: "put", EntryName: "STRIPE_SK", Outcome: "ok", TS: fakeNow.UnixNano()},
+					{Op: "get", EntryName: "DB_URL", Outcome: "ok", TS: fakeNow.UnixNano()},
 				},
 			}
 		}
