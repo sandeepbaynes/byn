@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Real-world incidents byn is built for — byn docs</title>
-<meta name="description" content="Field note · coverage: v0.3.0 · updated with each release">
+<meta name="description" content="Field note · coverage: v0.3.1 · updated with each release">
 <link rel="stylesheet" href="../../../assets/site.css">
 <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
 <script src="../../../assets/site.js" defer></script>
@@ -72,12 +72,12 @@
       <span>Re-verified at each release</span>
     </div>
 
-    <p><em>Field note · coverage: v0.3.0 · updated with each release</em></p>
+    <p><em>Field note · coverage: v0.3.1 · updated with each release</em></p>
     <p>Every incident below is real, verified, and linked to primary or
     reputable secondary sources. For each one we answer three questions
     <strong>honestly</strong>:</p>
     <ol>
-    <li><strong>Would byn (v0.3.0) have changed the outcome?</strong></li>
+    <li><strong>Would byn (v0.3.1) have changed the outcome?</strong></li>
     <li><strong>Would another credential manager have helped too?</strong> If yes, we say
     so — several good tools remove plaintext files, and pretending
     otherwise would be marketing, not security.</li>
@@ -107,7 +107,7 @@
     vault yields ciphertext, and a value read from the malware's shell has
     no session → <code>auth_required</code>. ◐ overall: the attempted reads land in
     the <strong>audit log</strong>, turning a silent harvest into a loud one. Honest
-    gap: byn v0.3.0 does not hide <code>~/.ssh</code> keys or other tools' token
+    gap: byn v0.3.1 does not hide <code>~/.ssh</code> keys or other tools' token
     files (the <code>ssh</code> shim and file-gating are roadmap) — those slices of
     the loot were reachable regardless of which env-secret manager you
     used.</li>

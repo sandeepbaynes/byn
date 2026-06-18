@@ -161,16 +161,22 @@ The three identities, all distinct (`owner ≠ _byn ≠ _byn-exec`):
 | **`_byn`** (service account) | the daemon (vault key in memory) | the vault key — but not the exec child's env |
 | **`_byn-exec`** (service account) | `byn exec` children of a trusted, *pinned* `.byn` action | only the injected env vars, for the child's lifetime |
 
-**Server-side exec spawn.** With privsep on, a trusted-`.byn` pinned `byn exec`
-no longer runs the child in-process at your UID. The `_byn` daemon spawns it as
-`_byn-exec` through a small, root-owned, file-capability **spawn helper**
-(`byn-exec-helper`) that does exactly one privileged thing — `setuid` to
-`_byn-exec` — then execs the pinned command with only the injected vars. A
-same-(owner)-UID **non-root** process then can't read that child's
-`/proc/<pid>/environ` (the kernel's ptrace-mode check denies the cross-UID read).
-Linux additionally sets `PR_SET_DUMPABLE=0` on the daemon and child; the systemd
-unit keeps `NoNewPrivileges=no` **on purpose** so the scoped helper retains its
-`cap_setuid`.
+**Terminal-anchored exec spawn.** With privsep on, a trusted-`.byn` pinned
+`byn exec` no longer runs the child in-process at your UID — but it is **not**
+spawned server-side by the daemon either. The CLI spawns it **in your own shell's
+process tree** through a small, root-owned **spawn helper** (`byn-exec-helper`,
+setuid-root on macOS / `cap_setuid` file-capability on Linux), which drops to
+`_byn-exec` and execs the pinned command. Spawning it in your shell's tree
+(rather than under the daemon) is what lets the child **inherit your shell's macOS
+TCC / Full Disk Access grant** — so `byn exec` works in `~/Documents`, iCloud,
+etc. The injected secrets never pass through the owner-UID CLI: at authorization
+the daemon mints a **one-time token**, and the helper redeems it directly from the
+daemon (peercred-gated to root / `_byn-exec`) for the curated env. A
+same-(owner)-UID **non-root** process then can't read that child's env — `ps -E`
+on macOS, `/proc/<pid>/environ` on Linux (the kernel's cross-UID check denies the
+read). Linux additionally sets `PR_SET_DUMPABLE=0` on the daemon and child; the
+systemd unit keeps `NoNewPrivileges=no` **on purpose** so the scoped helper
+retains its `cap_setuid`.
 
 **Honest ceiling.** Privsep raises the bar to **root**. It does **not** defend
 against root, `CAP_SYS_PTRACE`, or a root `task_for_pid` — those can still read

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The AWS credentials file that cost me my account — byn docs</title>
-<meta name="description" content="Field note · from the author · coverage: v0.3.0">
+<meta name="description" content="Field note · from the author · coverage: v0.3.1">
 <link rel="stylesheet" href="../../../assets/site.css">
 <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
 <script src="../../../assets/site.js" defer></script>
@@ -71,7 +71,7 @@
       <span>Re-verified at each release</span>
     </div>
 
-    <p><em>Field note · from the author · coverage: v0.3.0</em></p>
+    <p><em>Field note · from the author · coverage: v0.3.1</em></p>
     <p>This one isn't from a vendor write-up. It happened to me, on my own
     infrastructure, and it is part of why byn exists.</p>
     <hr>
@@ -180,7 +180,7 @@
     <strong>live session</strong> could use that session until it expired or was
     locked — per-terminal sessions narrow this drastically, but the
     same-UID ceiling is real with privilege separation off (the default).
-    Privsep shipped opt-in in v0.3.0 (<code>[security] privsep</code> + <code>sudo byn setup</code>) raises that bar to root.</li>
+    Privsep is opt-in in v0.3.1 (<code>[security] privsep</code> + <code>sudo byn setup</code>) and raises that bar to root.</li>
     <li>The on-box audit trail of a fully compromised machine can be tampered
     with by an attacker holding the vault file; <strong>off-box anchoring</strong> of
     the chain head is planned to close exactly that.</li>

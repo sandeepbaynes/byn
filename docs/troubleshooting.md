@@ -431,7 +431,8 @@ projects outside the protected folders — which needs no signing at all.
 ## Running `byn exec` under privsep (toolchain, TMPDIR, debugging)
 
 By default `byn exec` runs the child as the `_byn-exec` service user, so the
-injected secrets are hidden from your own `ps -E`. Because the child is a
+injected secrets are hidden from same-UID snooping (`ps -E` on macOS,
+`/proc/<pid>/environ` on Linux). Because the child is a
 **different UID** than you, it needs filesystem access to what your toolchain
 reads and writes — `byn trust` grants that for the *project*, but not for tools
 installed in your home. Symptoms and fixes:
@@ -491,7 +492,8 @@ run with `TMPDIR=/tmp`.
 
 A debugger running as **you** cannot attach to a **different-UID** (`_byn-exec`)
 process: macOS/Linux restrict `ptrace`/`task_for_pid` to the same UID. That's the
-*same* rule that hides the env from your `ps -E`. Two ways to debug:
+*same* rule that hides the child's env from a same-UID process (`ps -E` on macOS,
+`/proc/<pid>/environ` on Linux). Two ways to debug:
 
 - **`byn exec --no-privsep -- …`** runs the child **as you**, so a launch-mode
   debugger (VS Code "launch") attaches normally. Secrets are still injected, but
