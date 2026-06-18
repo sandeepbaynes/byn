@@ -12,6 +12,46 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.3.1
+
+**Headline:** privsep `byn exec` now works in protected dirs (macOS `~/Documents`
+et al.) by inheriting your shell's access, plus debug modes and automatic
+toolchain access for the exec child.
+
+### What's new
+
+- **Terminal-anchored privsep exec.** With `[security] privsep` on, a trusted-`.byn`
+  `byn exec` now spawns the child in your shell's process tree (then drops it to
+  `_byn-exec`), so on macOS it inherits your shell's Full Disk Access / TCC grant —
+  `byn exec` runs in `~/Documents`, `~/Desktop`, iCloud, etc., while the injected env
+  stays hidden from same-UID snooping (`ps -E` on macOS, `/proc/<pid>/environ` on
+  Linux). Secrets reach the child via a one-time token the privileged helper redeems
+  from the daemon; the owner-UID CLI never sees them.
+- **Debug modes for `byn exec`** (see [CLI reference](cli-reference.md#execution-modes--privsep-default---no-privsep---inspect)):
+  - `--no-privsep` runs the child **as you** (so a launch-mode debugger can attach) and
+    **requires the master password every run** — no blind trusted-file run, since the env
+    is then visible to any same-UID process (`ps -E` / `/proc/<pid>/environ`).
+  - `--inspect[=PORT]` (and `--inspect <PORT>` / `--inspect-brk`) keeps privsep and enables
+    the Node inspector for **attach-mode** debugging over loopback TCP; with no port byn
+    picks a free one, an explicit busy port fails clearly, and `--inspect=0` lets each
+    process self-allocate (e.g. `tsx watch`).
+- **Automatic toolchain access for the exec child.** Because the child runs as `_byn-exec`,
+  `byn trust` now grants it read/write on a curated set of common tool-state dirs that
+  exist (`~/.cache`, `~/.npm`, `~/Library/pnpm`, `~/.cargo`, `~/.rustup`, `~/go`, …), plus
+  any extra dirs a `.byn` declares in the new **`[exec] writable`** list (see
+  [.byn file format](byn-file-format.md)). The child's `TMPDIR` is normalized to a writable
+  location automatically.
+
+### Upgrade notes (from v0.3.0)
+
+- **No config or schema changes.** Privsep is still opt-in via `[security] privsep`,
+  still provisioned with `sudo byn setup` — nothing changes unless you have privsep on.
+- **macOS Full Disk Access:** for the daemon to read a `.byn` under `~/Documents`/iCloud
+  it still needs FDA (re-grant after a rebuild while unsigned). The exec **child** no
+  longer needs its own FDA — it inherits the shell's. See [Troubleshooting](troubleshooting.md#running-byn-exec-under-privsep-toolchain-tmpdir-debugging).
+
+---
+
 ## v0.3.0
 
 **Headline:** opt-in privilege separation, a fixed system data root with

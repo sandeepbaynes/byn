@@ -31,6 +31,18 @@ byn addresses all three:
 | Bulk-write keys (from .env / .json / yaml) | `byn import [PATH \| -]`            | yes (counts only) |
 | Export entire scope (dangerous)          | `byn export --format env`           | **NO** — block this in your harness |
 
+> **`byn exec` and authorization — the agent pattern.** For an **unattended**
+> agent the only credential-free path is a **trusted `.byn` with the command
+> pinned in `[exec] actions`**: it runs with **no password, even while the vault
+> is locked** (the values are injected via a sealed capability). An **unpinned**
+> command, or **ad-hoc exec** with no `.byn`, requires a fresh master password
+> per run — which an unattended agent can't supply, so it **fails closed**.
+> `byn unlock` / sessions do **not** authorize exec. So: set up the project's
+> `.byn` (pinned `[exec] actions` + a minimal `[exec] env` allowlist), `byn trust`
+> it once, and the agent runs the approved commands autonomously while everything
+> else stays gated. **Do not use `--no-privsep` in an agent harness** — it
+> requires a password every run and exists for interactive human debugging.
+
 ---
 
 ## Recommended agent harness rules

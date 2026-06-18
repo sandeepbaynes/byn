@@ -73,16 +73,25 @@ Errors:
 
 ### `byn unlock [--password-stdin]`
 
-Unwrap the vault key into the daemon's memory.
+Authorize value access (`get` / `put` / `update` / `delete`) for **this
+terminal's session only** — **not** a global unlock. It mints a session token
+bound to your TTY + UID so subsequent commands in *this* terminal don't
+re-prompt; other terminals, scripts, the portal, and background agents each
+authenticate separately (one session never grants another). It does **not**
+affect `byn exec` — exec is governed by the trusted `.byn` + per-action auth,
+independent of unlock/session state. (Internally it also unwraps the vault key
+into the daemon's memory, but value access still requires a valid session.)
 
 - Subject to the failed-unlock backoff (`auth-state.json`).
-- On success, starts the per-vault idle timer.
+- On success, starts the per-vault idle timer. End this terminal's session with
+  `byn lock --session`.
 
 ### `byn lock`
 
 Zero the in-memory vault key for `--vault` (or `--all` to lock every
-unlocked vault). `--session` ends only this terminal's session and
-leaves the vault unlocked.
+unlocked vault) — this affects **all** sessions. `--session` instead ends
+**only this terminal's** session (drops its token) and leaves the vault
+unlocked for other callers. Neither affects `byn exec` authorization.
 
 ### `byn daemon start [--foreground]`
 
@@ -430,14 +439,14 @@ byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each 
 
 How the child runs — and whether it needs a password — depends on the mode:
 
-| Mode | Child runs as | Env hidden from your `ps -E`? | Auth for a trusted `.byn` | Use for |
+| Mode | Child runs as | Env hidden from same-UID snooping? | Auth for a trusted `.byn` | Use for |
 |------|---------------|------------------------------|---------------------------|---------|
 | `byn exec` (default) | `_byn-exec` (privilege-separated), born in your shell's tree | **Yes** | **None** — credential-free, even locked | agents, CI, unattended/autonomous runs |
 | `byn exec --no-privsep` | **you** (in-process via `execve`) | No (same UID) | **Master password every run** | interactive step-debugging (launch-mode debuggers) |
 | `byn exec --inspect[=TARGET]` | `_byn-exec` (privilege-separated) | **Yes** | None (same as default) | debugging **while** keeping secrets hidden |
 
-- **Default (privsep):** the daemon authorizes the exec and a setuid helper — spawned in *your shell's* process tree — drops the child to the `_byn-exec` service user. The injected secrets are hidden from same-user snooping (your own `ps -E` shows nothing), and a trusted `.byn` with a matching `[exec]` action runs with **no password** — the autonomous path for agents.
-- **`--no-privsep`:** byn `execve`'s into the child **as you**, so its injected env is visible to your own `ps -E`. Because of that exposure it **requires the master password on every run** — it does *not* honor the trusted-`.byn` credential-free path. Use it for interactive debugging: a launch-mode debugger (VS Code "launch") attaches because the process shares your UID. A debugger **cannot attach across UIDs** — the same kernel rule that hides the env from your `ps -E` blocks attaching to a privsep child.
+- **Default (privsep):** the daemon authorizes the exec and a setuid helper — spawned in *your shell's* process tree — drops the child to the `_byn-exec` service user. The injected secrets are hidden from same-UID snooping (a different UID can't read the child's env — `ps -E` on macOS, `/proc/<pid>/environ` on Linux), and a trusted `.byn` with a matching `[exec]` action runs with **no password** — the autonomous path for agents.
+- **`--no-privsep`** exists for **human debugging**. byn `execve`'s into the child **as you**, so a launch-mode debugger (VS Code "launch") can attach — it shares your UID (a debugger **cannot attach across UIDs**, the same kernel rule that hides a privsep child's env, so it can't attach to the `_byn-exec` child directly). The cost: because the child runs as you, its injected env is visible to any same-UID process (`ps -E` on macOS, `/proc/<pid>/environ` on Linux). So this mode **requires the master password on every run**, and a **trusted `.byn` does *not* authorize it** (no autonomous / credential-free path here). That password gate is deliberate — it is the safeguard that stops a **rogue agent or attacker** from using `--no-privsep` to inject your secrets into an owner-UID process they could then read: a human at the keyboard can supply the password, an unattended agent cannot.
 - **`--inspect[=PORT]` / `--inspect PORT` / `--inspect-brk`:** keeps privsep **and** enables the Node inspector, so you debug while secrets stay hidden. byn sets `NODE_OPTIONS` and your debugger **attaches** over loopback TCP (UID-agnostic). Port handling:
   - **no PORT** → byn picks the **next free port** (printed), so concurrent debug sessions don't collide.
   - **explicit PORT** (`--inspect 9230` or `--inspect=9230`, also `127.0.0.1:9230`) → used **only if free**; otherwise byn **fails with a clear message** instead of a buried `EADDRINUSE`.
@@ -475,11 +484,18 @@ How the child runs — and whether it needs a password — depends on the mode:
   file — editing the `.byn` post-trust cannot change the effective policy
   without re-trusting (which requires the master password). Actions
   enforcement is **independent** of session state.
-- Every exec attempt — allowed or denied, including locked-vault
-  failures — is audited with the full command line. Alias execs are
-  audited as `alias <name> → <resolved command>`.
-- **Vault locked:** always a hard failure ("vault is locked"). Unlike
-  `delete`, exec cannot proceed with a password; `byn unlock` first.
+- **`[exec] writable` — tool-state dirs for the privsep child (optional):**
+  extra directories the `_byn-exec` child may read/write (e.g. a package
+  manager's global store under a `0700` home dir), granted at `byn trust` time
+  on top of a curated default set. Most stacks need nothing here. See
+  [byn-file-format.md](byn-file-format.md).
+- Every exec attempt — allowed or denied — is audited with the full
+  command line. Alias execs are audited as `alias <name> → <resolved command>`.
+- **Lock state and exec:** `byn unlock` / sessions do **not** authorize exec. A
+  trusted `.byn` runs exec by its own `[exec] actions` + per-action auth: a
+  **pinned** command runs autonomously (no unlock, no password — even while
+  locked) via its sealed capability; an **unpinned** one prompts for the master
+  password. Only **ad-hoc exec** (no `.byn`) requires the vault unlocked.
 - Stage 1: `exec.LookPath` to vet the binary
 - Stage 2: parent's environ + injected vars (last value wins, so
   vault values shadow shell exports)

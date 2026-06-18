@@ -133,6 +133,19 @@
     </tr>
     </tbody>
     </table>
+    <blockquote>
+    <p><strong><code>byn exec</code> and authorization — the agent pattern.</strong> For an <strong>unattended</strong>
+    agent the only credential-free path is a <strong>trusted <code>.byn</code> with the command
+    pinned in <code>[exec] actions</code></strong>: it runs with <strong>no password, even while the vault
+    is locked</strong> (the values are injected via a sealed capability). An <strong>unpinned</strong>
+    command, or <strong>ad-hoc exec</strong> with no <code>.byn</code>, requires a fresh master password
+    per run — which an unattended agent can't supply, so it <strong>fails closed</strong>.
+    <code>byn unlock</code> / sessions do <strong>not</strong> authorize exec. So: set up the project's
+    <code>.byn</code> (pinned <code>[exec] actions</code> + a minimal <code>[exec] env</code> allowlist), <code>byn trust</code>
+    it once, and the agent runs the approved commands autonomously while everything
+    else stays gated. <strong>Do not use <code>--no-privsep</code> in an agent harness</strong> — it
+    requires a password every run and exists for interactive human debugging.</p>
+    </blockquote>
     <hr>
     <h2 id="recommended-agent-harness-rules">Recommended agent harness rules</h2>
     <p>In your agent harness (hooks, permission rules, or system prompt), allow:</p>
@@ -291,7 +304,7 @@ export BYN_ENV=dev
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn <a href="../../../docs/releases/">v0.3.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/ai-agents.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../../docs/releases/">v0.3.1</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/integrations/ai-agents.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../../index.html">Home</a>
