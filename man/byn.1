@@ -237,14 +237,18 @@ shell's process tree \(em its injected env is hidden from your own
 action runs credential\-free (no password, even with the vault locked).
 This is the mode for agents, CI, and unattended runs.
 .IP
-\fB\-\-no\-privsep\fR runs the child IN\-PROCESS as YOU (\fBexecve\fR(2)),
-so its injected env is visible to your own \fBps \-E\fR; therefore this
-mode REQUIRES the master password on EVERY run (no blind trusted\-file
-run). Use it for interactive step\-debugging: a launch\-mode debugger
-(e.g. VS Code "launch") can attach because the process shares your UID.
-A debugger cannot attach across UIDs \(em the same kernel rule that
-hides the env from your \fBps \-E\fR \(em so it cannot attach to a
-privsep child directly.
+\fB\-\-no\-privsep\fR exists for HUMAN debugging: it runs the child
+IN\-PROCESS as YOU (\fBexecve\fR(2)) so a launch\-mode debugger (e.g. VS Code
+"launch") can attach \(em it shares your UID (a debugger cannot attach across
+UIDs, the same kernel rule that hides a privsep child's env, so it cannot attach
+to the \fB_byn\-exec\fR child directly). The cost: the child's injected env is
+then visible to any same\-UID process (\fBps \-E\fR on macOS,
+\fI/proc/<pid>/environ\fR on Linux). So this mode REQUIRES the master password on
+EVERY run and a trusted \fB.byn\fR does NOT authorize it (no credential\-free
+path). That password gate is the safeguard \(em it stops a rogue agent or
+attacker from using \fB\-\-no\-privsep\fR to inject secrets into an owner\-UID
+process they could then read: a human can type the password, an unattended agent
+cannot.
 .IP
 \fB\-\-inspect\fR[=\fIPORT\fR] / \fB\-\-inspect\fR \fIPORT\fR (and
 \fB\-\-inspect\-brk\fR) keeps privsep AND enables the Node inspector so

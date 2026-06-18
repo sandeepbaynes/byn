@@ -495,9 +495,14 @@ process: macOS/Linux restrict `ptrace`/`task_for_pid` to the same UID. That's th
 
 - **`byn exec --no-privsep -- …`** runs the child **as you**, so a launch-mode
   debugger (VS Code "launch") attaches normally. Secrets are still injected, but
-  the env is visible to your own `ps -E`, so this mode **requires the master
-  password every run** (no blind trusted-file run). Best for interactive
-  step-debugging — you're at the machine, so a password per run is fine.
+  the env is then visible to any same-UID process (`ps -E` on macOS,
+  `/proc/<pid>/environ` on Linux), so this mode **requires the master password
+  every run** and a trusted `.byn` does **not** authorize it (no credential-free
+  path). That password gate is the safeguard — it stops a rogue agent from using
+  `--no-privsep` to inject secrets into an owner-UID process it could then read;
+  a human at the keyboard supplies the password, an unattended agent can't. Best
+  for interactive step-debugging — you're at the machine, so a password per run
+  is fine.
 - **`byn exec --inspect[=PORT] -- …`** (or `--inspect PORT`) keeps privsep (env
   hidden) and enables the Node inspector. Your editor **attaches** over loopback
   TCP (UID-agnostic). With no PORT byn picks the next free port (printed); an

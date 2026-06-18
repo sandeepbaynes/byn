@@ -448,9 +448,14 @@ chmod +a &quot;_byn-exec allow read,write,execute,delete,add_file,add_subdirecto
     <ul>
     <li><strong><code>byn exec --no-privsep -- …</code></strong> runs the child <strong>as you</strong>, so a launch-mode
     debugger (VS Code &quot;launch&quot;) attaches normally. Secrets are still injected, but
-    the env is visible to your own <code>ps -E</code>, so this mode <strong>requires the master
-    password every run</strong> (no blind trusted-file run). Best for interactive
-    step-debugging — you're at the machine, so a password per run is fine.</li>
+    the env is then visible to any same-UID process (<code>ps -E</code> on macOS,
+    <code>/proc/&lt;pid&gt;/environ</code> on Linux), so this mode <strong>requires the master password
+    every run</strong> and a trusted <code>.byn</code> does <strong>not</strong> authorize it (no credential-free
+    path). That password gate is the safeguard — it stops a rogue agent from using
+    <code>--no-privsep</code> to inject secrets into an owner-UID process it could then read;
+    a human at the keyboard supplies the password, an unattended agent can't. Best
+    for interactive step-debugging — you're at the machine, so a password per run
+    is fine.</li>
     <li><strong><code>byn exec --inspect[=PORT] -- …</code></strong> (or <code>--inspect PORT</code>) keeps privsep (env
     hidden) and enables the Node inspector. Your editor <strong>attaches</strong> over loopback
     TCP (UID-agnostic). With no PORT byn picks the next free port (printed); an
