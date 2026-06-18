@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>byn vs the other tools, honestly — byn docs</title>
-<meta name="description" content="Field note · coverage: v0.3.0 · updated with each release">
+<meta name="description" content="Field note · coverage: v0.3.1 · updated with each release">
 <link rel="stylesheet" href="../../../assets/site.css">
 <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
 <script src="../../../assets/site.js" defer></script>
@@ -76,7 +76,7 @@
       <span>Re-verified at each release</span>
     </div>
 
-    <p><em>Field note · coverage: v0.3.0 · updated with each release</em></p>
+    <p><em>Field note · coverage: v0.3.1 · updated with each release</em></p>
     <p>A strengths-<strong>and</strong>-weaknesses comparison of the tools developers
     actually use to handle secrets — including byn's own weaknesses, listed
     just as bluntly. Two ground rules:</p>
@@ -212,11 +212,11 @@
     <li><strong>Young.</strong> Pre-1.0, small community, no independent third-party
     security audit yet. The <a href="../security/">security model</a> is
     documented honestly, but maturity takes time.</li>
-    <li><strong>The same-UID ceiling is real in v0.3.0 by default.</strong> With privilege
+    <li><strong>The same-UID ceiling is real in v0.3.1 by default.</strong> With privilege
     separation off (the default), a code-executing process as your UID can
     still ptrace the <em>unlocked</em> daemon or read an injected child's environ.
     Privilege separation (daemon and exec children on their own service UIDs)
-    ships <strong>opt-in</strong> in v0.3.0 — enable it with <code>[security] privsep</code> +
+    ships <strong>opt-in</strong> in v0.3.1 — enable it with <code>[security] privsep</code> +
     <code>sudo byn setup</code>; it raises the bar to root but not past it. With it off,
     OS-level isolation of untrusted code is the recommended companion control.</li>
     <li><strong>The master passphrase is the at-rest floor.</strong> The vault file is

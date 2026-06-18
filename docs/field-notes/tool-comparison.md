@@ -1,6 +1,6 @@
 # byn vs the other tools, honestly
 
-*Field note · coverage: v0.3.0 · updated with each release*
+*Field note · coverage: v0.3.1 · updated with each release*
 
 A strengths-**and**-weaknesses comparison of the tools developers
 actually use to handle secrets — including byn's own weaknesses, listed
@@ -147,11 +147,11 @@ them.**
   - **Young.** Pre-1.0, small community, no independent third-party
     security audit yet. The [security model](../security.md) is
     documented honestly, but maturity takes time.
-  - **The same-UID ceiling is real in v0.3.0 by default.** With privilege
+  - **The same-UID ceiling is real in v0.3.1 by default.** With privilege
     separation off (the default), a code-executing process as your UID can
     still ptrace the *unlocked* daemon or read an injected child's environ.
     Privilege separation (daemon and exec children on their own service UIDs)
-    ships **opt-in** in v0.3.0 — enable it with `[security] privsep` +
+    ships **opt-in** in v0.3.1 — enable it with `[security] privsep` +
     `sudo byn setup`; it raises the bar to root but not past it. With it off,
     OS-level isolation of untrusted code is the recommended companion control.
   - **The master passphrase is the at-rest floor.** The vault file is

@@ -24,12 +24,13 @@ toolchain access for the exec child.
   `byn exec` now spawns the child in your shell's process tree (then drops it to
   `_byn-exec`), so on macOS it inherits your shell's Full Disk Access / TCC grant —
   `byn exec` runs in `~/Documents`, `~/Desktop`, iCloud, etc., while the injected env
-  stays hidden from your own `ps -E`. Secrets reach the child via a one-time token the
-  privileged helper redeems from the daemon; the owner-UID CLI never sees them.
+  stays hidden from same-UID snooping (`ps -E` on macOS, `/proc/<pid>/environ` on
+  Linux). Secrets reach the child via a one-time token the privileged helper redeems
+  from the daemon; the owner-UID CLI never sees them.
 - **Debug modes for `byn exec`** (see [CLI reference](cli-reference.md#execution-modes--privsep-default---no-privsep---inspect)):
   - `--no-privsep` runs the child **as you** (so a launch-mode debugger can attach) and
     **requires the master password every run** — no blind trusted-file run, since the env
-    is then visible to your `ps -E`.
+    is then visible to any same-UID process (`ps -E` / `/proc/<pid>/environ`).
   - `--inspect[=PORT]` (and `--inspect <PORT>` / `--inspect-brk`) keeps privsep and enables
     the Node inspector for **attach-mode** debugging over loopback TCP; with no port byn
     picks a free one, an explicit busy port fails clearly, and `--inspect=0` lets each

@@ -399,7 +399,8 @@ sudo codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
     <hr>
     <h2 id="running-byn-exec-under-privsep-toolchain-tmpdir-debugging">Running <code>byn exec</code> under privsep (toolchain, TMPDIR, debugging)</h2>
     <p>By default <code>byn exec</code> runs the child as the <code>_byn-exec</code> service user, so the
-    injected secrets are hidden from your own <code>ps -E</code>. Because the child is a
+    injected secrets are hidden from same-UID snooping (<code>ps -E</code> on macOS,
+    <code>/proc/&lt;pid&gt;/environ</code> on Linux). Because the child is a
     <strong>different UID</strong> than you, it needs filesystem access to what your toolchain
     reads and writes — <code>byn trust</code> grants that for the <em>project</em>, but not for tools
     installed in your home. Symptoms and fixes:</p>
@@ -444,7 +445,8 @@ chmod +a &quot;_byn-exec allow read,write,execute,delete,add_file,add_subdirecto
     <h3 id="debugging--the-debugger-cant-attach-to-a-privsep-child">Debugging — the debugger can't attach to a privsep child</h3>
     <p>A debugger running as <strong>you</strong> cannot attach to a <strong>different-UID</strong> (<code>_byn-exec</code>)
     process: macOS/Linux restrict <code>ptrace</code>/<code>task_for_pid</code> to the same UID. That's the
-    <em>same</em> rule that hides the env from your <code>ps -E</code>. Two ways to debug:</p>
+    <em>same</em> rule that hides the child's env from a same-UID process (<code>ps -E</code> on macOS,
+    <code>/proc/&lt;pid&gt;/environ</code> on Linux). Two ways to debug:</p>
     <ul>
     <li><strong><code>byn exec --no-privsep -- …</code></strong> runs the child <strong>as you</strong>, so a launch-mode
     debugger (VS Code &quot;launch&quot;) attaches normally. Secrets are still injected, but

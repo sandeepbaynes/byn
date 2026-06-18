@@ -133,6 +133,19 @@
     </tr>
     </tbody>
     </table>
+    <blockquote>
+    <p><strong><code>byn exec</code> and authorization — the agent pattern.</strong> For an <strong>unattended</strong>
+    agent the only credential-free path is a <strong>trusted <code>.byn</code> with the command
+    pinned in <code>[exec] actions</code></strong>: it runs with <strong>no password, even while the vault
+    is locked</strong> (the values are injected via a sealed capability). An <strong>unpinned</strong>
+    command, or <strong>ad-hoc exec</strong> with no <code>.byn</code>, requires a fresh master password
+    per run — which an unattended agent can't supply, so it <strong>fails closed</strong>.
+    <code>byn unlock</code> / sessions do <strong>not</strong> authorize exec. So: set up the project's
+    <code>.byn</code> (pinned <code>[exec] actions</code> + a minimal <code>[exec] env</code> allowlist), <code>byn trust</code>
+    it once, and the agent runs the approved commands autonomously while everything
+    else stays gated. <strong>Do not use <code>--no-privsep</code> in an agent harness</strong> — it
+    requires a password every run and exists for interactive human debugging.</p>
+    </blockquote>
     <hr>
     <h2 id="recommended-agent-harness-rules">Recommended agent harness rules</h2>
     <p>In your agent harness (hooks, permission rules, or system prompt), allow:</p>
