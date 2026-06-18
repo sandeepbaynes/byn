@@ -47,3 +47,36 @@ func TestAssets_IndexWiring(t *testing.T) {
 		}
 	}
 }
+
+// TestAssets_RevertPersistWired guards the non-default-env override actions:
+// override rows get a revert + persist icon, new rows get a persist icon, and
+// the undo-toast + hover styles exist. app.js has no JS test harness, so this
+// presence check is the regression guard that the wiring is not silently lost.
+func TestAssets_RevertPersistWired(t *testing.T) {
+	js, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	s := string(js)
+	for _, want := range []string{
+		"revert:", "persist:", // ICONS registry entries
+		"function revertOverride", "function persistToDefault", "function toastUndo",
+		`iconBtn("revert"`, `iconBtn("persist"`,
+		`/api/entry/delete`, `env: "default"`, // persist promotes into the default scope
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("app.js missing %q — revert/persist wiring", want)
+		}
+	}
+
+	css, err := assetsFS.ReadFile("assets/style.css")
+	if err != nil {
+		t.Fatalf("read style.css: %v", err)
+	}
+	cs := string(css)
+	for _, want := range []string{".act-ico.revert", ".act-ico.persist", ".toast-undo"} {
+		if !strings.Contains(cs, want) {
+			t.Errorf("style.css missing %q — revert/persist styling", want)
+		}
+	}
+}

@@ -459,6 +459,12 @@ select.input { appearance: none; cursor: pointer; }
 }
 .toast.err { border-color: var(--danger); color: var(--danger-text); }
 .toast.ok::before { content: "✓ "; color: var(--signal); }
+/* inline "undo" affordance inside a toast (see toastUndo) */
+.toast-undo {
+  background: none; border: none; padding: 0; margin-left: 2px;
+  font: inherit; color: var(--signal); text-decoration: underline; cursor: pointer;
+}
+.toast-undo:hover { color: var(--text); }
 
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
@@ -605,6 +611,11 @@ select.input { appearance: none; cursor: pointer; }
 .act-ico.reveal:hover { color: var(--signal); }
 .act-ico.edit:hover { color: var(--amber); }
 .act-ico.danger:hover { color: var(--danger); border-color: var(--danger-ring); }
+/* revert undoes an override (amber) back to inherited; persist promotes a value
+   to the shared default, making it available everywhere (green = the new/default
+   accent). */
+.act-ico.revert:hover { color: var(--amber); }
+.act-ico.persist:hover { color: var(--signal); }
 .act.save { color: var(--signal); }
 
 /* multi-line value editing */

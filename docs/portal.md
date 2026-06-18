@@ -30,6 +30,18 @@ For a non-default env (one that inherits `default`), **reset to default** remove
 every override and added var in that env — leaving it inheriting `default`
 entirely — after a confirm dialog. The `default` env and other envs are untouched.
 
+Per-row, a non-default env adds two actions:
+
+- **revert** (on an *overridden* var — one that also exists in `default`) drops
+  this env's override so the row falls back to the `default` value. While the
+  vault is unlocked it is instant with an **undo** toast; while locked it asks
+  for the master password first (no undo, since the value can't be read back).
+- **persist** (on an *overridden* or *new* var) promotes this env's value into
+  `default` and removes the local copy, so this env — and every env inheriting
+  `default` — resolves to it. It requires the vault unlocked (writing to
+  `default` must encrypt) and confirms first, because it changes the shared
+  `default` (replacing its existing value for an override).
+
 ---
 
 ## Trust boundary: loopback + owner-token
