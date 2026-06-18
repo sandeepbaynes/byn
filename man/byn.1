@@ -1,4 +1,4 @@
-.TH BYN 1 "2026-06-03" "byn 0.0.1" "User Commands"
+.TH BYN 1 "2026-06-18" "byn 0.3.1" "User Commands"
 .SH NAME
 byn \- secure secrets vault with shim-based credential injection
 .SH SYNOPSIS
@@ -41,15 +41,18 @@ See
 .BR byn-init (1).
 .TP
 .B unlock
-Unlock the vault and start a per\-terminal session.  Prompts for the
+Authorise value access (\fBget\fR/\fBput\fR/\fBupdate\fR/\fBdelete\fR) for
+\fBthis terminal's session only\fR \(em NOT a global unlock.  Prompts for the
 master password.  On success, a session token is saved to
 .I <data-dir>/sessions/
-(keyed by the controlling terminal device number) so subsequent
-commands in the same terminal window are authorised without
-re\-prompting.  When stdout is not a terminal the vault is still
-unlocked but no session file is written.
-Run \fBbyn lock \-\-session\fR to clear the token for the current
-terminal without locking the vault for other callers.
+(keyed by the controlling terminal device number) so subsequent commands in the
+same terminal window are authorised without re\-prompting; other terminals,
+scripts, the portal, and background agents each authorise separately (one
+session never grants another).  When stdout is not a terminal the vault is still
+unlocked but no session file is written.  It does NOT affect \fBbyn exec\fR \(em
+exec is governed by the trusted \fB.byn\fR + per\-action auth, independent of
+unlock/session.  Run \fBbyn lock \-\-session\fR to clear the token for the
+current terminal without locking the vault for other callers.
 See
 .BR byn-unlock (1).
 .TP
@@ -234,14 +237,18 @@ shell's process tree \(em its injected env is hidden from your own
 action runs credential\-free (no password, even with the vault locked).
 This is the mode for agents, CI, and unattended runs.
 .IP
-\fB\-\-no\-privsep\fR runs the child IN\-PROCESS as YOU (\fBexecve\fR(2)),
-so its injected env is visible to your own \fBps \-E\fR; therefore this
-mode REQUIRES the master password on EVERY run (no blind trusted\-file
-run). Use it for interactive step\-debugging: a launch\-mode debugger
-(e.g. VS Code "launch") can attach because the process shares your UID.
-A debugger cannot attach across UIDs \(em the same kernel rule that
-hides the env from your \fBps \-E\fR \(em so it cannot attach to a
-privsep child directly.
+\fB\-\-no\-privsep\fR exists for HUMAN debugging: it runs the child
+IN\-PROCESS as YOU (\fBexecve\fR(2)) so a launch\-mode debugger (e.g. VS Code
+"launch") can attach \(em it shares your UID (a debugger cannot attach across
+UIDs, the same kernel rule that hides a privsep child's env, so it cannot attach
+to the \fB_byn\-exec\fR child directly). The cost: the child's injected env is
+then visible to any same\-UID process (\fBps \-E\fR on macOS,
+\fI/proc/<pid>/environ\fR on Linux). So this mode REQUIRES the master password on
+EVERY run and a trusted \fB.byn\fR does NOT authorize it (no credential\-free
+path). That password gate is the safeguard \(em it stops a rogue agent or
+attacker from using \fB\-\-no\-privsep\fR to inject secrets into an owner\-UID
+process they could then read: a human can type the password, an unattended agent
+cannot.
 .IP
 \fB\-\-inspect\fR[=\fIPORT\fR] / \fB\-\-inspect\fR \fIPORT\fR (and
 \fB\-\-inspect\-brk\fR) keeps privsep AND enables the Node inspector so
@@ -265,9 +272,12 @@ denials \(em is written to the vault's audit log with the full
 command line. Alias execs are logged as "alias NAME \(-> resolved argv"
 (capped at 200 chars).
 .IP
-\fBVault locked:\fR exec always fails with "vault is locked". Unlike
-the delete family, exec cannot proceed with a password alone; the
-vault must be unlocked first (\fBbyn unlock\fR).
+\fBLock state and exec:\fR \fBbyn unlock\fR / sessions do NOT authorize exec. A
+trusted \fB.byn\fR runs exec by its own \fB[exec] actions\fR + per\-action auth:
+a \fIpinned\fR command runs autonomously (no unlock, no password \(em even while
+the vault is locked) via its sealed capability; an \fIunpinned\fR one prompts for
+the master password. Only \fBad\-hoc exec\fR (no \fB.byn\fR) requires the vault
+unlocked.
 .IP
 Only exec verifies the \fB.byn\fR is trusted (machine + vault\-key MAC)
 before injecting; an untrusted, changed, or tampered \fB.byn\fR aborts
