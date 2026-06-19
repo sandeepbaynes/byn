@@ -130,6 +130,19 @@ func New(ctx context.Context, rootDir, vaultID, vaultName string, store chainHea
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit: mkdir %s: %w", dir, err)
 	}
+	// Reconcile the head with the durable on-disk log. Append writes the on-disk
+	// line BEFORE updating the meta head; a crash in that window leaves meta one
+	// entry behind. The on-disk last line is the source of truth — adopt it and
+	// re-persist meta, so the next Append chains correctly. This is the repair
+	// this file's header documents.
+	if diskHead, ok, derr := lastDiskHead(dir); derr != nil {
+		return nil, fmt.Errorf("audit: scan last line: %w", derr)
+	} else if ok && diskHead != head {
+		if err := store.MetaSet(ctx, MetaKeyHead, diskHead); err != nil {
+			return nil, fmt.Errorf("audit: reconcile head: %w", err)
+		}
+		head = diskHead
+	}
 	return &Logger{
 		rootDir:   rootDir,
 		vaultID:   vaultID,
@@ -138,6 +151,48 @@ func New(ctx context.Context, rootDir, vaultID, vaultName string, store chainHea
 		seed:      seed,
 		prevHex:   head,
 	}, nil
+}
+
+// lastDiskHead returns the hmac_chain of the last parseable line in the vault's
+// audit log dir (newest file first, scanning lines bottom-up), skipping a torn
+// trailing line a partial write may have left. ok is false when no parseable
+// line exists yet (fresh/empty log).
+func lastDiskHead(dir string) (head string, ok bool, err error) {
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		if errors.Is(rerr, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read dir: %w", rerr)
+	}
+	files := make([]string, 0, len(entries))
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			files = append(files, ent.Name())
+		}
+	}
+	sortStrings(files)
+	for i := len(files) - 1; i >= 0; i-- {
+		raw, rerr := os.ReadFile(filepath.Join(dir, files[i])) // #nosec G304 -- daemon-controlled
+		if rerr != nil {
+			return "", false, fmt.Errorf("read %s: %w", files[i], rerr)
+		}
+		lines := splitLines(raw)
+		for j := len(lines) - 1; j >= 0; j-- {
+			if len(lines[j]) == 0 {
+				continue
+			}
+			var e Event
+			if json.Unmarshal(lines[j], &e) != nil {
+				continue // torn / partial line — walk back
+			}
+			if e.HMACChain == "" {
+				continue
+			}
+			return e.HMACChain, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // Append writes an event to the current month's log file and updates

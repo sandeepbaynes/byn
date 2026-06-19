@@ -17,8 +17,9 @@ import (
 
 // fakeStore implements chainHeadStore for tests.
 type fakeStore struct {
-	mu   sync.Mutex
-	data map[string]string
+	mu       sync.Mutex
+	data     map[string]string
+	setCount int // number of MetaSet calls — lets tests assert no redundant writes
 }
 
 func newFakeStore(seed []byte) *fakeStore {
@@ -36,6 +37,7 @@ func (f *fakeStore) MetaGet(_ context.Context, key string) (string, error) {
 func (f *fakeStore) MetaSet(_ context.Context, key, value string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.setCount++
 	f.data[key] = value
 	return nil
 }
