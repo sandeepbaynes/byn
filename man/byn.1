@@ -389,12 +389,21 @@ this materialises plaintext. Treat the destination as you would a
 \fB.env\fR file \- never commit, never share.
 .SS Diagnostics and audit
 .TP
-.B doctor \fR[\fB\-\-json\fR]
-Run a battery of self\-checks against the daemon and every vault on
-disk: daemon liveness, vault enumeration, schema + fingerprint
-match, audit\-chain HMAC integrity. Each check returns
-\fBok\fR / \fBwarn\fR / \fBfail\fR. Exits non\-zero if any
-\fBfail\fR.
+.B doctor \fR[\fB\-\-json\fR] \fR[\fB\-\-repair\fR]
+Run two batteries of self\-checks. The LOCAL provisioning/health checks work
+even when the daemon is DOWN: privsep provisioned, spawn helper installed,
+daemon reachable, the data dir still owned by \fB_byn\fR (flags root\-owned
+strays a \fBsudo byn start\fR left behind), and no stale socket. When the daemon
+is reachable it also runs the daemon\-side checks: vault enumeration, schema +
+fingerprint match, audit\-chain HMAC integrity. Each check returns
+\fBok\fR / \fBwarn\fR / \fBfail\fR; exits non\-zero if any \fBfail\fR. Plain
+\fBbyn doctor\fR only diagnoses.
+.IP
+\fB\-\-repair\fR (root) applies the safe fixes for the failing local checks:
+chown the data dir back to \fB_byn\fR and reload the launchd/systemd service
+(clearing a stale socket and a broken registration). Run as
+\fBsudo byn doctor \-\-repair\fR \(em the packaged form of the manual
+launchctl bootout/bootstrap + chown recovery.
 .TP
 .B audit view \fR[\fB\-\-lines\fR \fIN\fR] \fR[\fB\-\-json\fR]
 Snapshot the most recent \fIN\fR events from the active vault's audit

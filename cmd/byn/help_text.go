@@ -1258,26 +1258,43 @@ SEE ALSO
 `,
 
 	"doctor": `NAME
-       byn-doctor - run self-checks on the daemon and every vault
+       byn-doctor - diagnose (and optionally repair) byn's health
 
 SYNOPSIS
        byn doctor [--json]
+       sudo byn doctor --repair
 
 DESCRIPTION
-       Reports per-check ok / warn / fail across:
-         • daemon          — running?
+       Runs two batteries. The LOCAL provisioning/health checks work even
+       when the daemon is DOWN (exactly when you need them):
+         • privsep provisioned     — the _byn service users exist
+         • spawn helper installed  — the setuid helper is in place
+         • daemon running          — the socket is reachable
+         • data dir owned by _byn  — flags root-owned strays a "sudo byn
+                                     start" left behind
+         • no stale socket         — a leftover socket with the daemon down
+
+       When the daemon IS reachable it also runs the daemon-side checks:
          • vaults.list     — vaults present on disk
          • vault[X].open   — schema version + meta.json fingerprint
          • vault[X].audit  — HMAC chain verifies end-to-end
 
-       Exit code is non-zero if any check is "fail".
+       Exit code is non-zero if any check fails. Plain "byn doctor" only
+       diagnoses (dry-run).
 
 OPTIONS
+       --repair
+           Apply the safe fixes for the failing LOCAL checks: chown the data
+           dir back to _byn, reload the launchd/systemd service (clearing a
+           stale socket and a broken registration). Requires root — run as
+           "sudo byn doctor --repair". This is the packaged form of the manual
+           launchctl bootout/bootstrap + chown recovery.
+
        --json
-           Emit the structured DoctorResp instead of human output.
+           Emit the structured result instead of human output.
 
 SEE ALSO
-       byn-audit(1), byn-status(1)
+       byn-audit(1), byn-status(1), byn-setup(1)
 `,
 
 	"audit": `NAME

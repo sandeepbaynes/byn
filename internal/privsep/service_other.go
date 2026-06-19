@@ -11,3 +11,6 @@ func InstallService(_ runner, _ string) error { return ErrUnsupported }
 
 // UninstallService returns ErrUnsupported on unsupported platforms.
 func UninstallService(_ runner) error { return ErrUnsupported }
+
+// RestartService returns ErrUnsupported on platforms without a managed service.
+func RestartService(_ runner) error { return ErrUnsupported }
