@@ -4,9 +4,24 @@ package privsep
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/paths"
+)
+
+// svcSleep is the delay used while waiting for launchd to settle between bootout
+// and bootstrap. A package var so tests can stub it to a no-op (no real sleeps).
+var svcSleep = time.Sleep
+
+const (
+	// serviceSettlePolls × serviceSettleInterval bound how long we wait for a
+	// booted-out label to fully disappear before bootstrapping it again.
+	serviceSettlePolls    = 6
+	serviceSettleInterval = 500 * time.Millisecond
+	// bootstrapRetryDelay is the pause before the single bootstrap retry.
+	bootstrapRetryDelay = 700 * time.Millisecond
 )
 
 // launchDaemonLabel is the reverse-DNS bundle id of the byn system LaunchDaemon.
@@ -128,14 +143,53 @@ func InstallService(run runner, execPath string) error {
 	if err := run("sh", "-c", launchDaemonWriteCmd(plist, launchDaemonPlistPath)); err != nil {
 		return fmt.Errorf("write LaunchDaemon plist: %w", err)
 	}
-	// `launchctl bootstrap` fails if the label is already loaded, so make a re-run
-	// idempotent: best-effort bootout any existing instance (errors harmlessly
-	// when not loaded — ignored), then bootstrap the freshly-written plist.
-	_ = run("launchctl", "bootout", "system/"+launchDaemonLabel)
+	// (Re)load the daemon robustly. Hardened against the launchd race that
+	// surfaces as "Bootstrap failed: 5: Input/output error" when bootstrap runs
+	// before a just-booted-out label has fully torn down, or when a stale
+	// socket/pidfile is in the way.
+	return reloadDaemonService(run)
+}
+
+// reloadDaemonService (re)loads the byn LaunchDaemon idempotently and
+// race-free: best-effort bootout any existing instance, WAIT until launchd
+// reports the label gone, remove the stale runtime files a crashed/booted-out
+// daemon may leave, then bootstrap with one retry on a transient failure. All
+// side effects go through the injected runner. Reused by setup, restart, and
+// `doctor --repair`.
+func reloadDaemonService(run runner) error {
+	_ = run("launchctl", "bootout", "system/"+launchDaemonLabel) // best-effort; harmless when not loaded
+	waitServiceGone(run)
+	removeStaleRuntime(run)
 	if err := run("launchctl", "bootstrap", "system", launchDaemonPlistPath); err != nil {
-		return fmt.Errorf("bootstrap LaunchDaemon: %w", err)
+		svcSleep(bootstrapRetryDelay)
+		_ = run("launchctl", "bootout", "system/"+launchDaemonLabel)
+		waitServiceGone(run)
+		if err2 := run("launchctl", "bootstrap", "system", launchDaemonPlistPath); err2 != nil {
+			return fmt.Errorf("bootstrap LaunchDaemon: %w", err2)
+		}
 	}
 	return nil
+}
+
+// waitServiceGone polls until `launchctl print` reports the label is not loaded
+// (a non-zero exit → the runner returns an error), bounded so a stuck service
+// never hangs setup.
+func waitServiceGone(run runner) {
+	for i := 0; i < serviceSettlePolls; i++ {
+		if run("launchctl", "print", "system/"+launchDaemonLabel) != nil {
+			return // print failed → not loaded → gone
+		}
+		svcSleep(serviceSettleInterval)
+	}
+}
+
+// removeStaleRuntime deletes a leftover daemon socket/pidfile that would block a
+// fresh bind. Best-effort; the daemon recreates them on start. The filenames
+// mirror daemon.SocketFilename / daemon.PIDFilename (not imported here — the
+// daemon package depends on privsep, so this dependency must not reverse).
+func removeStaleRuntime(run runner) {
+	dir := paths.SystemDataDir()
+	_ = run("rm", "-f", filepath.Join(dir, "daemon.sock"), filepath.Join(dir, "daemon.pid"))
 }
 
 // UninstallService bootouts + removes the byn LaunchDaemon plist. It deliberately
