@@ -213,3 +213,8 @@ func UninstallService(run runner) error {
 // rm-stale→bootstrap(+retry) path. Exported for `byn restart` and
 // `byn doctor --repair`. Requires root. All side effects go through run.
 func RestartService(run runner) error { return reloadDaemonService(run) }
+
+// StopService bootouts the byn LaunchDaemon (stops it; launchd will not respawn
+// it until re-bootstrapped or reboot — a plain SIGTERM is futile because
+// KeepAlive restarts it). Requires root. All side effects go through run.
+func StopService(run runner) error { return run("launchctl", "bootout", "system/"+launchDaemonLabel) }

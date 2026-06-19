@@ -756,19 +756,24 @@ commands and the paid Developer ID path for distributing to other Macs, is in
 .SS Daemon control
 .TP
 .B start \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
-Start the daemon (detached by default). The daemon refuses to run as root
-(uid 0) \(em a root daemon defeats the \fB_byn\fR privilege separation it
-installs; pass \fB\-\-allow\-root\fR to override (NOT recommended). Alias:
-\fBbyn daemon start\fR.
+Start the daemon. \fBWhen privsep is provisioned\fR the daemon is the \fB_byn\fR
+launchd/systemd service (auto-starts on boot/crash), so \fBbyn start\fR (run as
+yourself) only reports whether it is up and, if down, points you at
+\fBsudo byn restart\fR \(em it never spawns a daemon as you or as root. When NOT
+provisioned it starts a detached owner daemon. The daemon refuses to run as root
+(\fB\-\-allow\-root\fR overrides; NOT recommended). Alias: \fBbyn daemon start\fR.
 .TP
 .B stop
-SIGTERM the daemon via its pidfile. Alias: \fBbyn daemon stop\fR.
+Stop the daemon. \fBWhen provisioned\fR (root required) it boots out the
+\fB_byn\fR service \(em a SIGTERM is futile because KeepAlive respawns it. When
+NOT provisioned it SIGTERMs the owner daemon via its pidfile. Alias:
+\fBbyn daemon stop\fR.
 .TP
 .B restart \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
-Stop the running daemon (if any) and start a fresh one \- one command
-instead of stop + start. Picks up a new binary and config. Forwards
-\fB\-\-foreground\fR / \fB\-\-allow\-root\fR to start. Alias:
-\fBbyn daemon restart\fR.
+Restart the daemon. \fBWhen provisioned\fR (root required) it reloads the
+\fB_byn\fR service (bootout \(-> wait \(-> bootstrap, race-free). When NOT
+provisioned it stops and starts a fresh owner daemon, picking up a new binary
+and config. Alias: \fBbyn daemon restart\fR.
 .TP
 .B reload
 Signal the running daemon (SIGHUP) to re-read
