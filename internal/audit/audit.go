@@ -16,8 +16,8 @@
 // hmac_chain is mirrored to meta(audit_chain_head). On every Append,
 // both the on-disk JSON line and the DB head are updated in the same
 // (vault, time) order. A crash between the write and the DB update
-// leaves the chain head one entry behind — Doctor detects and repairs
-// this by re-reading the last line.
+// leaves the chain head one entry behind — New() reconciles this on
+// startup by re-reading the last on-disk line (see lastDiskHead).
 //
 // Files: <root>/audit/<vault>/YYYY-MM.log, mode 0600, O_APPEND. The
 // per-vault subdir keeps verification simple (each chain is one
@@ -249,7 +249,7 @@ func (l *Logger) appendLocked(ctx context.Context, e Event) (string, error) {
 
 	// Update DB head AFTER the disk write succeeds. A crash between
 	// the two leaves the on-disk line in place and the DB head one
-	// behind — recoverable by re-reading the last line during Doctor.
+	// behind — New() reconciles it from the last on-disk line on restart.
 	if err := l.store.MetaSet(ctx, MetaKeyHead, chainHex); err != nil {
 		return "", fmt.Errorf("audit: update head: %w", err)
 	}
