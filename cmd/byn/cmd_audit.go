@@ -10,9 +10,11 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -34,6 +36,8 @@ func runAudit(args []string, scope cliScope) int {
 		return runAuditTail(rest, scope)
 	case "verify":
 		return runAuditVerify(rest, scope)
+	case "reseal":
+		return runAuditReseal(rest, scope)
 	case "help", "--help", "-h":
 		printAuditUsage(os.Stdout)
 		return exitOK
@@ -265,6 +269,100 @@ func runAuditVerify(args []string, scope cliScope) int {
 	return exitDaemonErr
 }
 
+// runAuditReseal acknowledges a chain break by appending a signed bridge marker.
+// It shows the break, captures a reason, confirms, then sends OpAuditReseal. The
+// vault must be unlocked (the daemon enforces this).
+func runAuditReseal(args []string, scope cliScope) int {
+	fs := flag.NewFlagSet("audit reseal", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	reason := fs.String("reason", "", "why the chain broke (recorded in the marker)")
+	assumeYes := fs.Bool("yes", false, "skip the confirmation prompt (requires --reason)")
+	jsonOut := fs.Bool("json", false, "output as JSON")
+	if err := fs.Parse(args); err != nil {
+		return exitErr
+	}
+	dir, err := defaultDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return exitErr
+	}
+	client := newClient(dir, scope.Vault)
+
+	// Show what would be acknowledged before doing anything.
+	var ver ipc.AuditVerifyResp
+	if err := client.Call(ipc.OpAuditVerify, ipc.AuditVerifyReq{Vault: scope.Vault}, &ver); err != nil {
+		return handleCallError(err)
+	}
+	if ver.BadIndex < 0 {
+		fmt.Printf("audit chain intact — nothing to reseal (%d events)\n", ver.Total)
+		return exitOK
+	}
+	fmt.Fprintf(os.Stderr, "%s audit chain broken at event #%d (of %d).\n",
+		boldRed("Break:"), ver.BadIndex, ver.Total)
+	fmt.Fprintln(os.Stderr, "Reseal appends a SIGNED marker that ACKNOWLEDGES this discontinuity — it never")
+	fmt.Fprintln(os.Stderr, "rewrites or erases anything. The original hashes stay on disk; the marker records")
+	fmt.Fprintln(os.Stderr, "who, when, and why. Afterwards `byn audit verify` and `byn doctor` read it as intact.")
+
+	r := strings.TrimSpace(*reason)
+	if *assumeYes {
+		if r == "" {
+			fmt.Fprintln(os.Stderr, "Error: --reason is required with --yes.")
+			return exitErr
+		}
+	} else {
+		if r == "" {
+			r = strings.TrimSpace(promptLine(os.Stdin, os.Stderr, `Reason (e.g. "daemon restart during testing"): `))
+			if r == "" {
+				fmt.Fprintln(os.Stderr, "Error: a reason is required to reseal.")
+				return exitErr
+			}
+		}
+		if !confirmReseal(os.Stdin, os.Stderr) {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return exitErr
+		}
+	}
+
+	var resp ipc.AuditResealResp
+	if err := client.Call(ipc.OpAuditReseal, ipc.AuditResealReq{Vault: scope.Vault, Reason: r}, &resp); err != nil {
+		return handleCallError(err)
+	}
+	if resp.NoBreak {
+		fmt.Println("audit chain already intact — nothing to reseal")
+		return exitOK
+	}
+	if *jsonOut {
+		out, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Println(string(out))
+		return exitOK
+	}
+	fmt.Printf("Resealed — acknowledged the break at event #%d.\n", resp.BrokenIndex)
+	fmt.Printf("  reason: %s\n", resp.Reason)
+	fmt.Printf("  by:     %s\n", resp.By)
+	fmt.Println("`byn audit verify` (and `byn doctor`) now read the chain as intact.")
+	return exitOK
+}
+
+// promptLine writes prompt to out and reads one line from in.
+func promptLine(in io.Reader, out io.Writer, prompt string) string {
+	_, _ = fmt.Fprint(out, prompt)
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return ""
+	}
+	return sc.Text()
+}
+
+// confirmReseal asks for an explicit "yes".
+func confirmReseal(in io.Reader, out io.Writer) bool {
+	_, _ = fmt.Fprint(out, "Reseal now? Type "+bold("yes")+" to confirm: ")
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return false
+	}
+	return strings.TrimSpace(sc.Text()) == "yes"
+}
+
 func printAuditUsage(w *os.File) {
 	_, _ = fmt.Fprintln(w, `byn audit — read and verify the per-vault audit log
 
@@ -272,5 +370,7 @@ Usage:
   byn audit view [--lines N] [--json]   Snapshot the last N events (default 50)
   byn audit tail [-n N] [-f] [--json]   Like tail(1): last N (default 10);
                                         -f follows new events in realtime
-  byn audit verify [--json]             Re-walk the HMAC chain end-to-end`)
+  byn audit verify [--json]             Re-walk the HMAC chain end-to-end
+  byn audit reseal [--reason R] [--yes] Acknowledge a chain break with a signed
+                                        marker (vault must be unlocked)`)
 }

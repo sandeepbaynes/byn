@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +146,68 @@ func TestRunAuditVerify_DaemonDown(t *testing.T) {
 	noDaemon(t)
 	if got := runAudit([]string{"verify"}, cliScope{}); got != exitDaemonDown {
 		t.Fatalf("got %d", got)
+	}
+}
+
+func TestRunAuditReseal_NoBreak(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpAuditVerify, ipc.AuditVerifyResp{BadIndex: -1, Total: 5})
+	if got := runAudit([]string{"reseal"}, cliScope{}); got != exitOK {
+		t.Fatalf("no-break reseal got %d, want exitOK", got)
+	}
+}
+
+func TestRunAuditReseal_Scripted(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpAuditVerify, ipc.AuditVerifyResp{BadIndex: 3, Total: 5})
+	fd.onOK(ipc.OpAuditReseal, ipc.AuditResealResp{BrokenIndex: 3, Reason: "daemon restart", By: "uid=501 byn via socket"})
+	if got := runAudit([]string{"reseal", "--reason", "daemon restart", "--yes"}, cliScope{}); got != exitOK {
+		t.Fatalf("scripted reseal got %d, want exitOK", got)
+	}
+}
+
+func TestRunAuditReseal_YesNeedsReason(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpAuditVerify, ipc.AuditVerifyResp{BadIndex: 3, Total: 5})
+	if got := runAudit([]string{"reseal", "--yes"}, cliScope{}); got != exitErr {
+		t.Fatalf("--yes without --reason got %d, want exitErr", got)
+	}
+}
+
+func TestRunAuditReseal_NoBreakAtResealTime(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpAuditVerify, ipc.AuditVerifyResp{BadIndex: 3, Total: 5})
+	fd.onOK(ipc.OpAuditReseal, ipc.AuditResealResp{NoBreak: true, BrokenIndex: -1})
+	if got := runAudit([]string{"reseal", "--reason", "x", "--yes"}, cliScope{}); got != exitOK {
+		t.Fatalf("no-break-at-reseal got %d, want exitOK", got)
+	}
+}
+
+func TestConfirmReseal(t *testing.T) {
+	cases := map[string]bool{"yes\n": true, "no\n": false, "\n": false, "y\n": false}
+	for in, want := range cases {
+		if got := confirmReseal(strings.NewReader(in), io.Discard); got != want {
+			t.Errorf("confirmReseal(%q) = %v, want %v", in, got, want)
+		}
+	}
+	// surrounding whitespace is trimmed.
+	if !confirmReseal(strings.NewReader("  yes  \n"), io.Discard) {
+		t.Error("confirmReseal should trim whitespace around yes")
+	}
+}
+
+func TestPromptLine(t *testing.T) {
+	if got := promptLine(strings.NewReader("daemon restart\n"), io.Discard, "p: "); got != "daemon restart" {
+		t.Errorf("promptLine = %q", got)
+	}
+	if got := promptLine(strings.NewReader(""), io.Discard, "p: "); got != "" {
+		t.Errorf("empty stdin should give empty, got %q", got)
+	}
+}
+
+func TestRunAuditReseal_DaemonDown(t *testing.T) {
+	noDaemon(t)
+	if got := runAudit([]string{"reseal"}, cliScope{}); got != exitDaemonDown {
+		t.Fatalf("got %d, want exitDaemonDown", got)
 	}
 }

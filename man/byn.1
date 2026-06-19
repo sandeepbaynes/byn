@@ -423,6 +423,17 @@ Ctrl\-C (NDJSON when combined with \fB\-\-json\fR).
 Re\-walk the active vault's audit log and recompute the HMAC chain
 end\-to\-end. Exits 0 with "chain intact" on success; exits 3 with
 "chain BROKEN at event #N" if any link fails verification.
+.TP
+.B audit reseal \fR[\fB\-\-reason\fR \fIR\fR] \fR[\fB\-\-yes\fR] \fR[\fB\-\-json\fR]
+Acknowledge a chain break (e.g. one a daemon crash/SIGTERM left mid\-write)
+by appending a \fIsigned bridge marker\fR. The marker records the break index,
+the observed and expected heads, a free\-text \fB\-\-reason\fR, and who/when \(em
+it NEVER rewrites or erases the original hashes, so the discontinuity stays
+visible and attributable. Afterwards \fBaudit verify\fR and \fBdoctor\fR read the
+chain as intact (annotated with the acknowledged reseal). The vault must be
+unlocked (a deliberate owner action). Prompts for a reason and an explicit
+confirmation; \fB\-\-reason\fR with \fB\-\-yes\fR runs non\-interactively. A forged
+marker (without the chain seed) cannot clear a break.
 .SS Trust (\fB.byn\fR TOFU)
 .TP
 .B trust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR] \fR[\fB\-\-password\-stdin\fR]
