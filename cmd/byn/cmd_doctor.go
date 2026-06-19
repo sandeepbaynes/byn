@@ -65,14 +65,26 @@ func runDoctor(args []string, _ cliScope) int {
 	}
 
 	if *jsonOut {
-		payload := struct {
-			Local  []healCheck     `json:"local"`
-			Daemon *ipc.DoctorResp `json:"daemon,omitempty"`
-		}{Local: local}
-		if daemonChecked {
-			payload.Daemon = &dResp
+		// Flatten to the stable DoctorResp { checks: [...] } shape: local checks
+		// (OK→"ok"/"fail" severity, fix folded into detail) then the daemon-side
+		// checks. Keeps the --json contract a single "checks" array.
+		checks := make([]ipc.DoctorCheck, 0, len(local)+len(dResp.Checks))
+		for _, c := range local {
+			sev := "ok"
+			if !c.OK {
+				sev = "fail"
+			}
+			detail := c.Detail
+			if !c.OK && c.Fix != "" {
+				if detail != "" {
+					detail += " — "
+				}
+				detail += c.Fix
+			}
+			checks = append(checks, ipc.DoctorCheck{Name: c.Name, Severity: sev, Detail: detail})
 		}
-		out, _ := json.MarshalIndent(payload, "", "  ")
+		checks = append(checks, dResp.Checks...)
+		out, _ := json.MarshalIndent(ipc.DoctorResp{Checks: checks}, "", "  ")
 		fmt.Println(string(out))
 		return healExitCode(local, daemonChecked, dResp)
 	}
