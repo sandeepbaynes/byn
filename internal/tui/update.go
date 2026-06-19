@@ -1507,11 +1507,24 @@ func (m Model) keySearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		if m.searchAudit {
+			m.searchAudit = false // cancel: leave auditFilter unchanged
+			m.cmdline = nil
+			m.Mode = ModeAudit
+			return m, nil
+		}
 		m.entriesFilter = ""
 		m.cmdline = nil
 		m.Mode = ModeNormal
 		return m, nil
 	case "enter":
+		if m.searchAudit {
+			m.auditFilter = m.cmdline.Input
+			m.searchAudit = false
+			m.cmdline = nil
+			m.Mode = ModeAudit
+			return m, nil
+		}
 		m.entriesFilter = m.cmdline.Input
 		m.cmdline = nil
 		m.Mode = ModeNormal
@@ -1533,11 +1546,24 @@ func (m Model) keySearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) keyAudit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "esc":
+	case "esc":
+		// Clear an active filter first; a second esc leaves the view.
+		if m.auditFilter != "" {
+			m.auditFilter = ""
+			return m, nil
+		}
+		m.Mode = ModeNormal
+		return m, nil
+	case "q":
 		m.Mode = ModeNormal
 		return m, nil
 	case "r":
 		return m, loadAuditCmd(m.client, m.scope.Vault, 200)
+	case "/":
+		m.searchAudit = true
+		m.Mode = ModeSearch
+		m.cmdline = &cmdlineState{Prompt: "filter audit /", Input: m.auditFilter}
+		return m, nil
 	}
 	return m, nil
 }
