@@ -77,18 +77,56 @@ func diagnoseHeal(e healEnv) []healCheck {
 	return cs
 }
 
-// repairHeal applies the safe fixes (chown the data dir back to _byn, then
-// reload the launchd/systemd service which also clears a stale socket). Requires
-// root; run is the command runner. Returns the actions taken, in order.
+// healSleep is the poll delay while waiting for a reloaded daemon to come up; a
+// package var so tests can stub it to a no-op.
+var healSleep = time.Sleep
+
+const (
+	daemonUpPolls        = 20
+	daemonUpPollInterval = 250 * time.Millisecond
+)
+
+// repairHeal diagnoses FIRST and applies only the fixes for the FAILING checks —
+// it never restarts a healthy daemon or re-chowns a correctly-owned dir. After a
+// service reload it waits (bounded) for the daemon to come back up, so the
+// follow-up diagnosis is accurate instead of a false "daemon down" caught
+// mid-startup. Requires root; run is the command runner. Returns the actions
+// taken (empty when nothing was broken).
 func repairHeal(e healEnv, run func(string, ...string) error) []string {
-	var done []string
-	if err := run("chown", "-R", privsep.DaemonUser+":"+privsep.DaemonUser, e.dataDir); err == nil {
-		done = append(done, "restored "+privsep.DaemonUser+" ownership of "+e.dataDir)
+	failing := map[string]bool{}
+	for _, c := range diagnoseHeal(e) {
+		if !c.OK {
+			failing[c.Name] = true
+		}
 	}
-	if err := privsep.RestartService(run); err == nil {
-		done = append(done, "reloaded the "+privsep.DaemonUser+" service")
+
+	var done []string
+	if failing["data dir owned by "+privsep.DaemonUser] {
+		if err := run("chown", "-R", privsep.DaemonUser+":"+privsep.DaemonUser, e.dataDir); err == nil {
+			done = append(done, "restored "+privsep.DaemonUser+" ownership of "+e.dataDir)
+		}
+	}
+	// A down daemon or a leftover socket → reload the service (which also clears a
+	// stale socket), then wait for the daemon to bind before returning.
+	if failing["daemon running"] || failing["no stale socket"] {
+		if err := privsep.RestartService(run); err == nil {
+			done = append(done, "reloaded the "+privsep.DaemonUser+" service")
+		}
+		waitDaemonUp(e)
 	}
 	return done
+}
+
+// waitDaemonUp polls (bounded ~5s) until the daemon socket is reachable, so a
+// repair that just reloaded the service doesn't immediately re-report "daemon
+// down" while launchd is still bringing it up.
+func waitDaemonUp(e healEnv) {
+	for i := 0; i < daemonUpPolls; i++ {
+		if e.daemonUp() {
+			return
+		}
+		healSleep(daemonUpPollInterval)
+	}
 }
 
 // productionHealEnv wires the real OS probes for the data dir at dir.
