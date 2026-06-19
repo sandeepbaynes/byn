@@ -151,8 +151,10 @@ func run(args []string) int {
 	// wrong-identity invocation gets one clear, actionable message instead of a
 	// cryptic downstream failure (the daemon's "this peer may only redeem exec
 	// tokens", or a detached `sudo byn start` that dies into the log). See
-	// rootpolicy.go.
-	if enforceRootPolicy(cmd, os.Geteuid(), cliProvisioned, os.Stderr) {
+	// rootpolicy.go. BYN_ALLOW_ROOT=1 is the escape hatch (like the daemon's
+	// --allow-root) for the rare legitimate root-only environment (a container
+	// with no non-root user) and for the integration tests.
+	if os.Getenv("BYN_ALLOW_ROOT") != "1" && enforceRootPolicy(cmd, os.Geteuid(), cliProvisioned, os.Stderr) {
 		return exitErr
 	}
 

@@ -48,11 +48,14 @@ func (e healEnv) socketPath() string { return filepath.Join(e.dataDir, "daemon.s
 // "privsep provisioned" check short-circuits the rest: nothing else is
 // meaningful (or fixable) until setup has run.
 func diagnoseHeal(e healEnv) []healCheck {
-	prov := e.provisioned()
-	cs := []healCheck{{Name: "privsep provisioned", OK: prov, Fix: "run: sudo byn setup"}}
-	if !prov {
-		return cs
+	if !e.provisioned() {
+		// privsep is OPT-IN: not being provisioned is a valid (default) state, not
+		// a failure. Report it informationally (OK) and run no privsep-specific
+		// checks. The daemon-side checks still run separately when the daemon (here
+		// an owner daemon) is reachable.
+		return []healCheck{{Name: "privilege separation", OK: true, Detail: "not provisioned (opt-in) — enable with: sudo byn setup"}}
 	}
+	cs := []healCheck{{Name: "privilege separation", OK: true, Detail: "provisioned (daemon runs as _byn)"}}
 	cs = append(cs, healCheck{Name: "spawn helper installed", OK: e.exists(e.helperPath), Detail: e.helperPath, Fix: "run: sudo byn setup"})
 
 	up := e.daemonUp()

@@ -18,7 +18,9 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	s.t.Helper()
 	cmd := exec.Command(s.bin, args...) //nolint:gosec // test harness
 	cmd.Dir = cwd
-	cmd.Env = append([]string{"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester"}, env...)
+	// BYN_ALLOW_ROOT=1: the root-integration job has no non-root user; bypass the
+	// root-policy guard (unit-tested separately) so owner commands run.
+	cmd.Env = append([]string{"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester", "BYN_ALLOW_ROOT=1"}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {
