@@ -829,6 +829,13 @@ DESCRIPTION
        per-OS system path). Stale pidfiles (PID no longer alive) are
        detected and replaced on start.
 
+       When privsep is provisioned (sudo byn setup), the daemon is the
+       _byn launchd/systemd service: "byn start" (run as you) reports
+       its status and points you to "sudo byn restart" if it is down —
+       it never spawns a daemon as you; "sudo byn restart"/"stop" act on
+       the service (a SIGTERM is futile — KeepAlive respawns it); "sudo
+       byn reload" SIGHUPs it to re-read config.
+
 SUBCOMMANDS
        start [--foreground] [--allow-root]
            Start the daemon. Detaches by default; --foreground keeps

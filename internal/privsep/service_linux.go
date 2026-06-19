@@ -152,3 +152,6 @@ func UninstallService(run runner) error {
 // RestartService restarts the byn systemd service. Requires root. systemctl
 // restart is already idempotent (no launchd-style bootstrap race).
 func RestartService(run runner) error { return run("systemctl", "restart", "byn.service") }
+
+// StopService stops the byn systemd service. Requires root.
+func StopService(run runner) error { return run("systemctl", "stop", "byn.service") }
