@@ -62,7 +62,7 @@ func (d *Daemon) handleAuditVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 			fmt.Sprintf("vault %q: %v", name, err),
 			"check `byn vault list`")
 	}
-	bad, total, vErr := entry.auditor.VerifyChain(ctx)
+	bad, total, _, vErr := entry.auditor.VerifyChain(ctx)
 	if vErr != nil {
 		return internalErr(env.ID, vErr)
 	}
@@ -146,7 +146,7 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 			Detail: "schema + fingerprint ok",
 		})
 		// Audit chain.
-		bad, total, vErr := entry.auditor.VerifyChain(ctx)
+		bad, total, _, vErr := entry.auditor.VerifyChain(ctx)
 		switch {
 		case vErr != nil:
 			checks = append(checks, ipc.DoctorCheck{
