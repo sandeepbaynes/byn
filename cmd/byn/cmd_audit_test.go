@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -229,5 +230,45 @@ func TestRunAuditTail_FilterFlagsAndIndex(t *testing.T) {
 	requireUnmarshal(t, fd.callsFor(ipc.OpAuditTail)[0].Body, &req)
 	if req.Byn != "/a/.byn" || req.Scope != "alpha" || req.Caller != "byn" {
 		t.Errorf("filters not threaded to request: %+v", req)
+	}
+}
+
+// TestRunAuditView_PaginatesFullDump: --lines 0 pages back through a log larger
+// than one response, assembling all events oldest-first (the fix for the
+// "ipc: read: EOF" on a full dump). The fake daemon serves 10-event pages keyed
+// on the request Offset, mirroring the daemon's end-anchored windowing.
+func TestRunAuditView_PaginatesFullDump(t *testing.T) {
+	fd := startFakeDaemon(t)
+	const total = 25
+	fd.on(ipc.OpAuditTail, func(raw []byte) (any, *ipc.ErrMsg) {
+		var req ipc.AuditTailReq
+		_ = json.Unmarshal(raw, &req)
+		end := total - req.Offset
+		if end < 0 {
+			end = 0
+		}
+		start := end - 10 // page size 10
+		if start < 0 {
+			start = 0
+		}
+		evs := make([]ipc.AuditEvent, 0, end-start)
+		for i := start; i < end; i++ {
+			evs = append(evs, ipc.AuditEvent{Index: i, Op: "get", Outcome: "ok"})
+		}
+		return ipc.AuditTailResp{Events: evs, Total: total}, nil
+	})
+
+	var code int
+	out := captureStdout(t, func() { code = runAudit([]string{"view", "--lines", "0"}, cliScope{}) })
+	if code != exitOK {
+		t.Fatalf("full dump exit %d", code)
+	}
+	for i := 0; i < total; i++ {
+		if !strings.Contains(out, fmt.Sprintf("#%d ", i)) {
+			t.Errorf("missing event #%d in the assembled dump", i)
+		}
+	}
+	if strings.Index(out, "#0 ") > strings.Index(out, "#24 ") {
+		t.Error("dump must be oldest-first (#0 before #24)")
 	}
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -9,6 +10,45 @@ import (
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
+
+const (
+	// auditPageBudget bounds a single audit response well under ipc.MaxFrameSize
+	// (1 MiB), leaving headroom for the envelope; auditPageMax bounds the loop.
+	auditPageBudget = 768 * 1024
+	auditPageMax    = 5000
+)
+
+// auditWindow returns the `lines` events ending `offset` positions from the
+// newest (offset 0 = the tail), trimmed so the page's marshaled size stays under
+// auditPageBudget. lines <= 0 means "as many as fit". At least one event is
+// returned for a non-empty window even if it alone exceeds the budget.
+func auditWindow(all []audit.Event, lines, offset int) []audit.Event {
+	total := len(all)
+	end := total - offset
+	if end > total {
+		end = total
+	}
+	if end < 0 {
+		end = 0
+	}
+	limit := lines
+	if limit <= 0 || limit > auditPageMax {
+		limit = auditPageMax
+	}
+	size, start := 0, end
+	for start > 0 && (end-start) < limit {
+		e := all[start-1]
+		w := auditToWire(e)
+		w.Index = e.Index
+		b, _ := json.Marshal(w)
+		if start < end && size+len(b) > auditPageBudget {
+			break
+		}
+		size += len(b)
+		start--
+	}
+	return all[start:end]
+}
 
 // ---- Audit -------------------------------------------------------------
 
@@ -30,17 +70,18 @@ func (d *Daemon) handleAuditTail(ctx context.Context, env *ipc.Envelope) *ipc.En
 			fmt.Sprintf("vault %q: %v", name, err),
 			"check `byn vault list`")
 	}
-	events, err := entry.auditor.Tail(ctx, req.Lines,
+	all, err := entry.auditor.Tail(ctx, 0,
 		audit.Filter{Byn: req.Byn, Caller: req.Caller, Scope: req.Scope})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
-	wire := make([]ipc.AuditEvent, len(events))
-	for i, e := range events {
+	window := auditWindow(all, req.Lines, req.Offset)
+	wire := make([]ipc.AuditEvent, len(window))
+	for i, e := range window {
 		wire[i] = auditToWire(e)
 		wire[i].Index = e.Index
 	}
-	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire})
+	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire, Total: len(all)})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
