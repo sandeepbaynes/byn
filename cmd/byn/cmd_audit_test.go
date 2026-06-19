@@ -211,3 +211,23 @@ func TestRunAuditReseal_DaemonDown(t *testing.T) {
 		t.Fatalf("got %d, want exitDaemonDown", got)
 	}
 }
+
+func TestRunAuditTail_FilterFlagsAndIndex(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpAuditTail, ipc.AuditTailResp{Events: []ipc.AuditEvent{{Index: 7, Op: "get", Outcome: "ok"}}})
+	var code int
+	out := captureStdout(t, func() {
+		code = runAudit([]string{"tail", "--byn", "/a/.byn", "--scope", "alpha", "--caller", "byn"}, cliScope{})
+	})
+	if code != exitOK {
+		t.Fatalf("filtered tail got %d, want exitOK", code)
+	}
+	if !strings.Contains(out, "#7") {
+		t.Errorf("output should show event index #7, got: %s", out)
+	}
+	var req ipc.AuditTailReq
+	requireUnmarshal(t, fd.callsFor(ipc.OpAuditTail)[0].Body, &req)
+	if req.Byn != "/a/.byn" || req.Scope != "alpha" || req.Caller != "byn" {
+		t.Errorf("filters not threaded to request: %+v", req)
+	}
+}
