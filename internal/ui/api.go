@@ -25,7 +25,13 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var resp ipc.AuditTailResp
-	if !s.run(w, r, ipc.OpAuditTail, ipc.AuditTailReq{Vault: q.Get("vault"), Lines: n}, &resp) {
+	if !s.run(w, r, ipc.OpAuditTail, ipc.AuditTailReq{
+		Vault:  q.Get("vault"),
+		Lines:  n,
+		Byn:    q.Get("byn"),
+		Caller: q.Get("caller"),
+		Scope:  q.Get("scope"),
+	}, &resp) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

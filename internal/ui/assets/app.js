@@ -1310,11 +1310,46 @@ async function renderAuditView() {
     head.appendChild(el("span", "verify-chip " + (ok ? "ok" : "bad"),
       ok ? `chain intact · ${v.total}` : `chain BROKEN at #${v.bad_index}`));
   } catch (_) { /* verify is best-effort */ }
+
+  // Filter bar — server-side, so it scans the WHOLE log, not just the fetched
+  // window (older events hidden behind the n=200 limit are still findable).
+  state.auditFilter = state.auditFilter || { scope: "", byn: "", caller: "" };
+  const bar = el("div", "audit-filter");
+  const body = el("div", "audit-body");
+  const mkInput = (key, ph) => {
+    const inp = el("input");
+    inp.type = "text"; inp.placeholder = ph; inp.value = state.auditFilter[key];
+    let timer;
+    inp.oninput = () => {
+      state.auditFilter[key] = inp.value;
+      clearTimeout(timer);
+      timer = setTimeout(() => loadAuditBody(vault, body), 250);
+    };
+    return inp;
+  };
+  bar.appendChild(mkInput("scope", "filter scope (project/env)…"));
+  bar.appendChild(mkInput("byn", "filter .byn path…"));
+  bar.appendChild(mkInput("caller", "filter caller…"));
+  box.appendChild(bar);
+  box.appendChild(body);
+  loadAuditBody(vault, body);
+}
+
+async function loadAuditBody(vault, body) {
+  body.innerHTML = "";
+  const f = state.auditFilter || {};
+  const qs = "/api/audit?vault=" + enc(vault) + "&n=200"
+    + (f.byn ? "&byn=" + enc(f.byn) : "")
+    + (f.caller ? "&caller=" + enc(f.caller) : "")
+    + (f.scope ? "&scope=" + enc(f.scope) : "");
   let data;
-  try { data = await api("GET", "/api/audit?vault=" + enc(vault) + "&n=200"); }
-  catch (e) { box.appendChild(emptyHint(e.message)); return; }
+  try { data = await api("GET", qs); }
+  catch (e) { body.appendChild(emptyHint(e.message)); return; }
   const events = (data.events || []).slice().reverse(); // newest first
-  if (!events.length) { box.appendChild(emptyHint("no audit events yet")); return; }
+  if (!events.length) {
+    body.appendChild(emptyHint((f.byn || f.caller || f.scope) ? "no events match the filter" : "no audit events yet"));
+    return;
+  }
   const tbl = el("div", "audit-tbl");
   const hdr = el("div", "audit-row audit-head");
   ["#", "TIME", "OP", "OUTCOME", "SCOPE", "CALLER"].forEach((h) => hdr.appendChild(el("span", null, h)));
@@ -1331,7 +1366,7 @@ async function renderAuditView() {
     row.appendChild(el("span", "a-caller", auditCaller(e)));
     tbl.appendChild(row);
   }
-  box.appendChild(tbl);
+  body.appendChild(tbl);
 }
 function auditScope(e) {
   if (e.byn_path) return e.byn_path; // exec authorization: show the authorizing .byn
