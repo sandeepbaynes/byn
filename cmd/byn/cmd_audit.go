@@ -65,21 +65,20 @@ func runAuditView(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	var resp ipc.AuditTailResp
-	if err := newClient(dir, scope.Vault).Call(ipc.OpAuditTail,
-		ipc.AuditTailReq{Vault: scope.Vault, Lines: *lines, Byn: *bynF, Caller: *callerF, Scope: *scopeF}, &resp); err != nil {
+	events, err := fetchAuditWindow(newClient(dir, scope.Vault), scope, *lines, *bynF, *callerF, *scopeF)
+	if err != nil {
 		return handleCallError(err)
 	}
 	if *jsonOut {
-		out, _ := json.MarshalIndent(resp.Events, "", "  ")
+		out, _ := json.MarshalIndent(events, "", "  ")
 		fmt.Println(string(out))
 		return exitOK
 	}
-	if len(resp.Events) == 0 {
+	if len(events) == 0 {
 		fmt.Fprintln(os.Stderr, "(no audit events recorded yet)")
 		return exitOK
 	}
-	for _, e := range resp.Events {
+	for _, e := range events {
 		fmt.Println(auditLine(e))
 	}
 	return exitOK
@@ -111,34 +110,38 @@ func runAuditTail(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, scope.Vault)
 
-	filt := func(lines int) ipc.AuditTailReq {
-		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lines, Byn: *bynF, Caller: *callerF, Scope: *scopeF}
+	filt := func(lines, offset int) ipc.AuditTailReq {
+		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lines, Offset: offset, Byn: *bynF, Caller: *callerF, Scope: *scopeF}
 	}
-	var resp ipc.AuditTailResp
-	if err := client.Call(ipc.OpAuditTail, filt(*n), &resp); err != nil {
-		return handleCallError(err)
-	}
-	// Snapshot (no -f): JSON mode emits a single array — consistent with
-	// `audit view --json` and every other --json command. NDJSON is reserved
-	// for the streaming -f path below, where a JSON array can't be left open.
+
+	// Snapshot (no -f): page back through the log so each response stays under
+	// the IPC frame limit, assembling oldest-first. JSON mode emits a single
+	// array — consistent with `audit view --json`. NDJSON is reserved for -f.
 	if !*follow {
+		events, err := fetchAuditWindow(client, scope, *n, *bynF, *callerF, *scopeF)
+		if err != nil {
+			return handleCallError(err)
+		}
 		if *jsonOut {
-			out, _ := json.MarshalIndent(resp.Events, "", "  ")
+			out, _ := json.MarshalIndent(events, "", "  ")
 			fmt.Println(string(out))
 			return exitOK
 		}
-		if len(resp.Events) == 0 {
+		if len(events) == 0 {
 			fmt.Fprintln(os.Stderr, "(no audit events recorded yet)")
 			return exitOK
 		}
-		for _, e := range resp.Events {
+		for _, e := range events {
 			fmt.Println(auditLine(e))
 		}
 		return exitOK
 	}
 
-	// Follow (-f): print the initial batch as NDJSON (or text rows), then
-	// stream new events the same way.
+	// Follow (-f): a single recent page as the initial batch, then poll.
+	var resp ipc.AuditTailResp
+	if err := client.Call(ipc.OpAuditTail, filt(*n, 0), &resp); err != nil {
+		return handleCallError(err)
+	}
 	for _, e := range resp.Events {
 		printAuditEvent(e, *jsonOut)
 	}
@@ -149,7 +152,7 @@ func runAuditTail(args []string, scope cliScope) int {
 	for {
 		time.Sleep(700 * time.Millisecond)
 		var poll ipc.AuditTailResp
-		if err := client.Call(ipc.OpAuditTail, filt(256), &poll); err != nil {
+		if err := client.Call(ipc.OpAuditTail, filt(256, 0), &poll); err != nil {
 			return handleCallError(err)
 		}
 		var fresh []ipc.AuditEvent
@@ -185,6 +188,41 @@ func printAuditEvent(e ipc.AuditEvent, jsonOut bool) {
 		return
 	}
 	fmt.Println(auditLine(e))
+}
+
+// fetchAuditWindow returns the requested events (oldest-first), paging BACK
+// through the log (newest page first) so every IPC response stays under the
+// frame limit, then assembling them in order. lines <= 0 means "all". Used by
+// the snapshot view/tail; the -f follow path stays a single recent page.
+func fetchAuditWindow(client *ipc.Client, scope cliScope, lines int, byn, caller, scp string) ([]ipc.AuditEvent, error) {
+	var out []ipc.AuditEvent
+	offset := 0
+	for {
+		want := 0 // 0 → the daemon's max (size-budgeted) page
+		if lines > 0 {
+			if want = lines - offset; want <= 0 {
+				break
+			}
+		}
+		var resp ipc.AuditTailResp
+		req := ipc.AuditTailReq{Vault: scope.Vault, Lines: want, Offset: offset, Byn: byn, Caller: caller, Scope: scp}
+		if err := client.Call(ipc.OpAuditTail, req, &resp); err != nil {
+			return nil, err
+		}
+		got := len(resp.Events)
+		if got == 0 {
+			break
+		}
+		out = append(resp.Events, out...) // prepend: pages walk newest → oldest
+		offset += got
+		if offset >= resp.Total {
+			break
+		}
+	}
+	if lines > 0 && len(out) > lines {
+		out = out[len(out)-lines:]
+	}
+	return out, nil
 }
 
 // auditLine renders one event as a human-readable row.

@@ -623,6 +623,7 @@ type RenameResp struct{}
 type AuditTailReq struct {
 	Vault  string `json:"vault,omitempty"`
 	Lines  int    `json:"lines,omitempty"`
+	Offset int    `json:"offset,omitempty"` // events to skip FROM THE NEWEST (0 = tail); for paging back through a large log
 	Byn    string `json:"byn,omitempty"`    // filter: byn_path substring (case-insensitive)
 	Caller string `json:"caller,omitempty"` // filter: caller substring
 	Scope  string `json:"scope,omitempty"`  // filter: project[/env] substring
@@ -652,9 +653,12 @@ type AuditEvent struct {
 	HMACChain     string `json:"hmac_chain"`
 }
 
-// AuditTailResp returns the recovered events.
+// AuditTailResp returns one page of events (oldest-first), bounded to stay under
+// the IPC frame limit, plus Total — the count of (filtered) events in the whole
+// log, so a client can page back through all of them via AuditTailReq.Offset.
 type AuditTailResp struct {
 	Events []AuditEvent `json:"events"`
+	Total  int          `json:"total"`
 }
 
 // AuditVerifyReq re-walks the HMAC chain. Vault defaults to "default".
