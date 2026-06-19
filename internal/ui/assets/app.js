@@ -1423,6 +1423,11 @@ const DEFAULT_CONFIG_TEMPLATE = `# byn global configuration
 
 [daemon]
 # idle_timeout = "0s"   # lock all vaults after inactivity; "0s" disables (hot-apply)
+
+[security]
+# session_ttl  = "12h"  # absolute session lifetime; "0s" = no absolute cap (hot-apply)
+# session_idle = "0s"   # sliding idle window; "0s" = inherit [daemon] idle_timeout
+# privsep = true        # run trusted-.byn exec children as _byn-exec — needs \`sudo byn setup\` + a daemon restart
 `;
 
 // cfgState holds the mutable state for the settings panel (analogous to
@@ -1476,6 +1481,9 @@ async function cfgReset() {
     cfgState.uiPort        = p.ui_port;
     cfgState.revealHideAfter = p.reveal_hide_after;
     cfgState.idleTimeout   = p.idle_timeout;
+    cfgState.sessionTTL    = p.session_ttl;
+    cfgState.sessionIdle   = p.session_idle;
+    cfgState.privsep       = p.privsep === true;
     setRevealHideAfter(p.reveal_hide_after);
     // Re-render the form to reflect the reset values.
     // renderSettingsView re-creates cfgState and sets cfgBaseline.
@@ -1520,6 +1528,9 @@ async function renderSettingsView() {
     uiPort:        configParsed ? configParsed.ui_port        : 2967,
     revealHideAfter: configParsed ? configParsed.reveal_hide_after : "15s",
     idleTimeout:   configParsed ? configParsed.idle_timeout   : "15m0s",
+    sessionTTL:    configParsed ? configParsed.session_ttl     : "12h0m0s",
+    sessionIdle:   configParsed ? configParsed.session_idle    : "0s",
+    privsep:       configParsed ? configParsed.privsep === true : false,
     // Raw textarea content, seeded lazily when switching to raw mode.
     rawContent: configContent || DEFAULT_CONFIG_TEMPLATE,
     // DOM refs populated below.
@@ -1582,10 +1593,13 @@ async function renderSettingsView() {
   const refTitle = el("div", "cfg-ref-title", "key reference");
   ref.appendChild(refTitle);
   const refRows = [
-    ["[ui] enabled",           "hot-apply on save"],
-    ["[ui] port",              "hot-apply on save (needs restart to rebind)"],
-    ["[ui] reveal_hide_after", "hot-apply on save"],
-    ["[daemon] idle_timeout",  "hot-apply on save"],
+    ["[ui] enabled",            "hot-apply on save"],
+    ["[ui] port",               "hot-apply on save (needs restart to rebind)"],
+    ["[ui] reveal_hide_after",  "hot-apply on save"],
+    ["[daemon] idle_timeout",   "hot-apply on save"],
+    ["[security] session_ttl",  "needs daemon restart (not hot-applied)"],
+    ["[security] session_idle", "needs daemon restart (not hot-applied)"],
+    ["[security] privsep",      "needs `sudo byn setup` + daemon restart"],
   ];
   for (const [k, v] of refRows) {
     const row = el("div", "cfg-ref-row");
@@ -1702,6 +1716,48 @@ async function renderSettingsView() {
   idleWrap.appendChild(idleLabel); idleWrap.appendChild(idlePair); idleWrap.appendChild(idleHint);
   daemonCard.appendChild(idleWrap);
   formPanel.appendChild(daemonCard);
+
+  // [security] section
+  const secCard = cfgFormCard("security");
+
+  // session_ttl — Go duration string (12h default; "0s" = no absolute cap).
+  const sttlWrap = el("div", "cfg-form-row");
+  const sttlLabel = el("label", "cfg-field-label"); sttlLabel.textContent = "session ttl";
+  const sttlIn = el("input", "input mono cfg-port-input");
+  sttlIn.type = "text"; sttlIn.value = cfgState.sessionTTL || "12h0m0s";
+  sttlIn.placeholder = "12h"; sttlIn.autocomplete = "off"; sttlIn.spellcheck = false;
+  sttlIn.oninput = () => { cfgState.sessionTTL = sttlIn.value.trim(); };
+  sttlLabel.appendChild(sttlIn);
+  const sttlHint = el("span", "cfg-field-hint", "absolute session lifetime (e.g. 12h); 0s = no cap · hot-apply");
+  sttlWrap.appendChild(sttlLabel); sttlWrap.appendChild(sttlHint);
+  secCard.appendChild(sttlWrap);
+
+  // session_idle — Go duration string ("0s" = inherit [daemon] idle_timeout).
+  const sidleWrap = el("div", "cfg-form-row");
+  const sidleLabel = el("label", "cfg-field-label"); sidleLabel.textContent = "session idle";
+  const sidleIn = el("input", "input mono cfg-port-input");
+  sidleIn.type = "text"; sidleIn.value = cfgState.sessionIdle || "0s";
+  sidleIn.placeholder = "0s"; sidleIn.autocomplete = "off"; sidleIn.spellcheck = false;
+  sidleIn.oninput = () => { cfgState.sessionIdle = sidleIn.value.trim(); };
+  sidleLabel.appendChild(sidleIn);
+  const sidleHint = el("span", "cfg-field-hint", "sliding idle window; 0s = inherit idle_timeout · hot-apply");
+  sidleWrap.appendChild(sidleLabel); sidleWrap.appendChild(sidleHint);
+  secCard.appendChild(sidleWrap);
+
+  // privsep — checkbox + a loud warning (enabling needs provisioning + restart).
+  const psRow = el("label", "cfg-form-row");
+  const psCb = el("input"); psCb.type = "checkbox"; psCb.checked = !!cfgState.privsep;
+  const psWarn = el("div", "studio-warn");
+  const updatePsWarn = () => { psWarn.hidden = !psCb.checked; };
+  psCb.onchange = () => { cfgState.privsep = psCb.checked; updatePsWarn(); };
+  psRow.appendChild(psCb); psRow.appendChild(el("span", null, "privsep"));
+  psRow.appendChild(el("span", "cfg-field-hint", "run trusted-.byn exec children as the _byn-exec user"));
+  secCard.appendChild(psRow);
+  psWarn.textContent = "Requires `sudo byn setup` provisioning and a daemon restart to take effect. Enabled without provisioning, byn exec fails closed with a setup hint.";
+  updatePsWarn();
+  secCard.appendChild(psWarn);
+
+  formPanel.appendChild(secCard);
 
   formPanel.hidden = cfgState.rawMode;
   box.appendChild(formPanel);
@@ -1878,6 +1934,13 @@ function serializeCfg(st) {
   lines.push("[daemon]");
   lines.push("idle_timeout = " + tomlStr(st.idleTimeout || "0s"));
   lines.push("");
+  lines.push("[security]");
+  lines.push("session_ttl  = " + tomlStr(st.sessionTTL || "12h0m0s"));
+  lines.push("session_idle = " + tomlStr(st.sessionIdle || "0s"));
+  // privsep is presence-detecting (absent ⇒ off): only emit when enabled so the
+  // default form stays clean. Enabling it needs `sudo byn setup` provisioning.
+  if (st.privsep) lines.push("privsep = true");
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -1927,9 +1990,13 @@ async function toggleCfgMode() {
     // Zero errors — carry the parsed values through to cfgState form fields.
     const p = validateResp && validateResp.parsed;
     if (p) {
-      cfgState.uiEnabled   = p.ui_enabled;
-      cfgState.uiPort      = p.ui_port;
-      cfgState.idleTimeout = p.idle_timeout;
+      cfgState.uiEnabled       = p.ui_enabled;
+      cfgState.uiPort          = p.ui_port;
+      cfgState.revealHideAfter = p.reveal_hide_after;
+      cfgState.idleTimeout     = p.idle_timeout;
+      cfgState.sessionTTL      = p.session_ttl;
+      cfgState.sessionIdle     = p.session_idle;
+      cfgState.privsep         = p.privsep === true;
     }
     cfgState.rawMode = false;
     if (cfgState.rawPanel)  cfgState.rawPanel.hidden  = true;
@@ -2810,6 +2877,7 @@ function applyParsedToState(parsed, vaultVarNames) {
   // (mirrors env "*") — not a literal "*" row. Filter any "*" out of the list.
   studioState.actionsAll = !!parsed.actions_wildcard;
   studioState.actions = (parsed.actions || []).filter((a) => a !== "*");
+  studioState.writable = (parsed.writable || []).filter((w) => typeof w === "string" && w.trim());
   studioState.aliases = Object.entries(parsed.aliases || {}).map(([n, c]) => ({ name: n, cmd: c }));
   const authKeys = ["get", "update", "delete", "exec"];
   studioState.auth = { get: "default", update: "default", delete: "default", exec: "default" };
@@ -2857,8 +2925,9 @@ function serializeStudio(st) {
   const envAll     = st.envAll || false;
   const actionsAll = st.actionsAll || false;
   const actions    = (st.actions  || []).filter((a) => a.trim());
+  const writable   = (st.writable || []).map((w) => w.trim()).filter(Boolean);
   const mode = st.formatMode === "pretty" ? "pretty" : "minified";
-  if (envVars.length || envAll || actions.length || actionsAll) {
+  if (envVars.length || envAll || actions.length || actionsAll || writable.length) {
     lines.push("[exec]");
     if (envAll) {
       lines.push(...fmtTomlArray("env", ["*"], mode));
@@ -2869,6 +2938,9 @@ function serializeStudio(st) {
       lines.push(...fmtTomlArray("actions", ["*"], mode));
     } else if (actions.length) {
       lines.push(...fmtTomlArray("actions", actions, mode));
+    }
+    if (writable.length) {
+      lines.push(...fmtTomlArray("writable", writable, mode));
     }
     lines.push("");
   }
@@ -3127,6 +3199,23 @@ async function studioOpenExisting() {
   } catch (e) { toast("cannot read " + pickedPath + ": " + e.message, true); }
 }
 
+// pathEllipsisEl renders an absolute path with MIDDLE truncation: the leading
+// directories collapse behind an ellipsis while the last two segments (the part
+// that distinguishes one .byn from another) stay fully visible. The full path is
+// shown on hover via the title tooltip. Used by the trust picker, whose entries
+// otherwise all share a long common prefix and truncate to look identical.
+function pathEllipsisEl(full) {
+  const wrap = el("span", "sp-path");
+  wrap.title = full;
+  const segs = String(full || "").split("/");
+  const tailCount = Math.min(2, segs.length);
+  const headStr = segs.slice(0, segs.length - tailCount).join("/");
+  const tailStr = (headStr ? "/" : "") + segs.slice(segs.length - tailCount).join("/");
+  if (headStr) wrap.appendChild(el("span", "sp-path-head", headStr));
+  wrap.appendChild(el("span", "sp-path-tail", tailStr));
+  return wrap;
+}
+
 // openTrustPicker shows a simple list of trusted files and lets the user
 // choose one, or pick "browse filesystem…". Returns the chosen path, null for
 // browse, or undefined for cancel.
@@ -3144,8 +3233,8 @@ function openTrustPicker(entries) {
     for (const e of entries) {
       const btn = el("button", "studio-picker-item");
       const hash = el("span", "sp-hash"); hash.textContent = (e.sha256 || "").slice(0, 8);
-      const path = el("span", "sp-path"); path.textContent = e.path;
-      btn.appendChild(hash); btn.appendChild(path);
+      btn.appendChild(hash); btn.appendChild(pathEllipsisEl(e.path));
+      btn.title = e.path;
       btn.onclick = () => { document.body.removeChild(ovl); resolve(e.path); };
       list.appendChild(btn);
     }
@@ -3373,6 +3462,7 @@ function openBynStudio(opts) {
     envAll:  false,
     actions: [],
     actionsAll: false,
+    writable: [],
     auth:    { get: "default", update: "default", delete: "default", exec: "default" },
     aliases: [],
     rawMode: false,
@@ -3858,8 +3948,16 @@ async function studioLoadFromDir(dir) {
   try {
     const r = await api("POST", "/api/byn/read", { path: bynPath });
     await studioLoadFile(r);
-  } catch (_) {
-    // No .byn in this dir — reset to blank defaults and clear stale state.
+  } catch (e) {
+    // A genuinely-absent .byn is the normal "blank dir" case — reset silently.
+    // Any OTHER read failure (notably a macOS Full Disk Access / TCC denial on a
+    // .byn that DOES exist) must be surfaced with its actionable workflow message
+    // — otherwise the dropdown path fails silently while "open .byn" shows it.
+    const msg = (e && e.message) || "";
+    if (!/no such file|not found|does not exist|cannot find/i.test(msg)) {
+      toast(msg || ("cannot read " + bynPath), true);
+    }
+    // No readable .byn — reset to blank defaults and clear stale state.
     if (!studioState) return;
     studioState.filePath = null;
     studioState.originalParsed = null;
@@ -3881,6 +3979,7 @@ async function studioLoadFromDir(dir) {
     }
     studioState.actions = [];
     studioState.actionsAll = false;
+    studioState.writable = [];
     studioState.aliases = [];
     studioState.auth = { get: "default", update: "default", delete: "default", exec: "default" };
     if (!studioState.rawMode && studioState.builderPanel) {
@@ -3921,6 +4020,7 @@ async function studioReset() {
     }
     studioState.actions = [];
     studioState.actionsAll = false;
+    studioState.writable = [];
     studioState.aliases = [];
     studioState.auth = { get: "default", update: "default", delete: "default", exec: "default" };
   }
@@ -4335,6 +4435,27 @@ function renderBuilderPanel(panel) {
   actCard.appendChild(actList);
   panel.appendChild(actCard);
 
+  // -- Writable card (privsep tool-state dirs) --
+  const wrCard = studioCard("writable — exec tool-state dirs (privsep)");
+  const wrDesc = el("p", "studio-card-desc",
+    "extra dirs the privsep exec child (_byn-exec, a different UID) may read/write — e.g. a package manager's global store under a 0700 home. Granted at trust time on top of curated defaults; each path must be under your home. Most stacks need none.");
+  wrCard.appendChild(wrDesc);
+  const wrList = el("div", "studio-list");
+  if (!studioState.writable) studioState.writable = [];
+  for (let i = 0; i < studioState.writable.length; i++) {
+    wrList.appendChild(studioWritableRow(i, wrList));
+  }
+  const addWrBtn = el("button", "btn btn-ghost sm studio-add-row", "+ add dir");
+  addWrBtn.type = "button";
+  addWrBtn.onclick = () => {
+    studioState.writable.push("");
+    wrList.insertBefore(studioWritableRow(studioState.writable.length - 1, wrList), addWrBtn);
+    scheduleValidation();
+  };
+  wrList.appendChild(addWrBtn);
+  wrCard.appendChild(wrList);
+  panel.appendChild(wrCard);
+
   // -- Aliases card --
   const aliasCard = studioCard("aliases");
   const aliasDesc = el("p", "studio-card-desc",
@@ -4720,6 +4841,34 @@ function studioActionRow(idx, listEl, updateWarn) {
   return row;
 }
 
+// studioWritableRow renders one [exec] writable directory row (a path the
+// privsep exec child may read/write, on top of the curated defaults).
+function studioWritableRow(idx, listEl) {
+  const row = el("div", "studio-row studio-writable-row");
+  const inp = el("input", "input mono studio-row-input");
+  inp.type = "text"; inp.value = studioState.writable[idx] || "";
+  inp.placeholder = "~/Library/pnpm  or  ~/.cache/my-tool";
+  inp.autocomplete = "off"; inp.spellcheck = false;
+  inp.oninput = () => {
+    const rows = Array.from(listEl.querySelectorAll(".studio-writable-row"));
+    const i = rows.indexOf(row);
+    if (i >= 0) studioState.writable[i] = inp.value;
+    scheduleValidation();
+  };
+  const del = el("button", "act-ico danger studio-row-del");
+  del.title = "remove";
+  del.appendChild(icon("trash"));
+  del.onclick = () => {
+    const rows = Array.from(listEl.querySelectorAll(".studio-writable-row"));
+    const i = rows.indexOf(row);
+    if (i >= 0) studioState.writable.splice(i, 1);
+    listEl.removeChild(row);
+    scheduleValidation();
+  };
+  row.appendChild(inp); row.appendChild(del);
+  return row;
+}
+
 function studioAliasRow(idx, listEl) {
   const row = el("div", "studio-row");
   const nameIn = el("input", "input mono studio-alias-name");
@@ -4892,13 +5041,52 @@ function openStudioForPath(path) {
 }
 
 let toastTimer = null;
-// toast(msg, isErr, dur) — dur overrides the auto-timeout (ms); defaults:
-//   2000ms for ok, 4200ms for err. Policy-bearing toasts pass dur=6000.
+// toast(msg, isErr, dur) — non-error ("ok") toasts auto-dismiss after `dur`
+// (default 2000ms). ERROR toasts are PERSISTENT and Z-stacked: they never
+// auto-dismiss (dur is ignored), the newest sits in front, and closing the
+// front card brings the next forward — so an error is never lost behind a
+// timeout or another error. See pushErrorToast.
 function toast(msg, isErr, dur) {
-  const t = $("#toast"); t.textContent = msg; t.className = "toast " + (isErr ? "err" : "ok");
+  if (isErr) { pushErrorToast(msg); return; }
+  const t = $("#toast"); t.textContent = msg; t.className = "toast ok";
   t.hidden = false; clearTimeout(toastTimer);
-  const ms = dur != null ? dur : (isErr ? 4200 : 2000);
+  const ms = dur != null ? dur : 2000;
   toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+// pushErrorToast adds a persistent error card to #toast-stack. Each card has its
+// own ✕; the stack shows the newest in front with older ones peeking behind.
+function pushErrorToast(msg) {
+  const stack = $("#toast-stack");
+  if (!stack) { console.error(msg); return; }
+  const card = el("div", "toast err toast-err-card");
+  card.setAttribute("role", "alert");
+  const text = el("span", "toast-err-msg"); text.textContent = msg;
+  const close = el("button", "toast-close", "✕");
+  close.title = "dismiss";
+  close.setAttribute("aria-label", "dismiss error");
+  close.onclick = () => { if (card.parentNode) stack.removeChild(card); restackErrorToasts(); };
+  card.appendChild(text); card.appendChild(close);
+  stack.appendChild(card); // newest is the last child
+  restackErrorToasts();
+}
+
+// restackErrorToasts lays the cards out in Z: the last child (newest) is depth 0
+// (front, fully visible, interactive); older cards peek above with a capped
+// offset and are non-interactive until they reach the front.
+function restackErrorToasts() {
+  const stack = $("#toast-stack");
+  if (!stack) return;
+  const cards = Array.from(stack.children);
+  const n = cards.length;
+  cards.forEach((card, i) => {
+    const depth = (n - 1) - i;      // 0 for the newest (last)
+    const d = Math.min(depth, 3);   // cap the visible peek so a tall stack stays put
+    card.style.zIndex = String(1000 - depth);
+    card.style.transform = "translateX(-50%) translateY(" + (-d * 8) + "px) scale(" + (1 - d * 0.035) + ")";
+    card.style.opacity = depth === 0 ? "1" : (depth <= 3 ? "0.92" : "0");
+    card.style.pointerEvents = depth === 0 ? "auto" : "none";
+  });
 }
 // toastUndo shows an "ok" toast with a clickable "undo" affordance; clicking it
 // dismisses the toast and runs undoFn. Uses a longer default window (6s) so

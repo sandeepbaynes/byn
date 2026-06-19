@@ -466,6 +466,28 @@ select.input { appearance: none; cursor: pointer; }
 }
 .toast-undo:hover { color: var(--text); }
 
+/* Persistent, Z-stacked error toasts (pushErrorToast). Cards inherit .toast.err
+   for color/border/padding/bg/shadow; these rules (defined AFTER .toast) override
+   the positioning so they stack at a shared bottom-center anchor. The per-card
+   transform/opacity/z-index are set inline by restackErrorToasts(). */
+/* Above modals (dialog z-1100, pickers z-1200) so a persistent error fired from
+   inside a modal stays visible and dismissable on top of it. */
+.toast-stack { position: fixed; bottom: 22px; left: 50%; width: 0; height: 0; z-index: 1300; }
+.toast-err-card {
+  position: absolute; bottom: 0; left: 0;
+  display: flex; align-items: flex-start; gap: 12px;
+  max-width: min(560px, 90vw);
+  animation: none;
+  transition: transform .18s var(--ease), opacity .18s var(--ease);
+}
+.toast-err-msg { flex: 1 1 auto; white-space: pre-line; }
+.toast-close {
+  flex: 0 0 auto; background: none; border: none; padding: 0 0 0 2px; margin: 0;
+  font: inherit; font-size: 13px; line-height: 1.1; color: var(--danger-text);
+  cursor: pointer; opacity: .6;
+}
+.toast-close:hover { opacity: 1; }
+
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes flicker { 50% { opacity: .4; } }
@@ -956,7 +978,7 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   background: var(--overlay-bg-heavy); backdrop-filter: blur(3px); animation: fade .15s ease;
 }
 .studio-picker-card {
-  width: min(500px, 92vw);
+  width: min(820px, 94vw);
   background: linear-gradient(180deg, var(--surface), var(--ink-2));
   border: 1px solid var(--border-2); border-radius: 14px; padding: 20px;
   box-shadow: var(--shadow); animation: rise .2s var(--ease) both;
@@ -977,7 +999,12 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 }
 .studio-picker-item:hover { background: var(--raised); border-color: var(--border-2); }
 .sp-hash { color: var(--text-faint); flex: 0 0 70px; font-size: 11.5px; }
-.sp-path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Middle-truncated path: leading dirs (head) collapse with an ellipsis while the
+   last two segments (tail) stay fully visible so otherwise-identical entries are
+   distinguishable; full path on hover (title). */
+.sp-path { display: flex; align-items: baseline; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.sp-path-head { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.sp-path-tail { color: var(--text); white-space: nowrap; flex: 0 0 auto; }
 .studio-picker-foot { display: flex; justify-content: flex-end; gap: 10px; }
 
 /* ---- settings panel (global config editor) ---- */

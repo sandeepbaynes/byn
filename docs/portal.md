@@ -156,6 +156,16 @@ The **builder** tab presents a structured form:
   `[ui] reveal_hide_after` (default 15s) and when you leave the studio.
 - **Actions allowlist** — commands that may run without per-call auth. An
   **allow ALL commands ("\*")** toggle mirrors the env wildcard toggle.
+- **Writable dirs** — extra tool-state directories the privilege-separated exec
+  child (`_byn-exec`, a different UID) may read/write — e.g. a package manager's
+  global store under a `0700` home — written to `[exec] writable`. Granted at
+  `byn trust` time on top of a curated default set; each path must resolve under
+  your home. Most stacks need none.
+- **Aliases** — named entry points written to `[aliases]`; `byn exec <name>`
+  expands to the mapped command.
+- **Auth overrides** — per-operation auth policy (`[auth]` for get/update/delete/exec):
+  `default`, `always` (force fresh auth every call), or `none` (disable the gate —
+  use sparingly).
 
 Switch to **raw** mode at any time to hand-edit the generated TOML directly.
 Builder and raw stay in sync: switching back re-parses the raw TOML and
@@ -249,8 +259,12 @@ Notable settings visible in the panel:
 | `[ui] enabled` | `true` | Disable the portal |
 | `[ui] reveal_hide_after` | `"15s"` | Re-mask revealed values after this long; `"0s"` = never |
 | `[daemon] idle_timeout` | `"15m0s"` | Auto-lock all vaults after inactivity; `"0s"` disables |
+| `[security] session_ttl` | `"12h0m0s"` | Absolute session lifetime; `"0s"` = no absolute cap (needs daemon restart) |
+| `[security] session_idle` | `"0s"` | Sliding session idle window; `"0s"` = inherit `[daemon] idle_timeout` (needs daemon restart) |
+| `[security] privsep` | _absent (off)_ | Run trusted-`.byn` exec children as `_byn-exec` — requires `sudo byn setup` provisioning + a daemon restart |
 
-Durations use Go syntax (`"15s"`, `"1m30s"`, `"0s"`).
+The **Settings** view renders every key above as a form field (with a raw-TOML
+mode). Durations use Go syntax (`"15s"`, `"1m30s"`, `"0s"`).
 
 ---
 
