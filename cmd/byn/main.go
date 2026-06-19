@@ -147,6 +147,15 @@ func run(args []string) int {
 		return printCommandHelp(cmd)
 	}
 
+	// Enforce WHO each command must run as (owner vs root) BEFORE dispatch, so a
+	// wrong-identity invocation gets one clear, actionable message instead of a
+	// cryptic downstream failure (the daemon's "this peer may only redeem exec
+	// tokens", or a detached `sudo byn start` that dies into the log). See
+	// rootpolicy.go.
+	if enforceRootPolicy(cmd, os.Geteuid(), cliProvisioned, os.Stderr) {
+		return exitErr
+	}
+
 	switch cmd {
 	case "init":
 		return runInit(rest, scope)
@@ -338,14 +347,20 @@ Trust (.byn TOFU):
   trust list                 List trusted paths (also: --json)
   untrust [PATH]             Revoke trust (default: ./.byn)
 
-System (privsep, root-required):
+System (run with sudo — these manage the _byn service):
   setup                      Provision the _byn/_byn-exec service users
   migrate [--from PATH]      Adopt a vault into the system path (relocate
                              legacy ~/.byn, or import an external vault)
+  restart | reload | stop    Bounce / reload / stop the _byn system daemon
 
 Misc:
   version                    Print version
   help [command]             Print this help, or detailed help for a command
+
+Run byn as YOURSELF, not with sudo. Under privilege separation the daemon runs as
+the _byn service user; data/vault/exec commands (status, get, put, exec, unlock,
+web, …) refuse sudo and tell you to re-run without it. Only the System commands
+above need root. "byn start" is run as yourself; it never starts the daemon as root.
 
 For the full man page:  man byn
 Home: https://github.com/sandeepbaynes/byn   ·   by Sandeep Baynes
