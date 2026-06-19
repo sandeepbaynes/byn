@@ -126,6 +126,24 @@ func (d *Daemon) handleAuditReseal(ctx context.Context, env *ipc.Envelope) *ipc.
 	return resp
 }
 
+// auditChainDetail formats the doctor audit check from a VerifyChain result: a
+// break FAILs with a reseal hint; an intact chain is OK, annotated with the
+// count of owner-acknowledged reseals when any are present.
+func auditChainDetail(vaultName string, bad, total, acked int) (severity, detail string) {
+	if bad >= 0 {
+		return "fail", fmt.Sprintf("chain broken at event #%d — run: byn audit reseal %s", bad, vaultName)
+	}
+	detail = fmt.Sprintf("%d events, chain intact", total)
+	if acked > 0 {
+		suffix := "s"
+		if acked == 1 {
+			suffix = ""
+		}
+		detail = fmt.Sprintf("%d events, chain intact (%d acknowledged reseal%s)", total, acked, suffix)
+	}
+	return "ok", detail
+}
+
 func auditToWire(e audit.Event) ipc.AuditEvent {
 	return ipc.AuditEvent{
 		TS:            e.TS,
@@ -196,22 +214,15 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 			Detail: "schema + fingerprint ok",
 		})
 		// Audit chain.
-		bad, total, _, vErr := entry.auditor.VerifyChain(ctx)
-		switch {
-		case vErr != nil:
+		bad, total, acked, vErr := entry.auditor.VerifyChain(ctx)
+		if vErr != nil {
 			checks = append(checks, ipc.DoctorCheck{
-				Name: "vault[" + name + "].audit", Severity: "fail",
-				Detail: vErr.Error(),
+				Name: "vault[" + name + "].audit", Severity: "fail", Detail: vErr.Error(),
 			})
-		case bad >= 0:
+		} else {
+			sev, detail := auditChainDetail(name, bad, total, acked)
 			checks = append(checks, ipc.DoctorCheck{
-				Name: "vault[" + name + "].audit", Severity: "fail",
-				Detail: fmt.Sprintf("chain broken at event #%d", bad),
-			})
-		default:
-			checks = append(checks, ipc.DoctorCheck{
-				Name: "vault[" + name + "].audit", Severity: "ok",
-				Detail: fmt.Sprintf("%d events, chain intact", total),
+				Name: "vault[" + name + "].audit", Severity: sev, Detail: detail,
 			})
 		}
 	}
