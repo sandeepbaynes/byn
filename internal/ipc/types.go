@@ -63,6 +63,7 @@ const (
 	// dispatch.auditEmit).
 	OpAuditTail   Op = "audit.tail"
 	OpAuditVerify Op = "audit.verify"
+	OpAuditReseal Op = "audit.reseal"
 
 	// Diagnostics. OpDoctor returns a structured health report; the
 	// CLI renders it human-readable or as JSON.
@@ -145,7 +146,7 @@ var AllOps = []Op{
 	OpProjectCreate, OpProjectList, OpProjectDelete, OpProjectRename,
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
-	OpAuditTail, OpAuditVerify, OpDoctor,
+	OpAuditTail, OpAuditVerify, OpAuditReseal, OpDoctor,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
 	OpExecFetch, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
@@ -662,6 +663,25 @@ type AuditVerifyReq struct {
 type AuditVerifyResp struct {
 	Total    int `json:"total"`
 	BadIndex int `json:"bad_index"` // -1 when intact
+}
+
+// AuditResealReq acknowledges the first un-acknowledged chain break in a vault's
+// audit log by appending a signed bridge marker. The vault must be unlocked (a
+// deliberate owner action). Reason is free text recorded in the marker.
+type AuditResealReq struct {
+	Vault  string `json:"vault,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// AuditResealResp summarises the marker written. NoBreak is true when the chain
+// was already intact (nothing was written); BrokenIndex is -1 then.
+type AuditResealResp struct {
+	NoBreak      bool   `json:"no_break,omitempty"`
+	BrokenIndex  int    `json:"broken_index"`
+	ObservedHead string `json:"observed_head,omitempty"`
+	ExpectedHead string `json:"expected_head,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	By           string `json:"by,omitempty"`
 }
 
 // ---- Trust store -------------------------------------------------------

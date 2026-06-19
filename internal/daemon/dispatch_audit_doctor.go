@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
@@ -69,6 +70,55 @@ func (d *Daemon) handleAuditVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 	resp, err := ipc.NewResponse(env.ID, ipc.AuditVerifyResp{
 		Total:    total,
 		BadIndex: bad,
+	})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// handleAuditReseal acknowledges the first un-acknowledged chain break by
+// appending a signed bridge marker (original hashes are never rewritten). The
+// vault must be UNLOCKED: although the audit seed lives in unencrypted meta,
+// reseal is a deliberate owner action, so we gate out socket-only callers that
+// never proved the master password.
+func (d *Daemon) handleAuditReseal(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.AuditResealReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+	if err := vault.ValidateVaultName(name); err != nil {
+		return ipc.NewError(env.ID, ipc.CodeBadName, err.Error(), "")
+	}
+	entry, err := d.openVault(ctx, name)
+	if err != nil {
+		return ipc.NewError(env.ID, ipc.CodeNotInit,
+			fmt.Sprintf("vault %q: %v", name, err),
+			"check `byn vault list`")
+	}
+	if le := requireUnlocked(env.ID, entry.store); le != nil {
+		return le
+	}
+	ci := callerFrom(ctx)
+	by := fmt.Sprintf("uid=%d %s via %s", ci.UID, ci.Comm, ci.Surface)
+	m, err := entry.auditor.Reseal(ctx, req.Reason, by)
+	if errors.Is(err, audit.ErrNoBreak) {
+		resp, rerr := ipc.NewResponse(env.ID, ipc.AuditResealResp{NoBreak: true, BrokenIndex: -1})
+		if rerr != nil {
+			return internalErr(env.ID, rerr)
+		}
+		return resp
+	}
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.AuditResealResp{
+		BrokenIndex:  m.BrokenIndex,
+		ObservedHead: m.ObservedHead,
+		ExpectedHead: m.ExpectedHead,
+		Reason:       m.Reason,
+		By:           m.By,
 	})
 	if err != nil {
 		return internalErr(env.ID, err)
