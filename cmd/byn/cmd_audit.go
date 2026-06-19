@@ -57,6 +57,8 @@ func runAuditView(args []string, scope cliScope) int {
 	bynF := fs.String("byn", "", "filter: events whose .byn path matches (substring)")
 	callerF := fs.String("caller", "", "filter: events whose caller matches (substring)")
 	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
+	beforeF := fs.Int("before", 0, "older page: only events with index (#N) below this")
+	sinceF := fs.Int("since", 0, "forward: only events with index (#N) above this (to consume new events)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -65,7 +67,7 @@ func runAuditView(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	events, err := fetchAuditWindow(newClient(dir, scope.Vault), scope, *lines, *bynF, *callerF, *scopeF)
+	events, err := fetchAuditWindow(newClient(dir, scope.Vault), scope, *lines, *beforeF, *sinceF, *bynF, *callerF, *scopeF)
 	if err != nil {
 		return handleCallError(err)
 	}
@@ -97,6 +99,8 @@ func runAuditTail(args []string, scope cliScope) int {
 	bynF := fs.String("byn", "", "filter: events whose .byn path matches (substring)")
 	callerF := fs.String("caller", "", "filter: events whose caller matches (substring)")
 	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
+	beforeF := fs.Int("before", 0, "older page: only events with index (#N) below this")
+	sinceF := fs.Int("since", 0, "forward: only events with index (#N) above this (to consume new events)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -110,15 +114,15 @@ func runAuditTail(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, scope.Vault)
 
-	filt := func(lines, offset int) ipc.AuditTailReq {
-		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lines, Offset: offset, Byn: *bynF, Caller: *callerF, Scope: *scopeF}
+	filt := func(lines int) ipc.AuditTailReq {
+		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lines, Byn: *bynF, Caller: *callerF, Scope: *scopeF}
 	}
 
 	// Snapshot (no -f): page back through the log so each response stays under
 	// the IPC frame limit, assembling oldest-first. JSON mode emits a single
 	// array — consistent with `audit view --json`. NDJSON is reserved for -f.
 	if !*follow {
-		events, err := fetchAuditWindow(client, scope, *n, *bynF, *callerF, *scopeF)
+		events, err := fetchAuditWindow(client, scope, *n, *beforeF, *sinceF, *bynF, *callerF, *scopeF)
 		if err != nil {
 			return handleCallError(err)
 		}
@@ -139,7 +143,7 @@ func runAuditTail(args []string, scope cliScope) int {
 
 	// Follow (-f): a single recent page as the initial batch, then poll.
 	var resp ipc.AuditTailResp
-	if err := client.Call(ipc.OpAuditTail, filt(*n, 0), &resp); err != nil {
+	if err := client.Call(ipc.OpAuditTail, filt(*n), &resp); err != nil {
 		return handleCallError(err)
 	}
 	for _, e := range resp.Events {
@@ -152,7 +156,7 @@ func runAuditTail(args []string, scope cliScope) int {
 	for {
 		time.Sleep(700 * time.Millisecond)
 		var poll ipc.AuditTailResp
-		if err := client.Call(ipc.OpAuditTail, filt(256, 0), &poll); err != nil {
+		if err := client.Call(ipc.OpAuditTail, filt(256), &poll); err != nil {
 			return handleCallError(err)
 		}
 		var fresh []ipc.AuditEvent
@@ -194,28 +198,58 @@ func printAuditEvent(e ipc.AuditEvent, jsonOut bool) {
 // through the log (newest page first) so every IPC response stays under the
 // frame limit, then assembling them in order. lines <= 0 means "all". Used by
 // the snapshot view/tail; the -f follow path stays a single recent page.
-func fetchAuditWindow(client *ipc.Client, scope cliScope, lines int, byn, caller, scp string) ([]ipc.AuditEvent, error) {
-	var out []ipc.AuditEvent
-	offset := 0
-	for {
-		want := 0 // 0 → the daemon's max (size-budgeted) page
-		if lines > 0 {
-			if want = lines - offset; want <= 0 {
+func fetchAuditWindow(client *ipc.Client, scope cliScope, lines, before, since int, byn, caller, scp string) ([]ipc.AuditEvent, error) {
+	mkReq := func(b, s, lim int) ipc.AuditTailReq {
+		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lim, Before: b, Since: s, Byn: byn, Caller: caller, Scope: scp}
+	}
+
+	// --before N: one explicit older page (events with Index < N). Page further by
+	// passing the smallest #N you got as the next --before.
+	if before > 0 {
+		var resp ipc.AuditTailResp
+		if err := client.Call(ipc.OpAuditTail, mkReq(before, 0, lines), &resp); err != nil {
+			return nil, err
+		}
+		return resp.Events, nil
+	}
+
+	// --since N: ALL events newer than #N (oldest-first), paged forward by the
+	// max index seen — stable as the log grows.
+	if since > 0 {
+		var out []ipc.AuditEvent
+		cursor := since
+		for {
+			var resp ipc.AuditTailResp
+			if err := client.Call(ipc.OpAuditTail, mkReq(0, cursor, 0), &resp); err != nil {
+				return nil, err
+			}
+			if len(resp.Events) == 0 {
+				break
+			}
+			out = append(out, resp.Events...)
+			cursor = resp.Events[len(resp.Events)-1].Index // newest seen
+			if !resp.More {
 				break
 			}
 		}
+		return out, nil
+	}
+
+	// Default: the newest `lines` events (lines<=0 → the whole log), paged BACKWARD
+	// by the smallest index seen and assembled oldest-first.
+	var out []ipc.AuditEvent
+	beforeCur := 0 // 0 = newest
+	for {
 		var resp ipc.AuditTailResp
-		req := ipc.AuditTailReq{Vault: scope.Vault, Lines: want, Offset: offset, Byn: byn, Caller: caller, Scope: scp}
-		if err := client.Call(ipc.OpAuditTail, req, &resp); err != nil {
+		if err := client.Call(ipc.OpAuditTail, mkReq(beforeCur, 0, lines), &resp); err != nil {
 			return nil, err
 		}
-		got := len(resp.Events)
-		if got == 0 {
+		if len(resp.Events) == 0 {
 			break
 		}
-		out = append(resp.Events, out...) // prepend: pages walk newest → oldest
-		offset += got
-		if offset >= resp.Total {
+		out = append(resp.Events, out...) // prepend older pages
+		beforeCur = resp.Events[0].Index  // smallest seen → next older cursor
+		if !resp.More || (lines > 0 && len(out) >= lines) {
 			break
 		}
 	}

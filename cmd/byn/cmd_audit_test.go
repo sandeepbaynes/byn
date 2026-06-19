@@ -243,9 +243,9 @@ func TestRunAuditView_PaginatesFullDump(t *testing.T) {
 	fd.on(ipc.OpAuditTail, func(raw []byte) (any, *ipc.ErrMsg) {
 		var req ipc.AuditTailReq
 		_ = json.Unmarshal(raw, &req)
-		end := total - req.Offset
-		if end < 0 {
-			end = 0
+		end := total // exclusive upper index bound for this page
+		if req.Before > 0 {
+			end = req.Before
 		}
 		start := end - 10 // page size 10
 		if start < 0 {
@@ -255,7 +255,7 @@ func TestRunAuditView_PaginatesFullDump(t *testing.T) {
 		for i := start; i < end; i++ {
 			evs = append(evs, ipc.AuditEvent{Index: i, Op: "get", Outcome: "ok"})
 		}
-		return ipc.AuditTailResp{Events: evs, Total: total}, nil
+		return ipc.AuditTailResp{Events: evs, Total: total, More: start > 0}, nil
 	})
 
 	var code int
@@ -270,5 +270,44 @@ func TestRunAuditView_PaginatesFullDump(t *testing.T) {
 	}
 	if strings.Index(out, "#0 ") > strings.Index(out, "#24 ") {
 		t.Error("dump must be oldest-first (#0 before #24)")
+	}
+}
+
+// TestRunAuditView_SinceConsumesForward: --since N consumes events newer than
+// #N, oldest-first, paging forward by the max index seen (a program's
+// reliable "fetch since last scanned" path).
+func TestRunAuditView_SinceConsumesForward(t *testing.T) {
+	fd := startFakeDaemon(t)
+	const total = 25
+	fd.on(ipc.OpAuditTail, func(raw []byte) (any, *ipc.ErrMsg) {
+		var req ipc.AuditTailReq
+		_ = json.Unmarshal(raw, &req)
+		begin := req.Since + 1 // events with Index > Since
+		if begin < 0 {
+			begin = 0
+		}
+		end := begin + 10 // page size 10
+		if end > total {
+			end = total
+		}
+		evs := make([]ipc.AuditEvent, 0, end-begin)
+		for i := begin; i < end; i++ {
+			evs = append(evs, ipc.AuditEvent{Index: i, Op: "get", Outcome: "ok"})
+		}
+		return ipc.AuditTailResp{Events: evs, Total: total, More: end < total}, nil
+	})
+
+	var code int
+	out := captureStdout(t, func() { code = runAudit([]string{"view", "--since", "4"}, cliScope{}) })
+	if code != exitOK {
+		t.Fatalf("since exit %d", code)
+	}
+	for i := 5; i < total; i++ { // #5..#24 across two forward pages
+		if !strings.Contains(out, fmt.Sprintf("#%d ", i)) {
+			t.Errorf("--since 4 missing #%d", i)
+		}
+	}
+	if strings.Contains(out, "#4 ") || strings.Contains(out, "#0 ") {
+		t.Error("--since 4 must exclude #4 and older")
 	}
 }

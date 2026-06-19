@@ -621,9 +621,17 @@ type RenameResp struct{}
 // chronological order (oldest first within the returned slice).
 // Lines <= 0 returns all events.
 type AuditTailReq struct {
-	Vault  string `json:"vault,omitempty"`
-	Lines  int    `json:"lines,omitempty"`
-	Offset int    `json:"offset,omitempty"` // events to skip FROM THE NEWEST (0 = tail); for paging back through a large log
+	Vault string `json:"vault,omitempty"`
+	Lines int    `json:"lines,omitempty"`
+	// Pagination is by STABLE chain index (the "#N" each event carries), not a
+	// positional offset — so it stays correct as the log grows. Use at most one:
+	//   Since > 0 → forward: the oldest Lines events with index > Since (consume
+	//               new events; pass the max index you've seen).
+	//   Before > 0 → backward: the newest Lines events with index < Before (page
+	//               to older events; pass the min index you've seen).
+	//   neither   → the newest Lines events (tail).
+	Since  int    `json:"since,omitempty"`
+	Before int    `json:"before,omitempty"`
 	Byn    string `json:"byn,omitempty"`    // filter: byn_path substring (case-insensitive)
 	Caller string `json:"caller,omitempty"` // filter: caller substring
 	Scope  string `json:"scope,omitempty"`  // filter: project[/env] substring
@@ -654,11 +662,14 @@ type AuditEvent struct {
 }
 
 // AuditTailResp returns one page of events (oldest-first), bounded to stay under
-// the IPC frame limit, plus Total — the count of (filtered) events in the whole
-// log, so a client can page back through all of them via AuditTailReq.Offset.
+// the IPC frame limit. More reports whether further events exist in the paging
+// direction (older for Before/tail, newer for Since) — page until it is false,
+// passing the page's edge index back as the next cursor. Total is the count of
+// (filtered) events in the whole log, for display.
 type AuditTailResp struct {
 	Events []AuditEvent `json:"events"`
 	Total  int          `json:"total"`
+	More   bool         `json:"more,omitempty"`
 }
 
 // AuditVerifyReq re-walks the HMAC chain. Vault defaults to "default".

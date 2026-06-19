@@ -421,7 +421,12 @@ Ctrl\-C (NDJSON when combined with \fB\-\-json\fR). \fB\-\-byn\fR,
 \fB\-\-caller\fR, and \fB\-\-scope\fR filter (case\-insensitive substring)
 \fIserver\-side across the whole log\fR, so a match is found even when it
 predates the last \fIN\fR events. Every row is prefixed with its global
-chain event number \(em the same one \fBverify\fR and \fBreseal\fR report.
+chain event number (\fB#N\fR) \(em the same one \fBverify\fR and \fBreseal\fR
+report. Paginate by that STABLE index (never a positional offset, which a
+growing log would shift): \fB\-\-since\fR \fIN\fR streams every event with
+\fB#N\fR above N oldest\-first (a program tracks the highest #N it has seen and
+re\-queries to consume new events); \fB\-\-before\fR \fIN\fR fetches the page of
+events just below #N (pass the smallest #N you got to page further back).
 .TP
 .B audit verify \fR[\fB\-\-json\fR]
 Re\-walk the active vault's audit log and recompute the HMAC chain

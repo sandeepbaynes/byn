@@ -1308,8 +1308,8 @@ SEE ALSO
        byn-audit - read and verify the per-vault audit log
 
 SYNOPSIS
-       byn audit view [--lines N] [--byn P] [--caller C] [--scope S] [--json]
-       byn audit tail [-n N] [-f] [--byn P] [--caller C] [--scope S] [--json]
+       byn audit view [--lines N] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]
+       byn audit tail [-n N] [-f] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]
        byn audit verify [--json]
        byn audit reseal [--reason R] [--yes] [--json]
 
@@ -1339,6 +1339,12 @@ DESCRIPTION
        and --scope filter by case-insensitive substring SERVER-SIDE
        across the whole log, so a match is found even when it predates
        the last N events (handy when the recent window hides old events).
+
+       Paginate by that STABLE #N index, never a positional offset (a
+       growing log would shift an offset). --since N streams every event
+       with #N above N, oldest-first — a program tracks the highest #N it
+       has seen and re-queries to consume new events. --before N fetches
+       the page just below #N; pass the smallest #N you got to page back.
 
        byn audit verify
            Re-walk the chain end-to-end and recompute every
