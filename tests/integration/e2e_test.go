@@ -95,7 +95,10 @@ func (s *session) run(stdin string, args ...string) (string, string, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.bin, args...)
-	cmd.Env = append(os.Environ(), "BYN_TEST_DIR="+s.dir)
+	// BYN_ALLOW_ROOT=1: the privsep-integration job runs as root (no non-root
+	// user), so owner commands would otherwise be refused by the root-policy
+	// guard. The guard itself is unit-tested in cmd/byn/rootpolicy_test.go.
+	cmd.Env = append(os.Environ(), "BYN_TEST_DIR="+s.dir, "BYN_ALLOW_ROOT=1")
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {

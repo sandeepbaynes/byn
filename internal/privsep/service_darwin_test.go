@@ -9,11 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Tests never wait on launchd — collapse the settle/retry sleeps to no-ops so
+// the hardened InstallService / reloadDaemonService paths run instantly.
+func init() { svcSleep = func(time.Duration) {} }
 
 func TestShSingleQuote(t *testing.T) {
 	assert.Equal(t, `'abc'`, shSingleQuote("abc"))
@@ -283,4 +288,73 @@ func TestUninstallServiceErrorPaths(t *testing.T) {
 			assert.ErrorIs(t, err, sentinel)
 		})
 	}
+}
+
+// TestReloadDaemonService_Order asserts the hardened (re)load sequence:
+// bootout → remove stale runtime → bootstrap, in that order.
+func TestReloadDaemonService_Order(t *testing.T) {
+	var ran []string
+	run := func(cmd string, args ...string) error {
+		ran = append(ran, strings.TrimSpace(cmd+" "+strings.Join(args, " ")))
+		if cmd == "launchctl" && len(args) > 0 && args[0] == "print" {
+			return errors.New("could not find service") // not loaded → poll exits
+		}
+		return nil
+	}
+	require.NoError(t, reloadDaemonService(run))
+
+	idx := func(prefix string) int {
+		for i, c := range ran {
+			if strings.HasPrefix(c, prefix) {
+				return i
+			}
+		}
+		return -1
+	}
+	bootout := idx("launchctl bootout")
+	rmStale := idx("rm -f " + paths.SystemDataDir())
+	bootstrap := idx("launchctl bootstrap")
+	require.GreaterOrEqual(t, bootout, 0, "expected a bootout")
+	require.GreaterOrEqual(t, rmStale, 0, "expected stale runtime removal")
+	require.GreaterOrEqual(t, bootstrap, 0, "expected a bootstrap")
+	assert.Less(t, bootout, rmStale, "bootout before rm-stale")
+	assert.Less(t, rmStale, bootstrap, "rm-stale before bootstrap")
+}
+
+// TestReloadDaemonService_RetriesOnFailure proves a transient bootstrap failure
+// (the launchd "Bootstrap failed: 5" race) is retried once, and the retry wins.
+func TestReloadDaemonService_RetriesOnFailure(t *testing.T) {
+	bootstraps := 0
+	run := func(cmd string, args ...string) error {
+		if cmd == "launchctl" && len(args) > 0 && args[0] == "print" {
+			return errors.New("not loaded")
+		}
+		if cmd == "launchctl" && len(args) > 0 && args[0] == "bootstrap" {
+			bootstraps++
+			if bootstraps == 1 {
+				return errors.New("Bootstrap failed: 5: Input/output error")
+			}
+		}
+		return nil
+	}
+	require.NoError(t, reloadDaemonService(run))
+	assert.Equal(t, 2, bootstraps, "bootstrap should be retried once after a transient failure")
+}
+
+// TestReloadDaemonService_PersistentFailure surfaces a real (non-transient)
+// bootstrap error after the single retry.
+func TestReloadDaemonService_PersistentFailure(t *testing.T) {
+	sentinel := errors.New("boom")
+	run := func(cmd string, args ...string) error {
+		if cmd == "launchctl" && len(args) > 0 && args[0] == "print" {
+			return errors.New("not loaded")
+		}
+		if cmd == "launchctl" && len(args) > 0 && args[0] == "bootstrap" {
+			return sentinel
+		}
+		return nil
+	}
+	err := reloadDaemonService(run)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sentinel)
 }
