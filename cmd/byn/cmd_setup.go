@@ -279,12 +279,22 @@ func prebuiltHelperPath() (string, error) {
 }
 
 // privilegedRunner returns the production command runner: it execs fixed
-// commands supplied by internal/privsep (never user input) with byn's stdio.
+// commands supplied by internal/privsep (never user input). It CAPTURES each
+// command's output and discards it on success — byn reports its own result, so
+// raw launchctl/systemctl/dscl chatter (the `launchctl print` settle-poll's
+// service blob, "Bad request", "Could not find service") never reaches the
+// terminal — and surfaces the captured output only when a command actually
+// fails (so a real "Bootstrap failed: 5: Input/output error" is still shown).
 func privilegedRunner() func(string, ...string) error {
 	return func(cmd string, runArgs ...string) error {
 		c := exec.Command(cmd, runArgs...) //nolint:gosec // commands are fixed strings from internal/privsep, not user input
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		return c.Run()
+		out, err := c.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%s: %w: %s", cmd, err, msg)
+		}
+		return fmt.Errorf("%s: %w", cmd, err)
 	}
 }

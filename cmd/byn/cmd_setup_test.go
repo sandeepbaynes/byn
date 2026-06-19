@@ -156,3 +156,24 @@ func TestConfirmPurge(t *testing.T) {
 		})
 	}
 }
+
+// TestPrivilegedRunner_SurfacesOutputOnError: a failing command's captured
+// output is folded into the error, so a real "Bootstrap failed: 5" is not lost.
+func TestPrivilegedRunner_SurfacesOutputOnError(t *testing.T) {
+	err := privilegedRunner()("sh", "-c", "echo boom-detail >&2; exit 3")
+	if err == nil {
+		t.Fatal("expected an error for a non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "boom-detail") {
+		t.Errorf("error must surface the captured command output, got %q", err.Error())
+	}
+}
+
+// TestPrivilegedRunner_QuietOnSuccess: a successful command returns nil and its
+// output is captured (CombinedOutput), not streamed to the terminal — this is
+// what keeps `sudo byn setup`'s launchctl-print poll from dumping the blob.
+func TestPrivilegedRunner_QuietOnSuccess(t *testing.T) {
+	if err := privilegedRunner()("sh", "-c", "echo chatter; exit 0"); err != nil {
+		t.Errorf("expected success, got %v", err)
+	}
+}
