@@ -628,6 +628,7 @@ type AuditTailReq struct {
 // AuditEvent mirrors audit.Event on the wire. Re-declared here so the
 // CLI doesn't have to import internal/audit.
 type AuditEvent struct {
+	Index         int    `json:"index"` // global 0-based chain index (matches verify/reseal)
 	TS            int64  `json:"ts"`
 	VaultID       string `json:"vault_id"`
 	VaultName     string `json:"vault_name"`

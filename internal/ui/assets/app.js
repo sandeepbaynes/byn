@@ -1317,10 +1317,11 @@ async function renderAuditView() {
   if (!events.length) { box.appendChild(emptyHint("no audit events yet")); return; }
   const tbl = el("div", "audit-tbl");
   const hdr = el("div", "audit-row audit-head");
-  ["TIME", "OP", "OUTCOME", "SCOPE", "CALLER"].forEach((h) => hdr.appendChild(el("span", null, h)));
+  ["#", "TIME", "OP", "OUTCOME", "SCOPE", "CALLER"].forEach((h) => hdr.appendChild(el("span", null, h)));
   tbl.appendChild(hdr);
   for (const e of events) {
     const row = el("div", "audit-row" + (e.outcome && e.outcome !== "ok" ? " bad" : ""));
+    row.appendChild(el("span", "a-idx", "#" + e.index));
     row.appendChild(el("span", "a-time", fmtAuditTime(e.ts)));
     row.appendChild(el("span", "a-op", e.op + (e.command ? " " + e.command : (e.entry_name ? " " + e.entry_name : ""))));
     row.appendChild(el("span", "a-out", e.outcome + (e.error_code ? " (" + e.error_code + ")" : "")));
