@@ -338,7 +338,7 @@ Execution:
   edit, view                 Open the modal TUI editor (vi-style keys)
 
 Diagnostics:
-  doctor                     Run self-checks (daemon, vaults, audit chain) (also: --json)
+  doctor [--repair]          Health + provisioning checks; sudo --repair heals (also: --json)
   audit tail [--lines N]     Print recent audit-log events (also: --json)
   audit verify               Re-walk the per-vault HMAC chain (also: --json)
 

@@ -208,3 +208,8 @@ func UninstallService(run runner) error {
 	}
 	return nil
 }
+
+// RestartService reloads the byn LaunchDaemon via the hardened bootout→wait→
+// rm-stale→bootstrap(+retry) path. Exported for `byn restart` and
+// `byn doctor --repair`. Requires root. All side effects go through run.
+func RestartService(run runner) error { return reloadDaemonService(run) }
