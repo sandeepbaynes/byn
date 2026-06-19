@@ -71,6 +71,16 @@ func runDaemon(args []string) int {
 // — one command instead of stop + start. The new process picks up the
 // current binary + config. Forwards flags (e.g. --foreground) to start.
 func runDaemonRestart(args []string) int {
+	// Under privsep, act on the _byn service (a SIGTERM stop+start is futile —
+	// KeepAlive respawns it). The root-policy guard already required root here.
+	if daemonProvisioned() {
+		if err := restartServiceFn(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: restart the _byn service: %v\n", err)
+			return exitErr
+		}
+		fmt.Fprintln(os.Stderr, "byn daemon restarted (the _byn service).")
+		return exitOK
+	}
 	// Stop is best-effort: "no pidfile (already stopped)" returns exitOK,
 	// so restart degrades to a plain start when nothing is running.
 	if code := runDaemonStop(nil); code != exitOK {
@@ -158,6 +168,11 @@ func runDaemonStart(args []string) int {
 	}
 	if *foreground {
 		return runDaemonForeground(dir, *allowRoot)
+	}
+	// Under privsep the daemon is the _byn launchd/systemd service — never spawn
+	// it as the owner. Report status and delegate to the root path.
+	if daemonProvisioned() {
+		return startProvisionedDelegate(dir)
 	}
 	// Detached: re-exec ourselves with --foreground in a new session.
 	return runDaemonDetached(dir, *allowRoot)
@@ -289,6 +304,16 @@ func runDaemonStop(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
+	}
+	// Under privsep, bootout the _byn service (a SIGTERM is futile — KeepAlive
+	// respawns it). The root-policy guard already required root here.
+	if daemonProvisioned() {
+		if err := stopServiceFn(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: stop the _byn service: %v\n", err)
+			return exitErr
+		}
+		fmt.Fprintln(os.Stderr, "byn daemon stopped (booted out the _byn service).")
+		return exitOK
 	}
 	pid, ok, err := daemonPID(dir)
 	if err != nil {

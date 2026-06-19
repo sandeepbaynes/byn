@@ -29,6 +29,15 @@ to the entry's identity via AEAD additional data.
 The daemon stores its state at a fixed per\-OS system path (the data
 directory) \(em there is no runtime override. To separate credentials,
 use multiple vaults (\fB\-\-vault\fR), not multiple data directories.
+.PP
+\fBRun byn as yourself, not with sudo.\fR Under privilege separation the daemon
+runs as the dedicated \fB_byn\fR service user and its socket only accepts your
+UID, so data, vault and \fB.byn\fR commands (\fBstatus\fR, \fBget\fR, \fBput\fR,
+\fBexec\fR, \fBunlock\fR, \fBweb\fR, \&...) refuse to run under \fBsudo\fR and tell
+you to re\-run without it. Only the commands that manage the \fB_byn\fR system
+daemon need root: \fBsudo byn restart\fR / \fBreload\fR / \fBstop\fR,
+\fBsudo byn setup\fR, and \fBsudo byn doctor \-\-repair\fR. \fBbyn start\fR is run
+as yourself (it never starts the daemon as root).
 .SH COMMANDS
 .SS Setup and lifecycle
 .TP
@@ -380,12 +389,21 @@ this materialises plaintext. Treat the destination as you would a
 \fB.env\fR file \- never commit, never share.
 .SS Diagnostics and audit
 .TP
-.B doctor \fR[\fB\-\-json\fR]
-Run a battery of self\-checks against the daemon and every vault on
-disk: daemon liveness, vault enumeration, schema + fingerprint
-match, audit\-chain HMAC integrity. Each check returns
-\fBok\fR / \fBwarn\fR / \fBfail\fR. Exits non\-zero if any
-\fBfail\fR.
+.B doctor \fR[\fB\-\-json\fR] \fR[\fB\-\-repair\fR]
+Run two batteries of self\-checks. The LOCAL provisioning/health checks work
+even when the daemon is DOWN: privsep provisioned, spawn helper installed,
+daemon reachable, the data dir still owned by \fB_byn\fR (flags root\-owned
+strays a \fBsudo byn start\fR left behind), and no stale socket. When the daemon
+is reachable it also runs the daemon\-side checks: vault enumeration, schema +
+fingerprint match, audit\-chain HMAC integrity. Each check returns
+\fBok\fR / \fBwarn\fR / \fBfail\fR; exits non\-zero if any \fBfail\fR. Plain
+\fBbyn doctor\fR only diagnoses.
+.IP
+\fB\-\-repair\fR (root) applies the safe fixes for the failing local checks:
+chown the data dir back to \fB_byn\fR and reload the launchd/systemd service
+(clearing a stale socket and a broken registration). Run as
+\fBsudo byn doctor \-\-repair\fR \(em the packaged form of the manual
+launchctl bootout/bootstrap + chown recovery.
 .TP
 .B audit view \fR[\fB\-\-lines\fR \fIN\fR] \fR[\fB\-\-json\fR]
 Snapshot the most recent \fIN\fR events from the active vault's audit
@@ -738,19 +756,24 @@ commands and the paid Developer ID path for distributing to other Macs, is in
 .SS Daemon control
 .TP
 .B start \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
-Start the daemon (detached by default). The daemon refuses to run as root
-(uid 0) \(em a root daemon defeats the \fB_byn\fR privilege separation it
-installs; pass \fB\-\-allow\-root\fR to override (NOT recommended). Alias:
-\fBbyn daemon start\fR.
+Start the daemon. \fBWhen privsep is provisioned\fR the daemon is the \fB_byn\fR
+launchd/systemd service (auto-starts on boot/crash), so \fBbyn start\fR (run as
+yourself) only reports whether it is up and, if down, points you at
+\fBsudo byn restart\fR \(em it never spawns a daemon as you or as root. When NOT
+provisioned it starts a detached owner daemon. The daemon refuses to run as root
+(\fB\-\-allow\-root\fR overrides; NOT recommended). Alias: \fBbyn daemon start\fR.
 .TP
 .B stop
-SIGTERM the daemon via its pidfile. Alias: \fBbyn daemon stop\fR.
+Stop the daemon. \fBWhen provisioned\fR (root required) it boots out the
+\fB_byn\fR service \(em a SIGTERM is futile because KeepAlive respawns it. When
+NOT provisioned it SIGTERMs the owner daemon via its pidfile. Alias:
+\fBbyn daemon stop\fR.
 .TP
 .B restart \fR[\fB\-\-foreground\fR] \fR[\fB\-\-allow\-root\fR]
-Stop the running daemon (if any) and start a fresh one \- one command
-instead of stop + start. Picks up a new binary and config. Forwards
-\fB\-\-foreground\fR / \fB\-\-allow\-root\fR to start. Alias:
-\fBbyn daemon restart\fR.
+Restart the daemon. \fBWhen provisioned\fR (root required) it reloads the
+\fB_byn\fR service (bootout \(-> wait \(-> bootstrap, race-free). When NOT
+provisioned it stops and starts a fresh owner daemon, picking up a new binary
+and config. Alias: \fBbyn daemon restart\fR.
 .TP
 .B reload
 Signal the running daemon (SIGHUP) to re-read
@@ -875,6 +898,13 @@ auth\-state, and the
 .B vaults/
 subtree there. Use multiple vaults (\fB\-\-vault\fR), not multiple data
 directories, to separate credentials.
+.TP
+.B BYN_ALLOW_ROOT
+If set to \fB1\fR, bypasses the refusal to run owner commands (status, get,
+exec, unlock, web, \&...) as root. byn commands run as you, not \fBsudo\fR; this
+escape hatch is for the rare legitimate root\-only environment (a container with
+no non\-root user) and the integration tests. It does NOT bypass the privsep
+boundary or any password gate \(em it only silences the identity guard.
 .TP
 .B NO_COLOR
 If set to any non\-empty value, disables ANSI color codes in CLI

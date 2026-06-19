@@ -1,6 +1,8 @@
-// `byn doctor` — diagnostic battery. Runs daemon-side checks
-// (vault enumeration, fingerprint, schema, audit chain) and surfaces
-// per-check ok/warn/fail. Exit code is non-zero if any check failed.
+// `byn doctor` — health battery. Runs daemon-INDEPENDENT provisioning/health
+// checks (which work while the daemon is DOWN — exactly when you need them) plus,
+// when the daemon is reachable, the daemon-side checks (vault enumeration,
+// fingerprint, schema, audit chain). `byn doctor --repair` (root) heals the
+// common broken state. Exit code is non-zero if any check failed.
 package main
 
 import (
@@ -12,10 +14,15 @@ import (
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
+// doctorEnv builds the local-check environment for a data dir. A package var so
+// tests can inject a controlled environment instead of probing the real machine.
+var doctorEnv = productionHealEnv
+
 func runDoctor(args []string, _ cliScope) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
+	repair := fs.Bool("repair", false, "apply fixes for failing provisioning/health checks (requires root)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -24,34 +31,123 @@ func runDoctor(args []string, _ cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	var resp ipc.DoctorResp
-	if err := newClient(dir, "").Call(ipc.OpDoctor, ipc.DoctorReq{}, &resp); err != nil {
-		return handleCallError(err)
+	env := doctorEnv(dir)
+
+	// --repair applies the safe fixes (chown the data dir back to _byn, reload the
+	// service, clear a stale socket) — the recovery a user would otherwise run by
+	// hand. It needs root; without --repair, doctor only diagnoses (dry-run).
+	if *repair {
+		if os.Geteuid() != 0 {
+			fmt.Fprintf(os.Stderr, "%s byn doctor --repair needs root. Run:\n    sudo byn doctor --repair\n", boldRed("Error:"))
+			return exitErr
+		}
+		actions := repairHeal(env, execRunner)
+		if len(actions) == 0 {
+			fmt.Println("repair: nothing to do")
+		}
+		for _, a := range actions {
+			fmt.Printf("repair: %s\n", a)
+		}
+		fmt.Println()
 	}
+
+	// Local (daemon-independent) checks — work even when the daemon is down.
+	local := diagnoseHeal(env)
+
+	// Daemon-side checks only when reachable; a down daemon is already reported by
+	// the local "daemon running" check, so we never hard-fail when it is down.
+	var dResp ipc.DoctorResp
+	daemonChecked := false
+	if env.daemonUp() {
+		if cerr := newClient(dir, "").Call(ipc.OpDoctor, ipc.DoctorReq{}, &dResp); cerr == nil {
+			daemonChecked = true
+		}
+	}
+
 	if *jsonOut {
-		out, _ := json.MarshalIndent(resp, "", "  ")
+		// Flatten to the stable DoctorResp { checks: [...] } shape: local checks
+		// (OK→"ok"/"fail" severity, fix folded into detail) then the daemon-side
+		// checks. Keeps the --json contract a single "checks" array.
+		checks := make([]ipc.DoctorCheck, 0, len(local)+len(dResp.Checks))
+		for _, c := range local {
+			sev := "ok"
+			if !c.OK {
+				sev = "fail"
+			}
+			detail := c.Detail
+			if !c.OK && c.Fix != "" {
+				if detail != "" {
+					detail += " — "
+				}
+				detail += c.Fix
+			}
+			checks = append(checks, ipc.DoctorCheck{Name: c.Name, Severity: sev, Detail: detail})
+		}
+		checks = append(checks, dResp.Checks...)
+		out, _ := json.MarshalIndent(ipc.DoctorResp{Checks: checks}, "", "  ")
 		fmt.Println(string(out))
-		return doctorExitCode(resp)
+		return healExitCode(local, daemonChecked, dResp)
 	}
-	for _, c := range resp.Checks {
-		var marker string
-		switch c.Severity {
-		case "ok":
-			marker = "  OK   "
-		case "warn":
-			marker = " WARN  "
-		case "fail":
-			marker = " FAIL  "
-		default:
-			marker = " ?     "
-		}
-		if c.Detail != "" {
-			fmt.Printf("[%s] %-40s  %s\n", marker, c.Name, c.Detail)
-		} else {
-			fmt.Printf("[%s] %s\n", marker, c.Name)
+
+	fmt.Println("Provisioning & health:")
+	for _, c := range local {
+		printHealCheck(c)
+	}
+	if daemonChecked {
+		fmt.Println("\nDaemon-side checks:")
+		for _, c := range dResp.Checks {
+			printDaemonCheck(c)
 		}
 	}
-	return doctorExitCode(resp)
+	return healExitCode(local, daemonChecked, dResp)
+}
+
+// printHealCheck renders a local provisioning/health check with its fix hint.
+func printHealCheck(c healCheck) {
+	marker := " FAIL "
+	if c.OK {
+		marker = "  OK  "
+	}
+	line := fmt.Sprintf("[%s] %s", marker, c.Name)
+	if c.Detail != "" {
+		line += "  — " + c.Detail
+	}
+	if !c.OK && c.Fix != "" {
+		line += "  → " + c.Fix
+	}
+	fmt.Println(line)
+}
+
+// printDaemonCheck renders a daemon-side OpDoctor check.
+func printDaemonCheck(c ipc.DoctorCheck) {
+	marker := " ?     "
+	switch c.Severity {
+	case "ok":
+		marker = "  OK   "
+	case "warn":
+		marker = " WARN  "
+	case "fail":
+		marker = " FAIL  "
+	}
+	if c.Detail != "" {
+		fmt.Printf("[%s] %-40s  %s\n", marker, c.Name, c.Detail)
+	} else {
+		fmt.Printf("[%s] %s\n", marker, c.Name)
+	}
+}
+
+// healExitCode is non-zero if any local check failed, or (when the daemon was
+// reachable) any daemon-side check failed.
+func healExitCode(local []healCheck, daemonChecked bool, d ipc.DoctorResp) int {
+	for _, c := range local {
+		if !c.OK {
+			return exitErr
+		}
+	}
+	if daemonChecked {
+		return doctorExitCode(d)
+	}
+	return exitOK
 }
 
 func doctorExitCode(r ipc.DoctorResp) int {
