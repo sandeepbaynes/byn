@@ -252,9 +252,15 @@ func scopeDeleteCmd(c Client, kind railNodeKind, vlt, project, name string) tea.
 }
 
 func loadAuditCmd(c Client, vault string, lines int) tea.Cmd {
+	return loadAuditPageCmd(c, vault, lines, 0)
+}
+
+// loadAuditPageCmd loads one page; before>0 fetches the page of events with chain
+// index (#N) below before — a stable cursor for paging back through a growing log.
+func loadAuditPageCmd(c Client, vault string, lines, before int) tea.Cmd {
 	return func() tea.Msg {
 		var resp ipc.AuditTailResp
-		err := c.Call(ipc.OpAuditTail, ipc.AuditTailReq{Vault: vault, Lines: lines}, &resp)
+		err := c.Call(ipc.OpAuditTail, ipc.AuditTailReq{Vault: vault, Lines: lines, Before: before}, &resp)
 		return auditLoadedMsg{Vault: vault, Resp: resp, Err: err}
 	}
 }

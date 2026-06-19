@@ -72,3 +72,26 @@ func TestAuditFilterFlow(t *testing.T) {
 		t.Fatalf("second esc should exit audit: mode=%v", m.Mode)
 	}
 }
+
+// TestAuditPageNav drives the older/newest page keys and the stable cursor.
+func TestAuditPageNav(t *testing.T) {
+	m := Model{Mode: ModeAudit, auditMore: true, audit: []ipc.AuditEvent{{Index: 90}, {Index: 99}}}
+	// "]" older → freeze on the smallest #N shown (#90), dispatch a load.
+	mAny, cmd := m.keyAudit(tuiKey("]"))
+	m = asModel(t, mAny)
+	if m.auditBefore != 90 || cmd == nil {
+		t.Fatalf("] should freeze auditBefore at 90 and load, got before=%d cmd=%v", m.auditBefore, cmd != nil)
+	}
+	// "[" → back to live newest (cursor 0).
+	mAny, cmd = m.keyAudit(tuiKey("["))
+	m = asModel(t, mAny)
+	if m.auditBefore != 0 || cmd == nil {
+		t.Fatalf("[ should return to live (0) and reload, got before=%d cmd=%v", m.auditBefore, cmd != nil)
+	}
+	// "]" with no older events must not freeze.
+	noOlder := Model{Mode: ModeAudit, auditMore: false, audit: []ipc.AuditEvent{{Index: 0}}}
+	mAny, _ = noOlder.keyAudit(tuiKey("]"))
+	if asModel(t, mAny).auditBefore != 0 {
+		t.Fatal("] with no older events must stay live")
+	}
+}

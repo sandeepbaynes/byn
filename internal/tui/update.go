@@ -100,6 +100,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case auditLoadedMsg:
 		if msg.Err == nil {
 			m.audit = msg.Resp.Events
+			m.auditMore = msg.Resp.More
 		}
 		m.auditErr = msg.Err
 		return m, nil
@@ -222,7 +223,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Realtime audit: while the full-screen AUDIT view is open, refresh
 		// the log every tick so new events (from any surface) stream in.
 		if m.Mode == ModeAudit {
-			return m, tea.Batch(loadAuditCmd(m.client, m.scope.Vault, 200), tickCmd(time.Second))
+			// Live-refresh only the newest page; an older browsed page stays frozen.
+			if m.auditBefore == 0 {
+				return m, tea.Batch(loadAuditCmd(m.client, m.scope.Vault, 200), tickCmd(time.Second))
+			}
+			return m, tickCmd(time.Second)
 		}
 		return m, tickCmd(time.Second)
 
@@ -297,6 +302,7 @@ func (m Model) keyNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "a":
 			m.Mode = ModeAudit
+			m.auditBefore = 0 // enter live at the newest page
 			return m, loadAuditCmd(m.client, m.scope.Vault, 200)
 		case "d":
 			// Toggle detail pane on Large (no-op for now)
@@ -1559,6 +1565,23 @@ func (m Model) keyAudit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "r":
 		return m, loadAuditCmd(m.client, m.scope.Vault, 200)
+	case "]", "pgdown", "J":
+		// Older page: freeze on events with #N below the smallest currently shown.
+		// The cursor is a stable chain index, so it holds as the log grows.
+		if m.auditMore && len(m.audit) > 0 {
+			m.auditBefore = m.audit[0].Index
+			return m, loadAuditPageCmd(m.client, m.scope.Vault, 200, m.auditBefore)
+		}
+		m.flash("(oldest events)", true)
+		return m, nil
+	case "[", "pgup", "K":
+		// Back to the live newest page.
+		if m.auditBefore != 0 {
+			m.auditBefore = 0
+			return m, loadAuditCmd(m.client, m.scope.Vault, 200)
+		}
+		m.flash("(newest — live)", true)
+		return m, nil
 	case "/":
 		m.searchAudit = true
 		m.Mode = ModeSearch
