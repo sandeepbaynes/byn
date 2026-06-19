@@ -1311,6 +1311,7 @@ SYNOPSIS
        byn audit view [--lines N] [--json]
        byn audit tail [-n N] [-f] [--json]
        byn audit verify [--json]
+       byn audit reseal [--reason R] [--yes] [--json]
 
 DESCRIPTION
        Each vault has an append-only HMAC-chained audit log under
@@ -1338,6 +1339,16 @@ DESCRIPTION
            hmac_chain. Exits 0 with "intact" on success; exits 3
            with "BROKEN at event #M" + a treat-as-compromised hint
            if any link fails.
+
+       byn audit reseal
+           Acknowledge a chain break (e.g. one a daemon crash left
+           mid-write) by appending a SIGNED bridge marker — the
+           original hashes are never rewritten, so the gap stays
+           visible and attributable (records the break, the reason,
+           and who/when). Afterwards verify and doctor read the chain
+           as intact. The vault must be UNLOCKED. Prompts for a reason
+           and confirmation; --reason with --yes runs non-interactively.
+           A marker forged without the chain seed cannot clear a break.
 
 EXAMPLES
        Recent 20 events for the active vault:
