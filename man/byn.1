@@ -414,10 +414,14 @@ browser), process name, pid/uid, and the parent process (who invoked
 it) \- e.g. \fIsocket:byn(pid 9123, uid 501)\(<-node\fR. A reveal in
 the browser or TUI routes through \fBget\fR and is logged as such.
 .TP
-.B audit tail \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-f\fR] \fR[\fB\-\-json\fR]
+.B audit tail \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-f\fR] \fR[\fB\-\-byn\fR \fIP\fR] \fR[\fB\-\-caller\fR \fIC\fR] \fR[\fB\-\-scope\fR \fIS\fR] \fR[\fB\-\-json\fR]
 Like \fBtail\fR(1): print the last \fIN\fR events (default 10) and
 exit. With \fB\-f\fR, follow \- stream new events in realtime until
-Ctrl\-C (NDJSON when combined with \fB\-\-json\fR).
+Ctrl\-C (NDJSON when combined with \fB\-\-json\fR). \fB\-\-byn\fR,
+\fB\-\-caller\fR, and \fB\-\-scope\fR filter (case\-insensitive substring)
+\fIserver\-side across the whole log\fR, so a match is found even when it
+predates the last \fIN\fR events. Every row is prefixed with its global
+chain event number \(em the same one \fBverify\fR and \fBreseal\fR report.
 .TP
 .B audit verify \fR[\fB\-\-json\fR]
 Re\-walk the active vault's audit log and recompute the HMAC chain

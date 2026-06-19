@@ -54,6 +54,9 @@ func runAuditView(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	lines := fs.Int("lines", 50, "max events to show (0 = all)")
 	jsonOut := fs.Bool("json", false, "output as JSON")
+	bynF := fs.String("byn", "", "filter: events whose .byn path matches (substring)")
+	callerF := fs.String("caller", "", "filter: events whose caller matches (substring)")
+	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -64,7 +67,7 @@ func runAuditView(args []string, scope cliScope) int {
 	}
 	var resp ipc.AuditTailResp
 	if err := newClient(dir, scope.Vault).Call(ipc.OpAuditTail,
-		ipc.AuditTailReq{Vault: scope.Vault, Lines: *lines}, &resp); err != nil {
+		ipc.AuditTailReq{Vault: scope.Vault, Lines: *lines, Byn: *bynF, Caller: *callerF, Scope: *scopeF}, &resp); err != nil {
 		return handleCallError(err)
 	}
 	if *jsonOut {
@@ -92,6 +95,9 @@ func runAuditTail(args []string, scope cliScope) int {
 	linesAlias := fs.Int("lines", -1, "alias for -n")
 	follow := fs.Bool("f", false, "follow: stream new events in realtime (Ctrl-C to stop)")
 	jsonOut := fs.Bool("json", false, "output as JSON (NDJSON when following)")
+	bynF := fs.String("byn", "", "filter: events whose .byn path matches (substring)")
+	callerF := fs.String("caller", "", "filter: events whose caller matches (substring)")
+	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -105,9 +111,11 @@ func runAuditTail(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, scope.Vault)
 
+	filt := func(lines int) ipc.AuditTailReq {
+		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lines, Byn: *bynF, Caller: *callerF, Scope: *scopeF}
+	}
 	var resp ipc.AuditTailResp
-	if err := client.Call(ipc.OpAuditTail,
-		ipc.AuditTailReq{Vault: scope.Vault, Lines: *n}, &resp); err != nil {
+	if err := client.Call(ipc.OpAuditTail, filt(*n), &resp); err != nil {
 		return handleCallError(err)
 	}
 	// Snapshot (no -f): JSON mode emits a single array — consistent with
@@ -141,8 +149,7 @@ func runAuditTail(args []string, scope cliScope) int {
 	for {
 		time.Sleep(700 * time.Millisecond)
 		var poll ipc.AuditTailResp
-		if err := client.Call(ipc.OpAuditTail,
-			ipc.AuditTailReq{Vault: scope.Vault, Lines: 256}, &poll); err != nil {
+		if err := client.Call(ipc.OpAuditTail, filt(256), &poll); err != nil {
 			return handleCallError(err)
 		}
 		var fresh []ipc.AuditEvent

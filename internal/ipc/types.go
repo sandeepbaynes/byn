@@ -621,8 +621,11 @@ type RenameResp struct{}
 // chronological order (oldest first within the returned slice).
 // Lines <= 0 returns all events.
 type AuditTailReq struct {
-	Vault string `json:"vault,omitempty"`
-	Lines int    `json:"lines,omitempty"`
+	Vault  string `json:"vault,omitempty"`
+	Lines  int    `json:"lines,omitempty"`
+	Byn    string `json:"byn,omitempty"`    // filter: byn_path substring (case-insensitive)
+	Caller string `json:"caller,omitempty"` // filter: caller substring
+	Scope  string `json:"scope,omitempty"`  // filter: project[/env] substring
 }
 
 // AuditEvent mirrors audit.Event on the wire. Re-declared here so the

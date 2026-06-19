@@ -1308,8 +1308,8 @@ SEE ALSO
        byn-audit - read and verify the per-vault audit log
 
 SYNOPSIS
-       byn audit view [--lines N] [--json]
-       byn audit tail [-n N] [-f] [--json]
+       byn audit view [--lines N] [--byn P] [--caller C] [--scope S] [--json]
+       byn audit tail [-n N] [-f] [--byn P] [--caller C] [--scope S] [--json]
        byn audit verify [--json]
        byn audit reseal [--reason R] [--yes] [--json]
 
@@ -1333,6 +1333,12 @@ DESCRIPTION
            Like tail(1): print the last N events (default 10, -n N),
            and exit. With -f, follow — keep streaming new events in
            realtime until Ctrl-C (NDJSON with --json -f).
+
+       Each row is prefixed with #N — the event's global chain index
+       (the same number verify and reseal report). --byn, --caller,
+       and --scope filter by case-insensitive substring SERVER-SIDE
+       across the whole log, so a match is found even when it predates
+       the last N events (handy when the recent window hides old events).
 
        byn audit verify
            Re-walk the chain end-to-end and recompute every

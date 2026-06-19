@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -41,6 +42,10 @@ import (
 // Event is one row in the audit log. Field ordering matters for the
 // HMAC computation — see eventBytes.
 type Event struct {
+	// Index is the global 0-based chain position, populated in-memory by Tail for
+	// display (verify/reseal use the same numbering). json:"-" — never serialized,
+	// so it stays out of the on-disk line and the HMAC.
+	Index         int           `json:"-"`
 	TS            int64         `json:"ts"`                // unix nanoseconds
 	VaultID       string        `json:"vault_id"`          // matches meta.vault_id
 	VaultName     string        `json:"vault_name"`        // for human reading
@@ -445,20 +450,52 @@ func (l *Logger) Reseal(ctx context.Context, reason, by string) (*ResealMarker, 
 	return m, nil
 }
 
-// Tail returns the most recent n events across all monthly log files
-// in chronological order (oldest first within the returned slice), plus
-// firstIndex — the global 0-based chain index of the first returned event
-// (the same numbering VerifyChain and reseal use). If n <= 0, all events
-// are returned. Reading runs without holding l.mu — files are append-only
-// and never rewritten, so a snapshot read is consistent.
-func (l *Logger) Tail(_ context.Context, n int) (events []Event, firstIndex int, err error) {
+// Filter narrows Tail by case-insensitive substring. An empty field matches
+// everything; all set fields must match (AND).
+type Filter struct {
+	Byn    string // matches byn_path
+	Caller string // matches "surface comm uid=N"
+	Scope  string // matches "project" or "project/env"
+}
+
+func (f Filter) empty() bool { return f.Byn == "" && f.Caller == "" && f.Scope == "" }
+
+func (f Filter) match(e Event) bool {
+	has := func(hay, needle string) bool {
+		return strings.Contains(strings.ToLower(hay), strings.ToLower(needle))
+	}
+	if f.Byn != "" && !has(e.BynPath, f.Byn) {
+		return false
+	}
+	if f.Scope != "" {
+		scope := e.Project
+		if e.Env != "" {
+			scope += "/" + e.Env
+		}
+		if !has(scope, f.Scope) {
+			return false
+		}
+	}
+	if f.Caller != "" && !has(fmt.Sprintf("%s %s uid=%d", e.CallerSurface, e.CallerComm, e.CallerUID), f.Caller) {
+		return false
+	}
+	return true
+}
+
+// Tail returns the most recent n events across all monthly log files in
+// chronological order (oldest first within the returned slice), each tagged with
+// its global 0-based chain Index (the numbering VerifyChain and reseal use). A
+// non-empty filter narrows the WHOLE log first, so matches are found anywhere,
+// not just in the last n. If n <= 0, all matching events are returned. Reading
+// runs without holding l.mu — files are append-only, so a snapshot is consistent.
+func (l *Logger) Tail(_ context.Context, n int, filter Filter) ([]Event, error) {
 	dir := filepath.Join(l.rootDir, "audit", l.vaultName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, 0, nil
+			return nil, nil
 		}
-		return nil, 0, fmt.Errorf("audit: read dir: %w", err)
+		return nil, fmt.Errorf("audit: read dir: %w", err)
 	}
 	files := make([]string, 0, len(entries))
 	for _, ent := range entries {
@@ -474,7 +511,7 @@ func (l *Logger) Tail(_ context.Context, n int) (events []Event, firstIndex int,
 		path := filepath.Join(dir, fname)
 		raw, rerr := os.ReadFile(path) // #nosec G304 -- daemon-controlled
 		if rerr != nil {
-			return nil, 0, fmt.Errorf("audit: read %s: %w", path, rerr)
+			return nil, fmt.Errorf("audit: read %s: %w", path, rerr)
 		}
 		lines := splitLines(raw)
 		// Tolerate a partial/garbled LAST line in the CURRENT month's
@@ -495,16 +532,25 @@ func (l *Logger) Tail(_ context.Context, n int) (events []Event, firstIndex int,
 					// a real corruption (not just a writer race).
 					continue
 				}
-				return nil, 0, fmt.Errorf("audit: parse %s line %d: %w", path, li, jerr)
+				return nil, fmt.Errorf("audit: parse %s line %d: %w", path, li, jerr)
 			}
+			e.Index = len(all) // global chain position
 			all = append(all, e)
 		}
 	}
-	total := len(all)
-	if n > 0 && len(all) > n {
-		all = all[total-n:]
+	if !filter.empty() {
+		kept := make([]Event, 0, len(all))
+		for _, e := range all {
+			if filter.match(e) {
+				kept = append(kept, e)
+			}
+		}
+		all = kept
 	}
-	return all, total - len(all), nil
+	if n > 0 && len(all) > n {
+		all = all[len(all)-n:]
+	}
+	return all, nil
 }
 
 // computeWithSeed is the non-method variant used by VerifyChain to

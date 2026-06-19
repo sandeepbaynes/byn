@@ -232,7 +232,7 @@ func (e *errStore) MetaSet(_ context.Context, _, _ string) error {
 
 func TestTail_EmptyLogReturnsNil(t *testing.T) {
 	l, _, _ := freshLogger(t)
-	events, _, err := l.Tail(context.Background(), 10)
+	events, err := l.Tail(context.Background(), 10, Filter{})
 	if err != nil {
 		t.Fatalf("Tail: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestTail_TolerateTrailingPartialLine(t *testing.T) {
 	}
 	// Tail must skip the partial trailer and still return the 3 good
 	// events instead of erroring.
-	got, _, err := l.Tail(context.Background(), 0)
+	got, err := l.Tail(context.Background(), 0, Filter{})
 	if err != nil {
 		t.Fatalf("Tail returned error on partial last line: %v", err)
 	}
@@ -285,27 +285,27 @@ func TestTail_AllAndLastN(t *testing.T) {
 			t.Fatalf("Append: %v", err)
 		}
 	}
-	// All when n <= 0 — firstIndex is 0.
-	all, firstAll, err := l.Tail(context.Background(), 0)
+	// All when n <= 0 — the first event's Index is 0.
+	all, err := l.Tail(context.Background(), 0, Filter{})
 	if err != nil {
 		t.Fatalf("Tail(0): %v", err)
 	}
 	if len(all) != 7 {
 		t.Fatalf("Tail(0) returned %d events, want 7", len(all))
 	}
-	if firstAll != 0 {
-		t.Errorf("Tail(0) firstIndex = %d, want 0", firstAll)
+	if all[0].Index != 0 {
+		t.Errorf("Tail(0)[0].Index = %d, want 0", all[0].Index)
 	}
-	// Last 3 of 7 → global indices 4,5,6, so firstIndex is 4.
-	last3, first3, err := l.Tail(context.Background(), 3)
+	// Last 3 of 7 → global indices 4,5,6.
+	last3, err := l.Tail(context.Background(), 3, Filter{})
 	if err != nil {
 		t.Fatalf("Tail(3): %v", err)
 	}
 	if len(last3) != 3 {
 		t.Fatalf("Tail(3) returned %d events, want 3", len(last3))
 	}
-	if first3 != 4 {
-		t.Errorf("Tail(3) firstIndex = %d, want 4 (last 3 of 7)", first3)
+	if last3[0].Index != 4 {
+		t.Errorf("Tail(3)[0].Index = %d, want 4 (last 3 of 7)", last3[0].Index)
 	}
 	// Order is preserved (oldest first), last3 should match all[-3:].
 	for i := 0; i < 3; i++ {
@@ -313,4 +313,51 @@ func TestTail_AllAndLastN(t *testing.T) {
 			t.Fatalf("Tail(3)[%d] HMAC mismatch", i)
 		}
 	}
+}
+
+// TestTail_Filter covers server-side filtering and that filtered (non-contiguous)
+// results keep their TRUE global chain Index.
+func TestTail_Filter(t *testing.T) {
+	l, _, _ := freshLogger(t)
+	ctx := context.Background()
+	mk := func(proj, env, byn string, uid uint32) {
+		if _, err := l.Append(ctx, Event{Op: "get", Outcome: OutcomeOK,
+			Project: proj, Env: env, BynPath: byn, CallerUID: uid, CallerComm: "byn"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("alpha", "prod", "/a/.byn", 501) // 0
+	mk("beta", "dev", "/b/.byn", 502)   // 1
+	mk("alpha", "dev", "/a/.byn", 501)  // 2
+	mk("beta", "prod", "/c/.byn", 501)  // 3
+	mk("alpha", "prod", "/a/.byn", 502) // 4
+
+	got, err := l.Tail(ctx, 0, Filter{Scope: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Index != 0 || got[1].Index != 2 || got[2].Index != 4 {
+		t.Fatalf("scope alpha: want 3 events at indices 0,2,4, got %d events %v", len(got), idxOf(got))
+	}
+	if g, _ := l.Tail(ctx, 0, Filter{Byn: "/c/"}); len(g) != 1 || g[0].Index != 3 {
+		t.Errorf("byn /c/: want 1 event @3, got %v", idxOf(g))
+	}
+	if g, _ := l.Tail(ctx, 0, Filter{Caller: "uid=502"}); len(g) != 2 {
+		t.Errorf("caller uid=502: want 2, got %d", len(g))
+	}
+	if g, _ := l.Tail(ctx, 0, Filter{Scope: "alpha", Caller: "uid=502"}); len(g) != 1 || g[0].Index != 4 {
+		t.Errorf("alpha AND uid=502: want 1 event @4, got %v", idxOf(g))
+	}
+	// Last-N applies AFTER the filter.
+	if g, _ := l.Tail(ctx, 1, Filter{Scope: "alpha"}); len(g) != 1 || g[0].Index != 4 {
+		t.Errorf("last 1 of alpha: want @4, got %v", idxOf(g))
+	}
+}
+
+func idxOf(events []Event) []int {
+	out := make([]int, len(events))
+	for i, e := range events {
+		out[i] = e.Index
+	}
+	return out
 }

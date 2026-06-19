@@ -30,14 +30,15 @@ func (d *Daemon) handleAuditTail(ctx context.Context, env *ipc.Envelope) *ipc.En
 			fmt.Sprintf("vault %q: %v", name, err),
 			"check `byn vault list`")
 	}
-	events, firstIndex, err := entry.auditor.Tail(ctx, req.Lines)
+	events, err := entry.auditor.Tail(ctx, req.Lines,
+		audit.Filter{Byn: req.Byn, Caller: req.Caller, Scope: req.Scope})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
 	wire := make([]ipc.AuditEvent, len(events))
 	for i, e := range events {
 		wire[i] = auditToWire(e)
-		wire[i].Index = firstIndex + i
+		wire[i].Index = e.Index
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire})
 	if err != nil {
