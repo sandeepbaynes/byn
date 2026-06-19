@@ -58,20 +58,20 @@ func enforceRootPolicy(cmd string, euid int, provisionedFn func() bool, w io.Wri
 	switch cmdRootClass(cmd) {
 	case classOwner:
 		if euid == 0 {
-			fmt.Fprintf(w, "%s byn %s runs as you, not root. Re-run without sudo:\n    byn %s …\n",
+			_, _ = fmt.Fprintf(w, "%s byn %s runs as you, not root. Re-run without sudo:\n    byn %s …\n",
 				boldRed("Error:"), cmd, cmd)
 			return true
 		}
 	case classStart:
 		if euid == 0 {
-			fmt.Fprintf(w, "%s don't start byn as root — the daemon runs as the _byn service.\n"+
+			_, _ = fmt.Fprintf(w, "%s don't start byn as root — the daemon runs as the _byn service.\n"+
 				"    Run \"byn start\" as yourself; if it's down, \"sudo byn restart\".\n",
 				boldRed("Error:"))
 			return true
 		}
 	case classRootWhenProvisioned:
 		if euid != 0 && provisionedFn() {
-			fmt.Fprintf(w, "%s byn %s manages the _byn system daemon and needs root. Run:\n    sudo byn %s\n",
+			_, _ = fmt.Fprintf(w, "%s byn %s manages the _byn system daemon and needs root. Run:\n    sudo byn %s\n",
 				boldRed("Error:"), cmd, cmd)
 			return true
 		}
