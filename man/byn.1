@@ -29,6 +29,15 @@ to the entry's identity via AEAD additional data.
 The daemon stores its state at a fixed per\-OS system path (the data
 directory) \(em there is no runtime override. To separate credentials,
 use multiple vaults (\fB\-\-vault\fR), not multiple data directories.
+.PP
+\fBRun byn as yourself, not with sudo.\fR Under privilege separation the daemon
+runs as the dedicated \fB_byn\fR service user and its socket only accepts your
+UID, so data, vault and \fB.byn\fR commands (\fBstatus\fR, \fBget\fR, \fBput\fR,
+\fBexec\fR, \fBunlock\fR, \fBweb\fR, \&...) refuse to run under \fBsudo\fR and tell
+you to re\-run without it. Only the commands that manage the \fB_byn\fR system
+daemon need root: \fBsudo byn restart\fR / \fBreload\fR / \fBstop\fR,
+\fBsudo byn setup\fR, and \fBsudo byn doctor \-\-repair\fR. \fBbyn start\fR is run
+as yourself (it never starts the daemon as root).
 .SH COMMANDS
 .SS Setup and lifecycle
 .TP
