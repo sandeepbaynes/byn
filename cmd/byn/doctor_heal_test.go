@@ -9,10 +9,12 @@ import (
 )
 
 func TestDiagnoseHeal_NotProvisioned(t *testing.T) {
+	// privsep is opt-in: a non-provisioned byn is the valid default, so doctor
+	// reports a single INFORMATIONAL (OK) check — it must not fail.
 	e := healEnv{provisioned: func() bool { return false }}
 	cs := diagnoseHeal(e)
-	if len(cs) != 1 || cs[0].Name != "privsep provisioned" || cs[0].OK {
-		t.Fatalf("not-provisioned: want one failing 'privsep provisioned' check, got %+v", cs)
+	if len(cs) != 1 || !cs[0].OK {
+		t.Fatalf("not-provisioned: want one informational (OK) check, got %+v", cs)
 	}
 }
 

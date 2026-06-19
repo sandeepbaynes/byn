@@ -899,6 +899,13 @@ auth\-state, and the
 subtree there. Use multiple vaults (\fB\-\-vault\fR), not multiple data
 directories, to separate credentials.
 .TP
+.B BYN_ALLOW_ROOT
+If set to \fB1\fR, bypasses the refusal to run owner commands (status, get,
+exec, unlock, web, \&...) as root. byn commands run as you, not \fBsudo\fR; this
+escape hatch is for the rare legitimate root\-only environment (a container with
+no non\-root user) and the integration tests. It does NOT bypass the privsep
+boundary or any password gate \(em it only silences the identity guard.
+.TP
 .B NO_COLOR
 If set to any non\-empty value, disables ANSI color codes in CLI
 output. See
