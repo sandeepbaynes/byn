@@ -4,9 +4,32 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
+
+// brokenHealEnv: provisioned, helper present, but root-owned data dir + daemon
+// down — the exact post-`sudo byn start` mess repair must heal.
+func brokenHealEnv() healEnv {
+	return healEnv{
+		provisioned: func() bool { return true },
+		exists:      func(string) bool { return true },
+		fileUID:     func(string) (int, bool) { return 0, true }, // root-owned → ownership FAILS
+		bynUID:      func() (int, bool) { return 77, true },
+		daemonUp:    func() bool { return false }, // down → daemon-running FAILS
+		dataDir:     "/data",
+		helperPath:  "/helper",
+	}
+}
+
+// healthyHealEnv: everything OK — repair must be a no-op.
+func healthyHealEnv() healEnv {
+	e := brokenHealEnv()
+	e.fileUID = func(string) (int, bool) { return 77, true } // owned by _byn
+	e.daemonUp = func() bool { return true }                 // up
+	return e
+}
 
 func TestDiagnoseHeal_NotProvisioned(t *testing.T) {
 	// privsep is opt-in: a non-provisioned byn is the valid default, so doctor
@@ -63,22 +86,51 @@ func TestDiagnoseHeal_BrokenState(t *testing.T) {
 }
 
 func TestRepairHeal_ChownsAndRestarts(t *testing.T) {
+	oldSleep := healSleep
+	healSleep = func(time.Duration) {} // don't actually wait for the daemon
+	t.Cleanup(func() { healSleep = oldSleep })
+
 	var ran []string
 	run := func(cmd string, args ...string) error {
 		ran = append(ran, cmd+" "+strings.Join(args, " "))
-		// Make the service appear already gone so the reload poll exits without
-		// any real sleep (svcSleep lives in the privsep package).
+		// Service appears already gone so the privsep reload poll exits fast.
 		if cmd == "launchctl" && len(args) > 0 && args[0] == "print" {
 			return errors.New("not loaded")
 		}
 		return nil
 	}
-	actions := repairHeal(healEnv{dataDir: "/data"}, run)
+	actions := repairHeal(brokenHealEnv(), run)
 	joined := strings.Join(ran, "\n")
 	if !strings.Contains(joined, "chown -R "+privsep.DaemonUser+":"+privsep.DaemonUser+" /data") {
 		t.Errorf("repair must chown the data dir back to %s; ran:\n%s", privsep.DaemonUser, joined)
 	}
-	if len(actions) == 0 {
-		t.Error("repair should report the actions it took")
+	// Assert the reload via the returned action (platform-agnostic — the raw
+	// command is `launchctl bootstrap` on macOS, `systemctl restart` on Linux).
+	reloaded := false
+	for _, a := range actions {
+		if strings.Contains(a, "reloaded") {
+			reloaded = true
+		}
+	}
+	if !reloaded {
+		t.Errorf("repair must reload the service for a down daemon; actions=%v ran:\n%s", actions, joined)
+	}
+	if len(actions) < 2 {
+		t.Errorf("expected chown + reload actions, got %v", actions)
+	}
+}
+
+// TestRepairHeal_NothingWhenHealthy: a healthy daemon must NOT be chowned or
+// restarted — repair only touches FAILING checks. (Regression: --repair used to
+// reload a healthy daemon every run, then falsely report it down mid-startup.)
+func TestRepairHeal_NothingWhenHealthy(t *testing.T) {
+	called := false
+	run := func(string, ...string) error { called = true; return nil }
+	actions := repairHeal(healthyHealEnv(), run)
+	if called {
+		t.Error("repair ran a command on a healthy env — it must be a no-op")
+	}
+	if len(actions) != 0 {
+		t.Errorf("expected no actions for a healthy env, got %v", actions)
 	}
 }
