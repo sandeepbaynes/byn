@@ -104,8 +104,16 @@ func TestRepairHeal_ChownsAndRestarts(t *testing.T) {
 	if !strings.Contains(joined, "chown -R "+privsep.DaemonUser+":"+privsep.DaemonUser+" /data") {
 		t.Errorf("repair must chown the data dir back to %s; ran:\n%s", privsep.DaemonUser, joined)
 	}
-	if !strings.Contains(joined, "launchctl bootstrap") {
-		t.Errorf("repair must reload the service for a down daemon; ran:\n%s", joined)
+	// Assert the reload via the returned action (platform-agnostic — the raw
+	// command is `launchctl bootstrap` on macOS, `systemctl restart` on Linux).
+	reloaded := false
+	for _, a := range actions {
+		if strings.Contains(a, "reloaded") {
+			reloaded = true
+		}
+	}
+	if !reloaded {
+		t.Errorf("repair must reload the service for a down daemon; actions=%v ran:\n%s", actions, joined)
 	}
 	if len(actions) < 2 {
 		t.Errorf("expected chown + reload actions, got %v", actions)
