@@ -446,18 +446,19 @@ func (l *Logger) Reseal(ctx context.Context, reason, by string) (*ResealMarker, 
 }
 
 // Tail returns the most recent n events across all monthly log files
-// in chronological order (oldest first within the returned slice).
-// If n <= 0, all events are returned. Reading runs without holding
-// l.mu — files are append-only and never rewritten, so a snapshot
-// read is consistent.
-func (l *Logger) Tail(_ context.Context, n int) ([]Event, error) {
+// in chronological order (oldest first within the returned slice), plus
+// firstIndex — the global 0-based chain index of the first returned event
+// (the same numbering VerifyChain and reseal use). If n <= 0, all events
+// are returned. Reading runs without holding l.mu — files are append-only
+// and never rewritten, so a snapshot read is consistent.
+func (l *Logger) Tail(_ context.Context, n int) (events []Event, firstIndex int, err error) {
 	dir := filepath.Join(l.rootDir, "audit", l.vaultName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, 0, nil
 		}
-		return nil, fmt.Errorf("audit: read dir: %w", err)
+		return nil, 0, fmt.Errorf("audit: read dir: %w", err)
 	}
 	files := make([]string, 0, len(entries))
 	for _, ent := range entries {
@@ -473,7 +474,7 @@ func (l *Logger) Tail(_ context.Context, n int) ([]Event, error) {
 		path := filepath.Join(dir, fname)
 		raw, rerr := os.ReadFile(path) // #nosec G304 -- daemon-controlled
 		if rerr != nil {
-			return nil, fmt.Errorf("audit: read %s: %w", path, rerr)
+			return nil, 0, fmt.Errorf("audit: read %s: %w", path, rerr)
 		}
 		lines := splitLines(raw)
 		// Tolerate a partial/garbled LAST line in the CURRENT month's
@@ -494,15 +495,16 @@ func (l *Logger) Tail(_ context.Context, n int) ([]Event, error) {
 					// a real corruption (not just a writer race).
 					continue
 				}
-				return nil, fmt.Errorf("audit: parse %s line %d: %w", path, li, jerr)
+				return nil, 0, fmt.Errorf("audit: parse %s line %d: %w", path, li, jerr)
 			}
 			all = append(all, e)
 		}
 	}
+	total := len(all)
 	if n > 0 && len(all) > n {
-		all = all[len(all)-n:]
+		all = all[total-n:]
 	}
-	return all, nil
+	return all, total - len(all), nil
 }
 
 // computeWithSeed is the non-method variant used by VerifyChain to

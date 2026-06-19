@@ -117,7 +117,7 @@ func TestVerifyChain_DetectsClean(t *testing.T) {
 			t.Fatalf("Append %d: %v", i, err)
 		}
 	}
-	bad, total, err := l.VerifyChain(context.Background())
+	bad, total, _, err := l.VerifyChain(context.Background())
 	if err != nil {
 		t.Fatalf("VerifyChain: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestVerifyChain_DetectsTamperedLine(t *testing.T) {
 		t.Fatalf("write back: %v", err)
 	}
 
-	badIdx, _, err := l.VerifyChain(context.Background())
+	badIdx, _, _, err := l.VerifyChain(context.Background())
 	if err != nil {
 		t.Fatalf("VerifyChain: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestAppend_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	bad, total, err := l.VerifyChain(context.Background())
+	bad, total, _, err := l.VerifyChain(context.Background())
 	if err != nil || bad != -1 || total != 16 {
 		t.Fatalf("concurrent append broke chain: bad=%d total=%d err=%v", bad, total, err)
 	}
@@ -232,7 +232,7 @@ func (e *errStore) MetaSet(_ context.Context, _, _ string) error {
 
 func TestTail_EmptyLogReturnsNil(t *testing.T) {
 	l, _, _ := freshLogger(t)
-	events, err := l.Tail(context.Background(), 10)
+	events, _, err := l.Tail(context.Background(), 10)
 	if err != nil {
 		t.Fatalf("Tail: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestTail_TolerateTrailingPartialLine(t *testing.T) {
 	}
 	// Tail must skip the partial trailer and still return the 3 good
 	// events instead of erroring.
-	got, err := l.Tail(context.Background(), 0)
+	got, _, err := l.Tail(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Tail returned error on partial last line: %v", err)
 	}
@@ -285,21 +285,27 @@ func TestTail_AllAndLastN(t *testing.T) {
 			t.Fatalf("Append: %v", err)
 		}
 	}
-	// All when n <= 0
-	all, err := l.Tail(context.Background(), 0)
+	// All when n <= 0 — firstIndex is 0.
+	all, firstAll, err := l.Tail(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Tail(0): %v", err)
 	}
 	if len(all) != 7 {
 		t.Fatalf("Tail(0) returned %d events, want 7", len(all))
 	}
-	// Last 3
-	last3, err := l.Tail(context.Background(), 3)
+	if firstAll != 0 {
+		t.Errorf("Tail(0) firstIndex = %d, want 0", firstAll)
+	}
+	// Last 3 of 7 → global indices 4,5,6, so firstIndex is 4.
+	last3, first3, err := l.Tail(context.Background(), 3)
 	if err != nil {
 		t.Fatalf("Tail(3): %v", err)
 	}
 	if len(last3) != 3 {
 		t.Fatalf("Tail(3) returned %d events, want 3", len(last3))
+	}
+	if first3 != 4 {
+		t.Errorf("Tail(3) firstIndex = %d, want 4 (last 3 of 7)", first3)
 	}
 	// Order is preserved (oldest first), last3 should match all[-3:].
 	for i := 0; i < 3; i++ {

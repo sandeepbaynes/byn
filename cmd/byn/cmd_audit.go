@@ -198,8 +198,8 @@ func auditLine(e ipc.AuditEvent) string {
 	if e.Command != "" {
 		entryName = e.Command
 	}
-	line := fmt.Sprintf("%s  %-14s  %-20s  %-20s  %-9s  %s",
-		t, e.Op, scopePath, entryName, e.Outcome, auditCaller(e))
+	line := fmt.Sprintf("#%-6d %s  %-14s  %-20s  %-20s  %-9s  %s",
+		e.Index, t, e.Op, scopePath, entryName, e.Outcome, auditCaller(e))
 	if e.BynPath != "" {
 		line += "  via " + e.BynPath
 	}
