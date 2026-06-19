@@ -3,15 +3,17 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
-// handleListDir lists the subdirectories of req.Path (default: the user's home
-// directory) for the portal directory picker. The daemon runs as the user, so
-// it only ever reveals directories the user can already read. No vault access.
+// handleListDir lists the subdirectories of req.Path (default: the OWNER's home
+// directory) for the portal directory picker. The daemon only ever reveals
+// directories the listing process can read. No vault access.
 func (d *Daemon) handleListDir(env *ipc.Envelope) *ipc.Envelope {
 	var req ipc.ListDirReq
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
@@ -19,11 +21,7 @@ func (d *Daemon) handleListDir(env *ipc.Envelope) *ipc.Envelope {
 	}
 	path := req.Path
 	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return internalErr(env.ID, err)
-		}
-		path = home
+		path = d.resolveOwnerHome()
 	}
 	path = filepath.Clean(path)
 
@@ -68,4 +66,21 @@ func (d *Daemon) handleListDir(env *ipc.Envelope) *ipc.Envelope {
 		return internalErr(env.ID, err)
 	}
 	return resp
+}
+
+// resolveOwnerHome returns the OWNER's home directory — the default root for the
+// portal's directory/file pickers (and import). Under privsep the daemon runs as
+// the _byn service user, whose home is /var/empty, so a bare os.UserHomeDir()
+// would start every picker there. Resolve the home of the allowlisted owner UID
+// instead, falling back to the process home and finally "/".
+func (d *Daemon) resolveOwnerHome() string {
+	if d.ownerUID != 0 {
+		if u, err := user.LookupId(strconv.FormatUint(uint64(d.ownerUID), 10)); err == nil && u.HomeDir != "" {
+			return u.HomeDir
+		}
+	}
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h
+	}
+	return "/"
 }

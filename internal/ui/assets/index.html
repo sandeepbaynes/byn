@@ -118,6 +118,9 @@
 </div>
 
 <div id="toast" class="toast" role="status" hidden></div>
+<!-- Persistent, Z-stacked ERROR toasts (see pushErrorToast): the newest sits in
+     front; closing it brings the next forward. Non-error toasts use #toast above. -->
+<div id="toast-stack" class="toast-stack" aria-live="assertive"></div>
 
 <div id="palette" class="palette" hidden>
   <div class="palette-box" role="dialog" aria-modal="true">

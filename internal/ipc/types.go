@@ -1095,6 +1095,9 @@ type BynParsed struct {
 	Actions []string `json:"actions,omitempty"`
 	// ActionsWildcard is true when [exec].actions contains "*".
 	ActionsWildcard bool `json:"actions_wildcard,omitempty"`
+	// Writable is [exec].writable as a list — extra tool-state dirs the privsep
+	// exec child may read/write, on top of the curated defaults.
+	Writable []string `json:"writable,omitempty"`
 	// Aliases is the [aliases] table.
 	Aliases map[string]string `json:"aliases,omitempty"`
 	// Auth is the [auth] table.
@@ -1136,6 +1139,13 @@ type ConfigParsed struct {
 	IdleTimeout string `json:"idle_timeout"`
 	// RevealHideAfter mirrors [ui] reveal_hide_after as a Go duration string ("15s").
 	RevealHideAfter string `json:"reveal_hide_after"`
+	// SessionTTL mirrors [security] session_ttl as a Go duration string ("12h0m0s").
+	SessionTTL string `json:"session_ttl"`
+	// SessionIdle mirrors [security] session_idle as a Go duration string ("0s" = inherit).
+	SessionIdle string `json:"session_idle"`
+	// Privsep mirrors [security] privsep. Tri-state pointer: null = key absent
+	// (off, the default), else the explicit bool.
+	Privsep *bool `json:"privsep"`
 }
 
 // ConfigGetResp returns the raw config file bytes and the path.

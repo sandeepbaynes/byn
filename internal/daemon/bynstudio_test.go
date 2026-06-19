@@ -222,7 +222,7 @@ func TestBynValidate_ValidFile_NoIssues(t *testing.T) {
 // values into the form/builder without a separate round-trip.
 func TestBynValidate_ParsedPopulatedOnZeroErrors(t *testing.T) {
 	_, c := startTestDaemon(t)
-	content := []byte("[scope]\nvault = \"default\"\nproject = \"api\"\n\n[exec]\nenv = [\"API_KEY\"]\nactions = [\"make test\"]\n\n[aliases]\ndeploy = \"kubectl apply\"\n\n[auth]\nexec = \"none\"\n")
+	content := []byte("[scope]\nvault = \"default\"\nproject = \"api\"\n\n[exec]\nenv = [\"API_KEY\"]\nactions = [\"make test\"]\nwritable = [\"~/Library/pnpm\", \"~/.cache/tool\"]\n\n[aliases]\ndeploy = \"kubectl apply\"\n\n[auth]\nexec = \"none\"\n")
 	var resp ipc.BynValidateResp
 	if err := c.Call(ipc.OpBynValidate, ipc.BynValidateReq{Content: content}, &resp); err != nil {
 		t.Fatalf("byn.validate: %v", err)
@@ -244,6 +244,9 @@ func TestBynValidate_ParsedPopulatedOnZeroErrors(t *testing.T) {
 	}
 	if len(resp.Parsed.Actions) != 1 || resp.Parsed.Actions[0] != "make test" {
 		t.Errorf("Parsed.Actions = %v, want [make test]", resp.Parsed.Actions)
+	}
+	if len(resp.Parsed.Writable) != 2 || resp.Parsed.Writable[0] != "~/Library/pnpm" || resp.Parsed.Writable[1] != "~/.cache/tool" {
+		t.Errorf("Parsed.Writable = %v, want [~/Library/pnpm ~/.cache/tool]", resp.Parsed.Writable)
 	}
 	if resp.Parsed.Aliases["deploy"] != "kubectl apply" {
 		t.Errorf("Parsed.Aliases[deploy] = %q, want \"kubectl apply\"", resp.Parsed.Aliases["deploy"])
@@ -631,9 +634,21 @@ func TestBynRead_SizeCap(t *testing.T) {
 
 func TestBynRead_Missing(t *testing.T) {
 	_, c := startTestDaemon(t)
-	err := c.Call(ipc.OpBynRead, ipc.BynReadReq{Path: "/tmp/byn-nonexistent-zzz.byn"}, &ipc.BynReadResp{})
+	// A path whose final component is exactly ".byn" in an existing dir, but the
+	// file is absent — this reaches the actual read (past the name guard), unlike
+	// a "*.byn" name which the endpoint rejects up front (see TestBynRead_NonBynPath).
+	missing := filepath.Join(t.TempDir(), ".byn")
+	err := c.Call(ipc.OpBynRead, ipc.BynReadReq{Path: missing}, &ipc.BynReadResp{})
 	if code := errCode(t, err); code != ipc.CodeBadRequest {
 		t.Fatalf("missing file: code = %v, want bad_request", code)
+	}
+	// The message must read as "not found" so the portal's dropdown loader
+	// (studioLoadFromDir) treats an absent .byn as the normal blank case and
+	// resets silently — distinct from an FDA/TCC read denial, which it surfaces
+	// with the grant-Full-Disk-Access workflow. annotateReadErr leaves a
+	// not-exist error unchanged on every OS.
+	if msg := errMsg(t, err); !strings.Contains(msg, "no such file") {
+		t.Errorf("missing-file message = %q, want it to contain %q", msg, "no such file")
 	}
 }
 
