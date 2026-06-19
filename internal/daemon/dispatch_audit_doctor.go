@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -18,36 +19,54 @@ const (
 	auditPageMax    = 5000
 )
 
-// auditWindow returns the `lines` events ending `offset` positions from the
-// newest (offset 0 = the tail), trimmed so the page's marshaled size stays under
-// auditPageBudget. lines <= 0 means "as many as fit". At least one event is
-// returned for a non-empty window even if it alone exceeds the budget.
-func auditWindow(all []audit.Event, lines, offset int) []audit.Event {
-	total := len(all)
-	end := total - offset
-	if end > total {
-		end = total
-	}
-	if end < 0 {
-		end = 0
-	}
+// auditPage returns one page from the (oldest-first, Index-tagged) slice `all`,
+// trimmed so the marshaled page stays under auditPageBudget (lines <= 0 → as many
+// as fit). Pagination is by STABLE chain index, so it is correct as the log grows:
+//
+//	since > 0 → forward: the OLDEST events with Index > since; more = newer remain.
+//	else       → backward: the NEWEST events with Index < before (before <= 0 → the
+//	             tail); more = older remain.
+//
+// At least one event is returned for a non-empty page even if it alone exceeds
+// the budget. `all` is sorted by Index ascending (Tail's natural order).
+func auditPage(all []audit.Event, lines, before, since int) (window []audit.Event, more bool) {
 	limit := lines
 	if limit <= 0 || limit > auditPageMax {
 		limit = auditPageMax
 	}
-	size, start := 0, end
-	for start > 0 && (end-start) < limit {
-		e := all[start-1]
+	sz := func(e audit.Event) int {
 		w := auditToWire(e)
 		w.Index = e.Index
 		b, _ := json.Marshal(w)
-		if start < end && size+len(b) > auditPageBudget {
+		return len(b)
+	}
+	if since > 0 {
+		begin := sort.Search(len(all), func(i int) bool { return all[i].Index > since })
+		end, size := begin, 0
+		for end < len(all) && (end-begin) < limit {
+			s := sz(all[end])
+			if end > begin && size+s > auditPageBudget {
+				break
+			}
+			size += s
+			end++
+		}
+		return all[begin:end], end < len(all)
+	}
+	end := len(all)
+	if before > 0 {
+		end = sort.Search(len(all), func(i int) bool { return all[i].Index >= before })
+	}
+	start, size := end, 0
+	for start > 0 && (end-start) < limit {
+		s := sz(all[start-1])
+		if start < end && size+s > auditPageBudget {
 			break
 		}
-		size += len(b)
+		size += s
 		start--
 	}
-	return all[start:end]
+	return all[start:end], start > 0
 }
 
 // ---- Audit -------------------------------------------------------------
@@ -75,13 +94,13 @@ func (d *Daemon) handleAuditTail(ctx context.Context, env *ipc.Envelope) *ipc.En
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
-	window := auditWindow(all, req.Lines, req.Offset)
+	window, more := auditPage(all, req.Lines, req.Before, req.Since)
 	wire := make([]ipc.AuditEvent, len(window))
 	for i, e := range window {
 		wire[i] = auditToWire(e)
 		wire[i].Index = e.Index
 	}
-	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire, Total: len(all)})
+	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire, Total: len(all), More: more})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
