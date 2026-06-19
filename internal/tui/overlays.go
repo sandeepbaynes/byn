@@ -343,9 +343,13 @@ func (m Model) renderAudit() string {
 		lines = append(lines, m.styles.Placeholder.Render("  (no events match /"+m.auditFilter+")"))
 	}
 	lines = append(lines, "")
-	hint := fmt.Sprintf("%d events · / filter · q quit", len(m.audit))
+	keys := "] older · [ live · / filter · q quit"
+	hint := fmt.Sprintf("%d events · live · %s", len(m.audit), keys)
+	if m.auditBefore != 0 {
+		hint = fmt.Sprintf("%d events · frozen below #%d · %s", len(m.audit), m.auditBefore, keys)
+	}
 	if m.auditFilter != "" {
-		hint = fmt.Sprintf("%d/%d match /%s · esc clears · q quit", len(evs), len(m.audit), m.auditFilter)
+		hint = fmt.Sprintf("%d/%d match /%s · esc clears · %s", len(evs), len(m.audit), m.auditFilter, keys)
 	}
 	lines = append(lines, m.styles.StatusHint.Render(hint))
 
