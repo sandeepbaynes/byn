@@ -5034,13 +5034,52 @@ function openStudioForPath(path) {
 }
 
 let toastTimer = null;
-// toast(msg, isErr, dur) — dur overrides the auto-timeout (ms); defaults:
-//   2000ms for ok, 4200ms for err. Policy-bearing toasts pass dur=6000.
+// toast(msg, isErr, dur) — non-error ("ok") toasts auto-dismiss after `dur`
+// (default 2000ms). ERROR toasts are PERSISTENT and Z-stacked: they never
+// auto-dismiss (dur is ignored), the newest sits in front, and closing the
+// front card brings the next forward — so an error is never lost behind a
+// timeout or another error. See pushErrorToast.
 function toast(msg, isErr, dur) {
-  const t = $("#toast"); t.textContent = msg; t.className = "toast " + (isErr ? "err" : "ok");
+  if (isErr) { pushErrorToast(msg); return; }
+  const t = $("#toast"); t.textContent = msg; t.className = "toast ok";
   t.hidden = false; clearTimeout(toastTimer);
-  const ms = dur != null ? dur : (isErr ? 4200 : 2000);
+  const ms = dur != null ? dur : 2000;
   toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+// pushErrorToast adds a persistent error card to #toast-stack. Each card has its
+// own ✕; the stack shows the newest in front with older ones peeking behind.
+function pushErrorToast(msg) {
+  const stack = $("#toast-stack");
+  if (!stack) { console.error(msg); return; }
+  const card = el("div", "toast err toast-err-card");
+  card.setAttribute("role", "alert");
+  const text = el("span", "toast-err-msg"); text.textContent = msg;
+  const close = el("button", "toast-close", "✕");
+  close.title = "dismiss";
+  close.setAttribute("aria-label", "dismiss error");
+  close.onclick = () => { if (card.parentNode) stack.removeChild(card); restackErrorToasts(); };
+  card.appendChild(text); card.appendChild(close);
+  stack.appendChild(card); // newest is the last child
+  restackErrorToasts();
+}
+
+// restackErrorToasts lays the cards out in Z: the last child (newest) is depth 0
+// (front, fully visible, interactive); older cards peek above with a capped
+// offset and are non-interactive until they reach the front.
+function restackErrorToasts() {
+  const stack = $("#toast-stack");
+  if (!stack) return;
+  const cards = Array.from(stack.children);
+  const n = cards.length;
+  cards.forEach((card, i) => {
+    const depth = (n - 1) - i;      // 0 for the newest (last)
+    const d = Math.min(depth, 3);   // cap the visible peek so a tall stack stays put
+    card.style.zIndex = String(1000 - depth);
+    card.style.transform = "translateX(-50%) translateY(" + (-d * 8) + "px) scale(" + (1 - d * 0.035) + ")";
+    card.style.opacity = depth === 0 ? "1" : (depth <= 3 ? "0.92" : "0");
+    card.style.pointerEvents = depth === 0 ? "auto" : "none";
+  });
 }
 // toastUndo shows an "ok" toast with a clickable "undo" affordance; clicking it
 // dismisses the toast and runs undoFn. Uses a longer default window (6s) so

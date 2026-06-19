@@ -466,6 +466,26 @@ select.input { appearance: none; cursor: pointer; }
 }
 .toast-undo:hover { color: var(--text); }
 
+/* Persistent, Z-stacked error toasts (pushErrorToast). Cards inherit .toast.err
+   for color/border/padding/bg/shadow; these rules (defined AFTER .toast) override
+   the positioning so they stack at a shared bottom-center anchor. The per-card
+   transform/opacity/z-index are set inline by restackErrorToasts(). */
+.toast-stack { position: fixed; bottom: 22px; left: 50%; width: 0; height: 0; z-index: 320; }
+.toast-err-card {
+  position: absolute; bottom: 0; left: 0;
+  display: flex; align-items: flex-start; gap: 12px;
+  max-width: min(560px, 90vw);
+  animation: none;
+  transition: transform .18s var(--ease), opacity .18s var(--ease);
+}
+.toast-err-msg { flex: 1 1 auto; white-space: pre-line; }
+.toast-close {
+  flex: 0 0 auto; background: none; border: none; padding: 0 0 0 2px; margin: 0;
+  font: inherit; font-size: 13px; line-height: 1.1; color: var(--danger-text);
+  cursor: pointer; opacity: .6;
+}
+.toast-close:hover { opacity: 1; }
+
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes flicker { 50% { opacity: .4; } }
