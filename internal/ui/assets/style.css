@@ -470,7 +470,9 @@ select.input { appearance: none; cursor: pointer; }
    for color/border/padding/bg/shadow; these rules (defined AFTER .toast) override
    the positioning so they stack at a shared bottom-center anchor. The per-card
    transform/opacity/z-index are set inline by restackErrorToasts(). */
-.toast-stack { position: fixed; bottom: 22px; left: 50%; width: 0; height: 0; z-index: 320; }
+/* Above modals (dialog z-1100, pickers z-1200) so a persistent error fired from
+   inside a modal stays visible and dismissable on top of it. */
+.toast-stack { position: fixed; bottom: 22px; left: 50%; width: 0; height: 0; z-index: 1300; }
 .toast-err-card {
   position: absolute; bottom: 0; left: 0;
   display: flex; align-items: flex-start; gap: 12px;

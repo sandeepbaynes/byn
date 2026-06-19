@@ -1481,6 +1481,9 @@ async function cfgReset() {
     cfgState.uiPort        = p.ui_port;
     cfgState.revealHideAfter = p.reveal_hide_after;
     cfgState.idleTimeout   = p.idle_timeout;
+    cfgState.sessionTTL    = p.session_ttl;
+    cfgState.sessionIdle   = p.session_idle;
+    cfgState.privsep       = p.privsep === true;
     setRevealHideAfter(p.reveal_hide_after);
     // Re-render the form to reflect the reset values.
     // renderSettingsView re-creates cfgState and sets cfgBaseline.
@@ -1594,8 +1597,8 @@ async function renderSettingsView() {
     ["[ui] port",               "hot-apply on save (needs restart to rebind)"],
     ["[ui] reveal_hide_after",  "hot-apply on save"],
     ["[daemon] idle_timeout",   "hot-apply on save"],
-    ["[security] session_ttl",  "hot-apply on save"],
-    ["[security] session_idle", "hot-apply on save"],
+    ["[security] session_ttl",  "needs daemon restart (not hot-applied)"],
+    ["[security] session_idle", "needs daemon restart (not hot-applied)"],
     ["[security] privsep",      "needs `sudo byn setup` + daemon restart"],
   ];
   for (const [k, v] of refRows) {
@@ -1987,9 +1990,13 @@ async function toggleCfgMode() {
     // Zero errors — carry the parsed values through to cfgState form fields.
     const p = validateResp && validateResp.parsed;
     if (p) {
-      cfgState.uiEnabled   = p.ui_enabled;
-      cfgState.uiPort      = p.ui_port;
-      cfgState.idleTimeout = p.idle_timeout;
+      cfgState.uiEnabled       = p.ui_enabled;
+      cfgState.uiPort          = p.ui_port;
+      cfgState.revealHideAfter = p.reveal_hide_after;
+      cfgState.idleTimeout     = p.idle_timeout;
+      cfgState.sessionTTL      = p.session_ttl;
+      cfgState.sessionIdle     = p.session_idle;
+      cfgState.privsep         = p.privsep === true;
     }
     cfgState.rawMode = false;
     if (cfgState.rawPanel)  cfgState.rawPanel.hidden  = true;
