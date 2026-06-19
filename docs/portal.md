@@ -259,8 +259,8 @@ Notable settings visible in the panel:
 | `[ui] enabled` | `true` | Disable the portal |
 | `[ui] reveal_hide_after` | `"15s"` | Re-mask revealed values after this long; `"0s"` = never |
 | `[daemon] idle_timeout` | `"15m0s"` | Auto-lock all vaults after inactivity; `"0s"` disables |
-| `[security] session_ttl` | `"12h0m0s"` | Absolute session lifetime; `"0s"` = no absolute cap |
-| `[security] session_idle` | `"0s"` | Sliding session idle window; `"0s"` = inherit `[daemon] idle_timeout` |
+| `[security] session_ttl` | `"12h0m0s"` | Absolute session lifetime; `"0s"` = no absolute cap (needs daemon restart) |
+| `[security] session_idle` | `"0s"` | Sliding session idle window; `"0s"` = inherit `[daemon] idle_timeout` (needs daemon restart) |
 | `[security] privsep` | _absent (off)_ | Run trusted-`.byn` exec children as `_byn-exec` — requires `sudo byn setup` provisioning + a daemon restart |
 
 The **Settings** view renders every key above as a form field (with a raw-TOML
