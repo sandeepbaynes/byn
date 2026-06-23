@@ -166,10 +166,16 @@ That is the win it is built for. These are the limits that come with it — read
 them before you rely on byn for anything that matters.
 
 - **Concurrent commands share one service user.** Two byn-run commands running
-  at the same time are **not** isolated from each other — both children run as
-  the single `_byn-exec` service user, so one could read the other's injected
-  secrets from its environment. Don't run mutually-distrusting commands in
-  parallel under byn.
+  at the same time both run as the single `_byn-exec` user — there is no
+  per-command isolation. On **Linux** the same-UID residual this leaves is closed:
+  each exec child is marked **undumpable** (`prctl(PR_SET_DUMPABLE, 0)`) before
+  `execve`, so the kernel reparents its `/proc/<pid>/{environ,mem,…}` to `root`
+  and a same-UID sibling **cannot** read the other child's injected env or memory
+  (only root / `CAP_SYS_PTRACE` can). On **macOS** that prctl does not exist — the
+  hardened runtime blocks debugger/`task_for_pid` memory access but not a same-UID
+  `ps -E` env read — so a residual remains there. Either way byn does not
+  *guarantee* isolation between sibling commands, so for mutually-distrusting
+  workloads — especially on macOS — don't run them in parallel under byn.
 - **No defense against root or a compromised byn service.** Anyone who can run
   code as root, as `_byn`, or as `_byn-exec` can read secrets. byn guards your
   dev workflow against ordinary same-user processes (agents, scripts, IDE

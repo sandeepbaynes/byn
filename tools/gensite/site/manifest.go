@@ -76,6 +76,21 @@ func Manifest() []Page {
 			StampNote:    "Updated with each release — items marked in progress are actively being addressed",
 			GitHubPath:   "docs/security.md",
 			Prev:         &NavLink{Label: "← Previous", Title: "CLI Reference", Href: "../cli-reference/"},
+			Next:         &NavLink{Label: "Next →", Title: "Audit log", Href: "../audit/"},
+		},
+
+		// ---- Audit log ----
+		{
+			SourceRel:    "audit.md",
+			OutDir:       "docs/audit",
+			Nav:          NavSecurity,
+			Crumbs:       []Crumb{docsHome, {Label: "Audit log", Current: true}},
+			SidebarTitle: "Audit log",
+			SidebarBadge: v,
+			VersionStamp: v,
+			StampNote:    "Updated with each release",
+			GitHubPath:   "docs/audit.md",
+			Prev:         &NavLink{Label: "← Previous", Title: "Security model", Href: "../security/"},
 			Next:         &NavLink{Label: "Next →", Title: "Migration & setup", Href: "../migration/"},
 		},
 
@@ -87,7 +102,7 @@ func Manifest() []Page {
 			Crumbs:       []Crumb{docsHome, {Label: "Migration & setup", Current: true}},
 			SidebarTitle: "Migration & setup",
 			GitHubPath:   "docs/migration.md",
-			Prev:         &NavLink{Label: "← Previous", Title: "Security model", Href: "../security/"},
+			Prev:         &NavLink{Label: "← Previous", Title: "Audit log", Href: "../audit/"},
 			Next:         &NavLink{Label: "Next →", Title: "Architecture", Href: "../architecture/"},
 		},
 

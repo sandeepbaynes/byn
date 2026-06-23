@@ -5,7 +5,7 @@ package site
 //
 // Bump it on every release (see the release checklist) — it drives both the
 // manifest's per-page version stamp and the footer version on every page.
-const Version = "v0.3.1"
+const Version = "v0.4.0"
 
 // ReleasesURL is the GitHub releases page (downloads + per-release assets),
 // linked from the site footer.

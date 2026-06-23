@@ -1,4 +1,4 @@
-.TH BYN 1 "2026-06-18" "byn 0.3.1" "User Commands"
+.TH BYN 1 "2026-06-21" "byn 0.4.0" "User Commands"
 .SH NAME
 byn \- secure secrets vault with shim-based credential injection
 .SH SYNOPSIS
@@ -1219,9 +1219,14 @@ service user and audits every access, but the following limits apply:
 \fBConcurrent commands share one service user.\fR Two byn\-run commands
 running at once both execute as the single
 .I _byn\-exec
-account, so they are not isolated from each other \(em one can read the
-other's injected secrets. Don't run mutually\-distrusting commands in
-parallel under byn.
+account \(em there is no per\-command isolation. On Linux each exec child is
+marked undumpable (\fBprctl\fR(PR_SET_DUMPABLE, 0)) before \fBexecve\fR, so a
+same\-UID sibling cannot read the other child's environ or memory (only
+root / CAP_SYS_PTRACE can); on macOS that prctl is a no\-op (the hardened
+runtime blocks debugger access but not a same\-UID \fBps \-E\fR env read), so a
+residual remains. byn does not \fIguarantee\fR isolation between siblings, so
+for mutually\-distrusting workloads \(em especially on macOS \(em don't run them
+in parallel under byn.
 .IP \(bu 2
 \fBNo defense against root or a compromised byn service.\fR Anyone who can
 run code as root, as
