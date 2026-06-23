@@ -242,7 +242,7 @@ func verifyOneVault(ctx context.Context, root, name string) error {
 	if err != nil {
 		return fmt.Errorf("migrate: verify vault %q audit: %w", name, err)
 	}
-	badIndex, _, err := logger.VerifyChain(ctx)
+	badIndex, _, _, err := logger.VerifyChain(ctx)
 	if err != nil {
 		return fmt.Errorf("migrate: verify vault %q audit chain: %w", name, err)
 	}

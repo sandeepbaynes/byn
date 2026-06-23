@@ -597,9 +597,16 @@ select.input { appearance: none; cursor: pointer; }
 .verify-chip { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; text-transform: none; letter-spacing: 0; }
 .verify-chip.ok  { background: var(--signal-faint); color: var(--signal); }
 .verify-chip.bad { background: var(--danger-faint); color: var(--danger); }
+.audit-filter { display: flex; gap: 8px; margin: 8px 0; }
+.audit-filter input { flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px; background: var(--raised); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+.audit-filter input:focus { border-color: var(--border-2); outline: none; }
+.audit-more { align-self: flex-start; margin: 10px 0; padding: 6px 12px; font-size: 12px; background: var(--raised); border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; }
+.audit-more:hover { color: var(--text); border-color: var(--border-2); }
+.audit-more:disabled { opacity: .5; cursor: default; }
 .audit-tbl { display: flex; flex-direction: column; font-size: 12px; }
-.audit-row { display: grid; grid-template-columns: 150px 1fr 130px 120px 1.2fr; gap: 10px; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.audit-row { display: grid; grid-template-columns: 56px 150px 1fr 130px 120px 1.2fr; gap: 10px; padding: 5px 6px; border-bottom: 1px solid var(--border); }
 .audit-row.audit-head { color: var(--text-faint); font-size: 10px; letter-spacing: .1em; border-bottom-color: var(--border-2); }
+.audit-row .a-idx { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .audit-row .a-time { color: var(--text-dim); }
 .audit-row .a-op { color: var(--text); }
 .audit-row .a-out { color: var(--signal); }

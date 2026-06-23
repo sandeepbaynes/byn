@@ -1310,27 +1310,83 @@ async function renderAuditView() {
     head.appendChild(el("span", "verify-chip " + (ok ? "ok" : "bad"),
       ok ? `chain intact · ${v.total}` : `chain BROKEN at #${v.bad_index}`));
   } catch (_) { /* verify is best-effort */ }
-  let data;
-  try { data = await api("GET", "/api/audit?vault=" + enc(vault) + "&n=200"); }
-  catch (e) { box.appendChild(emptyHint(e.message)); return; }
-  const events = (data.events || []).slice().reverse(); // newest first
-  if (!events.length) { box.appendChild(emptyHint("no audit events yet")); return; }
+
+  // Filter bar — server-side, so it scans the WHOLE log, not just the fetched
+  // window (older events hidden behind the n=200 limit are still findable).
+  state.auditFilter = state.auditFilter || { scope: "", byn: "", caller: "" };
+  const bar = el("div", "audit-filter");
+  const body = el("div", "audit-body");
+  const mkInput = (key, ph) => {
+    const inp = el("input");
+    inp.type = "text"; inp.placeholder = ph; inp.value = state.auditFilter[key];
+    let timer;
+    inp.oninput = () => {
+      state.auditFilter[key] = inp.value;
+      clearTimeout(timer);
+      timer = setTimeout(() => loadAuditBody(vault, body), 250);
+    };
+    return inp;
+  };
+  bar.appendChild(mkInput("scope", "filter scope (project/env)…"));
+  bar.appendChild(mkInput("byn", "filter .byn path…"));
+  bar.appendChild(mkInput("caller", "filter caller…"));
+  box.appendChild(bar);
+  box.appendChild(body);
+  loadAuditBody(vault, body);
+}
+
+async function loadAuditBody(vault, body) {
+  body.innerHTML = "";
+  const f = state.auditFilter || {};
   const tbl = el("div", "audit-tbl");
   const hdr = el("div", "audit-row audit-head");
-  ["TIME", "OP", "OUTCOME", "SCOPE", "CALLER"].forEach((h) => hdr.appendChild(el("span", null, h)));
+  ["#", "TIME", "OP", "OUTCOME", "SCOPE", "CALLER"].forEach((h) => hdr.appendChild(el("span", null, h)));
   tbl.appendChild(hdr);
-  for (const e of events) {
-    const row = el("div", "audit-row" + (e.outcome && e.outcome !== "ok" ? " bad" : ""));
-    row.appendChild(el("span", "a-time", fmtAuditTime(e.ts)));
-    row.appendChild(el("span", "a-op", e.op + (e.command ? " " + e.command : (e.entry_name ? " " + e.entry_name : ""))));
-    row.appendChild(el("span", "a-out", e.outcome + (e.error_code ? " (" + e.error_code + ")" : "")));
-    const sc = el("span", "a-scope", auditScope(e));
-    if (e.byn_path) sc.title = e.byn_path;
-    row.appendChild(sc);
-    row.appendChild(el("span", "a-caller", auditCaller(e)));
-    tbl.appendChild(row);
-  }
-  box.appendChild(tbl);
+  body.appendChild(tbl);
+  // "Load older" pager: offset counts events back from the newest; each click
+  // fetches the next older page and appends it (oldest goes to the bottom).
+  const more = el("button", "audit-more");
+  more.hidden = true;
+  body.appendChild(more);
+
+  let cursor = 0; // 0 = newest; then the smallest index (#N) seen so far
+  let shown = 0;
+  const fetchPage = async () => {
+    more.disabled = true;
+    const qs = "/api/audit?vault=" + enc(vault) + "&n=200" + (cursor > 0 ? "&before=" + cursor : "")
+      + (f.byn ? "&byn=" + enc(f.byn) : "")
+      + (f.caller ? "&caller=" + enc(f.caller) : "")
+      + (f.scope ? "&scope=" + enc(f.scope) : "");
+    let data;
+    try { data = await api("GET", qs); }
+    catch (e) { body.insertBefore(emptyHint(e.message), more); more.hidden = true; return; }
+    const events = (data.events || []).slice().reverse(); // newest-first within the page
+    for (const e of events) tbl.appendChild(auditRow(e));
+    shown += events.length;
+    if (events.length) cursor = events[events.length - 1].index; // smallest #N → next "before"
+    if (shown === 0) {
+      body.insertBefore(emptyHint((f.byn || f.caller || f.scope) ? "no events match the filter" : "no audit events yet"), more);
+    }
+    const remaining = (data.total || 0) - shown;
+    more.hidden = !data.more;
+    more.disabled = false;
+    more.textContent = data.more ? (remaining > 0 ? `Load older (${remaining} more)` : "Load older") : "";
+  };
+  more.onclick = fetchPage;
+  await fetchPage();
+}
+
+function auditRow(e) {
+  const row = el("div", "audit-row" + (e.outcome && e.outcome !== "ok" ? " bad" : ""));
+  row.appendChild(el("span", "a-idx", "#" + e.index));
+  row.appendChild(el("span", "a-time", fmtAuditTime(e.ts)));
+  row.appendChild(el("span", "a-op", e.op + (e.command ? " " + e.command : (e.entry_name ? " " + e.entry_name : ""))));
+  row.appendChild(el("span", "a-out", e.outcome + (e.error_code ? " (" + e.error_code + ")" : "")));
+  const sc = el("span", "a-scope", auditScope(e));
+  if (e.byn_path) sc.title = e.byn_path;
+  row.appendChild(sc);
+  row.appendChild(el("span", "a-caller", auditCaller(e)));
+  return row;
 }
 function auditScope(e) {
   if (e.byn_path) return e.byn_path; // exec authorization: show the authorizing .byn

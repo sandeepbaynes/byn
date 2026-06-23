@@ -561,8 +561,8 @@ func (m Model) renderAuditSection(w int) []string {
 		case "error":
 			outcome = m.styles.AuditError.Render("error")
 		}
-		line := fmt.Sprintf("  %s  %-12s %-16s  %s  %s",
-			t, e.Op, entry, outcome, m.styles.EntryMeta.Render(auditCallerShort(e)))
+		line := fmt.Sprintf("  #%-5d %s  %-12s %-16s  %s  %s",
+			e.Index, t, e.Op, entry, outcome, m.styles.EntryMeta.Render(auditCallerShort(e)))
 		out = append(out, padRightLipgloss(truncate(line, w), w))
 	}
 	return out

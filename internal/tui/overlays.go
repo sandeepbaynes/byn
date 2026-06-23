@@ -275,6 +275,18 @@ func auditCallerShort(e ipc.AuditEvent) string {
 	return e.CallerSurface
 }
 
+// auditMatches reports whether an event matches a free-text filter term
+// (case-insensitive substring across every human-meaningful field).
+func auditMatches(e ipc.AuditEvent, term string) bool {
+	term = strings.ToLower(term)
+	hay := strings.ToLower(strings.Join([]string{
+		e.Op, e.Outcome, e.EntryName, e.Command, e.BynPath,
+		e.Project, e.Env, e.CallerComm, e.CallerSurface,
+		fmt.Sprintf("uid=%d", e.CallerUID),
+	}, " "))
+	return strings.Contains(hay, term)
+}
+
 func (m Model) renderAudit() string {
 	w := m.Width
 	h := m.Layout.Content.H + m.Layout.TopBar.H
@@ -296,11 +308,20 @@ func (m Model) renderAudit() string {
 		return lipgloss.JoinVertical(lipgloss.Left, lines...)
 	}
 
+	// Apply the active filter (client-side, matches any field).
+	evs := m.audit
+	if m.auditFilter != "" {
+		filtered := make([]ipc.AuditEvent, 0, len(m.audit))
+		for _, e := range m.audit {
+			if auditMatches(e, m.auditFilter) {
+				filtered = append(filtered, e)
+			}
+		}
+		evs = filtered
+	}
 	// Newest first.
-	events := append([]struct{}{}, make([]struct{}, len(m.audit))...)
-	_ = events
-	for i := len(m.audit) - 1; i >= 0; i-- {
-		e := m.audit[i]
+	for i := len(evs) - 1; i >= 0; i-- {
+		e := evs[i]
 		t := time.Unix(0, e.TS).Format("2006-01-02 15:04:05")
 		entry := e.EntryName
 		if entry == "" {
@@ -315,11 +336,22 @@ func (m Model) renderAudit() string {
 		case "error":
 			outcome = m.styles.AuditError.Render("error")
 		}
-		lines = append(lines, fmt.Sprintf("  %s  %-14s %-18s  %s  %s",
-			t, e.Op, entry, outcome, m.styles.EntryMeta.Render(auditCaller(e))))
+		lines = append(lines, fmt.Sprintf("  #%-6d %s  %-14s %-18s  %s  %s",
+			e.Index, t, e.Op, entry, outcome, m.styles.EntryMeta.Render(auditCaller(e))))
+	}
+	if m.auditFilter != "" && len(evs) == 0 {
+		lines = append(lines, m.styles.Placeholder.Render("  (no events match /"+m.auditFilter+")"))
 	}
 	lines = append(lines, "")
-	lines = append(lines, m.styles.StatusHint.Render(fmt.Sprintf("%d events · live ↻ · q quit", len(m.audit))))
+	keys := "] older · [ live · / filter · q quit"
+	hint := fmt.Sprintf("%d events · live · %s", len(m.audit), keys)
+	if m.auditBefore != 0 {
+		hint = fmt.Sprintf("%d events · frozen below #%d · %s", len(m.audit), m.auditBefore, keys)
+	}
+	if m.auditFilter != "" {
+		hint = fmt.Sprintf("%d/%d match /%s · esc clears · %s", len(evs), len(m.audit), m.auditFilter, keys)
+	}
+	lines = append(lines, m.styles.StatusHint.Render(hint))
 
 	for len(lines) < h {
 		lines = append(lines, "")

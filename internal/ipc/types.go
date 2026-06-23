@@ -63,6 +63,7 @@ const (
 	// dispatch.auditEmit).
 	OpAuditTail   Op = "audit.tail"
 	OpAuditVerify Op = "audit.verify"
+	OpAuditReseal Op = "audit.reseal"
 
 	// Diagnostics. OpDoctor returns a structured health report; the
 	// CLI renders it human-readable or as JSON.
@@ -145,7 +146,7 @@ var AllOps = []Op{
 	OpProjectCreate, OpProjectList, OpProjectDelete, OpProjectRename,
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
-	OpAuditTail, OpAuditVerify, OpDoctor,
+	OpAuditTail, OpAuditVerify, OpAuditReseal, OpDoctor,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
 	OpExecFetch, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
@@ -622,11 +623,24 @@ type RenameResp struct{}
 type AuditTailReq struct {
 	Vault string `json:"vault,omitempty"`
 	Lines int    `json:"lines,omitempty"`
+	// Pagination is by STABLE chain index (the "#N" each event carries), not a
+	// positional offset — so it stays correct as the log grows. Use at most one:
+	//   Since > 0 → forward: the oldest Lines events with index > Since (consume
+	//               new events; pass the max index you've seen).
+	//   Before > 0 → backward: the newest Lines events with index < Before (page
+	//               to older events; pass the min index you've seen).
+	//   neither   → the newest Lines events (tail).
+	Since  int    `json:"since,omitempty"`
+	Before int    `json:"before,omitempty"`
+	Byn    string `json:"byn,omitempty"`    // filter: byn_path substring (case-insensitive)
+	Caller string `json:"caller,omitempty"` // filter: caller substring
+	Scope  string `json:"scope,omitempty"`  // filter: project[/env] substring
 }
 
 // AuditEvent mirrors audit.Event on the wire. Re-declared here so the
 // CLI doesn't have to import internal/audit.
 type AuditEvent struct {
+	Index         int    `json:"index"` // global 0-based chain index (matches verify/reseal)
 	TS            int64  `json:"ts"`
 	VaultID       string `json:"vault_id"`
 	VaultName     string `json:"vault_name"`
@@ -647,9 +661,15 @@ type AuditEvent struct {
 	HMACChain     string `json:"hmac_chain"`
 }
 
-// AuditTailResp returns the recovered events.
+// AuditTailResp returns one page of events (oldest-first), bounded to stay under
+// the IPC frame limit. More reports whether further events exist in the paging
+// direction (older for Before/tail, newer for Since) — page until it is false,
+// passing the page's edge index back as the next cursor. Total is the count of
+// (filtered) events in the whole log, for display.
 type AuditTailResp struct {
 	Events []AuditEvent `json:"events"`
+	Total  int          `json:"total"`
+	More   bool         `json:"more,omitempty"`
 }
 
 // AuditVerifyReq re-walks the HMAC chain. Vault defaults to "default".
@@ -662,6 +682,25 @@ type AuditVerifyReq struct {
 type AuditVerifyResp struct {
 	Total    int `json:"total"`
 	BadIndex int `json:"bad_index"` // -1 when intact
+}
+
+// AuditResealReq acknowledges the first un-acknowledged chain break in a vault's
+// audit log by appending a signed bridge marker. The vault must be unlocked (a
+// deliberate owner action). Reason is free text recorded in the marker.
+type AuditResealReq struct {
+	Vault  string `json:"vault,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// AuditResealResp summarises the marker written. NoBreak is true when the chain
+// was already intact (nothing was written); BrokenIndex is -1 then.
+type AuditResealResp struct {
+	NoBreak      bool   `json:"no_break,omitempty"`
+	BrokenIndex  int    `json:"broken_index"`
+	ObservedHead string `json:"observed_head,omitempty"`
+	ExpectedHead string `json:"expected_head,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	By           string `json:"by,omitempty"`
 }
 
 // ---- Trust store -------------------------------------------------------
