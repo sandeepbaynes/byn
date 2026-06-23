@@ -12,6 +12,62 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.4.0
+
+**Headline:** the audit log grows up — it self-heals after a crash, repairs
+deliberately, and is fully readable (event numbers, server-side search, and
+pagination that's reliable on a growing log) — plus a self-healing daemon
+lifecycle that can't be bricked by `sudo`.
+
+### What's new
+
+- **The audit log is now a first-class, documented feature.** New
+  [**Audit log** guide](audit.md) covers why the tamper-evident HMAC chain
+  exists, what's recorded, the threat model, and every way to use it.
+- **Self-healing audit chain + `byn audit reseal`.** A daemon crash/SIGTERM
+  mid-write used to leave a permanent "chain broken at #N". Now the logger
+  **reconciles its chain head from disk on restart**, so a clean crash repairs
+  itself. For an existing break, `byn audit reseal` appends a **signed bridge
+  marker** that *acknowledges* the gap (records the break, a reason, and
+  who/when) **without rewriting any historical hash** — so a benign gap and a
+  real tamper stay distinguishable. `byn doctor` then reads the chain as intact
+  (with the acknowledged reseal).
+- **Event numbers, search, and reliable pagination.** Every audit row (CLI,
+  TUI, web) is prefixed with its **`#N` chain index** — the same number `verify`
+  and `reseal` report. Filter the whole log **server-side** with
+  `--byn` / `--caller` / `--scope` (also `/` in the TUI and the portal's filter
+  bar). Paginate by the **stable `#N` index, never a positional offset** (which a
+  growing log would shift): `--since N` streams new events for a program to
+  consume; `--before N` pages back. The portal gets a **Load older** button; the
+  TUI gets `]`/`[` page navigation. `byn audit view --lines 0` now streams the
+  entire log instead of failing on a large dump.
+- **Self-healing daemon lifecycle (privsep).** `byn` now refuses to run owner
+  commands as `sudo`/root with a clear message instead of a cryptic peer error;
+  `byn setup` and the service (re)load are race-free and idempotent (no more
+  "Bootstrap failed: 5"); `byn doctor` runs even when the daemon is **down** and
+  `sudo byn doctor --repair` heals provisioning/ownership/launchd state; and
+  `start`/`stop`/`restart` are privsep-aware (the daemon is the `_byn` service).
+  `BYN_ALLOW_ROOT=1` is the escape hatch for root-only containers.
+- **Portal polish.** Persistent, stackable error toasts (close to dismiss);
+  the studio/settings editor surfaces the full config (incl. `[security]`) and
+  `[exec] writable`; the file pickers start from your home, not the daemon's;
+  and macOS Full-Disk-Access read denials now surface an actionable error.
+
+### Upgrade notes (from v0.3.1)
+
+- **No config or schema changes.** Existing vaults and audit logs are read as-is.
+- **Audit pagination changed shape, for the better.** A program that consumed
+  the log by positional offset should switch to **`--since <max #N seen>`** —
+  it's reliable as the log grows. Interactive use is unchanged (`tail`, `view`,
+  `-f` follow all still show the most recent events).
+- **A pre-existing audit break** (from forced restarts before this release) will
+  still show as broken until you acknowledge it once with
+  `byn audit reseal` (requires the vault unlocked). New crashes self-heal.
+- **Privsep is still opt-in** via `[security] privsep` + `sudo byn setup`;
+  nothing changes for non-privsep installs.
+
+---
+
 ## v0.3.1
 
 **Headline:** privsep `byn exec` now works in protected dirs (macOS `~/Documents`

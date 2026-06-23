@@ -2,12 +2,72 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
+
+const (
+	// auditPageBudget bounds a single audit response well under ipc.MaxFrameSize
+	// (1 MiB), leaving headroom for the envelope; auditPageMax bounds the loop.
+	auditPageBudget = 768 * 1024
+	auditPageMax    = 5000
+)
+
+// auditPage returns one page from the (oldest-first, Index-tagged) slice `all`,
+// trimmed so the marshaled page stays under auditPageBudget (lines <= 0 → as many
+// as fit). Pagination is by STABLE chain index, so it is correct as the log grows:
+//
+//	since > 0 → forward: the OLDEST events with Index > since; more = newer remain.
+//	else       → backward: the NEWEST events with Index < before (before <= 0 → the
+//	             tail); more = older remain.
+//
+// At least one event is returned for a non-empty page even if it alone exceeds
+// the budget. `all` is sorted by Index ascending (Tail's natural order).
+func auditPage(all []audit.Event, lines, before, since int) (window []audit.Event, more bool) {
+	limit := lines
+	if limit <= 0 || limit > auditPageMax {
+		limit = auditPageMax
+	}
+	sz := func(e audit.Event) int {
+		w := auditToWire(e)
+		w.Index = e.Index
+		b, _ := json.Marshal(w)
+		return len(b)
+	}
+	if since > 0 {
+		begin := sort.Search(len(all), func(i int) bool { return all[i].Index > since })
+		end, size := begin, 0
+		for end < len(all) && (end-begin) < limit {
+			s := sz(all[end])
+			if end > begin && size+s > auditPageBudget {
+				break
+			}
+			size += s
+			end++
+		}
+		return all[begin:end], end < len(all)
+	}
+	end := len(all)
+	if before > 0 {
+		end = sort.Search(len(all), func(i int) bool { return all[i].Index >= before })
+	}
+	start, size := end, 0
+	for start > 0 && (end-start) < limit {
+		s := sz(all[start-1])
+		if start < end && size+s > auditPageBudget {
+			break
+		}
+		size += s
+		start--
+	}
+	return all[start:end], start > 0
+}
 
 // ---- Audit -------------------------------------------------------------
 
@@ -29,15 +89,18 @@ func (d *Daemon) handleAuditTail(ctx context.Context, env *ipc.Envelope) *ipc.En
 			fmt.Sprintf("vault %q: %v", name, err),
 			"check `byn vault list`")
 	}
-	events, err := entry.auditor.Tail(ctx, req.Lines)
+	all, err := entry.auditor.Tail(ctx, 0,
+		audit.Filter{Byn: req.Byn, Caller: req.Caller, Scope: req.Scope})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
-	wire := make([]ipc.AuditEvent, len(events))
-	for i, e := range events {
+	window, more := auditPage(all, req.Lines, req.Before, req.Since)
+	wire := make([]ipc.AuditEvent, len(window))
+	for i, e := range window {
 		wire[i] = auditToWire(e)
+		wire[i].Index = e.Index
 	}
-	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire})
+	resp, err := ipc.NewResponse(env.ID, ipc.AuditTailResp{Events: wire, Total: len(all), More: more})
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
@@ -62,7 +125,7 @@ func (d *Daemon) handleAuditVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 			fmt.Sprintf("vault %q: %v", name, err),
 			"check `byn vault list`")
 	}
-	bad, total, vErr := entry.auditor.VerifyChain(ctx)
+	bad, total, _, vErr := entry.auditor.VerifyChain(ctx)
 	if vErr != nil {
 		return internalErr(env.ID, vErr)
 	}
@@ -74,6 +137,73 @@ func (d *Daemon) handleAuditVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 		return internalErr(env.ID, err)
 	}
 	return resp
+}
+
+// handleAuditReseal acknowledges the first un-acknowledged chain break by
+// appending a signed bridge marker (original hashes are never rewritten). The
+// vault must be UNLOCKED: although the audit seed lives in unencrypted meta,
+// reseal is a deliberate owner action, so we gate out socket-only callers that
+// never proved the master password.
+func (d *Daemon) handleAuditReseal(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
+	var req ipc.AuditResealReq
+	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
+		return badRequest(env.ID, err)
+	}
+	name := defaultIfEmpty(req.Vault, vault.DefaultVaultName)
+	if err := vault.ValidateVaultName(name); err != nil {
+		return ipc.NewError(env.ID, ipc.CodeBadName, err.Error(), "")
+	}
+	entry, err := d.openVault(ctx, name)
+	if err != nil {
+		return ipc.NewError(env.ID, ipc.CodeNotInit,
+			fmt.Sprintf("vault %q: %v", name, err),
+			"check `byn vault list`")
+	}
+	if le := requireUnlocked(env.ID, entry.store); le != nil {
+		return le
+	}
+	ci := callerFrom(ctx)
+	by := fmt.Sprintf("uid=%d %s via %s", ci.UID, ci.Comm, ci.Surface)
+	m, err := entry.auditor.Reseal(ctx, req.Reason, by)
+	if errors.Is(err, audit.ErrNoBreak) {
+		resp, rerr := ipc.NewResponse(env.ID, ipc.AuditResealResp{NoBreak: true, BrokenIndex: -1})
+		if rerr != nil {
+			return internalErr(env.ID, rerr)
+		}
+		return resp
+	}
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	resp, err := ipc.NewResponse(env.ID, ipc.AuditResealResp{
+		BrokenIndex:  m.BrokenIndex,
+		ObservedHead: m.ObservedHead,
+		ExpectedHead: m.ExpectedHead,
+		Reason:       m.Reason,
+		By:           m.By,
+	})
+	if err != nil {
+		return internalErr(env.ID, err)
+	}
+	return resp
+}
+
+// auditChainDetail formats the doctor audit check from a VerifyChain result: a
+// break FAILs with a reseal hint; an intact chain is OK, annotated with the
+// count of owner-acknowledged reseals when any are present.
+func auditChainDetail(vaultName string, bad, total, acked int) (severity, detail string) {
+	if bad >= 0 {
+		return "fail", fmt.Sprintf("chain broken at event #%d — run: byn audit reseal %s", bad, vaultName)
+	}
+	detail = fmt.Sprintf("%d events, chain intact", total)
+	if acked > 0 {
+		suffix := "s"
+		if acked == 1 {
+			suffix = ""
+		}
+		detail = fmt.Sprintf("%d events, chain intact (%d acknowledged reseal%s)", total, acked, suffix)
+	}
+	return "ok", detail
 }
 
 func auditToWire(e audit.Event) ipc.AuditEvent {
@@ -146,22 +276,15 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 			Detail: "schema + fingerprint ok",
 		})
 		// Audit chain.
-		bad, total, vErr := entry.auditor.VerifyChain(ctx)
-		switch {
-		case vErr != nil:
+		bad, total, acked, vErr := entry.auditor.VerifyChain(ctx)
+		if vErr != nil {
 			checks = append(checks, ipc.DoctorCheck{
-				Name: "vault[" + name + "].audit", Severity: "fail",
-				Detail: vErr.Error(),
+				Name: "vault[" + name + "].audit", Severity: "fail", Detail: vErr.Error(),
 			})
-		case bad >= 0:
+		} else {
+			sev, detail := auditChainDetail(name, bad, total, acked)
 			checks = append(checks, ipc.DoctorCheck{
-				Name: "vault[" + name + "].audit", Severity: "fail",
-				Detail: fmt.Sprintf("chain broken at event #%d", bad),
-			})
-		default:
-			checks = append(checks, ipc.DoctorCheck{
-				Name: "vault[" + name + "].audit", Severity: "ok",
-				Detail: fmt.Sprintf("%d events, chain intact", total),
+				Name: "vault[" + name + "].audit", Severity: sev, Detail: detail,
 			})
 		}
 	}

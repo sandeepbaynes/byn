@@ -16,8 +16,8 @@
 // hmac_chain is mirrored to meta(audit_chain_head). On every Append,
 // both the on-disk JSON line and the DB head are updated in the same
 // (vault, time) order. A crash between the write and the DB update
-// leaves the chain head one entry behind — Doctor detects and repairs
-// this by re-reading the last line.
+// leaves the chain head one entry behind — New() reconciles this on
+// startup by re-reading the last on-disk line (see lastDiskHead).
 //
 // Files: <root>/audit/<vault>/YYYY-MM.log, mode 0600, O_APPEND. The
 // per-vault subdir keeps verification simple (each chain is one
@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -41,25 +42,45 @@ import (
 // Event is one row in the audit log. Field ordering matters for the
 // HMAC computation — see eventBytes.
 type Event struct {
-	TS            int64  `json:"ts"`                // unix nanoseconds
-	VaultID       string `json:"vault_id"`          // matches meta.vault_id
-	VaultName     string `json:"vault_name"`        // for human reading
-	Project       string `json:"project,omitempty"` // scope at time of op
-	Env           string `json:"env,omitempty"`
-	Kind          string `json:"kind,omitempty"`       // env_var | file
-	EntryName     string `json:"entry_name,omitempty"` // plain name (user decision)
-	BynPath       string `json:"byn_path,omitempty"`   // authorizing .byn for an exec injection
-	Command       string `json:"command,omitempty"`    // the exec'd command the injection ran
-	Op            string `json:"op"`                   // ipc op string, e.g., "put"
-	Outcome       string `json:"outcome"`              // "ok" | "denied" | "not_found" | "error"
-	CallerUID     uint32 `json:"caller_uid,omitempty"`
-	CallerPID     int    `json:"caller_pid,omitempty"`
-	CallerComm    string `json:"caller_comm,omitempty"`    // process name of the caller PID
-	CallerPComm   string `json:"caller_pcomm,omitempty"`   // parent process name (who invoked it)
-	CallerSurface string `json:"caller_surface,omitempty"` // "socket" (cli/tui) | "portal" (browser)
-	ErrorCode     string `json:"error_code,omitempty"`     // ipc error code if any
-	HMACChain     string `json:"hmac_chain"`               // hex; depends on prev_hmac + event
+	// Index is the global 0-based chain position, populated in-memory by Tail for
+	// display (verify/reseal use the same numbering). json:"-" — never serialized,
+	// so it stays out of the on-disk line and the HMAC.
+	Index         int           `json:"-"`
+	TS            int64         `json:"ts"`                // unix nanoseconds
+	VaultID       string        `json:"vault_id"`          // matches meta.vault_id
+	VaultName     string        `json:"vault_name"`        // for human reading
+	Project       string        `json:"project,omitempty"` // scope at time of op
+	Env           string        `json:"env,omitempty"`
+	Kind          string        `json:"kind,omitempty"`       // env_var | file
+	EntryName     string        `json:"entry_name,omitempty"` // plain name (user decision)
+	BynPath       string        `json:"byn_path,omitempty"`   // authorizing .byn for an exec injection
+	Command       string        `json:"command,omitempty"`    // the exec'd command the injection ran
+	Op            string        `json:"op"`                   // ipc op string, e.g., "put"
+	Outcome       string        `json:"outcome"`              // "ok" | "denied" | "not_found" | "error"
+	CallerUID     uint32        `json:"caller_uid,omitempty"`
+	CallerPID     int           `json:"caller_pid,omitempty"`
+	CallerComm    string        `json:"caller_comm,omitempty"`    // process name of the caller PID
+	CallerPComm   string        `json:"caller_pcomm,omitempty"`   // parent process name (who invoked it)
+	CallerSurface string        `json:"caller_surface,omitempty"` // "socket" (cli/tui) | "portal" (browser)
+	ErrorCode     string        `json:"error_code,omitempty"`     // ipc error code if any
+	Reseal        *ResealMarker `json:"reseal,omitempty"`         // present only on reseal marker events
+	HMACChain     string        `json:"hmac_chain"`               // hex; depends on prev_hmac + event
 }
+
+// ResealMarker is the payload of a reseal marker event. It records an
+// owner-acknowledged audit-chain discontinuity: VerifyChain treats a valid
+// marker as a legitimate chain-restart point at observed_head. The marker's own
+// hmac_chain continues the chain normally, so it is unforgeable without the seed.
+type ResealMarker struct {
+	BrokenIndex  int    `json:"broken_index"`  // 0-based index of the first post-break event
+	ObservedHead string `json:"observed_head"` // recorded hmac at the break (the restart anchor)
+	ExpectedHead string `json:"expected_head"` // hmac verification expected there (forensic)
+	Reason       string `json:"reason"`        // free-text, owner-supplied
+	By           string `json:"by"`            // who acknowledged (owner / session)
+}
+
+// ErrNoBreak is returned by Reseal when the chain has no un-acknowledged break.
+var ErrNoBreak = errors.New("audit: no un-acknowledged chain break to reseal")
 
 // Outcome constants for the Outcome field.
 const (
@@ -130,6 +151,19 @@ func New(ctx context.Context, rootDir, vaultID, vaultName string, store chainHea
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit: mkdir %s: %w", dir, err)
 	}
+	// Reconcile the head with the durable on-disk log. Append writes the on-disk
+	// line BEFORE updating the meta head; a crash in that window leaves meta one
+	// entry behind. The on-disk last line is the source of truth — adopt it and
+	// re-persist meta, so the next Append chains correctly. This is the repair
+	// this file's header documents.
+	if diskHead, ok, derr := lastDiskHead(dir); derr != nil {
+		return nil, fmt.Errorf("audit: scan last line: %w", derr)
+	} else if ok && diskHead != head {
+		if err := store.MetaSet(ctx, MetaKeyHead, diskHead); err != nil {
+			return nil, fmt.Errorf("audit: reconcile head: %w", err)
+		}
+		head = diskHead
+	}
 	return &Logger{
 		rootDir:   rootDir,
 		vaultID:   vaultID,
@@ -138,6 +172,48 @@ func New(ctx context.Context, rootDir, vaultID, vaultName string, store chainHea
 		seed:      seed,
 		prevHex:   head,
 	}, nil
+}
+
+// lastDiskHead returns the hmac_chain of the last parseable line in the vault's
+// audit log dir (newest file first, scanning lines bottom-up), skipping a torn
+// trailing line a partial write may have left. ok is false when no parseable
+// line exists yet (fresh/empty log).
+func lastDiskHead(dir string) (head string, ok bool, err error) {
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		if errors.Is(rerr, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read dir: %w", rerr)
+	}
+	files := make([]string, 0, len(entries))
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			files = append(files, ent.Name())
+		}
+	}
+	sortStrings(files)
+	for i := len(files) - 1; i >= 0; i-- {
+		raw, rerr := os.ReadFile(filepath.Join(dir, files[i])) // #nosec G304 -- daemon-controlled
+		if rerr != nil {
+			return "", false, fmt.Errorf("read %s: %w", files[i], rerr)
+		}
+		lines := splitLines(raw)
+		for j := len(lines) - 1; j >= 0; j-- {
+			if len(lines[j]) == 0 {
+				continue
+			}
+			var e Event
+			if json.Unmarshal(lines[j], &e) != nil {
+				continue // torn / partial line — walk back
+			}
+			if e.HMACChain == "" {
+				continue
+			}
+			return e.HMACChain, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // Append writes an event to the current month's log file and updates
@@ -149,7 +225,12 @@ func New(ctx context.Context, rootDir, vaultID, vaultName string, store chainHea
 func (l *Logger) Append(ctx context.Context, e Event) (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.appendLocked(ctx, e)
+}
 
+// appendLocked writes an event and advances the chain head. Caller holds l.mu.
+// Shared by Append and by Reseal (which appends a marker event).
+func (l *Logger) appendLocked(ctx context.Context, e Event) (string, error) {
 	e.TS = time.Now().UTC().UnixNano()
 	e.VaultID = l.vaultID
 	e.VaultName = l.vaultName
@@ -173,7 +254,7 @@ func (l *Logger) Append(ctx context.Context, e Event) (string, error) {
 
 	// Update DB head AFTER the disk write succeeds. A crash between
 	// the two leaves the on-disk line in place and the DB head one
-	// behind — recoverable by re-reading the last line during Doctor.
+	// behind — New() reconciles it from the last on-disk line on restart.
 	if err := l.store.MetaSet(ctx, MetaKeyHead, chainHex); err != nil {
 		return "", fmt.Errorf("audit: update head: %w", err)
 	}
@@ -235,73 +316,179 @@ func (l *Logger) appendLine(when time.Time, line []byte) error {
 	return nil
 }
 
-// VerifyChain re-walks the events in a vault's audit log, recomputing
-// the HMAC chain and comparing against the recorded hmac_chain in
-// each line. Returns the index of the first event that fails (or -1
-// if the entire log is intact) plus the number of events verified.
-// Used by `byn doctor`.
-func (l *Logger) VerifyChain(_ context.Context) (badIndex, total int, err error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
+// auditLines reads every non-empty line of the vault's audit log in
+// chronological order (files sorted by YYYY-MM). Caller holds l.mu.
+func (l *Logger) auditLines() ([][]byte, error) {
 	dir := filepath.Join(l.rootDir, "audit", l.vaultName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return -1, 0, nil
+			return nil, nil
 		}
-		return -1, 0, fmt.Errorf("audit: read dir: %w", err)
+		return nil, fmt.Errorf("audit: read dir: %w", err)
 	}
-	// Sort by filename — YYYY-MM is lexicographic-friendly.
 	files := make([]string, 0, len(entries))
 	for _, ent := range entries {
-		if ent.IsDir() {
-			continue
+		if !ent.IsDir() {
+			files = append(files, ent.Name())
 		}
-		files = append(files, ent.Name())
 	}
 	sortStrings(files)
-
-	prev := []byte(nil)
-	idx := 0
+	var out [][]byte
 	for _, fname := range files {
-		path := filepath.Join(dir, fname)
-		raw, rerr := os.ReadFile(path) // #nosec G304 -- daemon-controlled
+		raw, rerr := os.ReadFile(filepath.Join(dir, fname)) // #nosec G304 -- daemon-controlled
 		if rerr != nil {
-			return idx, idx, fmt.Errorf("audit: read %s: %w", path, rerr)
+			return nil, fmt.Errorf("audit: read %s: %w", fname, rerr)
 		}
 		for _, line := range splitLines(raw) {
-			if len(line) == 0 {
-				continue
+			if len(line) > 0 {
+				out = append(out, line)
 			}
-			var e Event
-			if jerr := json.Unmarshal(line, &e); jerr != nil {
-				return idx, idx, fmt.Errorf("audit: parse %s line %d: %w", path, idx, jerr)
-			}
-			recorded, derr := hex.DecodeString(e.HMACChain)
-			if derr != nil {
-				return idx, idx, fmt.Errorf("audit: parse hmac at line %d: %w", idx, derr)
-			}
-			expected, eerr := computeWithSeed(l.seed, prev, e)
-			if eerr != nil {
-				return idx, idx, eerr
-			}
-			if !hmac.Equal(recorded, expected) {
-				return idx, idx, nil
-			}
-			prev = recorded
-			idx++
 		}
 	}
-	return -1, idx, nil
+	return out, nil
 }
 
-// Tail returns the most recent n events across all monthly log files
-// in chronological order (oldest first within the returned slice).
-// If n <= 0, all events are returned. Reading runs without holding
-// l.mu — files are append-only and never rewritten, so a snapshot
-// read is consistent.
-func (l *Logger) Tail(_ context.Context, n int) ([]Event, error) {
+// chainWalk is the result of a marker-aware chain verification.
+type chainWalk struct {
+	badIndex int    // index of the first UN-acknowledged break, or -1 if none
+	total    int    // events walked
+	acked    int    // acknowledged reseal restarts honored
+	observed string // recorded hmac at badIndex (hex), "" when intact
+	expected string // expected hmac at badIndex (hex), "" when intact
+}
+
+// walkChainLocked verifies the chain, tolerating a break that a valid reseal
+// marker acknowledges (the bridge model). Caller holds l.mu.
+func (l *Logger) walkChainLocked() (chainWalk, error) {
+	lines, err := l.auditLines()
+	if err != nil {
+		return chainWalk{badIndex: -1}, err
+	}
+	// Pass 1: collect reseal markers, keyed on the head they acknowledge.
+	ackByObserved := map[string]*ResealMarker{}
+	for _, line := range lines {
+		var e Event
+		if json.Unmarshal(line, &e) != nil {
+			continue // torn line — pass 2 surfaces it as an error
+		}
+		if e.Reseal != nil {
+			ackByObserved[e.Reseal.ObservedHead] = e.Reseal
+		}
+	}
+	// Pass 2: walk, honoring acknowledged restarts.
+	prev := []byte(nil)
+	idx, acked := 0, 0
+	for _, line := range lines {
+		var e Event
+		if jerr := json.Unmarshal(line, &e); jerr != nil {
+			return chainWalk{badIndex: idx, total: idx, acked: acked}, fmt.Errorf("audit: parse line %d: %w", idx, jerr)
+		}
+		recorded, derr := hex.DecodeString(e.HMACChain)
+		if derr != nil {
+			return chainWalk{badIndex: idx, total: idx, acked: acked}, fmt.Errorf("audit: parse hmac at line %d: %w", idx, derr)
+		}
+		expected, eerr := computeWithSeed(l.seed, prev, e)
+		if eerr != nil {
+			return chainWalk{badIndex: idx, total: idx, acked: acked}, eerr
+		}
+		if !hmac.Equal(recorded, expected) {
+			// Acknowledged iff a marker records EXACTLY this observed (recorded)
+			// head and the expected head we just computed. A forged marker fails at
+			// its own line below (it can't be signed without the seed).
+			if m := ackByObserved[e.HMACChain]; m != nil && m.ExpectedHead == hex.EncodeToString(expected) {
+				acked++
+				prev = recorded
+				idx++
+				continue
+			}
+			return chainWalk{
+				badIndex: idx, total: idx, acked: acked,
+				observed: e.HMACChain, expected: hex.EncodeToString(expected),
+			}, nil
+		}
+		prev = recorded
+		idx++
+	}
+	return chainWalk{badIndex: -1, total: idx, acked: acked}, nil
+}
+
+// VerifyChain re-walks the chain, tolerating breaks acknowledged by a reseal
+// marker. Returns the first un-acknowledged break index (or -1), the events
+// walked, and the count of acknowledged reseals. Used by `byn doctor`.
+func (l *Logger) VerifyChain(_ context.Context) (badIndex, total, acked int, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	w, werr := l.walkChainLocked()
+	return w.badIndex, w.total, w.acked, werr
+}
+
+// Reseal acknowledges the first un-acknowledged chain break by appending a
+// signed bridge marker — original event hashes are never rewritten. Returns
+// ErrNoBreak when the chain is intact. The caller must ensure the vault is
+// unlocked (the seed is required to sign the marker).
+func (l *Logger) Reseal(ctx context.Context, reason, by string) (*ResealMarker, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	w, err := l.walkChainLocked()
+	if err != nil {
+		return nil, err
+	}
+	if w.badIndex < 0 {
+		return nil, ErrNoBreak
+	}
+	m := &ResealMarker{
+		BrokenIndex:  w.badIndex,
+		ObservedHead: w.observed,
+		ExpectedHead: w.expected,
+		Reason:       reason,
+		By:           by,
+	}
+	if _, err := l.appendLocked(ctx, Event{Op: "audit.reseal", Outcome: OutcomeOK, Reseal: m}); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Filter narrows Tail by case-insensitive substring. An empty field matches
+// everything; all set fields must match (AND).
+type Filter struct {
+	Byn    string // matches byn_path
+	Caller string // matches "surface comm uid=N"
+	Scope  string // matches "project" or "project/env"
+}
+
+func (f Filter) empty() bool { return f.Byn == "" && f.Caller == "" && f.Scope == "" }
+
+func (f Filter) match(e Event) bool {
+	has := func(hay, needle string) bool {
+		return strings.Contains(strings.ToLower(hay), strings.ToLower(needle))
+	}
+	if f.Byn != "" && !has(e.BynPath, f.Byn) {
+		return false
+	}
+	if f.Scope != "" {
+		scope := e.Project
+		if e.Env != "" {
+			scope += "/" + e.Env
+		}
+		if !has(scope, f.Scope) {
+			return false
+		}
+	}
+	if f.Caller != "" && !has(fmt.Sprintf("%s %s uid=%d", e.CallerSurface, e.CallerComm, e.CallerUID), f.Caller) {
+		return false
+	}
+	return true
+}
+
+// Tail returns the most recent n events across all monthly log files in
+// chronological order (oldest first within the returned slice), each tagged with
+// its global 0-based chain Index (the numbering VerifyChain and reseal use). A
+// non-empty filter narrows the WHOLE log first, so matches are found anywhere,
+// not just in the last n. If n <= 0, all matching events are returned. Reading
+// runs without holding l.mu — files are append-only, so a snapshot is consistent.
+func (l *Logger) Tail(_ context.Context, n int, filter Filter) ([]Event, error) {
 	dir := filepath.Join(l.rootDir, "audit", l.vaultName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -347,8 +534,18 @@ func (l *Logger) Tail(_ context.Context, n int) ([]Event, error) {
 				}
 				return nil, fmt.Errorf("audit: parse %s line %d: %w", path, li, jerr)
 			}
+			e.Index = len(all) // global chain position
 			all = append(all, e)
 		}
+	}
+	if !filter.empty() {
+		kept := make([]Event, 0, len(all))
+		for _, e := range all {
+			if filter.match(e) {
+				kept = append(kept, e)
+			}
+		}
+		all = kept
 	}
 	if n > 0 && len(all) > n {
 		all = all[len(all)-n:]

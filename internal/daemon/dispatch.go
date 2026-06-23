@@ -242,6 +242,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleAuditTail(ctx, env)
 	case ipc.OpAuditVerify:
 		return d.handleAuditVerify(ctx, env)
+	case ipc.OpAuditReseal:
+		return d.handleAuditReseal(ctx, env)
 	case ipc.OpDoctor:
 		return d.handleDoctor(ctx, env)
 	case ipc.OpTrustList:

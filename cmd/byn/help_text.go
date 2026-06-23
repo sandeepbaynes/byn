@@ -1308,9 +1308,10 @@ SEE ALSO
        byn-audit - read and verify the per-vault audit log
 
 SYNOPSIS
-       byn audit view [--lines N] [--json]
-       byn audit tail [-n N] [-f] [--json]
+       byn audit view [--lines N] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]
+       byn audit tail [-n N] [-f] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]
        byn audit verify [--json]
+       byn audit reseal [--reason R] [--yes] [--json]
 
 DESCRIPTION
        Each vault has an append-only HMAC-chained audit log under
@@ -1333,11 +1334,33 @@ DESCRIPTION
            and exit. With -f, follow — keep streaming new events in
            realtime until Ctrl-C (NDJSON with --json -f).
 
+       Each row is prefixed with #N — the event's global chain index
+       (the same number verify and reseal report). --byn, --caller,
+       and --scope filter by case-insensitive substring SERVER-SIDE
+       across the whole log, so a match is found even when it predates
+       the last N events (handy when the recent window hides old events).
+
+       Paginate by that STABLE #N index, never a positional offset (a
+       growing log would shift an offset). --since N streams every event
+       with #N above N, oldest-first — a program tracks the highest #N it
+       has seen and re-queries to consume new events. --before N fetches
+       the page just below #N; pass the smallest #N you got to page back.
+
        byn audit verify
            Re-walk the chain end-to-end and recompute every
            hmac_chain. Exits 0 with "intact" on success; exits 3
            with "BROKEN at event #M" + a treat-as-compromised hint
            if any link fails.
+
+       byn audit reseal
+           Acknowledge a chain break (e.g. one a daemon crash left
+           mid-write) by appending a SIGNED bridge marker — the
+           original hashes are never rewritten, so the gap stays
+           visible and attributable (records the break, the reason,
+           and who/when). Afterwards verify and doctor read the chain
+           as intact. The vault must be UNLOCKED. Prompts for a reason
+           and confirmation; --reason with --yes runs non-interactively.
+           A marker forged without the chain seed cannot clear a break.
 
 EXAMPLES
        Recent 20 events for the active vault:

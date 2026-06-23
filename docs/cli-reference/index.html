@@ -638,15 +638,27 @@ byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each 
     </table>
     <p>Severity is <code>ok</code> / <code>warn</code> / <code>fail</code>. Exit code is non-zero if any
     <code>fail</code>. <code>--json</code> emits <code>[]DoctorCheck{Name, Severity, Detail}</code>.</p>
-    <h3 id="byn-audit-tail--n-n--f---json"><code>byn audit tail [-n N] [-f] [--json]</code></h3>
+    <h3 id="byn-audit-tail--n-n--f---since-n---before-n---byn-p---caller-c---scope-s---json"><code>byn audit tail [-n N] [-f] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]</code></h3>
     <p>Print the most recent N events from the active vault's audit log
     (like <code>tail(1)</code>). Default N = 10 (<code>--lines</code> is an alias for <code>-n</code>);
-    <code>-f</code> follows the log.</p>
-    <p>Allowed while locked — audit metadata is not secret. See
-    <a href="security/">security.md</a> for what's captured per event.</p>
-    <p>Human format: timestamp + op + scope + entry name + outcome:</p>
-    <pre><code>2026-06-02 12:34:56Z  put        default/billing/staging  DB_URL    ok
-2026-06-02 12:35:01Z  vault.lock default                  -         ok
+    <code>-f</code> follows the log. <code>byn audit view</code> is the same reader with a larger
+    default window (<code>--lines 0</code> prints the whole log).</p>
+    <p>Allowed while locked — audit metadata is not secret. Every row is prefixed with
+    its <strong><code>#N</code> chain index</strong> (the same number <code>verify</code>/<code>reseal</code> report). The
+    <a href="audit/"><strong>Audit log</strong> guide</a> is the full picture — what's captured and why,
+    the chain integrity model, reseal, filters, and pagination; this is the flag
+    reference.</p>
+    <p><strong>Filter</strong> (server-side, case-insensitive substring, across the <em>whole</em> log so a
+    match is found even when it predates the recent window): <code>--byn P</code> (authorizing
+    <code>.byn</code> path), <code>--caller C</code> (caller process/uid), <code>--scope S</code> (<code>project[/env]</code>).</p>
+    <p><strong>Paginate</strong> by the stable <code>#N</code> index, never a positional offset (a growing log
+    would shift an offset): <code>--since N</code> streams every event with <code>#N</code> above N,
+    oldest-first — a program tracks the highest <code>#N</code> it has processed and re-queries
+    to consume new events without skips or repeats; <code>--before N</code> fetches the page
+    just below <code>#N</code> (pass the smallest <code>#N</code> you got to page further back).</p>
+    <p>Human format: <code>#N</code> + timestamp + op + scope + entry name + outcome + caller:</p>
+    <pre><code>#4120  2026-06-02 12:34:56Z  put        default/billing/staging  DB_URL    ok
+#4121  2026-06-02 12:35:01Z  vault.lock default                  -         ok
 </code></pre>
     <p>With <code>--json</code>, a snapshot is a single <strong>JSON array</strong> of event objects (so
     <code>byn audit tail --json | jq</code> works, like every other <code>--json</code> command). Add
@@ -660,6 +672,17 @@ byn exec --inspect=0 -- pnpm dev              # tsx watch / multi-process: each 
     <li>Exit 3 + <code>FAIL: audit chain BROKEN at event #M (of N)</code> otherwise,
     with a treat-as-compromised hint.</li>
     </ul>
+    <p>A break is often benign (a daemon crash mid-write); see <code>reseal</code> below and the
+    <a href="audit/#chain-breaks-and-reseal">Audit log guide</a>.</p>
+    <h3 id="byn-audit-reseal---reason-r---yes---json"><code>byn audit reseal [--reason R] [--yes] [--json]</code></h3>
+    <p>Acknowledge a chain break by appending a <strong>signed bridge marker</strong> — the original
+    hashes are never rewritten, so the gap stays visible and attributable (it records
+    the break index, observed vs expected heads, a reason, and who/when). Requires
+    the vault <strong>unlocked</strong> (a deliberate owner action). Interactive by default (shows
+    the break, prompts for a reason, confirms); <code>--reason R --yes</code> runs
+    non-interactively. Afterwards <code>verify</code> and <code>doctor</code> read the chain as intact
+    (with the acknowledged reseal). A marker forged without the chain seed cannot
+    clear a break. See the <a href="audit/#chain-breaks-and-reseal">Audit log guide</a>.</p>
     <hr>
     <h2 id="trust-byn-tofu">Trust (<code>.byn</code> TOFU)</h2>
     <h3 id="byn-trust-path"><code>byn trust [PATH]</code></h3>
@@ -957,8 +980,9 @@ enabled = true
     <a href="#byn-edit--byn-view--byn-no-args" class="toc-item sub">byn edit / byn view / byn (no args)</a>
     <a href="#diagnostics" class="toc-item">Diagnostics</a>
     <a href="#byn-doctor---json" class="toc-item sub">byn doctor [--json]</a>
-    <a href="#byn-audit-tail--n-n--f---json" class="toc-item sub">byn audit tail [-n N] [-f] [--json]</a>
+    <a href="#byn-audit-tail--n-n--f---since-n---before-n---byn-p---caller-c---scope-s---json" class="toc-item sub">byn audit tail [-n N] [-f] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]</a>
     <a href="#byn-audit-verify---json" class="toc-item sub">byn audit verify [--json]</a>
+    <a href="#byn-audit-reseal---reason-r---yes---json" class="toc-item sub">byn audit reseal [--reason R] [--yes] [--json]</a>
     <a href="#trust-byn-tofu" class="toc-item">Trust (.byn TOFU)</a>
     <a href="#byn-trust-path" class="toc-item sub">byn trust [PATH]</a>
     <a href="#auth-table--per-scope-per-action-authorization-policy" class="toc-item sub">[auth] table — per-scope per-action authorization policy</a>
@@ -981,7 +1005,7 @@ enabled = true
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn <a href="../../docs/releases/">v0.3.1</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.4.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>

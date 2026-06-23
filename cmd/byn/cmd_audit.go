@@ -10,9 +10,11 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -34,6 +36,8 @@ func runAudit(args []string, scope cliScope) int {
 		return runAuditTail(rest, scope)
 	case "verify":
 		return runAuditVerify(rest, scope)
+	case "reseal":
+		return runAuditReseal(rest, scope)
 	case "help", "--help", "-h":
 		printAuditUsage(os.Stdout)
 		return exitOK
@@ -50,6 +54,11 @@ func runAuditView(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	lines := fs.Int("lines", 50, "max events to show (0 = all)")
 	jsonOut := fs.Bool("json", false, "output as JSON")
+	bynF := fs.String("byn", "", "filter: events whose .byn path matches (substring)")
+	callerF := fs.String("caller", "", "filter: events whose caller matches (substring)")
+	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
+	beforeF := fs.Int("before", 0, "older page: only events with index (#N) below this")
+	sinceF := fs.Int("since", 0, "forward: only events with index (#N) above this (to consume new events)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -58,21 +67,20 @@ func runAuditView(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
 	}
-	var resp ipc.AuditTailResp
-	if err := newClient(dir, scope.Vault).Call(ipc.OpAuditTail,
-		ipc.AuditTailReq{Vault: scope.Vault, Lines: *lines}, &resp); err != nil {
+	events, err := fetchAuditWindow(newClient(dir, scope.Vault), scope, *lines, *beforeF, *sinceF, *bynF, *callerF, *scopeF)
+	if err != nil {
 		return handleCallError(err)
 	}
 	if *jsonOut {
-		out, _ := json.MarshalIndent(resp.Events, "", "  ")
+		out, _ := json.MarshalIndent(events, "", "  ")
 		fmt.Println(string(out))
 		return exitOK
 	}
-	if len(resp.Events) == 0 {
+	if len(events) == 0 {
 		fmt.Fprintln(os.Stderr, "(no audit events recorded yet)")
 		return exitOK
 	}
-	for _, e := range resp.Events {
+	for _, e := range events {
 		fmt.Println(auditLine(e))
 	}
 	return exitOK
@@ -88,6 +96,11 @@ func runAuditTail(args []string, scope cliScope) int {
 	linesAlias := fs.Int("lines", -1, "alias for -n")
 	follow := fs.Bool("f", false, "follow: stream new events in realtime (Ctrl-C to stop)")
 	jsonOut := fs.Bool("json", false, "output as JSON (NDJSON when following)")
+	bynF := fs.String("byn", "", "filter: events whose .byn path matches (substring)")
+	callerF := fs.String("caller", "", "filter: events whose caller matches (substring)")
+	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
+	beforeF := fs.Int("before", 0, "older page: only events with index (#N) below this")
+	sinceF := fs.Int("since", 0, "forward: only events with index (#N) above this (to consume new events)")
 	if err := fs.Parse(args); err != nil {
 		return exitErr
 	}
@@ -101,32 +114,38 @@ func runAuditTail(args []string, scope cliScope) int {
 	}
 	client := newClient(dir, scope.Vault)
 
-	var resp ipc.AuditTailResp
-	if err := client.Call(ipc.OpAuditTail,
-		ipc.AuditTailReq{Vault: scope.Vault, Lines: *n}, &resp); err != nil {
-		return handleCallError(err)
+	filt := func(lines int) ipc.AuditTailReq {
+		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lines, Byn: *bynF, Caller: *callerF, Scope: *scopeF}
 	}
-	// Snapshot (no -f): JSON mode emits a single array — consistent with
-	// `audit view --json` and every other --json command. NDJSON is reserved
-	// for the streaming -f path below, where a JSON array can't be left open.
+
+	// Snapshot (no -f): page back through the log so each response stays under
+	// the IPC frame limit, assembling oldest-first. JSON mode emits a single
+	// array — consistent with `audit view --json`. NDJSON is reserved for -f.
 	if !*follow {
+		events, err := fetchAuditWindow(client, scope, *n, *beforeF, *sinceF, *bynF, *callerF, *scopeF)
+		if err != nil {
+			return handleCallError(err)
+		}
 		if *jsonOut {
-			out, _ := json.MarshalIndent(resp.Events, "", "  ")
+			out, _ := json.MarshalIndent(events, "", "  ")
 			fmt.Println(string(out))
 			return exitOK
 		}
-		if len(resp.Events) == 0 {
+		if len(events) == 0 {
 			fmt.Fprintln(os.Stderr, "(no audit events recorded yet)")
 			return exitOK
 		}
-		for _, e := range resp.Events {
+		for _, e := range events {
 			fmt.Println(auditLine(e))
 		}
 		return exitOK
 	}
 
-	// Follow (-f): print the initial batch as NDJSON (or text rows), then
-	// stream new events the same way.
+	// Follow (-f): a single recent page as the initial batch, then poll.
+	var resp ipc.AuditTailResp
+	if err := client.Call(ipc.OpAuditTail, filt(*n), &resp); err != nil {
+		return handleCallError(err)
+	}
 	for _, e := range resp.Events {
 		printAuditEvent(e, *jsonOut)
 	}
@@ -137,8 +156,7 @@ func runAuditTail(args []string, scope cliScope) int {
 	for {
 		time.Sleep(700 * time.Millisecond)
 		var poll ipc.AuditTailResp
-		if err := client.Call(ipc.OpAuditTail,
-			ipc.AuditTailReq{Vault: scope.Vault, Lines: 256}, &poll); err != nil {
+		if err := client.Call(ipc.OpAuditTail, filt(256), &poll); err != nil {
 			return handleCallError(err)
 		}
 		var fresh []ipc.AuditEvent
@@ -176,6 +194,71 @@ func printAuditEvent(e ipc.AuditEvent, jsonOut bool) {
 	fmt.Println(auditLine(e))
 }
 
+// fetchAuditWindow returns the requested events (oldest-first), paging BACK
+// through the log (newest page first) so every IPC response stays under the
+// frame limit, then assembling them in order. lines <= 0 means "all". Used by
+// the snapshot view/tail; the -f follow path stays a single recent page.
+func fetchAuditWindow(client *ipc.Client, scope cliScope, lines, before, since int, byn, caller, scp string) ([]ipc.AuditEvent, error) {
+	mkReq := func(b, s, lim int) ipc.AuditTailReq {
+		return ipc.AuditTailReq{Vault: scope.Vault, Lines: lim, Before: b, Since: s, Byn: byn, Caller: caller, Scope: scp}
+	}
+
+	// --before N: one explicit older page (events with Index < N). Page further by
+	// passing the smallest #N you got as the next --before.
+	if before > 0 {
+		var resp ipc.AuditTailResp
+		if err := client.Call(ipc.OpAuditTail, mkReq(before, 0, lines), &resp); err != nil {
+			return nil, err
+		}
+		return resp.Events, nil
+	}
+
+	// --since N: ALL events newer than #N (oldest-first), paged forward by the
+	// max index seen — stable as the log grows.
+	if since > 0 {
+		var out []ipc.AuditEvent
+		cursor := since
+		for {
+			var resp ipc.AuditTailResp
+			if err := client.Call(ipc.OpAuditTail, mkReq(0, cursor, 0), &resp); err != nil {
+				return nil, err
+			}
+			if len(resp.Events) == 0 {
+				break
+			}
+			out = append(out, resp.Events...)
+			cursor = resp.Events[len(resp.Events)-1].Index // newest seen
+			if !resp.More {
+				break
+			}
+		}
+		return out, nil
+	}
+
+	// Default: the newest `lines` events (lines<=0 → the whole log), paged BACKWARD
+	// by the smallest index seen and assembled oldest-first.
+	var out []ipc.AuditEvent
+	beforeCur := 0 // 0 = newest
+	for {
+		var resp ipc.AuditTailResp
+		if err := client.Call(ipc.OpAuditTail, mkReq(beforeCur, 0, lines), &resp); err != nil {
+			return nil, err
+		}
+		if len(resp.Events) == 0 {
+			break
+		}
+		out = append(resp.Events, out...) // prepend older pages
+		beforeCur = resp.Events[0].Index  // smallest seen → next older cursor
+		if !resp.More || (lines > 0 && len(out) >= lines) {
+			break
+		}
+	}
+	if lines > 0 && len(out) > lines {
+		out = out[len(out)-lines:]
+	}
+	return out, nil
+}
+
 // auditLine renders one event as a human-readable row.
 func auditLine(e ipc.AuditEvent) string {
 	t := time.Unix(0, e.TS).UTC().Format("2006-01-02 15:04:05Z")
@@ -194,8 +277,8 @@ func auditLine(e ipc.AuditEvent) string {
 	if e.Command != "" {
 		entryName = e.Command
 	}
-	line := fmt.Sprintf("%s  %-14s  %-20s  %-20s  %-9s  %s",
-		t, e.Op, scopePath, entryName, e.Outcome, auditCaller(e))
+	line := fmt.Sprintf("#%-6d %s  %-14s  %-20s  %-20s  %-9s  %s",
+		e.Index, t, e.Op, scopePath, entryName, e.Outcome, auditCaller(e))
 	if e.BynPath != "" {
 		line += "  via " + e.BynPath
 	}
@@ -265,6 +348,100 @@ func runAuditVerify(args []string, scope cliScope) int {
 	return exitDaemonErr
 }
 
+// runAuditReseal acknowledges a chain break by appending a signed bridge marker.
+// It shows the break, captures a reason, confirms, then sends OpAuditReseal. The
+// vault must be unlocked (the daemon enforces this).
+func runAuditReseal(args []string, scope cliScope) int {
+	fs := flag.NewFlagSet("audit reseal", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	reason := fs.String("reason", "", "why the chain broke (recorded in the marker)")
+	assumeYes := fs.Bool("yes", false, "skip the confirmation prompt (requires --reason)")
+	jsonOut := fs.Bool("json", false, "output as JSON")
+	if err := fs.Parse(args); err != nil {
+		return exitErr
+	}
+	dir, err := defaultDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return exitErr
+	}
+	client := newClient(dir, scope.Vault)
+
+	// Show what would be acknowledged before doing anything.
+	var ver ipc.AuditVerifyResp
+	if err := client.Call(ipc.OpAuditVerify, ipc.AuditVerifyReq{Vault: scope.Vault}, &ver); err != nil {
+		return handleCallError(err)
+	}
+	if ver.BadIndex < 0 {
+		fmt.Printf("audit chain intact — nothing to reseal (%d events)\n", ver.Total)
+		return exitOK
+	}
+	fmt.Fprintf(os.Stderr, "%s audit chain broken at event #%d (of %d).\n",
+		boldRed("Break:"), ver.BadIndex, ver.Total)
+	fmt.Fprintln(os.Stderr, "Reseal appends a SIGNED marker that ACKNOWLEDGES this discontinuity — it never")
+	fmt.Fprintln(os.Stderr, "rewrites or erases anything. The original hashes stay on disk; the marker records")
+	fmt.Fprintln(os.Stderr, "who, when, and why. Afterwards `byn audit verify` and `byn doctor` read it as intact.")
+
+	r := strings.TrimSpace(*reason)
+	if *assumeYes {
+		if r == "" {
+			fmt.Fprintln(os.Stderr, "Error: --reason is required with --yes.")
+			return exitErr
+		}
+	} else {
+		if r == "" {
+			r = strings.TrimSpace(promptLine(os.Stdin, os.Stderr, `Reason (e.g. "daemon restart during testing"): `))
+			if r == "" {
+				fmt.Fprintln(os.Stderr, "Error: a reason is required to reseal.")
+				return exitErr
+			}
+		}
+		if !confirmReseal(os.Stdin, os.Stderr) {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return exitErr
+		}
+	}
+
+	var resp ipc.AuditResealResp
+	if err := client.Call(ipc.OpAuditReseal, ipc.AuditResealReq{Vault: scope.Vault, Reason: r}, &resp); err != nil {
+		return handleCallError(err)
+	}
+	if resp.NoBreak {
+		fmt.Println("audit chain already intact — nothing to reseal")
+		return exitOK
+	}
+	if *jsonOut {
+		out, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Println(string(out))
+		return exitOK
+	}
+	fmt.Printf("Resealed — acknowledged the break at event #%d.\n", resp.BrokenIndex)
+	fmt.Printf("  reason: %s\n", resp.Reason)
+	fmt.Printf("  by:     %s\n", resp.By)
+	fmt.Println("`byn audit verify` (and `byn doctor`) now read the chain as intact.")
+	return exitOK
+}
+
+// promptLine writes prompt to out and reads one line from in.
+func promptLine(in io.Reader, out io.Writer, prompt string) string {
+	_, _ = fmt.Fprint(out, prompt)
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return ""
+	}
+	return sc.Text()
+}
+
+// confirmReseal asks for an explicit "yes".
+func confirmReseal(in io.Reader, out io.Writer) bool {
+	_, _ = fmt.Fprint(out, "Reseal now? Type "+bold("yes")+" to confirm: ")
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return false
+	}
+	return strings.TrimSpace(sc.Text()) == "yes"
+}
+
 func printAuditUsage(w *os.File) {
 	_, _ = fmt.Fprintln(w, `byn audit — read and verify the per-vault audit log
 
@@ -272,5 +449,7 @@ Usage:
   byn audit view [--lines N] [--json]   Snapshot the last N events (default 50)
   byn audit tail [-n N] [-f] [--json]   Like tail(1): last N (default 10);
                                         -f follows new events in realtime
-  byn audit verify [--json]             Re-walk the HMAC chain end-to-end`)
+  byn audit verify [--json]             Re-walk the HMAC chain end-to-end
+  byn audit reseal [--reason R] [--yes] Acknowledge a chain break with a signed
+                                        marker (vault must be unlocked)`)
 }

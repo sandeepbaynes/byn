@@ -1,4 +1,4 @@
-.TH BYN 1 "2026-06-18" "byn 0.3.1" "User Commands"
+.TH BYN 1 "2026-06-21" "byn 0.4.0" "User Commands"
 .SH NAME
 byn \- secure secrets vault with shim-based credential injection
 .SH SYNOPSIS
@@ -414,15 +414,35 @@ browser), process name, pid/uid, and the parent process (who invoked
 it) \- e.g. \fIsocket:byn(pid 9123, uid 501)\(<-node\fR. A reveal in
 the browser or TUI routes through \fBget\fR and is logged as such.
 .TP
-.B audit tail \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-f\fR] \fR[\fB\-\-json\fR]
+.B audit tail \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-f\fR] \fR[\fB\-\-byn\fR \fIP\fR] \fR[\fB\-\-caller\fR \fIC\fR] \fR[\fB\-\-scope\fR \fIS\fR] \fR[\fB\-\-json\fR]
 Like \fBtail\fR(1): print the last \fIN\fR events (default 10) and
 exit. With \fB\-f\fR, follow \- stream new events in realtime until
-Ctrl\-C (NDJSON when combined with \fB\-\-json\fR).
+Ctrl\-C (NDJSON when combined with \fB\-\-json\fR). \fB\-\-byn\fR,
+\fB\-\-caller\fR, and \fB\-\-scope\fR filter (case\-insensitive substring)
+\fIserver\-side across the whole log\fR, so a match is found even when it
+predates the last \fIN\fR events. Every row is prefixed with its global
+chain event number (\fB#N\fR) \(em the same one \fBverify\fR and \fBreseal\fR
+report. Paginate by that STABLE index (never a positional offset, which a
+growing log would shift): \fB\-\-since\fR \fIN\fR streams every event with
+\fB#N\fR above N oldest\-first (a program tracks the highest #N it has seen and
+re\-queries to consume new events); \fB\-\-before\fR \fIN\fR fetches the page of
+events just below #N (pass the smallest #N you got to page further back).
 .TP
 .B audit verify \fR[\fB\-\-json\fR]
 Re\-walk the active vault's audit log and recompute the HMAC chain
 end\-to\-end. Exits 0 with "chain intact" on success; exits 3 with
 "chain BROKEN at event #N" if any link fails verification.
+.TP
+.B audit reseal \fR[\fB\-\-reason\fR \fIR\fR] \fR[\fB\-\-yes\fR] \fR[\fB\-\-json\fR]
+Acknowledge a chain break (e.g. one a daemon crash/SIGTERM left mid\-write)
+by appending a \fIsigned bridge marker\fR. The marker records the break index,
+the observed and expected heads, a free\-text \fB\-\-reason\fR, and who/when \(em
+it NEVER rewrites or erases the original hashes, so the discontinuity stays
+visible and attributable. Afterwards \fBaudit verify\fR and \fBdoctor\fR read the
+chain as intact (annotated with the acknowledged reseal). The vault must be
+unlocked (a deliberate owner action). Prompts for a reason and an explicit
+confirmation; \fB\-\-reason\fR with \fB\-\-yes\fR runs non\-interactively. A forged
+marker (without the chain seed) cannot clear a break.
 .SS Trust (\fB.byn\fR TOFU)
 .TP
 .B trust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR] \fR[\fB\-\-password\-stdin\fR]
@@ -1199,9 +1219,14 @@ service user and audits every access, but the following limits apply:
 \fBConcurrent commands share one service user.\fR Two byn\-run commands
 running at once both execute as the single
 .I _byn\-exec
-account, so they are not isolated from each other \(em one can read the
-other's injected secrets. Don't run mutually\-distrusting commands in
-parallel under byn.
+account \(em there is no per\-command isolation. On Linux each exec child is
+marked undumpable (\fBprctl\fR(PR_SET_DUMPABLE, 0)) before \fBexecve\fR, so a
+same\-UID sibling cannot read the other child's environ or memory (only
+root / CAP_SYS_PTRACE can); on macOS that prctl is a no\-op (the hardened
+runtime blocks debugger access but not a same\-UID \fBps \-E\fR env read), so a
+residual remains. byn does not \fIguarantee\fR isolation between siblings, so
+for mutually\-distrusting workloads \(em especially on macOS \(em don't run them
+in parallel under byn.
 .IP \(bu 2
 \fBNo defense against root or a compromised byn service.\fR Anyone who can
 run code as root, as

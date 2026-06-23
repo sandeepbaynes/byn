@@ -290,6 +290,10 @@ type Model struct {
 	// Entries for active scope
 	entries       []ipc.SecretMeta
 	entriesFilter string // active SEARCH filter
+	auditFilter   string // active audit-view filter (client-side, matches any field)
+	searchAudit   bool   // the in-progress "/" search targets the audit view, not entries
+	auditBefore   int    // audit page cursor: 0 = live newest; >0 = frozen on events with #N below this
+	auditMore     bool   // older events exist beyond the current audit page
 	entryCursor   int
 	entriesErr    error
 
