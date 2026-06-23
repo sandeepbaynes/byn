@@ -44,7 +44,7 @@ func TestNew_ReconcilesHeadLagFromDisk(t *testing.T) {
 	if _, err := l2.Append(ctx, Event{Op: "put", Outcome: OutcomeOK}); err != nil {
 		t.Fatal(err)
 	}
-	if bad, total, err := l2.VerifyChain(ctx); err != nil || bad != -1 {
+	if bad, total, _, err := l2.VerifyChain(ctx); err != nil || bad != -1 {
 		t.Fatalf("chain should be intact after reconcile: bad=%d total=%d err=%v", bad, total, err)
 	}
 }
