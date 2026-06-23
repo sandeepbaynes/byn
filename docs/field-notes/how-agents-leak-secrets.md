@@ -1,6 +1,6 @@
 # How agents and bots leak your secrets
 
-*Field note · coverage: v0.3.1 · updated with each release*
+*Field note · coverage: v0.4.0 · updated with each release*
 
 Most credential leaks in agentic development are not attacks. They are
 **accidents with your permissions**: an agent debugging a build reads the
@@ -12,7 +12,7 @@ running as you can read** — and your machine is now operated by a crowd
 of such processes.
 
 This field note catalogs the leak vectors one by one. For each: how the
-leak happens, what byn does about it **today (v0.3.1)**, where byn
+leak happens, what byn does about it **today (v0.4.0)**, where byn
 **cannot** protect, and what is **coming** that will close more of the
 gap. It is updated every release. For verified incidents in the wild,
 see [Real-world incidents](real-world-incidents.md); for the author's
@@ -46,7 +46,7 @@ the linked reports and the honest caveats.
   (`[security] privsep` + `sudo byn setup`) — runs the daemon and trusted-pinned
   exec children on their own service UIDs (`_byn`, `_byn-exec`), so a same-UID
   agent can't ptrace the daemon or read an injected child's env (`ps -E` on
-  macOS, `/proc/<pid>/environ` on Linux). **v0.3.1** spawns that child in your
+  macOS, `/proc/<pid>/environ` on Linux). **v0.4.0** spawns that child in your
   shell's process tree, so it inherits your TCC / Full Disk Access (it runs in
   `~/Documents` et al.) while the env stays hidden. Still on the roadmap: Phase 3
   shims (`aws`, `ssh`, …) to remove more plaintext files, and FUSE-gated
@@ -212,7 +212,7 @@ account](aws-credential-file-takeover.md).
 
 ## The honest summary: default vs opt-in privsep
 
-| Vector | v0.3.1 (default) | v0.3.1 + privsep (opt-in) | Planned |
+| Vector | v0.4.0 (default) | v0.4.0 + privsep (opt-in) | Planned |
 |---|---|---|---|
 | 1. Agent reads secret file | ✓ no plaintext file; reads gated + audited | ✓ + daemon/child on own UIDs | Shims, FUSE file gating |
 | 2. Secret enters agent context | ◐ reduced + audited; child output not controllable | — | Audit leak-pattern scan |

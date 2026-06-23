@@ -529,20 +529,34 @@ Run a battery of self-checks against every vault on disk:
 Severity is `ok` / `warn` / `fail`. Exit code is non-zero if any
 `fail`. `--json` emits `[]DoctorCheck{Name, Severity, Detail}`.
 
-### `byn audit tail [-n N] [-f] [--json]`
+### `byn audit tail [-n N] [-f] [--since N] [--before N] [--byn P] [--caller C] [--scope S] [--json]`
 
 Print the most recent N events from the active vault's audit log
 (like `tail(1)`). Default N = 10 (`--lines` is an alias for `-n`);
-`-f` follows the log.
+`-f` follows the log. `byn audit view` is the same reader with a larger
+default window (`--lines 0` prints the whole log).
 
-Allowed while locked — audit metadata is not secret. See
-[security.md](security.md) for what's captured per event.
+Allowed while locked — audit metadata is not secret. Every row is prefixed with
+its **`#N` chain index** (the same number `verify`/`reseal` report). The
+[**Audit log** guide](audit.md) is the full picture — what's captured and why,
+the chain integrity model, reseal, filters, and pagination; this is the flag
+reference.
 
-Human format: timestamp + op + scope + entry name + outcome:
+**Filter** (server-side, case-insensitive substring, across the *whole* log so a
+match is found even when it predates the recent window): `--byn P` (authorizing
+`.byn` path), `--caller C` (caller process/uid), `--scope S` (`project[/env]`).
+
+**Paginate** by the stable `#N` index, never a positional offset (a growing log
+would shift an offset): `--since N` streams every event with `#N` above N,
+oldest-first — a program tracks the highest `#N` it has processed and re-queries
+to consume new events without skips or repeats; `--before N` fetches the page
+just below `#N` (pass the smallest `#N` you got to page further back).
+
+Human format: `#N` + timestamp + op + scope + entry name + outcome + caller:
 
 ```
-2026-06-02 12:34:56Z  put        default/billing/staging  DB_URL    ok
-2026-06-02 12:35:01Z  vault.lock default                  -         ok
+#4120  2026-06-02 12:34:56Z  put        default/billing/staging  DB_URL    ok
+#4121  2026-06-02 12:35:01Z  vault.lock default                  -         ok
 ```
 
 With `--json`, a snapshot is a single **JSON array** of event objects (so
@@ -558,6 +572,20 @@ report the first bad index.
 - Exit 0 + `audit chain intact — N events verified` if clean.
 - Exit 3 + `FAIL: audit chain BROKEN at event #M (of N)` otherwise,
   with a treat-as-compromised hint.
+
+A break is often benign (a daemon crash mid-write); see `reseal` below and the
+[Audit log guide](audit.md#chain-breaks-and-reseal).
+
+### `byn audit reseal [--reason R] [--yes] [--json]`
+
+Acknowledge a chain break by appending a **signed bridge marker** — the original
+hashes are never rewritten, so the gap stays visible and attributable (it records
+the break index, observed vs expected heads, a reason, and who/when). Requires
+the vault **unlocked** (a deliberate owner action). Interactive by default (shows
+the break, prompts for a reason, confirms); `--reason R --yes` runs
+non-interactively. Afterwards `verify` and `doctor` read the chain as intact
+(with the acknowledged reseal). A marker forged without the chain seed cannot
+clear a break. See the [Audit log guide](audit.md#chain-breaks-and-reseal).
 
 ---
 
