@@ -162,6 +162,11 @@ func TestStatus_OnFreshDaemon(t *testing.T) {
 		t.Fatalf("ProtocolMin/Max = %d/%d, want %d/%d",
 			resp.ProtocolMin, resp.ProtocolMax, ipc.ProtocolMin, ipc.ProtocolVersion)
 	}
+	// FDAGranted must be nil when privsep is off — the daemon runs as the
+	// owner who inherits the Terminal's TCC grant; no FDA check needed.
+	if resp.FDAGranted != nil {
+		t.Fatalf("FDAGranted = %v, want nil (privsep off)", *resp.FDAGranted)
+	}
 }
 
 // findVault returns the named vault summary from a StatusResp, or

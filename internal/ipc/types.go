@@ -274,6 +274,13 @@ type StatusResp struct {
 	UIEnabled bool `json:"ui_enabled"`
 	UIPort    int  `json:"ui_port"`
 	Privsep   bool `json:"privsep"`
+
+	// FDAGranted is non-nil only on macOS when privsep is active (daemon runs
+	// as _byn). true = the daemon has Full Disk Access and can read .byn files
+	// anywhere; false = it lacks FDA and cannot reach ~/Documents, ~/Desktop,
+	// ~/Downloads, or iCloud Drive. nil = not applicable (non-macOS or privsep
+	// off — the daemon runs as the owner who inherits the Terminal's TCC grant).
+	FDAGranted *bool `json:"fda_granted,omitempty"`
 }
 
 // VaultSummary is the per-vault entry in StatusResp.Vaults. LastActive
