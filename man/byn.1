@@ -91,6 +91,8 @@ requires a per\-terminal session started with \fBbyn unlock\fR.
 Each vault row shows \fB[session: active, expires in \&...]\fR when the
 current terminal has a live session, or a dim \fB[no session in this
 terminal \(em byn unlock to authorize reads]\fR when it does not.
+On macOS with privilege separation active, a \fBfda:\fR line reports
+whether the daemon (\fI_byn\fR) has Full Disk Access.
 See
 .BR byn-status (1).
 .SS Structure (vault / project / env)
@@ -810,6 +812,9 @@ Each unlocked vault shows the caller's per\-terminal session state:
 \fB[no session in this terminal]\fR note otherwise.
 \(lqUnlocked\(rq means the daemon holds the key; value reads
 still require a session or the master password.
+On macOS with privilege separation active, a \fBfda:\fR line reports
+whether the daemon (\fI_byn\fR) has Full Disk Access; without it the
+daemon cannot read \fI.byn\fR files in TCC-protected directories.
 .TP
 .B daemon install
 Register the daemon as a user auto-start service (launchd LaunchAgent on

@@ -675,7 +675,7 @@ async function apiWithConfigAuth(method, path, body) {
           validate: (v) => (v ? null : "token required") },
       ],
     });
-    if (!r) throw e; // user cancelled
+    if (!r) { const c = new Error("cancelled"); c.code = "cancelled"; throw c; }
     return await api(method, path, body, { "X-Byn-Config-Auth": r.token.trim() });
   }
 }
@@ -2129,7 +2129,13 @@ async function saveCfg() {
     showConfigNotes(notesEl, resp.change_notes || [], false);
     toast("config saved");
   } catch (e) {
-    showConfigNotes(notesEl, [e.message], true);
+    if (e.code === "cancelled") {
+      // user dismissed the token dialog — restore state silently
+    } else if (e.code === "config_auth_required") {
+      showConfigNotes(notesEl, ["Invalid or expired token. Run `byn config-auth` in your terminal and try again."], true);
+    } else {
+      showConfigNotes(notesEl, [e.message], true);
+    }
   } finally {
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "save config"; }
   }

@@ -939,13 +939,24 @@ DESCRIPTION
        current terminal has a live session, or a dim "[no session in
        this terminal — byn unlock to authorize reads]" when it does not.
 
+       On macOS with privilege separation active, a "fda:" line reports
+       whether the daemon (running as _byn) has Full Disk Access.
+       Without FDA the daemon cannot read .byn files stored under
+       ~/Documents, ~/Desktop, ~/Downloads, or iCloud Drive.  Grant
+       Full Disk Access in System Settings > Privacy & Security >
+       Full Disk Access, then restart the daemon.  This line is absent
+       when privsep is off (the daemon inherits your Terminal's TCC
+       grant) or on non-macOS platforms.
+
 EXAMPLES
        Check state:
            $ byn status
            daemon:  running (version dev)
-           socket:  /Users/you/.byn/daemon.sock
-           vault:   unlocked
+           socket:  /Library/Application Support/byn/daemon.sock
            uptime:  1h2m
+           fda:     granted
+           vaults:
+             default               unlocked  [session: active, expires in 14m59s]
 
 EXIT STATUS
        0    Daemon responded.

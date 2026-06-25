@@ -296,3 +296,75 @@ func TestRunDaemonStatus_SessionActiveSuffix(t *testing.T) {
 		t.Errorf("unexpected footnote when session is active; got:\n%s", out)
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
+
+// TestRunDaemonStatus_FDAGranted asserts that "fda: granted" is printed
+// when the daemon reports FDAGranted = true.
+func TestRunDaemonStatus_FDAGranted(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{
+		Version:     "v",
+		ProtocolMin: ipc.ProtocolMin,
+		ProtocolMax: ipc.ProtocolVersion,
+		StartedAt:   time.Now().Add(-time.Hour),
+		Privsep:     true,
+		FDAGranted:  boolPtr(true),
+	})
+	var rc int
+	out := captureStdout(t, func() { rc = runDaemonStatus(nil) })
+	if rc != exitOK {
+		t.Fatalf("exit %d", rc)
+	}
+	if !strings.Contains(out, "fda:") {
+		t.Errorf("expected fda: line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "granted") {
+		t.Errorf("expected 'granted'; got:\n%s", out)
+	}
+}
+
+// TestRunDaemonStatus_FDANotGranted asserts that a warning is printed
+// when the daemon reports FDAGranted = false.
+func TestRunDaemonStatus_FDANotGranted(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{
+		Version:     "v",
+		ProtocolMin: ipc.ProtocolMin,
+		ProtocolMax: ipc.ProtocolVersion,
+		StartedAt:   time.Now().Add(-time.Hour),
+		Privsep:     true,
+		FDAGranted:  boolPtr(false),
+	})
+	var rc int
+	out := captureStdout(t, func() { rc = runDaemonStatus(nil) })
+	if rc != exitOK {
+		t.Fatalf("exit %d; status should remain 0 (non-fatal warning)", rc)
+	}
+	if !strings.Contains(out, "NOT GRANTED") {
+		t.Errorf("expected NOT GRANTED warning; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Full Disk Access") {
+		t.Errorf("expected remediation hint; got:\n%s", out)
+	}
+}
+
+// TestRunDaemonStatus_FDAAbsent asserts that no fda: line is printed
+// when FDAGranted is nil (privsep off or non-macOS).
+func TestRunDaemonStatus_FDAAbsent(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpStatus, ipc.StatusResp{
+		Version:     "v",
+		ProtocolMin: ipc.ProtocolMin,
+		ProtocolMax: ipc.ProtocolVersion,
+		StartedAt:   time.Now().Add(-time.Hour),
+	})
+	var rc int
+	out := captureStdout(t, func() { rc = runDaemonStatus(nil) })
+	if rc != exitOK {
+		t.Fatalf("exit %d", rc)
+	}
+	if strings.Contains(out, "fda:") {
+		t.Errorf("unexpected fda: line when FDAGranted is nil; got:\n%s", out)
+	}
+}

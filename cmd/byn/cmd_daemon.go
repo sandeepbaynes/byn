@@ -373,6 +373,15 @@ func runDaemonStatus(args []string) int {
 		resp.Version, resp.ProtocolMin, resp.ProtocolMax)
 	fmt.Printf("socket:  %s\n", resp.SocketPath)
 	fmt.Printf("uptime:  %s\n", time.Since(resp.StartedAt).Round(time.Second))
+	if resp.FDAGranted != nil {
+		if *resp.FDAGranted {
+			fmt.Println("fda:     granted")
+		} else {
+			fmt.Println(boldYellow("fda:") + "     NOT GRANTED")
+			fmt.Println("         byn cannot read .byn files in ~/Documents, ~/Desktop, ~/Downloads or iCloud Drive.")
+			fmt.Println("         → Grant Full Disk Access to byn in System Settings > Privacy & Security > Full Disk Access, then restart.")
+		}
+	}
 	if len(resp.Vaults) == 0 {
 		fmt.Println("vaults:  (none initialized)")
 	} else {

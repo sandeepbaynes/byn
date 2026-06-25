@@ -12,6 +12,47 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.4.1
+
+**Headline:** Linux/Fedora compatibility, macOS FDA status in `byn status`, and a cleaner portal config-auth flow.
+
+### What's new
+
+- **Linux/Fedora compatibility.** Four privsep setup fixes: `printf '%b'` in the
+  provisioner so sysusers.d and the systemd unit are correctly multi-line (not
+  one-liners with literal `\n`); `StateDirectoryMode=0711` so the CLI can
+  traverse `/var/lib/byn` (was silently reporting "not running" after provisioning
+  due to `EACCES`); `AF_INET`/`AF_INET6` in `RestrictAddressFamilies` so the web
+  portal is reachable; `byn migrate` no longer errors with "no byn state
+  artifacts" when run before `sudo byn setup` on a fresh install.
+- **macOS Full Disk Access indicator.** On macOS with privsep active (daemon runs
+  as `_byn`), `byn status` now shows an `fda:` line — `granted` when the daemon
+  has Full Disk Access, or `NOT GRANTED` with a direct pointer to System Settings
+  when it doesn't. Without FDA the daemon silently fails to read `.byn` files in
+  `~/Documents`, `~/Desktop`, `~/Downloads`, or iCloud Drive; this makes that
+  visible immediately. The line is absent on Linux or when privsep is off.
+- **Portal config-auth error message.** Submitting an invalid or expired sudo
+  token when saving settings now shows *"Invalid or expired token. Run
+  `byn config-auth` in your terminal and try again."* instead of the raw
+  `config_auth_required` error code. Cancelling the token dialog now silently
+  restores the save button rather than showing an error.
+- **`make uninstall` target.** Stops the daemon, reverses the privsep setup, and
+  removes installed binaries (vault is preserved). Default install dir changed to
+  `/usr/local/bin` (was `~/.local/bin` fallback).
+
+### Upgrade notes (from v0.4.0)
+
+- **No config or schema changes.** Existing vaults, audit logs, and privsep
+  setups work as-is.
+- **Linux privsep users:** if you provisioned before this release,
+  `sudo byn doctor --repair` will apply the `StateDirectoryMode` and unit-file
+  fixes; or re-run `sudo byn setup` (idempotent).
+- **macOS privsep + Full Disk Access:** after upgrading, `byn status` will show
+  `fda: NOT GRANTED` until you grant Full Disk Access to byn in
+  System Settings → Privacy & Security → Full Disk Access, then `sudo byn restart`.
+
+---
+
 ## v0.4.0
 
 **Headline:** the audit log grows up — it self-heals after a crash, repairs

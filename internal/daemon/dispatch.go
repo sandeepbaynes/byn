@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/fdpass"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/privsep"
 	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
@@ -311,6 +313,17 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 
 func (d *Daemon) handleStatus(ctx context.Context, env *ipc.Envelope) *ipc.Envelope {
 	summaries := d.buildVaultSummariesForCaller(ctx)
+
+	// FDA check: only meaningful on macOS when privsep is active, because
+	// then the daemon runs as _byn (not the owner) and macOS TCC applies.
+	// When privsep is off the daemon runs as the owner, who inherits the
+	// Terminal's TCC grant, so no separate FDA is needed.
+	var fdaGranted *bool
+	if runtime.GOOS == "darwin" && d.cfg.Privsep {
+		v := privsep.CheckFDA()
+		fdaGranted = &v
+	}
+
 	resp, err := ipc.NewResponse(env.ID, ipc.StatusResp{
 		Version:     d.cfg.Version,
 		ProtocolMin: ipc.ProtocolMin,
@@ -321,6 +334,7 @@ func (d *Daemon) handleStatus(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		UIEnabled:   d.cfg.UIEnabled,
 		UIPort:      d.cfg.UIPort,
 		Privsep:     d.cfg.Privsep,
+		FDAGranted:  fdaGranted,
 	})
 	if err != nil {
 		return internalErr(env.ID, err)
