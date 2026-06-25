@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Release notes — byn docs</title>
+<meta name="description" content="What changed in each byn release — headline changes, upgrade/migrationnotes, and any specific instructions. Newest first.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script>document.documentElement.setAttribute('data-theme',localStorage.getItem('byn-theme')||'system')</script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+
+<nav class="site-nav">
+  <a href="../../index.html" class="nav-logo">
+    <div class="nav-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span class="nav-name">byn</span>
+  </a>
+  <div class="nav-links">
+    <a href="../../docs/" class="active">Docs</a>
+    <a href="../../docs/cli-reference/">CLI reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/field-notes/">Field notes</a>
+    <a href="https://github.com/sandeepbaynes/byn" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <div class="theme-toggle">
+      <button class="theme-btn" data-theme="light"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1=".5" x2="6" y2="1.5"/><line x1="6" y1="10.5" x2="6" y2="11.5"/><line x1=".5" y1="6" x2="1.5" y2="6"/><line x1="10.5" y1="6" x2="11.5" y2="6"/><line x1="2.1" y1="2.1" x2="2.8" y2="2.8"/><line x1="9.2" y1="9.2" x2="9.9" y2="9.9"/><line x1="9.9" y1="2.1" x2="9.2" y2="2.8"/><line x1="2.8" y1="9.2" x2="2.1" y2="9.9"/></svg>Light</button>
+      <button class="theme-btn" data-theme="dark"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 7.5A5 5 0 0 1 4.5 2a4.5 4.5 0 1 0 5.5 5.5z"/></svg>Dark</button>
+      <button class="theme-btn active" data-theme="system"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="10" height="7" rx="1.5"/><line x1="4" y1="11" x2="8" y2="11"/><line x1="6" y1="9" x2="6" y2="11"/></svg>System</button>
+    </div>
+    <a href="../../index.html#install" class="btn-nav-cta">Install →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Release notes</div>
+      <a href="./" class="sb-item active">Release notes <span class="sb-badge">v0.4.1</span></a>
+      <a href="#v041" class="sb-item">v0.4.1</a>
+      <a href="#v040" class="sb-item">v0.4.0</a>
+      <a href="#v031" class="sb-item">v0.3.1</a>
+      <a href="#v030" class="sb-item">v0.3.0</a>
+      <a href="#v020" class="sb-item">v0.2.0</a>
+      <a href="#v010" class="sb-item">v0.1.0</a>
+      <a href="#v001" class="sb-item">v0.0.1</a>
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="breadcrumb">
+      <a href="../../index.html" style="color:var(--faint);text-decoration:none;">Home</a>
+      <span class="sep">/</span>
+      <a href="../" style="color:var(--faint);text-decoration:none;">Docs</a>
+      <span class="sep">/</span>
+      <span style="color:var(--text);font-weight:600;">Release notes</span>
+    </div>
+
+    <h1>Release notes</h1>
+    <div class="doc-meta">
+      <span>Source: <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/releases.md">docs/releases.md</a></span>
+      <span>·</span>
+      <a href="https://github.com/sandeepbaynes/byn/edit/main/docs/releases.md">Edit on GitHub ↗</a>
+    </div>
+
+    <p>What changed in each byn release — headline changes, upgrade/migration
+    notes, and any specific instructions. Newest first.</p>
+    <p>Downloadable binaries and per-release assets live on the
+    <a href="https://github.com/sandeepbaynes/byn/releases">GitHub releases page</a>.
+    This page is the curated changelog; the GitHub page is the artifacts.</p>
+    <blockquote>
+    <p>byn is pre-1.0. Until 1.0, minor versions may include behavior changes —
+    each one is called out under <strong>Upgrade notes</strong> below.</p>
+    </blockquote>
+    <hr>
+    <h2 id="v041">v0.4.1</h2>
+    <p><strong>Headline:</strong> Linux/Fedora compatibility, macOS FDA status in <code>byn status</code>, and a cleaner portal config-auth flow.</p>
+    <h3 id="whats-new">What's new</h3>
+    <ul>
+    <li><strong>Linux/Fedora compatibility.</strong> Four privsep setup fixes: <code>printf '%b'</code> in the
+    provisioner so sysusers.d and the systemd unit are correctly multi-line (not
+    one-liners with literal <code>\n</code>); <code>StateDirectoryMode=0711</code> so the CLI can
+    traverse <code>/var/lib/byn</code> (was silently reporting &quot;not running&quot; after provisioning
+    due to <code>EACCES</code>); <code>AF_INET</code>/<code>AF_INET6</code> in <code>RestrictAddressFamilies</code> so the web
+    portal is reachable; <code>byn migrate</code> no longer errors with &quot;no byn state
+    artifacts&quot; when run before <code>sudo byn setup</code> on a fresh install.</li>
+    <li><strong>macOS Full Disk Access indicator.</strong> On macOS with privsep active (daemon runs
+    as <code>_byn</code>), <code>byn status</code> now shows an <code>fda:</code> line — <code>granted</code> when the daemon
+    has Full Disk Access, or <code>NOT GRANTED</code> with a direct pointer to System Settings
+    when it doesn't. Without FDA the daemon silently fails to read <code>.byn</code> files in
+    <code>~/Documents</code>, <code>~/Desktop</code>, <code>~/Downloads</code>, or iCloud Drive; this makes that
+    visible immediately. The line is absent on Linux or when privsep is off.</li>
+    <li><strong>Portal config-auth error message.</strong> Submitting an invalid or expired sudo
+    token when saving settings now shows <em>&quot;Invalid or expired token. Run
+    <code>byn config-auth</code> in your terminal and try again.&quot;</em> instead of the raw
+    <code>config_auth_required</code> error code. Cancelling the token dialog now silently
+    restores the save button rather than showing an error.</li>
+    <li><strong><code>make uninstall</code> target.</strong> Stops the daemon, reverses the privsep setup, and
+    removes installed binaries (vault is preserved). Default install dir changed to
+    <code>/usr/local/bin</code> (was <code>~/.local/bin</code> fallback).</li>
+    </ul>
+    <h3 id="upgrade-notes-from-v040">Upgrade notes (from v0.4.0)</h3>
+    <ul>
+    <li><strong>No config or schema changes.</strong> Existing vaults, audit logs, and privsep
+    setups work as-is.</li>
+    <li><strong>Linux privsep users:</strong> if you provisioned before this release,
+    <code>sudo byn doctor --repair</code> will apply the <code>StateDirectoryMode</code> and unit-file
+    fixes; or re-run <code>sudo byn setup</code> (idempotent).</li>
+    <li><strong>macOS privsep + Full Disk Access:</strong> after upgrading, <code>byn status</code> will show
+    <code>fda: NOT GRANTED</code> until you grant Full Disk Access to byn in
+    System Settings → Privacy &amp; Security → Full Disk Access, then <code>sudo byn restart</code>.</li>
+    </ul>
+    <hr>
+    <h2 id="v040">v0.4.0</h2>
+    <p><strong>Headline:</strong> the audit log grows up — it self-heals after a crash, repairs
+    deliberately, and is fully readable (event numbers, server-side search, and
+    pagination that's reliable on a growing log) — plus a self-healing daemon
+    lifecycle that can't be bricked by <code>sudo</code>.</p>
+    <h3 id="whats-new-1">What's new</h3>
+    <ul>
+    <li><strong>The audit log is now a first-class, documented feature.</strong> New
+    <a href="audit/"><strong>Audit log</strong> guide</a> covers why the tamper-evident HMAC chain
+    exists, what's recorded, the threat model, and every way to use it.</li>
+    <li><strong>Self-healing audit chain + <code>byn audit reseal</code>.</strong> A daemon crash/SIGTERM
+    mid-write used to leave a permanent &quot;chain broken at #N&quot;. Now the logger
+    <strong>reconciles its chain head from disk on restart</strong>, so a clean crash repairs
+    itself. For an existing break, <code>byn audit reseal</code> appends a <strong>signed bridge
+    marker</strong> that <em>acknowledges</em> the gap (records the break, a reason, and
+    who/when) <strong>without rewriting any historical hash</strong> — so a benign gap and a
+    real tamper stay distinguishable. <code>byn doctor</code> then reads the chain as intact
+    (with the acknowledged reseal).</li>
+    <li><strong>Event numbers, search, and reliable pagination.</strong> Every audit row (CLI,
+    TUI, web) is prefixed with its <strong><code>#N</code> chain index</strong> — the same number <code>verify</code>
+    and <code>reseal</code> report. Filter the whole log <strong>server-side</strong> with
+    <code>--byn</code> / <code>--caller</code> / <code>--scope</code> (also <code>/</code> in the TUI and the portal's filter
+    bar). Paginate by the <strong>stable <code>#N</code> index, never a positional offset</strong> (which a
+    growing log would shift): <code>--since N</code> streams new events for a program to
+    consume; <code>--before N</code> pages back. The portal gets a <strong>Load older</strong> button; the
+    TUI gets <code>]</code>/<code>[</code> page navigation. <code>byn audit view --lines 0</code> now streams the
+    entire log instead of failing on a large dump.</li>
+    <li><strong>Self-healing daemon lifecycle (privsep).</strong> <code>byn</code> now refuses to run owner
+    commands as <code>sudo</code>/root with a clear message instead of a cryptic peer error;
+    <code>byn setup</code> and the service (re)load are race-free and idempotent (no more
+    &quot;Bootstrap failed: 5&quot;); <code>byn doctor</code> runs even when the daemon is <strong>down</strong> and
+    <code>sudo byn doctor --repair</code> heals provisioning/ownership/launchd state; and
+    <code>start</code>/<code>stop</code>/<code>restart</code> are privsep-aware (the daemon is the <code>_byn</code> service).
+    <code>BYN_ALLOW_ROOT=1</code> is the escape hatch for root-only containers.</li>
+    <li><strong>Portal polish.</strong> Persistent, stackable error toasts (close to dismiss);
+    the studio/settings editor surfaces the full config (incl. <code>[security]</code>) and
+    <code>[exec] writable</code>; the file pickers start from your home, not the daemon's;
+    and macOS Full-Disk-Access read denials now surface an actionable error.</li>
+    </ul>
+    <h3 id="upgrade-notes-from-v031">Upgrade notes (from v0.3.1)</h3>
+    <ul>
+    <li><strong>No config or schema changes.</strong> Existing vaults and audit logs are read as-is.</li>
+    <li><strong>Audit pagination changed shape, for the better.</strong> A program that consumed
+    the log by positional offset should switch to <strong><code>--since &lt;max #N seen&gt;</code></strong> —
+    it's reliable as the log grows. Interactive use is unchanged (<code>tail</code>, <code>view</code>,
+    <code>-f</code> follow all still show the most recent events).</li>
+    <li><strong>A pre-existing audit break</strong> (from forced restarts before this release) will
+    still show as broken until you acknowledge it once with
+    <code>byn audit reseal</code> (requires the vault unlocked). New crashes self-heal.</li>
+    <li><strong>Privsep is still opt-in</strong> via <code>[security] privsep</code> + <code>sudo byn setup</code>;
+    nothing changes for non-privsep installs.</li>
+    </ul>
+    <hr>
+    <h2 id="v031">v0.3.1</h2>
+    <p><strong>Headline:</strong> privsep <code>byn exec</code> now works in protected dirs (macOS <code>~/Documents</code>
+    et al.) by inheriting your shell's access, plus debug modes and automatic
+    toolchain access for the exec child.</p>
+    <h3 id="whats-new-2">What's new</h3>
+    <ul>
+    <li><strong>Terminal-anchored privsep exec.</strong> With <code>[security] privsep</code> on, a trusted-<code>.byn</code>
+    <code>byn exec</code> now spawns the child in your shell's process tree (then drops it to
+    <code>_byn-exec</code>), so on macOS it inherits your shell's Full Disk Access / TCC grant —
+    <code>byn exec</code> runs in <code>~/Documents</code>, <code>~/Desktop</code>, iCloud, etc., while the injected env
+    stays hidden from same-UID snooping (<code>ps -E</code> on macOS, <code>/proc/&lt;pid&gt;/environ</code> on
+    Linux). Secrets reach the child via a one-time token the privileged helper redeems
+    from the daemon; the owner-UID CLI never sees them.</li>
+    <li><strong>Debug modes for <code>byn exec</code></strong> (see <a href="cli-reference/#execution-modes--privsep-default---no-privsep---inspect">CLI reference</a>):
+    <ul>
+    <li><code>--no-privsep</code> runs the child <strong>as you</strong> (so a launch-mode debugger can attach) and
+    <strong>requires the master password every run</strong> — no blind trusted-file run, since the env
+    is then visible to any same-UID process (<code>ps -E</code> / <code>/proc/&lt;pid&gt;/environ</code>).</li>
+    <li><code>--inspect[=PORT]</code> (and <code>--inspect &lt;PORT&gt;</code> / <code>--inspect-brk</code>) keeps privsep and enables
+    the Node inspector for <strong>attach-mode</strong> debugging over loopback TCP; with no port byn
+    picks a free one, an explicit busy port fails clearly, and <code>--inspect=0</code> lets each
+    process self-allocate (e.g. <code>tsx watch</code>).</li>
+    </ul>
+    </li>
+    <li><strong>Automatic toolchain access for the exec child.</strong> Because the child runs as <code>_byn-exec</code>,
+    <code>byn trust</code> now grants it read/write on a curated set of common tool-state dirs that
+    exist (<code>~/.cache</code>, <code>~/.npm</code>, <code>~/Library/pnpm</code>, <code>~/.cargo</code>, <code>~/.rustup</code>, <code>~/go</code>, …), plus
+    any extra dirs a <code>.byn</code> declares in the new <strong><code>[exec] writable</code></strong> list (see
+    <a href="byn-file-format/">.byn file format</a>). The child's <code>TMPDIR</code> is normalized to a writable
+    location automatically.</li>
+    </ul>
+    <h3 id="upgrade-notes-from-v030">Upgrade notes (from v0.3.0)</h3>
+    <ul>
+    <li><strong>No config or schema changes.</strong> Privsep is still opt-in via <code>[security] privsep</code>,
+    still provisioned with <code>sudo byn setup</code> — nothing changes unless you have privsep on.</li>
+    <li><strong>macOS Full Disk Access:</strong> for the daemon to read a <code>.byn</code> under <code>~/Documents</code>/iCloud
+    it still needs FDA (re-grant after a rebuild while unsigned). The exec <strong>child</strong> no
+    longer needs its own FDA — it inherits the shell's. See <a href="troubleshooting/#running-byn-exec-under-privsep-toolchain-tmpdir-debugging">Troubleshooting</a>.</li>
+    </ul>
+    <hr>
+    <h2 id="v030">v0.3.0</h2>
+    <p><strong>Headline:</strong> opt-in privilege separation, a fixed system data root with
+    first-class provisioning/migration, and a generated docs site.</p>
+    <h3 id="whats-new-3">What's new</h3>
+    <ul>
+    <li><strong>Opt-in privilege separation (NU-5/6).</strong> The daemon can run as a
+    dedicated <code>_byn</code> service user, and trusted-pinned <code>byn exec</code> children
+    drop to a separate <code>_byn-exec</code> user — a three-UID model (you ≠ <code>_byn</code> ≠
+    <code>_byn-exec</code>) so a same-UID process can no longer ptrace the daemon or
+    read an injected child's environ without root. <strong>Off by default.</strong>
+    Provision with <code>sudo byn setup</code>, then enable with <code>[security] privsep = true</code> and restart the daemon. Honest ceiling: it raises the bar to root,
+    it does not defend against root.</li>
+    <li><strong>Fixed per-OS system data root + provisioning.</strong> <code>byn setup</code> provisions
+    the service users, installs the privileged spawn helper and the system
+    service, and relocates a legacy <code>~/.byn</code> into the system path
+    (<code>/Library/Application Support/byn</code> on macOS, <code>/var/lib/byn</code> on Linux).
+    <code>byn migrate</code> relocates an existing <code>~/.byn</code> or imports an external
+    vault. See <a href="migration/">Migration &amp; setup</a>.</li>
+    <li><strong>Generated docs site.</strong> The docs now publish to GitHub Pages from the
+    markdown via <code>make site</code>; added the <strong><a href="field-notes/">field notes</a></strong>
+    (threat briefings) and <strong><a href="why-not-containers/">why not containers</a></strong>.</li>
+    </ul>
+    <h3 id="upgrade-notes-from-v020">Upgrade notes (from v0.2.0)</h3>
+    <ul>
+    <li><strong>Schema migrates automatically.</strong> The vault schema moves from v3 to v4
+    on first open — no action needed; it is applied in place.</li>
+    <li><strong>The data-root override environment variable was removed.</strong> If you
+    relied on it to point byn at a non-default directory, it is now ignored:
+    byn uses <code>~/.byn</code> by default, or the system path once provisioned. Move
+    your data with <code>byn migrate</code> if needed.</li>
+    <li><strong>Privilege separation is opt-in — nothing changes unless you turn it
+    on.</strong> Existing installs keep running exactly as before at your own UID.
+    To adopt privsep: <code>sudo byn setup</code> (one sudo prompt, idempotent), then
+    set <code>[security] privsep = true</code>. Reverse with <code>sudo byn setup --uninstall</code> (add <code>--purge</code> to also delete the relocated vault).</li>
+    </ul>
+    <hr>
+    <h2 id="v020">v0.2.0</h2>
+    <p><strong>Headline:</strong> no universal unlock (NU-1…NU-3) and the browser portal <code>.byn</code>
+    studio.</p>
+    <h3 id="whats-new-4">What's new</h3>
+    <ul>
+    <li><strong>No universal unlock (per-terminal sessions).</strong> An unlocked vault no
+    longer grants every same-UID process access. Each terminal, TUI, or
+    portal session authenticates independently; sensitive operations require
+    a live session or fresh authorization even while the vault is unlocked.</li>
+    <li><strong>Browser portal <code>.byn</code> studio</strong> for viewing/editing scopes and entries,
+    with passkey / Touch ID unlock (WebAuthn PRF).</li>
+    </ul>
+    <h3 id="upgrade-notes-from-v010">Upgrade notes (from v0.1.0)</h3>
+    <ul>
+    <li><strong><code>byn unlock</code> is now per-terminal.</strong> Unlocking in terminal A does not
+    unlock for terminal B or background scripts — run <code>byn unlock</code> once per
+    terminal, or supply <code>--password-stdin</code> in scripts. See the NU-3 section
+    of the <a href="security/">Security model</a>.</li>
+    <li><strong>The <code>[security] per_action_auth</code> config key was removed.</strong> If your
+    <code>~/.byn/config</code> contains it, delete it — the strict parser rejects the
+    whole config otherwise, and the daemon will refuse to start.</li>
+    </ul>
+    <hr>
+    <h2 id="v010">v0.1.0</h2>
+    <p>Early development release: the encrypted multi-vault store, the
+    daemon ↔ thin-CLI architecture over a Unix socket, the
+    <code>vault → project → env</code> scope hierarchy, and core env-var CRUD + <code>byn exec</code> injection.</p>
+    <hr>
+    <h2 id="v001">v0.0.1</h2>
+    <p>First public release.</p>
+
+    <div class="docs-nav">
+      <a href="../" class="docs-nav-btn">
+        <div class="nav-btn-label">← Previous</div>
+        <div class="nav-btn-title">Docs home</div>
+      </a>
+    </div>
+  </main>
+
+  <nav class="docs-toc docs-toc-col">
+    <div class="toc-title">On this page</div>
+    <a href="#v041" class="toc-item">v0.4.1</a>
+    <a href="#whats-new" class="toc-item sub">What&#39;s new</a>
+    <a href="#upgrade-notes-from-v040" class="toc-item sub">Upgrade notes (from v0.4.0)</a>
+    <a href="#v040" class="toc-item">v0.4.0</a>
+    <a href="#whats-new-1" class="toc-item sub">What&#39;s new</a>
+    <a href="#upgrade-notes-from-v031" class="toc-item sub">Upgrade notes (from v0.3.1)</a>
+    <a href="#v031" class="toc-item">v0.3.1</a>
+    <a href="#whats-new-2" class="toc-item sub">What&#39;s new</a>
+    <a href="#upgrade-notes-from-v030" class="toc-item sub">Upgrade notes (from v0.3.0)</a>
+    <a href="#v030" class="toc-item">v0.3.0</a>
+    <a href="#whats-new-3" class="toc-item sub">What&#39;s new</a>
+    <a href="#upgrade-notes-from-v020" class="toc-item sub">Upgrade notes (from v0.2.0)</a>
+    <a href="#v020" class="toc-item">v0.2.0</a>
+    <a href="#whats-new-4" class="toc-item sub">What&#39;s new</a>
+    <a href="#upgrade-notes-from-v010" class="toc-item sub">Upgrade notes (from v0.1.0)</a>
+    <a href="#v010" class="toc-item">v0.1.0</a>
+    <a href="#v001" class="toc-item">v0.0.1</a>
+  </nav>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-brand">
+    <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
+    <span>byn <a href="../../docs/releases/">v0.4.1</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/releases.md">github.com/sandeepbaynes/byn/docs</a></span>
+  </div>
+  <div>
+    <a href="../../index.html">Home</a>
+    <a href="../../docs/cli-reference/">CLI Reference</a>
+    <a href="../../docs/security/">Security</a>
+    <a href="../../docs/releases/">Release notes</a>
+    <a href="https://github.com/sandeepbaynes/byn/releases" target="_blank" rel="noopener">Releases ↗</a>
+  </div>
+</footer>
+
+</body>
+</html>
