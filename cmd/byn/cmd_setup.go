@@ -95,6 +95,9 @@ func runProvision(stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stdout, "relocated legacy %s -> %s (trust + passkeys preserved)\n",
 			res.LegacyDir, res.SystemDir)
 	}
+	if res.HomeACLWarning != "" {
+		_, _ = fmt.Fprintf(stderr, "warning: %s\n", res.HomeACLWarning)
+	}
 	_, _ = fmt.Fprintln(stdout, "")
 	_, _ = fmt.Fprintln(stdout, "Run byn as your normal user (NOT sudo) — only "+cyan("byn setup")+" needs root.")
 	_, _ = fmt.Fprintln(stdout, "Enable privilege separation: set "+cyan("[security] privsep = true")+
@@ -191,6 +194,9 @@ func defaultProvisionDeps() (setup.Deps, error) {
 		},
 		Relocate: func(legacyDir, sysDir string, uid, gid int) error {
 			return migrate.Relocate(legacyDir, sysDir, migrate.Options{UID: uid, GID: gid})
+		},
+		GrantHomeAccess: func(homeDir string) error {
+			return privsep.GrantDaemonHomeAccess(run, homeDir)
 		},
 		WriteOwnerRecord: privsep.WriteOwnerRecord,
 		Verify:           verifyProvisioned,

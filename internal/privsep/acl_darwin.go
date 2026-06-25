@@ -135,6 +135,11 @@ func bynReadRevokeCommands(bynPath, user string) [][]string {
 	}
 }
 
+// GrantDaemonHomeAccess is a no-op on macOS — Full Disk Access (FDA) granted to
+// the byn binary gives _byn filesystem access transparently, so no per-directory
+// ACE is needed.
+func GrantDaemonHomeAccess(_ func(name string, args ...string) error, _ string) error { return nil }
+
 // GrantBynReadACL grants the _byn daemon read access to a single .byn file (and
 // traversal to reach it) via `chmod +a`. Run by the OWNER CLI at trust time so
 // the daemon can independently read+validate the file. Best-effort: returns the

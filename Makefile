@@ -65,7 +65,7 @@ uninstall-man:
 #   make install CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)"
 # Find the identity with: security find-identity -v -p codesigning
 # See docs/troubleshooting.md "macOS Full Disk Access (TCC)".
-install: build install-man
+install: build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
 	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
@@ -78,6 +78,10 @@ install: build install-man
 		echo "Signed. Re-add /usr/local/bin/byn to Full Disk Access once; the grant then persists across reinstalls signed with this identity."; \
 	fi
 	@echo "Installed $(BINDIR)/byn (+ byn-exec-helper) ($(VERSION))"
+	@if id _byn >/dev/null 2>&1 && [ -d /var/lib/byn ]; then \
+		chown _byn:_byn /var/lib/byn && echo "  fixed /var/lib/byn ownership → _byn:_byn"; \
+	fi
+	@$(MAKE) install-man 2>/dev/null || echo "  (man page skipped — $(MANDIR) not writable)"
 
 # Remove byn binaries, man page, and (if provisioned) the system service +
 # privsep accounts. The vault and its secrets are LEFT INTACT.

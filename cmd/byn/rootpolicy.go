@@ -43,7 +43,7 @@ func cmdRootClass(cmd string) rootClass {
 		return classRootWhenProvisioned
 	case "start":
 		return classStart
-	case "setup", "migrate", "daemon", "doctor":
+	case "setup", "uninstall", "migrate", "daemon", "doctor":
 		return classSelfChecks
 	default:
 		return classNeutral

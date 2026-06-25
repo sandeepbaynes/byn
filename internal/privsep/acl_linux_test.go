@@ -11,15 +11,15 @@ import (
 )
 
 // TestACLGrantCommands_Linux asserts the three expected setfacl invocations:
-// recursive rwX on the project, a default (-d) rwX ACL on the project, and an
-// execute-only (search) ACL on the home.
+// non-recursive rwX on the project root, a default (-d) rwX ACL on the project
+// root, and an execute-only (search) ACL on the home.
 func TestACLGrantCommands_Linux(t *testing.T) {
 	cmds := aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec")
 	require.Len(t, cmds, 3)
 
 	assert.Equal(t,
 		[]string{"setfacl", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
-		cmds[0], "recursive rwX on project")
+		cmds[0], "non-recursive rwX on project root")
 	assert.Equal(t,
 		[]string{"setfacl", "-d", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
 		cmds[1], "default rwX ACL on project")
@@ -86,7 +86,9 @@ func TestACLRevokeCommands_Linux_HomeEqualsProject(t *testing.T) {
 }
 
 // TestGrantProjectACL_Linux_RunsAllAndUsesExecUser verifies the exported entry
-// iterates every command and passes ExecUser, not an arbitrary string.
+// iterates every command and passes ExecUser, not an arbitrary string. The
+// function emits: (1) non-recursive access ACL on root, (2) default ACL on
+// root, (3) traverse on home, and (4) best-effort setfacl -R on the project.
 func TestGrantProjectACL_Linux_RunsAllAndUsesExecUser(t *testing.T) {
 	var ran [][]string
 	err := GrantProjectACL(func(name string, args ...string) error {
@@ -94,12 +96,14 @@ func TestGrantProjectACL_Linux_RunsAllAndUsesExecUser(t *testing.T) {
 		return nil
 	}, "/home/o/proj", "/home/o")
 	require.NoError(t, err)
-	require.Len(t, ran, 3)
+	require.Len(t, ran, 4, "3 from aclGrantCommands + 1 best-effort setfacl -R")
 	for _, c := range ran {
 		assert.Contains(t, c, "setfacl")
 	}
-	// rwX ACE names the service user.
+	// Non-recursive root grant names the service user.
 	assert.Contains(t, ran[0], "u:_byn-exec:rwX")
+	// Fourth command is the best-effort recursive grant.
+	assert.Equal(t, []string{"setfacl", "-R", "-m", "u:_byn-exec:rwX", "/home/o/proj"}, ran[3])
 }
 
 // TestGrantProjectACL_Linux_StopsAtFirstError confirms best-effort short-circuit
@@ -141,10 +145,37 @@ func TestRevokeProjectACL_Linux_StopsAtFirstError(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
+// ---- daemon home-directory ACL (_byn lists home for the web portal import picker) ---
+
+// TestGrantDaemonHomeAccess_Linux_RunsSetfacl verifies the single setfacl
+// invocation: u:_byn:rx on the home directory so os.ReadDir works from home.
+func TestGrantDaemonHomeAccess_Linux_RunsSetfacl(t *testing.T) {
+	var ran [][]string
+	err := GrantDaemonHomeAccess(func(name string, args ...string) error {
+		ran = append(ran, append([]string{name}, args...))
+		return nil
+	}, "/home/o")
+	require.NoError(t, err)
+	require.Len(t, ran, 1)
+	assert.Equal(t, []string{"setfacl", "-m", "u:_byn:rx", "/home/o"}, ran[0])
+}
+
+// TestGrantDaemonHomeAccess_Linux_PropagatesError confirms the runner error is
+// returned so the caller can surface a warning.
+func TestGrantDaemonHomeAccess_Linux_PropagatesError(t *testing.T) {
+	sentinel := errors.New("setfacl: not found")
+	err := GrantDaemonHomeAccess(func(name string, args ...string) error {
+		return sentinel
+	}, "/home/o")
+	require.ErrorIs(t, err, sentinel)
+}
+
 // ---- daemon-read ACL (_byn reads the .byn to validate) -------------------
 
 // TestBynReadGrantCommands_Linux asserts three setfacl invocations: read on the
-// FILE (u:_byn:r), and execute-only traversal on its DIR and on the home.
+// FILE (u:_byn:r), and read+execute (rx) on its DIR and on the home. rx is
+// required so the web portal's directory picker (os.ReadDir) can list these dirs;
+// execute alone only allows traversal, not enumeration.
 func TestBynReadGrantCommands_Linux(t *testing.T) {
 	cmds := bynReadGrantCommands("/home/o/proj/.byn", "/home/o", "_byn")
 	require.Len(t, cmds, 3)
@@ -152,11 +183,11 @@ func TestBynReadGrantCommands_Linux(t *testing.T) {
 		[]string{"setfacl", "-m", "u:_byn:r", "/home/o/proj/.byn"},
 		cmds[0], "read on the file")
 	assert.Equal(t,
-		[]string{"setfacl", "-m", "u:_byn:x", "/home/o/proj"},
-		cmds[1], "traverse into the dir (no read = no listing)")
+		[]string{"setfacl", "-m", "u:_byn:rx", "/home/o/proj"},
+		cmds[1], "read+traverse on the dir (r needed for portal directory picker)")
 	assert.Equal(t,
-		[]string{"setfacl", "-m", "u:_byn:x", "/home/o"},
-		cmds[2], "traverse into home")
+		[]string{"setfacl", "-m", "u:_byn:rx", "/home/o"},
+		cmds[2], "read+traverse on home (r needed to list home in the picker)")
 }
 
 // TestBynReadGrantCommands_Linux_HomeEqualsDir drops the home command when the
@@ -168,19 +199,20 @@ func TestBynReadGrantCommands_Linux_HomeEqualsDir(t *testing.T) {
 	assert.Equal(t, "/home/o", cmds[1][len(cmds[1])-1])
 }
 
-// TestBynReadGrantCommands_Linux_DeepPath grants a traverse entry on EVERY
-// intermediate dir up to home (a 0700 ancestor would otherwise block the open).
+// TestBynReadGrantCommands_Linux_DeepPath grants a read+traverse entry on EVERY
+// intermediate dir up to home so the portal's directory picker can enumerate each
+// level (a 0700 ancestor with only x would block os.ReadDir even if the leaf is readable).
 func TestBynReadGrantCommands_Linux_DeepPath(t *testing.T) {
 	cmds := bynReadGrantCommands("/home/o/Documents/proj/.byn", "/home/o", "_byn")
 	require.Len(t, cmds, 4)
 	targets := map[string]bool{}
 	for _, c := range cmds[1:] {
 		targets[c[len(c)-1]] = true
-		assert.Equal(t, "u:_byn:x", c[2], "ancestor entry must grant traverse only")
+		assert.Equal(t, "u:_byn:rx", c[2], "ancestor entry must grant read+traverse for portal picker")
 	}
-	assert.True(t, targets["/home/o/Documents"], "intermediate must get a traverse entry; got %v", targets)
-	assert.True(t, targets["/home/o/Documents/proj"], "project dir must get a traverse entry")
-	assert.True(t, targets["/home/o"], "home must get a traverse entry")
+	assert.True(t, targets["/home/o/Documents"], "intermediate must get a read+traverse entry; got %v", targets)
+	assert.True(t, targets["/home/o/Documents/proj"], "project dir must get a read+traverse entry")
+	assert.True(t, targets["/home/o"], "home must get a read+traverse entry")
 }
 
 // TestBynReadRevokeCommands_Linux removes the file read entry and the dir

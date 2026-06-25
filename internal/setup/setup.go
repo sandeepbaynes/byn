@@ -17,6 +17,7 @@ package setup
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // Deps are the injectable seams the orchestration depends on. Production wiring
@@ -70,6 +71,13 @@ type Deps struct {
 	// legacy dir exists.
 	Relocate func(legacyDir, systemDir string, uid, gid int) error
 
+	// GrantHomeAccess grants the _byn daemon read+execute access to the owner's
+	// home directory so the web portal's import file picker can enumerate from
+	// home. On macOS, FDA grants this implicitly; on Linux it sets an ACL via
+	// setfacl. Best-effort: Provision records a warning in Result.HomeACLWarning
+	// on failure but does not abort — a missing setfacl binary must not break setup.
+	GrantHomeAccess func(homeDir string) error
+
 	// WriteOwnerRecord records the allowlisted owner UID at path
 	// (privsep.WriteOwnerRecord). uid is the SUDO_UID resolved above (never 0).
 	WriteOwnerRecord func(path string, uid int) error
@@ -91,10 +99,11 @@ var errNoSudoContext = errors.New(
 
 // Result reports what Provision did, for the caller's success message.
 type Result struct {
-	OwnerUID  int    // the recorded owner UID (the invoking human)
-	SystemDir string // the system data root
-	Migrated  bool   // true if a legacy ~/.byn was relocated
-	LegacyDir string // the legacy dir relocated FROM (only when Migrated)
+	OwnerUID       int    // the recorded owner UID (the invoking human)
+	SystemDir      string // the system data root
+	Migrated       bool   // true if a legacy ~/.byn was relocated
+	LegacyDir      string // the legacy dir relocated FROM (only when Migrated)
+	HomeACLWarning string // non-empty if GrantHomeAccess failed (best-effort; non-fatal)
 }
 
 // Provision runs the full `byn setup`: provision service users + spawn helper +
@@ -144,6 +153,22 @@ func Provision(d Deps) (Result, error) {
 	if lerr != nil {
 		return Result{}, fmt.Errorf("locate legacy data dir: %w", lerr)
 	}
+
+	// Grant _byn read+execute on the owner's home directory so the web portal's
+	// import file picker can list the filesystem from home (analogous to macOS FDA).
+	// Best-effort: a missing setfacl or restricted filesystem must not abort setup.
+	if legacyDir != "" {
+		if homeDir := filepath.Dir(legacyDir); homeDir != "" && homeDir != "." {
+			if herr := d.GrantHomeAccess(homeDir); herr != nil {
+				res.HomeACLWarning = fmt.Sprintf(
+					"could not grant %s read access to home directory %s: %v; "+
+						"the web portal file picker may show 'permission denied' — "+
+						"run `sudo setfacl -m u:_byn:rx %s` manually to fix",
+					"_byn", homeDir, herr, homeDir)
+			}
+		}
+	}
+
 	if legacyExists {
 		if err := d.Relocate(legacyDir, systemDir, daemonUID, daemonGID); err != nil {
 			return Result{}, fmt.Errorf("relocate legacy data dir %s: %w", legacyDir, err)
