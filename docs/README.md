@@ -3,6 +3,8 @@
 This directory is the reference for users and contributors. Read what
 you need; everything cross-links.
 
+**New to byn?** Start with the **[5-minute quickstart](quickstart.md)** — install → daemon → vault → first secret.
+
 > **For contracts** (what must always be true), read
 > [`spec.md`](spec.md). It's the single source of truth for
 > byn behavior. The files in this directory **explain** that

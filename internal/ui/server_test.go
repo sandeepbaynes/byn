@@ -142,12 +142,6 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		var req ipc.ConfigSetReq
 		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
 		f.lastConfigContent = req.Content
-		if f.wrongPassword && len(req.Password) > 0 {
-			return ipc.NewError(env.ID, ipc.CodeWrongPassword, "wrong password", "verify password")
-		}
-		if len(req.Password) == 0 && len(req.PresenceToken) == 0 {
-			return ipc.NewError(env.ID, ipc.CodeAuthRequired, "config change requires authorization", "supply password")
-		}
 		return mk(ipc.ConfigSetResp{ChangeNotes: []string{"[ui] port unchanged", "[daemon] idle_timeout applied"}})
 	case ipc.OpConfigValidate:
 		var req ipc.ConfigValidateReq
@@ -1079,31 +1073,15 @@ func TestConfigGet_ReturnsContent(t *testing.T) {
 	}
 }
 
-// TestConfigSet_AuthRequired_NoCreds: POST without password or presence_token →
-// the daemon returns auth_required → 401.
-func TestConfigSet_AuthRequired_NoCreds(t *testing.T) {
-	ts, c := newTestServer(t, &fakeDisp{})
-	r := post(t, c, ts.URL+"/api/config", "http://localhost:2967",
-		map[string]string{"content": "[ui]\nport = 2967\n"})
-	defer r.Body.Close()
-	if r.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("config set without creds = %d, want 401", r.StatusCode)
-	}
-	var body map[string]string
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body["code"] != string(ipc.CodeAuthRequired) {
-		t.Errorf("code = %q, want auth_required", body["code"])
-	}
-}
-
-// TestConfigSet_ForwardsContent: POST with password returns 200 and the daemon
-// receives the content bytes.
+// TestConfigSet_ForwardsContent: POST returns 200 and the daemon receives
+// the content bytes. The sole gate (config-auth token) is disabled in tests
+// (nil configAuth consumer), so no token is needed here.
 func TestConfigSet_ForwardsContent(t *testing.T) {
 	f := &fakeDisp{}
 	ts, c := newTestServer(t, f)
 	const wantContent = "[daemon]\nidle_timeout = \"10m\"\n"
 	r := post(t, c, ts.URL+"/api/config", "http://localhost:2967",
-		map[string]any{"content": wantContent, "password": "correct-horse"})
+		map[string]any{"content": wantContent})
 	defer r.Body.Close()
 	if r.StatusCode != http.StatusOK {
 		t.Fatalf("config set = %d, want 200", r.StatusCode)
@@ -1124,7 +1102,7 @@ func TestConfigSet_ForwardsContent(t *testing.T) {
 func TestConfigSet_CSRF(t *testing.T) {
 	ts, c := newTestServer(t, &fakeDisp{})
 	r := post(t, c, ts.URL+"/api/config", "http://evil.example",
-		map[string]string{"content": "[ui]\nport = 2967\n", "password": "pw"})
+		map[string]string{"content": "[ui]\nport = 2967\n"})
 	r.Body.Close()
 	if r.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin config set = %d, want 403", r.StatusCode)

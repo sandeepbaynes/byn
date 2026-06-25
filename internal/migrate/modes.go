@@ -46,7 +46,19 @@ func Relocate(legacyDir, systemDir string, opts Options) error {
 		return fmt.Errorf("migrate: relocate source and destination are the same dir (%s)", systemDir)
 	}
 
-	if err := Adopt(NewLocalSource(legacyDir), systemDir, AdoptOptions{
+	src := NewLocalSource(legacyDir)
+	rels, err := src.List()
+	if err != nil {
+		return err
+	}
+	if len(rels) == 0 {
+		// The legacy dir exists but holds only daemon runtime ephemera (socket,
+		// pidfile, log). This happens when the user ran `byn start` on a fresh
+		// install before running `sudo byn setup`. There is no vault to migrate;
+		// proceed as a clean fresh install.
+		return nil
+	}
+	if err := Adopt(src, systemDir, AdoptOptions{
 		UID:     opts.UID,
 		GID:     opts.GID,
 		Force:   opts.Force,

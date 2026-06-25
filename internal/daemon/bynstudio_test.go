@@ -828,39 +828,12 @@ func TestConfigGet_AbsentFile_ReturnsPathEmptyContent(t *testing.T) {
 	}
 }
 
-func TestConfigSet_NoCreds_AuthRequired(t *testing.T) {
-	_, c := startTestDaemon(t)
-	initUnlocked(t, c, []byte(authzPW))
-
-	err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content: []byte("[ui]\nport = 2968\n"),
-	}, &ipc.ConfigSetResp{})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("no creds: code = %v, want auth_required", code)
-	}
-}
-
-func TestConfigSet_WrongPassword_WrongPassword(t *testing.T) {
-	_, c := startTestDaemon(t)
-	initUnlocked(t, c, []byte(authzPW))
-
-	err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte("[ui]\nport = 2968\n"),
-		Password: []byte("wrong-password"),
-	}, &ipc.ConfigSetResp{})
-	if code := errCode(t, err); code != ipc.CodeWrongPassword {
-		t.Fatalf("wrong password: code = %v, want wrong_password", code)
-	}
-}
-
 func TestConfigSet_InvalidTOML_Refused(t *testing.T) {
 	_, c := startTestDaemon(t)
-	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
+	initUnlocked(t, c, []byte(authzPW))
 
 	err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte("not toml [[["),
-		Password: pw,
+		Content: []byte("not toml [[["),
 	}, &ipc.ConfigSetResp{})
 	if code := errCode(t, err); code != ipc.CodeBadRequest {
 		t.Fatalf("invalid TOML: code = %v, want bad_request", code)
@@ -869,13 +842,11 @@ func TestConfigSet_InvalidTOML_Refused(t *testing.T) {
 
 func TestConfigSet_InvalidRange_Refused(t *testing.T) {
 	_, c := startTestDaemon(t)
-	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
+	initUnlocked(t, c, []byte(authzPW))
 
 	// Port out of range.
 	err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte("[ui]\nport = 99999\n"),
-		Password: pw,
+		Content: []byte("[ui]\nport = 99999\n"),
 	}, &ipc.ConfigSetResp{})
 	if code := errCode(t, err); code != ipc.CodeBadRequest {
 		t.Fatalf("out-of-range port: code = %v, want bad_request", code)
@@ -884,8 +855,7 @@ func TestConfigSet_InvalidRange_Refused(t *testing.T) {
 
 func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 	_, c := startTestDaemon(t)
-	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
+	initUnlocked(t, c, []byte(authzPW))
 
 	// config.get to check current state.
 	var getResp ipc.ConfigGetResp
@@ -897,8 +867,7 @@ func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 	newContent := "[ui]\nenabled = true\nport = 2968\n"
 	var setResp ipc.ConfigSetResp
 	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte(newContent),
-		Password: pw,
+		Content: []byte(newContent),
 	}, &setResp); err != nil {
 		t.Fatalf("config.set: %v", err)
 	}
@@ -912,40 +881,17 @@ func TestConfigSet_Valid_FileWrittenAndReloadApplied(t *testing.T) {
 	}
 }
 
-func TestConfigSet_LockedVault_PasswordStillWorks(t *testing.T) {
-	// Even when the vault is locked, supplying the correct password should
-	// work for config.set (master password verification works locked).
-	d, c := startTestDaemon(t)
-	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
-
-	// Lock the vault.
-	lockVaultStore(t, d, "default")
-
-	// config.set with the correct password should still work.
-	newContent := "[ui]\nport = 2969\nenabled = true\n"
-	var setResp ipc.ConfigSetResp
-	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte(newContent),
-		Password: pw,
-	}, &setResp); err != nil {
-		t.Fatalf("config.set with locked vault: %v", err)
-	}
-}
-
 func TestConfigSet_InvalidTOML_FileUnchanged(t *testing.T) {
 	// When config.set receives invalid TOML, the config file must remain
 	// byte-identical (not written).
 	_, c := startTestDaemon(t)
-	pw := []byte(authzPW)
-	initUnlocked(t, c, pw)
+	initUnlocked(t, c, []byte(authzPW))
 
 	// First, set a valid config.
 	validContent := "[ui]\nport = 2968\n"
 	var setResp ipc.ConfigSetResp
 	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte(validContent),
-		Password: pw,
+		Content: []byte(validContent),
 	}, &setResp); err != nil {
 		t.Fatalf("config.set valid: %v", err)
 	}
@@ -959,8 +905,7 @@ func TestConfigSet_InvalidTOML_FileUnchanged(t *testing.T) {
 
 	// Now try to set invalid TOML; should be rejected.
 	err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte("not toml [[["),
-		Password: pw,
+		Content: []byte("not toml [[["),
 	}, &ipc.ConfigSetResp{})
 	if code := errCode(t, err); code != ipc.CodeBadRequest {
 		t.Fatalf("invalid TOML: code = %v, want bad_request", code)
@@ -1277,8 +1222,7 @@ func TestConfigGet_ParsedValues(t *testing.T) {
 	content := "[ui]\nenabled = false\nport = 3000\n\n[daemon]\nidle_timeout = \"5m\"\n"
 	var setResp ipc.ConfigSetResp
 	if err := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte(content),
-		Password: pw,
+		Content: []byte(content),
 	}, &setResp); err != nil {
 		t.Fatalf("config.set: %v", err)
 	}

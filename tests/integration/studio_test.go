@@ -435,8 +435,7 @@ func TestStudio_ConfigSet_FlipsPerActionAuth(t *testing.T) {
 	newContent := "[security]\nper_action_auth = true\n"
 	var setResp ipc.ConfigSetResp
 	setErr := c.Call(ipc.OpConfigSet, ipc.ConfigSetReq{
-		Content:  []byte(newContent),
-		Password: []byte(studioPW),
+		Content: []byte(newContent),
 	}, &setResp)
 	if setErr == nil {
 		t.Fatal("config.set with per_action_auth = true: expected error (unknown key), got nil")

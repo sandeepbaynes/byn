@@ -36,6 +36,12 @@ daemon → vault → first secret → portal.
 > (usually `~/go/bin`) is on it — e.g. add `export PATH="$HOME/go/bin:$PATH"` to
 > your shell rc. Homebrew and the install script handle this for you.
 
+> **`sudo byn setup` and PATH:** The install script and system packages (apt, dnf)
+> place `byn` in `/usr/local/bin` or `/usr/bin`, which sudo can find on all
+> platforms. `go install` (`~/go/bin`) and Homebrew on Apple Silicon
+> (`/opt/homebrew/bin`) install outside sudo's `secure_path`. If `sudo byn setup`
+> says "command not found", use: `sudo $(which byn) setup`
+
 > **⚠️ Early access — the install path will change.** byn is pre-1.0 and
 > currently installs from `github.com/sandeepbaynes/byn`. Once the project's
 > own domain is in place, the canonical Go module path (and the Homebrew tap)

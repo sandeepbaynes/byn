@@ -1202,12 +1202,12 @@ type ConfigGetResp struct {
 }
 
 // ConfigSetReq writes new config content and triggers a live reload.
-// Credential-gated (master password or presence token) because config can
-// enable/disable the portal port — daemon-global impact.
+// Authorization is handled at the HTTP layer via the config-auth token
+// (X-Byn-Config-Auth, minted by `byn config-auth` after sudo verification)
+// rather than at the IPC layer — config is a daemon-global setting, not a
+// per-vault secret, so the vault master password is the wrong gate.
 type ConfigSetReq struct {
-	Content       []byte `json:"content"`
-	Password      []byte `json:"password,omitempty"`
-	PresenceToken []byte `json:"presence_token,omitempty"`
+	Content []byte `json:"content"`
 }
 
 // ConfigSetResp reports what changed after the reload.

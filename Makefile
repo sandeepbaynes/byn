@@ -79,8 +79,24 @@ install: build install-man
 	fi
 	@echo "Installed $(BINDIR)/byn (+ byn-exec-helper) ($(VERSION))"
 
+# Remove byn binaries, man page, and (if provisioned) the system service +
+# privsep accounts. The vault and its secrets are LEFT INTACT.
+# Run as: sudo make uninstall
 uninstall: uninstall-man
+	@# Stop the daemon as the original (pre-sudo) user. Root's home is /root, not
+	@# the user's, so running `byn stop` as root can't find the pidfile under
+	@# ~/.byn. SUDO_USER is set by sudo and gives us the right identity.
+	@_u=$${SUDO_USER:-}; \
+	 if [ -n "$$_u" ]; then \
+	   su -c "$(DESTDIR)$(BINDIR)/byn stop" "$$_u" 2>/dev/null || true; \
+	 else \
+	   $(DESTDIR)$(BINDIR)/byn stop 2>/dev/null || true; \
+	 fi
+	@# Reverse privsep setup if provisioned (removes service, spawn helper, owner
+	@# record). Idempotent and silent when setup was never run.
+	@$(DESTDIR)$(BINDIR)/byn setup --uninstall 2>/dev/null || true
 	rm -f $(DESTDIR)$(BINDIR)/byn $(DESTDIR)$(BINDIR)/byn-exec-helper
+	@echo "Uninstalled $(BINDIR)/byn — vault preserved"
 
 # The byntest tag compiles the data-root test seam (internal/paths) so tests can
 # isolate a tempdir via BYN_TEST_DIR. It is NEVER in a production build — see

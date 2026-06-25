@@ -60,7 +60,7 @@ func provisionUsers(lookup uidLookup, run runner) (ProvisionResult, error) {
 	}
 	conf := sysusersConf()
 	if err := run("sh", "-c",
-		fmt.Sprintf("printf '%%s' %q > "+sysusersDropDir+"/byn.conf && systemd-sysusers", conf)); err != nil {
+		fmt.Sprintf("printf '%%b' %q > "+sysusersDropDir+"/byn.conf && systemd-sysusers", conf)); err != nil {
 		return ProvisionResult{}, fmt.Errorf("create service users: %w", err)
 	}
 	return ProvisionResult{}, nil

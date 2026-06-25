@@ -50,11 +50,13 @@ asset="byn-${os}-${arch}.tar.gz"
 url="${BASE}/${asset}"
 
 # ---- pick an install dir ------------------------------------------------
-dir="${BYN_INSTALL_DIR:-}"
-if [ -z "$dir" ]; then
-  if [ -w /usr/local/bin ]; then dir=/usr/local/bin; else dir="$HOME/.local/bin"; fi
-fi
-mkdir -p "$dir"
+# Default to /usr/local/bin — a system path that sudo can find. byn requires
+# root (sudo byn setup) for privilege separation, so the binary belongs in a
+# path that sudo's secure_path includes. The install step below uses sudo if
+# the current user can't write there directly.
+# Override with BYN_INSTALL_DIR if you need a non-standard location.
+dir="${BYN_INSTALL_DIR:-/usr/local/bin}"
+mkdir -p "$dir" 2>/dev/null || true
 
 # ---- download -----------------------------------------------------------
 tmp="$(mktemp)"
@@ -104,7 +106,8 @@ say "installed $dest ($VERSION)"
 if [ -f "$work/byn-exec-helper" ]; then
   helper_dest="$dir/byn-exec-helper"
   $SUDO mv "$work/byn-exec-helper" "$helper_dest" || say "warning: could not install byn-exec-helper to $helper_dest"
-  say "installed $helper_dest (privsep helper; run: sudo byn setup)"
+  say "installed $helper_dest (privsep helper)"
+  say "to enable privilege separation: sudo byn setup"
 fi
 
 # ---- install man page (best-effort) -------------------------------------
