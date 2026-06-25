@@ -593,6 +593,27 @@ Your `$TMPDIR` points at a uid-private folder (`0700`) the child can't write. by
 this is handled automatically on a current build. On an older build, prefix the
 run with `TMPDIR=/tmp`.
 
+### `EACCES … open '…/node_modules/.vite-temp/…'` — cache dirs owned by the wrong user
+
+```
+Error: EACCES: permission denied, open '.../node_modules/.vite-temp/vite.config.ts.timestamp-....mjs'
+```
+
+A privsep run (`byn exec` without `--no-privsep`) creates cache directories owned by `_byn-exec`. A later non-privsep run (with `--no-privsep`) runs as **you** and can't write into those `_byn-exec`-owned directories. The same collision happens in reverse: if you run the tool as yourself first and then switch to privsep, `_byn-exec` can't write into your directories.
+
+**Common culprits:** `node_modules/.vite-temp/`, `.astro/`, `node_modules/.cache/`, `.next/cache/`.
+
+**Fix — delete the stale cache dir** (it will be recreated with the right owner on the next run):
+
+```sh
+rm -rf node_modules/.vite-temp/
+# or whichever cache dir the error names
+```
+
+**To avoid it recurring:** use one mode consistently per project. If the project uses `--no-privsep` (asks for a master password each run), it should always run non-privsep. If it uses privsep, always use privsep. Mixing modes mid-project accumulates ownership collisions in cache dirs.
+
+---
+
 ### Debugging — the debugger can't attach to a privsep child
 
 A debugger running as **you** cannot attach to a **different-UID** (`_byn-exec`)
