@@ -559,26 +559,10 @@ func (d *Daemon) handleConfigSet(ctx context.Context, env *ipc.Envelope) *ipc.En
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
 		return badRequest(env.ID, err)
 	}
-	defer zeroBytes(req.Password)
-
-	// Credential gate FIRST — changing config is a daemon-global action.
-	// Route through authorizeActionAlways (the "default" vault is the config vault).
-	vaultName := vault.DefaultVaultName
-	st, errEnv := d.storeForVault(env.ID, vaultName)
-	if errEnv != nil {
-		return errEnv
-	}
-	if le := d.authorizeActionAlways(ctx, env.ID, vaultName, st,
-		"changing byn configuration requires authorization",
-		"supply the master password or use a passkey",
-		req.Password, req.PresenceToken); le != nil {
-		d.auditEmit(ctx, vaultName, audit.Event{
-			Op:        string(ipc.OpConfigSet),
-			Outcome:   audit.OutcomeDenied,
-			ErrorCode: string(le.Err.Code),
-		})
-		return le
-	}
+	// Authorization is at the HTTP layer (X-Byn-Config-Auth, sudo-verified token
+	// minted by `byn config-auth`). No vault credential required: config is a
+	// daemon-global setting, not tied to any vault, and sudo is a stronger gate.
+	const vaultName = vault.DefaultVaultName
 
 	// Validate the new content via config.Parse (round-trip; no disk write yet).
 	if _, verr := config.Parse(req.Content); verr != nil {

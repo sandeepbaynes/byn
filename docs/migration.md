@@ -16,6 +16,8 @@ for the threat reasoning and the honest ceiling.
 
 ```sh
 # 1. Provision the service accounts + system service (one sudo prompt).
+# If installed via go install or Homebrew on Apple Silicon, use the full path:
+#   sudo $(which byn) setup
 sudo byn setup
 
 # 2. Turn privsep on in the config and restart the daemon.
@@ -43,6 +45,11 @@ Run setup **via sudo**, not as real root:
 ```sh
 sudo byn setup
 ```
+
+> **PATH note:** sudo uses a restricted `secure_path` that includes
+> `/usr/local/bin` and `/usr/bin` but not `~/go/bin` or `/opt/homebrew/bin`. If
+> you installed via `go install` or Homebrew on Apple Silicon and `sudo byn setup`
+> says "command not found", use the full path: `sudo $(which byn) setup`
 
 `byn setup` reads `SUDO_UID` to learn **who the owner is** — the human who ran
 sudo. That UID is recorded as the single identity the daemon allowlists on its

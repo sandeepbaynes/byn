@@ -77,6 +77,8 @@
     <hr>
     <h2 id="tldr">TL;DR</h2>
     <pre><code class="language-sh"># 1. Provision the service accounts + system service (one sudo prompt).
+# If installed via go install or Homebrew on Apple Silicon, use the full path:
+#   sudo $(which byn) setup
 sudo byn setup
 
 # 2. Turn privsep on in the config and restart the daemon.
@@ -97,6 +99,12 @@ byn daemon stop &amp;&amp; byn daemon start
     <p>Run setup <strong>via sudo</strong>, not as real root:</p>
     <pre><code class="language-sh">sudo byn setup
 </code></pre>
+    <blockquote>
+    <p><strong>PATH note:</strong> sudo uses a restricted <code>secure_path</code> that includes
+    <code>/usr/local/bin</code> and <code>/usr/bin</code> but not <code>~/go/bin</code> or <code>/opt/homebrew/bin</code>. If
+    you installed via <code>go install</code> or Homebrew on Apple Silicon and <code>sudo byn setup</code>
+    says "command not found", use the full path: <code>sudo $(which byn) setup</code></p>
+    </blockquote>
     <p><code>byn setup</code> reads <code>SUDO_UID</code> to learn <strong>who the owner is</strong> — the human who ran
     sudo. That UID is recorded as the single identity the daemon allowlists on its
     peercred-gated socket. Running as real root (e.g. a root shell, no sudo) <strong>fails
