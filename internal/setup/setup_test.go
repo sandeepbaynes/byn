@@ -13,24 +13,26 @@ type recorder struct {
 	calls []string
 
 	// fakeable knobs
-	sudoUID         int
-	sudoOK          bool
-	legacyDir       string
-	legacyExists    bool
-	legacyErr       error
-	daemonUID       int
-	daemonGID       int
-	daemonErr       error
-	installHelperEr error
-	installSvcErr   error
-	relocateErr     error
-	writeOwnerErr   error
-	verifyErr       error
+	sudoUID          int
+	sudoOK           bool
+	legacyDir        string
+	legacyExists     bool
+	legacyErr        error
+	daemonUID        int
+	daemonGID        int
+	daemonErr        error
+	installHelperEr  error
+	installSvcErr    error
+	relocateErr      error
+	writeOwnerErr    error
+	verifyErr        error
+	grantHomeErr     error
 
 	// recorded values
 	relocateUID, relocateGID int
 	wroteOwnerUID            int
 	wroteOwnerPath           string
+	grantedHomeDir           string
 }
 
 const (
@@ -58,6 +60,11 @@ func (r *recorder) deps() Deps {
 			r.relocateUID, r.relocateGID = uid, gid
 			return r.relocateErr
 		},
+		GrantHomeAccess: func(homeDir string) error {
+			r.calls = append(r.calls, "GrantHomeAccess")
+			r.grantedHomeDir = homeDir
+			return r.grantHomeErr
+		},
 		WriteOwnerRecord: func(path string, uid int) error {
 			r.calls = append(r.calls, "WriteOwnerRecord")
 			r.wroteOwnerPath, r.wroteOwnerUID = path, uid
@@ -74,6 +81,10 @@ func happyRecorder() *recorder {
 	return &recorder{
 		sudoUID: 501, sudoOK: true,
 		daemonUID: 200, daemonGID: 200,
+		// legacyDir is set even on a fresh install (no vault) because SUDO_USER
+		// is always set when `sudo byn setup` runs — LegacyDir returns the path
+		// regardless of whether the directory exists.
+		legacyDir: "/home/testuser/.byn",
 	}
 }
 
@@ -83,9 +94,9 @@ func TestProvision_HappyPath_FreshInstall_NoMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	// Fresh install: no Relocate. The service is installed/started LAST, after the
-	// owner record — only Verify follows it.
-	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "WriteOwnerRecord", "InstallService", "Verify"}
+	// Fresh install: no Relocate. GrantHomeAccess runs between LegacyDir and
+	// WriteOwnerRecord; the service is installed/started LAST.
+	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "GrantHomeAccess", "WriteOwnerRecord", "InstallService", "Verify"}
 	assertSeq(t, r.calls, want)
 	if res.Migrated {
 		t.Error("Migrated = true on a fresh install (no legacy dir)")
@@ -99,6 +110,12 @@ func TestProvision_HappyPath_FreshInstall_NoMigrate(t *testing.T) {
 	if r.wroteOwnerPath != testOwnerRecord {
 		t.Errorf("owner record path = %q, want %q", r.wroteOwnerPath, testOwnerRecord)
 	}
+	if r.grantedHomeDir != "/home/testuser" {
+		t.Errorf("GrantHomeAccess called with %q, want /home/testuser", r.grantedHomeDir)
+	}
+	if res.HomeACLWarning != "" {
+		t.Errorf("unexpected HomeACLWarning = %q", res.HomeACLWarning)
+	}
 }
 
 func TestProvision_HappyPath_LegacyPresent_CallsRelocate(t *testing.T) {
@@ -109,8 +126,8 @@ func TestProvision_HappyPath_LegacyPresent_CallsRelocate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	// Relocate runs BEFORE the service starts; the service is installed/started LAST.
-	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "Relocate", "WriteOwnerRecord", "InstallService", "Verify"}
+	// GrantHomeAccess runs between LegacyDir and Relocate; service is installed LAST.
+	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "GrantHomeAccess", "Relocate", "WriteOwnerRecord", "InstallService", "Verify"}
 	assertSeq(t, r.calls, want)
 	if !res.Migrated {
 		t.Error("Migrated = false despite a present legacy dir")
@@ -148,6 +165,40 @@ func TestProvision_SudoUIDZero_Refused(t *testing.T) {
 	_, err := Provision(r.deps())
 	if !errors.Is(err, errNoSudoContext) {
 		t.Fatalf("error = %v, want errNoSudoContext for uid 0", err)
+	}
+}
+
+func TestProvision_GrantHomeAccess_Failure_IsNonFatal(t *testing.T) {
+	r := happyRecorder()
+	r.grantHomeErr = errors.New("setfacl: not found")
+	res, err := Provision(r.deps())
+	if err != nil {
+		t.Fatalf("Provision must not abort on GrantHomeAccess failure, got: %v", err)
+	}
+	if res.HomeACLWarning == "" {
+		t.Error("HomeACLWarning must be set when GrantHomeAccess fails")
+	}
+	if !strings.Contains(res.HomeACLWarning, "setfacl: not found") {
+		t.Errorf("HomeACLWarning does not include the underlying error: %q", res.HomeACLWarning)
+	}
+	// Provision must continue through the full sequence despite the failure.
+	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "GrantHomeAccess", "WriteOwnerRecord", "InstallService", "Verify"}
+	assertSeq(t, r.calls, want)
+}
+
+func TestProvision_GrantHomeAccess_Skipped_WhenNoLegacyDir(t *testing.T) {
+	// When LegacyDir returns "" (no SUDO_USER / can't determine home), GrantHomeAccess
+	// must not be called — there is no home path to grant.
+	r := happyRecorder()
+	r.legacyDir = "" // override: pretend SUDO_USER was unset (unusual but tested)
+	_, err := Provision(r.deps())
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	for _, c := range r.calls {
+		if c == "GrantHomeAccess" {
+			t.Error("GrantHomeAccess must not be called when legacyDir is empty")
+		}
 	}
 }
 

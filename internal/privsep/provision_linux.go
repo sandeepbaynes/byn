@@ -84,10 +84,15 @@ func installHelper(run runner, srcHelperPath, destPath, configPath string, execU
 	if err := run("setcap", "cap_setuid,cap_setgid+ep", destPath); err != nil {
 		return fmt.Errorf("setcap helper: %w", err)
 	}
-	// Pre-create the state dir so the owner record + relocate target exist before
-	// the service starts; systemd's StateDirectory re-owns /var/lib/byn to
-	// _byn:_byn 0700 when the unit starts.
-	if err := run("install", "-d", "-o", "root", "-g", "root", "-m", "0711", "/var/lib/byn"); err != nil {
+	// /usr/local/libexec/ maps to usr_t by default on Fedora/RHEL SELinux policy,
+	// which blocks cap_setuid/cap_setgid. Set bin_t explicitly so file capabilities
+	// are honoured. No-op when SELinux is absent (chcon exits 0 with a warning).
+	_ = run("chcon", "-t", "bin_t", destPath)
+	// Pre-create the state dir owned by _byn so the daemon can write its trust
+	// database there. MUST use _byn:_byn — systemd's StateDirectory does NOT
+	// change ownership of an already-existing directory, so creating it as
+	// root:root would leave the daemon (_byn) unable to create files inside.
+	if err := run("install", "-d", "-o", DaemonUser, "-g", DaemonUser, "-m", "0711", "/var/lib/byn"); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
 	// Write target ids root-owned + root-only-writable (0644). Helper validates.

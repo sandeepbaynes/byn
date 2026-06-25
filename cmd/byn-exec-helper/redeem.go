@@ -61,8 +61,8 @@ func redeemSocketPath() (string, error) {
 }
 
 // redeemToken exchanges the one-time token with the daemon for the authorized
-// child argv, the complete curated env, and the sandbox profile. The helper runs
-// this as root (before the privilege drop); the daemon's peercred gate accepts
+// child argv, the complete curated env, and the sandbox profile. The helper calls
+// this after dropping to _byn-exec; the daemon's peercred gate accepts
 // root/_byn-exec only.
 func redeemToken(sock string, token []byte) (argv, env []string, profile string, err error) {
 	client := ipc.NewClient(sock)
@@ -87,11 +87,19 @@ func buildExecArgv(profile string, argv []string) []string {
 	return out
 }
 
-// redeemMain is the Option-A entrypoint: read the token (fd 3), redeem it with
-// the daemon as root, drop to _byn-exec, then exec the authorized target
+// redeemMain is the Option-A entrypoint: read the token (fd 3), drop to
+// _byn-exec, redeem the token with the daemon, then exec the authorized target
 // (sandbox-wrapped on macOS) with the curated env. The child is born in the
 // invoking shell's process tree (the CLI spawned this helper), so it inherits the
 // shell's TCC grant while running as _byn-exec.
+//
+// Drop order: the privilege drop happens BEFORE the daemon round-trip.
+// On macOS the binary is setuid-root (euid=0); on Linux it has file capabilities
+// (cap_setuid,cap_setgid+ep) and starts as the owner UID. In both cases, dropping
+// to _byn-exec first is correct: the daemon's peercred gate accepts root/_byn-exec
+// for exec.redeem, and _byn-exec satisfies that check. The sandbox profile (returned
+// by redeemToken) is applied AFTER the drop (macOS refuses exec of a setuid binary
+// while sandboxed).
 func redeemMain() {
 	uid, gid, err := readTargetIDs()
 	if err != nil {
@@ -114,6 +122,14 @@ func redeemMain() {
 		fatal("resolving daemon socket: %v", err)
 	}
 
+	// Drop to _byn-exec BEFORE connecting to the daemon. On macOS the binary is
+	// setuid-root so this drops from root; on Linux the binary has file capabilities
+	// and starts as the owner UID so this is the privilege escalation step. Either
+	// way the daemon's peercred gate sees _byn-exec (an accepted helper identity).
+	if err := dropTo(uid, gid); err != nil {
+		fatal("dropping privileges: %v", err)
+	}
+
 	argv, childEnv, profile, rerr := redeemToken(sock, token)
 	for i := range token { // zero the token after the round-trip
 		token[i] = 0
@@ -123,12 +139,6 @@ func redeemMain() {
 	}
 	if len(argv) == 0 {
 		fatal("daemon returned no command to exec")
-	}
-
-	// Drop to _byn-exec, THEN apply the sandbox (macOS refuses to exec a setuid
-	// binary while sandboxed — drop first, sandbox the non-setuid target).
-	if err := dropTo(uid, gid); err != nil {
-		fatal("dropping privileges: %v", err)
 	}
 
 	execArgv := buildExecArgv(profile, argv)

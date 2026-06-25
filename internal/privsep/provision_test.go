@@ -55,14 +55,15 @@ func TestInstallHelperWritesConfig(t *testing.T) {
 	}, "/src/byn-exec-helper", "/usr/local/libexec/byn-exec-helper",
 		"/usr/local/libexec/byn-exec-helper.conf", 411, 411)
 	assert.NoError(t, err)
-	// Should call: install -d (helper dir), install (binary), setcap, install -d
-	// (state dir), sh (config write).
-	assert.GreaterOrEqual(t, len(cmds), 5)
+	// Should call: install -d (helper dir), install (binary), setcap, chcon
+	// (SELinux — best-effort, error ignored), install -d (state dir), sh (config).
+	assert.GreaterOrEqual(t, len(cmds), 6)
 	assert.Equal(t, "install", cmds[0], "first must create the helper's parent dir")
 	assert.Equal(t, "install", cmds[1], "second must install the helper binary")
 	assert.Equal(t, "setcap", cmds[2], "third must set file caps")
-	assert.Equal(t, "install", cmds[3], "fourth must create the state dir")
-	assert.Equal(t, "sh", cmds[4], "fifth must write the config")
+	assert.Equal(t, "chcon", cmds[3], "fourth must set SELinux context (best-effort)")
+	assert.Equal(t, "install", cmds[4], "fifth must create the state dir")
+	assert.Equal(t, "sh", cmds[5], "sixth must write the config")
 }
 
 func TestInstallHelperErrorPaths(t *testing.T) {
@@ -76,8 +77,9 @@ func TestInstallHelperErrorPaths(t *testing.T) {
 		{"create helper dir", 0},
 		{"install binary", 1},
 		{"setcap", 2},
-		{"create state dir", 3},
-		{"write config", 4},
+		// call 3 is chcon (SELinux, best-effort) — failing it is a no-op, skip
+		{"create state dir", 4},
+		{"write config", 5},
 	}
 	for _, s := range steps {
 		s := s

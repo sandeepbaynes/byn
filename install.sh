@@ -97,17 +97,22 @@ if ! mv "$work/byn" "$dest" 2>/dev/null; then
   SUDO="sudo"
   $SUDO mv "$work/byn" "$dest" || die "could not install to $dest"
 fi
+# Restore SELinux file context after mv from a temp dir (Fedora/RHEL only;
+# restorecon is a no-op or absent on other distros so ignore failures).
+$SUDO restorecon "$dest" 2>/dev/null || true
 say "installed $dest ($VERSION)"
 
 # ---- install privsep helper (alongside byn) -----------------------------
 # SUDO is already set correctly from the byn install step above (either "" or
 # "sudo"). Install the helper to the same $dir so `byn setup` finds it next
 # to byn via os.Executable()→dir→"byn-exec-helper".
+PRIVSEP_HELPER=0
 if [ -f "$work/byn-exec-helper" ]; then
   helper_dest="$dir/byn-exec-helper"
   $SUDO mv "$work/byn-exec-helper" "$helper_dest" || say "warning: could not install byn-exec-helper to $helper_dest"
+  $SUDO restorecon "$helper_dest" 2>/dev/null || true
   say "installed $helper_dest (privsep helper)"
-  say "to enable privilege separation: sudo byn setup"
+  PRIVSEP_HELPER=1
 fi
 
 # ---- install man page (best-effort) -------------------------------------
@@ -147,4 +152,8 @@ case ":$PATH:" in
     fi
     ;;
 esac
-say "next:  byn start  &&  byn init"
+if [ "$PRIVSEP_HELPER" = "1" ]; then
+  say "next:  sudo byn setup  &&  byn init"
+else
+  say "next:  byn start  &&  byn init"
+fi

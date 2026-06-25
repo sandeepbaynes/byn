@@ -8,16 +8,17 @@ import (
 )
 
 // aclGrantCommands returns the setfacl invocations to give `user` access to a
-// project dir: NON-recursive rwX on the project dir plus a default ACL so files
-// the child CREATES under it inherit access, and an execute-only (search) ACL on
-// each ancestor up to home so `user` can traverse INTO the project without being
-// able to LIST it. Returns [][]string (each = a command + args for exec.Command).
+// project dir: NON-recursive rwX on the project root, a default (-d) ACL so
+// files the child CREATES under it inherit access, and execute-only (search)
+// entries on each ancestor up to home. Returns [][]string (each = a command +
+// args for exec.Command).
 //
-// It is deliberately NON-recursive: `setfacl -R` over a real project would walk
-// node_modules and hang for minutes. The default ACL covers NEW files; existing
-// files are reachable via their own world/group perms (typical for source
-// trees). The trade-off — a pre-existing OWNER-ONLY file is not granted to the
-// exec child — is accepted (see docs/security.md / threat-model.md).
+// The grant is deliberately NON-recursive here to ensure these commands always
+// succeed, even when the project tree contains files or dirs owned by _byn-exec
+// (created during previous runs). GrantProjectACL separately issues a best-
+// effort setfacl -R that covers all user-owned subdirs at trust time; errors
+// from that pass are silently ignored because _byn-exec-owned dirs are already
+// writable by ownership and do not need an ACL.
 //
 // X = +x only on dirs/already-exec files (not data files) — POSIX ACL X-flag.
 func aclGrantCommands(projectDir, homeDir, user string) [][]string {
@@ -57,12 +58,23 @@ func aclRevokeCommands(projectDir, _, user string) [][]string {
 //
 // run executes a command WITHOUT a shell (exec.Command, not sh -c), so the
 // project path — which may contain shell metacharacters — cannot inject.
+//
+// In addition to the non-recursive root grant (aclGrantCommands), a best-effort
+// setfacl -R is issued on the project tree so pre-existing nested dirs like
+// node_modules/.vite/ and .astro/ are reachable on the first exec. The error
+// is silently ignored: dirs created by a previous _byn-exec run are already
+// accessible by ownership and do not require an ACL; setfacl -R exits non-zero
+// when it encounters such files, which is expected and harmless.
 func GrantProjectACL(run func(name string, args ...string) error, projectDir, homeDir string) error {
 	for _, c := range aclGrantCommands(projectDir, homeDir, ExecUser) {
 		if err := run(c[0], c[1:]...); err != nil {
 			return err
 		}
 	}
+	// Best-effort deep grant: covers existing nested dirs (node_modules/.vite,
+	// .astro, etc.) that pnpm/Vite/Astro need to write to on first run. Ignored
+	// on error — e.g. when _byn-exec-owned cache dirs are present in the tree.
+	_ = run("setfacl", "-R", "-m", fmt.Sprintf("u:%s:rwX", ExecUser), projectDir)
 	return nil
 }
 
@@ -78,21 +90,23 @@ func RevokeProjectACL(run func(name string, args ...string) error, projectDir, h
 }
 
 // bynReadGrantCommands returns the setfacl invocations that give the _byn daemon
-// read access to a single .byn FILE (u:_byn:r) plus execute-only (search)
-// traversal on the dir it lives in and on the owner's home, so the daemon can
-// open and hash it to validate the fingerprint. The owner CLI runs these (it
-// owns the file; the daemon cannot setfacl a user-owned file).
+// read access to a single .byn FILE (u:_byn:r) plus read+execute (rx) on the
+// ancestor dirs up to home. rx rather than x-only lets the daemon list those
+// directories, which is needed for the web portal's directory picker
+// (handleListDir calls os.ReadDir starting from the owner's home — execute alone
+// is not enough to enumerate). On macOS this is not needed because FDA grants the
+// daemon full filesystem access; Linux has no equivalent, so the ACL must carry r.
 //
 // The home entry is dropped when home == the project dir.
 func bynReadGrantCommands(bynPath, homeDir, user string) [][]string {
 	cmds := [][]string{
 		{"setfacl", "-m", fmt.Sprintf("u:%s:r", user), bynPath}, // read the file
 	}
-	// Traverse EVERY ancestor from the .byn's own dir up to home — a single
-	// restrictive intermediate (e.g. a 0700 ~/Documents) would otherwise block
-	// the open even though the leaf file is readable.
+	// rx (not just x) on EVERY ancestor from the .byn's own dir up to home — r
+	// is needed so the portal's directory picker can list each level; x alone only
+	// allows traversal, not enumeration.
 	for _, d := range traverseAncestors(filepath.Dir(bynPath), homeDir) {
-		cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), d})
+		cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:rx", user), d})
 	}
 	return cmds
 }
@@ -108,6 +122,15 @@ func bynReadRevokeCommands(bynPath, user string) [][]string {
 		{"setfacl", "-x", fmt.Sprintf("u:%s", user), bynPath},
 		{"setfacl", "-x", fmt.Sprintf("u:%s", user), projectDir},
 	}
+}
+
+// GrantDaemonHomeAccess grants the _byn daemon read+execute (rx) on homeDir via
+// setfacl, so the web portal's import file picker can enumerate the owner's
+// home directory. On macOS, FDA grants this implicitly; Linux has no equivalent
+// so the ACL must be set explicitly at setup time. Best-effort: the caller
+// warns on failure but does not abort provisioning.
+func GrantDaemonHomeAccess(run func(name string, args ...string) error, homeDir string) error {
+	return run("setfacl", "-m", fmt.Sprintf("u:%s:rx", DaemonUser), homeDir)
 }
 
 // GrantBynReadACL grants the _byn daemon read access to a single .byn file (and

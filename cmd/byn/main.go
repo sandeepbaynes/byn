@@ -215,6 +215,8 @@ func run(args []string) int {
 		return runUntrust(rest, scope)
 	case "setup":
 		return runSetup(rest)
+	case "uninstall":
+		return runUninstall(rest)
 	case "config-auth":
 		return runConfigAuth(rest)
 	case "migrate":
@@ -234,7 +236,7 @@ func skipDiscoveryFor(cmd string) bool {
 	switch cmd {
 	case "trust", "untrust", "daemon", "start", "stop", "restart", "reload",
 		"version", "--version", "-v",
-		"help", "--help", "-h", "doctor", "web", "ui", "setup", "config-auth", "migrate":
+		"help", "--help", "-h", "doctor", "web", "ui", "setup", "uninstall", "config-auth", "migrate":
 		return true
 	}
 	return false
