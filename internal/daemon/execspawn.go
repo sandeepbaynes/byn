@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -210,9 +211,20 @@ func (d *Daemon) validateAbsTarget(id, absTarget string, resolvedArgv []string) 
 			"resolved target must be an absolute path", "")
 	}
 	fi, err := os.Stat(absTarget)
-	if err != nil || !fi.Mode().IsRegular() {
+	if err != nil {
+		// Most common cause: the daemon (_byn) cannot traverse the path to the
+		// target binary — e.g. ~/.local/bin/ has no ACL for _byn. The error
+		// message includes the OS reason so the user can diagnose it.
 		return ipc.NewError(id, ipc.CodeBadRequest,
-			"resolved target is not a regular file", "")
+			fmt.Sprintf("exec target not accessible: %v — run `byn trust .` to refresh ACLs, or check that the tool is in a world-traversable path", err), "")
+	}
+	if !fi.Mode().IsRegular() {
+		// Symlinks are followed by os.Stat, so this catches directories, named
+		// pipes, and dangling symlinks resolved to a non-file. Shebang scripts
+		// ARE regular files and pass this check; if one fails it is the stat
+		// above (daemon can't read the path), not this branch.
+		return ipc.NewError(id, ipc.CodeBadRequest,
+			fmt.Sprintf("exec target %q is not a regular file (type: %s); if this is a script, invoke it via its interpreter: e.g. `python3 script.py` instead of `./script.py`", filepath.Base(absTarget), fi.Mode().Type()), "")
 	}
 	if len(resolvedArgv) == 0 {
 		return ipc.NewError(id, ipc.CodeBadRequest,
