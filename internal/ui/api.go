@@ -730,27 +730,18 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// POST /api/config {content, password?, presence_token?} — validate + atomic-
-// write + reload the global config. Credential-gated unconditionally (the
-// daemon always requires a password or passkey presence token because config
-// controls the daemon's own security settings).
+// POST /api/config {content} — validate + atomic-write + reload the global
+// config. Authorization is the config-auth token in X-Byn-Config-Auth
+// (checked by handleConfigRoute before this is reached).
 func (s *Server) handleConfigSet(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Content       string `json:"content"`
-		Password      string `json:"password"`
-		PresenceToken []byte `json:"presence_token"`
+		Content string `json:"content"`
 	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.ConfigSetReq{
-		Content:       []byte(b.Content),
-		PresenceToken: b.PresenceToken,
-	}
-	if b.Password != "" {
-		req.Password = []byte(b.Password)
-	}
+	req := ipc.ConfigSetReq{Content: []byte(b.Content)}
 	var resp ipc.ConfigSetResp
 	if !s.run(w, r, ipc.OpConfigSet, req, &resp) {
 		return

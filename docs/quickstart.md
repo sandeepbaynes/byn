@@ -18,6 +18,12 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
 ```
 
+> **Install location matters for `sudo byn setup`.** The install script and
+> system packages (apt, dnf) put `byn` in `/usr/local/bin` or `/usr/bin` — paths
+> sudo can always find. Homebrew on Apple Silicon (`/opt/homebrew/bin`) and
+> `go install` (`~/go/bin`) are outside sudo's `secure_path`. If `sudo byn setup`
+> says "command not found", use: `sudo $(which byn) setup`
+
 ---
 
 ## 2. Start the daemon

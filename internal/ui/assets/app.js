@@ -563,13 +563,14 @@ function showUnauthorizedNotice() {
 
 // ---- API ----------------------------------------------------------------
 
-async function api(method, path, body) {
+async function api(method, path, body, extraHeaders) {
   const opts = { method, headers: {} };
   if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
   // Attach the portal owner-token on every API request. The header is
   // checked server-side against $BYN_DIR/portal.token (mode 0600).
   const tok = portalToken();
   if (tok) opts.headers["X-Byn-Portal-Token"] = tok;
+  if (extraHeaders) Object.assign(opts.headers, extraHeaders);
   const res = await fetch(path, opts);
   let data = null;
   try { data = await res.json(); } catch (_) {}
@@ -582,6 +583,12 @@ async function api(method, path, body) {
       const err = new Error("portal_token_required");
       err.status = 401;
       err.code = "portal_token_required";
+      throw err;
+    }
+    if (res.status === 401 && data && data.error === "config_auth_required") {
+      const err = new Error("config_auth_required");
+      err.status = 401;
+      err.code = "config_auth_required";
       throw err;
     }
     const err = new Error((data && data.error) || `${res.status} ${res.statusText}`);
@@ -647,6 +654,29 @@ async function apiWithAuth(method, path, body, vault) {
     });
     // Single retry — any further auth_required propagates normally.
     return await api(method, path, retryBody);
+  }
+}
+
+// apiWithConfigAuth wraps api() for config writes. The sole gate is the
+// config-auth token (X-Byn-Config-Auth) minted by `byn config-auth` after
+// sudo verification — no vault master password is required because config is
+// a daemon-global setting, not tied to any vault.
+async function apiWithConfigAuth(method, path, body) {
+  try {
+    return await api(method, path, body);
+  } catch (e) {
+    if (e.code !== "config_auth_required") throw e;
+    const r = await openDialog({
+      title: "Config change requires sudo",
+      okText: "save",
+      message: "Config changes require sudo. In your terminal run:\n\n    byn config-auth\n\nThen paste the one-time token below (valid 60 s).",
+      fields: [
+        { key: "token", label: "one-time token", placeholder: "paste token here",
+          validate: (v) => (v ? null : "token required") },
+      ],
+    });
+    if (!r) throw e; // user cancelled
+    return await api(method, path, body, { "X-Byn-Config-Auth": r.token.trim() });
   }
 }
 
@@ -2090,7 +2120,7 @@ async function saveCfg() {
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "saving…"; }
 
   try {
-    const resp = await apiWithAuth("POST", "/api/config", { content: newContent }, "");
+    const resp = await apiWithConfigAuth("POST", "/api/config", { content: newContent });
     // Update dirty-tracking baseline so the guard does not fire after a clean save.
     cfgBaseline = newContent;
     // Refresh the cached reveal auto-hide timeout from the authoritative saved
