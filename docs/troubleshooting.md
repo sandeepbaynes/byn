@@ -481,6 +481,111 @@ re-applies the project + home-traverse + tool-state ACEs if they get cleared.
 > sandboxing the toolchain. Granting `_byn-exec` read access to your dev
 > environment is therefore not a new exposure.
 
+### `exec target not accessible` — daemon can't reach the tool binary
+
+```
+Error: exec target not accessible: stat /home/you/.local/bin/poetry: permission denied
+       — run `byn trust .` to refresh ACLs, or check that the tool is in a world-traversable path
+```
+
+The daemon (`_byn`) is a different user from you. `exec.LookPath` resolves the binary
+using your PATH, but the daemon then validates that path is accessible — and fails if
+any parent directory blocks traversal for `_byn`.
+
+**Common cause:** tools installed in `~/.local/bin/` (pip, poetry, pipx, etc.) or
+`~/.cargo/bin/`, where `~/.local/` or `~/.cargo/` has mode `0700` or no ACL for `_byn`.
+
+**Fix A — re-run `byn trust .`** (the home-ACL grant was added in v0.4.1):
+
+```sh
+byn trust .
+```
+
+This grants `_byn` `rx` on your home directory, which lets the daemon traverse
+through `~/.local/` and similar tool-install dirs whose parent is home.
+
+**Fix B — use the absolute path in `~/.local/bin`** (which is world-readable because
+`/usr/local/` and most system bin dirs are `0755`). Install the tool in `/usr/local/bin`
+or use the system package manager, so the path is traversable without an ACL.
+
+**Fix C — for Python tools installed with pip/pipx/poetry**, use the venv interpreter
+directly instead of the wrapper script. For example, instead of:
+
+```toml
+# .byn — PROBLEM: poetry wrapper in ~/.local/bin/poetry may not be reachable
+[exec]
+actions = ["poetry run uvicorn app:main"]
+```
+
+Use:
+
+```toml
+# .byn — WORKS: .venv/bin/python is under the project dir (granted at trust time)
+[exec]
+actions = [".venv/bin/python -m uvicorn app:main"]
+```
+
+The project directory is always fully granted for `_byn-exec` at trust time. Binaries
+inside `.venv/bin/` — Python interpreters created by `poetry install` or `python -m venv`
+— are real ELF binaries and work without any extra ACL.
+
+**Note on shebang scripts vs binaries.** `byn exec` requires the exec target to be a
+**regular file** that the daemon can stat. A shebang script (`#!/usr/bin/env python3`) IS
+a regular file and passes validation — the error you see is almost always the daemon
+lacking traverse permission on the parent directory, not the file type itself. The
+message includes the OS error (`permission denied` vs `no such file`) to help distinguish.
+
+---
+
+### Monorepo with nested `.byn` files — subdirectories lose read access
+
+**Symptom:** `pnpm --filter @scope/pkg dev` or other tools that enumerate a parent
+directory fail with `Permission denied` even though the root project is trusted.
+
+```
+Error: EACCES: permission denied, scandir '/repo/services'
+```
+
+**Cause: ancestor-ACL downgrade in nested trusts.** When you run `byn trust` on a
+nested project (e.g. `services/api/.byn`), the ACL code grants `_byn-exec` **traverse
+only** (`--x`) on every directory above the project root up to home — including directories
+that were already granted full `rwx` by a parent `.byn` trust. The last trust to run wins,
+so trusting any sub-project after the root project downgrades the root's directory to
+traverse-only.
+
+**Check the current ACL:**
+
+```sh
+getfacl /path/to/repo/
+# user:_byn-exec:--x   ← problem: should be rwx
+# user:_byn-exec:rwx   ← correct
+```
+
+**Fix — re-trust the root project last:**
+
+```sh
+# From the repo root, after all nested trusts have been run:
+byn trust .
+```
+
+Re-trusting the root re-applies the full `rwX` ACL on the root directory, which then
+covers the whole tree via the default (inherit) ACL and the best-effort recursive grant.
+
+**If the problem persists** (e.g. because a nested trust runs again later), switch the
+affected commands to forms that **don't require listing the parent directory**:
+
+| Instead of | Use |
+|---|---|
+| `pnpm --filter @scope/pkg dev` | `pnpm run dev` (runs local `package.json`) |
+| `pnpm -r --filter ...` workspace glob | Run from the package dir directly |
+| Tooling that globs ancestor dirs | Invoke the specific entry point instead |
+
+This is a known limitation of the ACL model when a directory is simultaneously a project
+root and an ancestor of a sibling project. A future release will detect and preserve
+the more-permissive entry during ancestor traversal.
+
+---
+
 ### `EACCES … mkdir '/var/folders/…/T/…'` — `TMPDIR`
 
 Your `$TMPDIR` points at a uid-private folder (`0700`) the child can't write. byn
