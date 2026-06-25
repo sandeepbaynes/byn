@@ -48,11 +48,16 @@ func systemdUnit(execPath string) string {
 		"Restart=on-failure\n" +
 		"\n" +
 		"# StateDirectory makes systemd create and own " + paths.SystemDataDir() + " as\n" +
-		"# " + DaemonUser + ":" + DaemonUser + " 0700 before the daemon starts — the vault tree the\n" +
-		"# separate-UID daemon reads. RuntimeDirectory does the same for /run/byn,\n" +
+		"# " + DaemonUser + ":" + DaemonUser + " 0711 before the daemon starts. 0711 lets the\n" +
+		"# owner CLI traverse in to stat the owner record (0444) without being able\n" +
+		"# to list the directory. RuntimeDirectory does the same for /run/byn,\n" +
 		"# the owner-traversable parent of the peercred-gated socket.\n" +
 		"StateDirectory=byn\n" +
-		"StateDirectoryMode=0700\n" +
+		// 0711: _byn has full access; others can traverse to stat known paths
+		// (the owner record at /var/lib/byn/owner, which is 0444) but cannot
+		// list the directory. This lets the CLI's ProvisionedIn() stat the owner
+		// record without exposing vault file contents (each vault.db is 0600).
+		"StateDirectoryMode=0711\n" +
 		"RuntimeDirectory=" + runtimeSocketDir + "\n" +
 		"\n" +
 		"# --- Hardening -------------------------------------------------------\n" +
@@ -63,9 +68,10 @@ func systemdUnit(execPath string) string {
 		"# invisible /proc denies an attacker reconnaissance from inside the unit.\n" +
 		"ProtectProc=invisible\n" +
 		"ProcSubset=pid\n" +
-		"# The daemon only ever talks over the AF_UNIX socket; deny every other\n" +
-		"# address family so a compromise cannot open network sockets.\n" +
-		"RestrictAddressFamilies=AF_UNIX\n" +
+		"# The daemon uses AF_UNIX for its IPC socket and AF_INET/AF_INET6 for the\n" +
+		"# local-only web portal (bound to 127.0.0.1). Deny all other families so a\n" +
+		"# compromise cannot reach external network sockets.\n" +
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n" +
 		"SystemCallFilter=@system-service\n" +
 		"# No W^X memory — block mapping a page writable then executable.\n" +
 		"MemoryDenyWriteExecute=yes\n" +
@@ -94,7 +100,7 @@ const sysusersConfPath = sysusersDropDir + "/byn.conf"
 func applySysusers(run runner) error {
 	conf := sysusersConf()
 	if err := run("sh", "-c",
-		fmt.Sprintf("printf '%%s' %q > %q", conf, sysusersConfPath)); err != nil {
+		fmt.Sprintf("printf '%%b' %q > %q", conf, sysusersConfPath)); err != nil {
 		return fmt.Errorf("write sysusers.d: %w", err)
 	}
 	if err := run("systemd-sysusers", sysusersConfPath); err != nil {
@@ -116,7 +122,7 @@ func InstallService(run runner, execPath string) error {
 	}
 	unit := systemdUnit(execPath)
 	if err := run("sh", "-c",
-		fmt.Sprintf("printf '%%s' %q > %q", unit, systemUnitPath)); err != nil {
+		fmt.Sprintf("printf '%%b' %q > %q", unit, systemUnitPath)); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
 	if err := run("systemctl", "daemon-reload"); err != nil {
