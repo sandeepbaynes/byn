@@ -12,7 +12,8 @@ import (
 
 // TestACLGrantCommands_Linux asserts the three expected setfacl invocations:
 // non-recursive rwX on the project root, a default (-d) rwX ACL on the project
-// root, and an execute-only (search) ACL on the home.
+// root, and rwX on the home ancestor (not execute-only — workspace tooling needs
+// to list parent dirs, and nested-project trusts must not downgrade rwX to x).
 func TestACLGrantCommands_Linux(t *testing.T) {
 	cmds := aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec")
 	require.Len(t, cmds, 3)
@@ -24,8 +25,8 @@ func TestACLGrantCommands_Linux(t *testing.T) {
 		[]string{"setfacl", "-d", "-m", "u:_byn-exec:rwX", "/home/o/proj"},
 		cmds[1], "default rwX ACL on project")
 	assert.Equal(t,
-		[]string{"setfacl", "-m", "u:_byn-exec:x", "/home/o"},
-		cmds[2], "execute-only on home (traverse, not list)")
+		[]string{"setfacl", "-m", "u:_byn-exec:rwX", "/home/o"},
+		cmds[2], "rwX on home ancestor (list+traverse, not execute-only)")
 }
 
 // TestACLGrantCommands_Linux_HomeEqualsProject drops the home command when home
@@ -61,19 +62,19 @@ func TestACLRevokeCommands_Linux(t *testing.T) {
 	}
 }
 
-// TestACLGrantCommands_Linux_DeepPath grants the exec child a traverse entry on
-// every intermediate dir up to home — the real-world 0700 ~/Documents case.
+// TestACLGrantCommands_Linux_DeepPath grants the exec child rwX on every
+// intermediate dir up to home — the real-world 0700 ~/Documents case.
 func TestACLGrantCommands_Linux_DeepPath(t *testing.T) {
 	cmds := aclGrantCommands("/home/o/Documents/proj", "/home/o", "_byn-exec")
-	// recursive access + default ACL + traverse on [/home/o/Documents, /home/o]
+	// rwX on project + default ACL + rwX on [/home/o/Documents, /home/o]
 	require.Len(t, cmds, 4)
 	targets := map[string]bool{}
 	for _, c := range cmds[2:] {
 		targets[c[len(c)-1]] = true
-		assert.Equal(t, "u:_byn-exec:x", c[2], "ancestor entry must grant traverse only")
+		assert.Equal(t, "u:_byn-exec:rwX", c[2], "ancestor entry must grant rwX (list+traverse)")
 	}
-	assert.True(t, targets["/home/o/Documents"], "intermediate must get a traverse entry; got %v", targets)
-	assert.True(t, targets["/home/o"], "home must get a traverse entry")
+	assert.True(t, targets["/home/o/Documents"], "intermediate must get a rwX entry; got %v", targets)
+	assert.True(t, targets["/home/o"], "home must get a rwX entry")
 }
 
 // TestACLRevokeCommands_Linux_HomeEqualsProject drops the home command when

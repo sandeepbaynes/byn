@@ -9,9 +9,16 @@ import (
 
 // aclGrantCommands returns the setfacl invocations to give `user` access to a
 // project dir: NON-recursive rwX on the project root, a default (-d) ACL so
-// files the child CREATES under it inherit access, and execute-only (search)
-// entries on each ancestor up to home. Returns [][]string (each = a command +
-// args for exec.Command).
+// files the child CREATES under it inherit access, and rwX entries on each
+// ancestor up to home. Returns [][]string (each = a command + args for
+// exec.Command).
+//
+// Ancestors get rwX (not execute-only) for two reasons:
+//  1. Monorepo tooling (pnpm workspace glob, cargo workspaces, etc.) lists
+//     parent directories to enumerate sibling packages; execute-only breaks that.
+//  2. When a directory is BOTH an ancestor of a nested project AND the root of a
+//     parent project, a prior execute-only grant would downgrade the rwX that
+//     parent trust set. rwX is idempotent regardless of trust order.
 //
 // The grant is deliberately NON-recursive here to ensure these commands always
 // succeed, even when the project tree contains files or dirs owned by _byn-exec
@@ -26,12 +33,13 @@ func aclGrantCommands(projectDir, homeDir, user string) [][]string {
 		{"setfacl", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
 		{"setfacl", "-d", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
 	}
-	// Traverse (execute-only) every ancestor ABOVE the project dir up to home so
-	// a restrictive intermediate (e.g. a 0700 ~/Documents) can't block the child
-	// from reaching the project. projectDir itself is covered by the grant above.
+	// rwX on every ancestor ABOVE the project dir up to home so a restrictive
+	// intermediate (e.g. a 0700 ~/Documents) can't block the child from reaching
+	// the project, and so workspace-enumerating tools (pnpm --filter, cargo)
+	// can list these directories without extra manual grants.
 	if homeDir != "" && homeDir != projectDir {
 		for _, d := range traverseAncestors(filepath.Dir(projectDir), homeDir) {
-			cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:x", user), d})
+			cmds = append(cmds, []string{"setfacl", "-m", fmt.Sprintf("u:%s:rwX", user), d})
 		}
 	}
 	return cmds

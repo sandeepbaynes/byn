@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -527,6 +528,20 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return exitErr, true
+	}
+	// exec.LookPath returns a relative path unchanged when the argument contains a
+	// slash (e.g. ".venv/bin/python", "./bin/node"). Resolve it to absolute using
+	// the caller's CWD so the daemon's validateAbsTarget check passes and action
+	// pattern matching in the .byn sees the same path the user's regex can anchor to.
+	if !filepath.IsAbs(absTarget) {
+		absTarget, err = filepath.Abs(absTarget)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s resolving exec target path: %v\n", boldRed("Error:"), err)
+			return exitErr, true
+		}
+		// Mirror into childArgv[0] (and therefore req.Argv[0], same underlying array)
+		// so the daemon's action-pattern matching sees the absolute path too.
+		childArgv[0] = absTarget
 	}
 
 	cwd, _ := os.Getwd()
