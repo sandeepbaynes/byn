@@ -31,6 +31,94 @@ func helpFor(name string) string {
 }
 
 var commandHelp = map[string]string{
+	"kill": `NAME
+       byn-kill - stop running byn exec processes
+
+SYNOPSIS
+       byn kill --all
+       byn kill <pid> [<pid>...]
+
+DESCRIPTION
+       Sends SIGTERM to one or more byn exec wrapper processes and
+       their direct children (the actual commands they launched).
+       Children are signalled before the wrapper so they can shut
+       down cleanly before their parent exits.
+
+       PIDs must come from "byn ps" output. byn kill refuses to
+       signal a PID that is not a known byn exec process, preventing
+       accidental kills of unrelated processes.
+
+OPTIONS
+       --all
+           Kill every running byn exec process found by "byn ps".
+
+       <pid>
+           Kill a specific byn exec process. May be repeated.
+
+EXAMPLES
+       List processes, then kill one:
+         $ byn ps
+           PID  COMMAND
+         33887  pnpm --filter @myorg/api dev
+
+         $ byn kill 33887
+         sent SIGTERM to 33887 (children: 34022)
+
+       Kill everything at once:
+         $ byn kill --all
+
+EXIT STATUS
+       0   all targeted processes were signalled successfully
+       1   one or more PIDs were invalid or not byn exec processes
+
+SEE ALSO
+       byn-ps(1), byn-exec(1)
+`,
+	"ps": `NAME
+       byn-ps - list running byn exec processes
+
+SYNOPSIS
+       byn ps
+
+DESCRIPTION
+       Lists every live "byn exec" wrapper process and the command it
+       is running. Useful for identifying and killing orphaned exec
+       children after a manual kill of the parent process.
+
+       On Linux, process information is read directly from /proc —
+       no daemon connection required, and sudo is not needed.
+
+OUTPUT
+       PID      The process ID of the "byn exec" wrapper. Kill this
+                PID to stop the wrapper; its child (the actual
+                command) will be orphaned or receive SIGHUP depending
+                on the terminal setup. Kill the child PID separately
+                if it survives.
+
+       COMMAND  The command that "byn exec" launched, extracted from
+                its argv (everything after the "--" separator or the
+                alias name).
+
+EXAMPLES
+       $ byn ps
+         PID  COMMAND
+       33887  pnpm --filter @myorg/api dev
+       34073  pnpm --filter @myorg/chat dev
+
+       To kill a specific exec and its child:
+         $ kill 33887
+         $ kill $(pgrep -P 33887)
+
+       To kill all byn exec wrappers at once:
+         $ pkill -f "byn exec"
+
+EXIT STATUS
+       0   success (zero or more processes listed)
+       1   error reading the process table
+
+SEE ALSO
+       byn-exec(1), byn-doctor(1)
+`,
 	"init": `NAME
        byn-init - create a new vault
 
@@ -351,7 +439,7 @@ EXAMPLES
 
        Does a specific var exist? (exit 0 = yes, 1 = no, prints nothing
        extra):
-           $ byn ls SQL_POOL_MAX --vault example-project && echo present
+           $ byn ls SQL_POOL_MAX --vault myproject && echo present
 
        Every name starting with SQL:
            $ byn ls 'SQL*'

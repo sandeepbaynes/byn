@@ -249,7 +249,7 @@ func TestRunDaemonStatus_NoSessionSuffix(t *testing.T) {
 		ProtocolMax: ipc.ProtocolVersion,
 		StartedAt:   now.Add(-time.Hour),
 		Vaults: []ipc.VaultSummary{
-			{Name: "example-project", Initialized: true, Locked: false, SessionActive: false},
+			{Name: "myproject", Initialized: true, Locked: false, SessionActive: false},
 		},
 	})
 	var rc int

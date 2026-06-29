@@ -180,6 +180,17 @@ func splitNUL(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
+// setPdeathsig registers SIGTERM as the death signal for this process if its
+// parent exits. Must be called AFTER the UID drop: Linux 5.4+ clears the
+// pdeathsig on setresuid, so setting it before the drop would be a no-op.
+// The flag is preserved across execve, so the exec'd target inherits it —
+// when the byn exec wrapper exits (e.g. killed by `byn kill`), the kernel
+// automatically delivers SIGTERM to the target even though the wrapper runs
+// as the owner UID and the target runs as _byn-exec.
+func setPdeathsig() error {
+	return unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(unix.SIGTERM), 0, 0, 0)
+}
+
 // execTarget replaces the current process via execve. It requires an ABSOLUTE
 // target path and does NO PATH resolution — the daemon resolves PATH itself,
 // unprivileged, removing the PATH-poisoning vector from the privileged helper.
