@@ -313,7 +313,14 @@ func runExec(args []string, scope cliScope) int {
 	// (last value wins per POSIX, and most shells/libs follow that). This
 	// means a stored DB_URL overrides any DB_URL already exported in the
 	// parent shell — usually what the user wants.
+	//
+	// BYN_EXEC_PID stamps the current PID into the child's environment.
+	// After syscall.Exec the PID is unchanged, so "byn ps" can find the
+	// running child by scanning /proc/*/environ for entries where the
+	// BYN_EXEC_PID value matches the process's own PID. Children of the
+	// child inherit the var but have different PIDs, so they are excluded.
 	envv := append(os.Environ(), extraEnv...)
+	envv = append(envv, "BYN_EXEC_PID="+strconv.Itoa(os.Getpid()))
 
 	// Replace the process. On success, this never returns.
 	// gosec G204 flags subprocess launches with variable paths;
@@ -635,6 +642,14 @@ func invokeExecHelper(token []byte) int {
 	cmd.Stderr = os.Stderr
 	cmd.ExtraFiles = []*os.File{r} // ExtraFiles[0] → fd 3 in the helper
 
+	// Create a new process group so all _byn-exec descendants share one PGID
+	// (equal to this wrapper's PID). byn kill then uses byn-exec-helper
+	// --kill-pgrp to signal the entire subtree atomically. In a shell with job
+	// control the foreground group is already this process's PID, so Setpgid
+	// is a no-op. In make/script context (job control off) it detaches the
+	// service from the terminal's PGID so kill(-pgid) is safe.
+	_ = syscall.Setpgid(0, 0)
+
 	if err := cmd.Start(); err != nil {
 		_ = r.Close()
 		fmt.Fprintf(os.Stderr, "%s starting privsep helper: %v\n", boldRed("Error:"), err)
@@ -646,13 +661,25 @@ func invokeExecHelper(token []byte) int {
 	// after it execs). The child shares our tty + process group, so tty-generated
 	// signals reach it directly too; forwarding additionally covers signals sent to
 	// byn specifically.
+	//
+	// In privsep mode the child runs as _byn-exec (a different UID), so
+	// Signal() returns EPERM. We cannot forward in that case, but we CAN exit
+	// this wrapper — byn-exec-helper sets pdeathsig=SIGTERM after its UID drop,
+	// so the kernel delivers SIGTERM to the exec'd target when this parent exits.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 	go func() {
 		for s := range sigCh {
 			if cmd.Process != nil {
-				_ = cmd.Process.Signal(s)
+				if err := cmd.Process.Signal(s); errors.Is(err, syscall.EPERM) {
+					// Privsep child: can't signal across UID boundary. Exit so
+					// pdeathsig kills the target.
+					if sig, ok := s.(syscall.Signal); ok {
+						os.Exit(128 + int(sig))
+					}
+					os.Exit(1)
+				}
 			}
 		}
 	}()

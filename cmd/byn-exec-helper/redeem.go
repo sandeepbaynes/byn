@@ -130,6 +130,18 @@ func redeemMain() {
 		fatal("dropping privileges: %v", err)
 	}
 
+	// Register a parent-death signal AFTER the UID drop. Linux 5.4+ clears
+	// pdeathsig on setresuid, so it must be set here — once we are already
+	// _byn-exec — to survive. The flag is preserved across execve, so the
+	// exec'd target inherits it: when the byn exec wrapper (the owner-UID
+	// process that spawned this helper) exits, the kernel automatically
+	// delivers SIGTERM to the target, enabling `byn kill` to work cleanly.
+	if err := setPdeathsig(); err != nil {
+		// Non-fatal: byn kill is degraded but `sudo pkill -u _byn-exec` still
+		// works. Don't abort — failing to set pdeathsig is rare and recoverable.
+		fmt.Fprintf(os.Stderr, "byn-exec-helper: warning: pdeathsig: %v\n", err)
+	}
+
 	argv, childEnv, profile, rerr := redeemToken(sock, token)
 	for i := range token { // zero the token after the round-trip
 		token[i] = 0

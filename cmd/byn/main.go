@@ -205,6 +205,10 @@ func run(args []string) int {
 		return runExport(rest, scope)
 	case "audit":
 		return runAudit(rest, scope)
+	case "ps":
+		return runPS(rest)
+	case "kill":
+		return runKill(rest)
 	case "doctor":
 		return runDoctor(rest, scope)
 	case "web", "ui":
@@ -236,7 +240,7 @@ func skipDiscoveryFor(cmd string) bool {
 	switch cmd {
 	case "trust", "untrust", "daemon", "start", "stop", "restart", "reload",
 		"version", "--version", "-v",
-		"help", "--help", "-h", "doctor", "web", "ui", "setup", "uninstall", "config-auth", "migrate":
+		"help", "--help", "-h", "doctor", "web", "ui", "setup", "uninstall", "config-auth", "migrate", "ps", "kill":
 		return true
 	}
 	return false
@@ -345,6 +349,8 @@ Diagnostics:
   doctor [--repair]          Health + provisioning checks; sudo --repair heals (also: --json)
   audit tail [--lines N]     Print recent audit-log events (also: --json)
   audit verify               Re-walk the per-vault HMAC chain (also: --json)
+  ps                         List running byn exec processes and their commands
+  kill [--all] [<pid>...]    Stop one or all running byn exec processes (SIGTERM)
 
 Trust (.byn TOFU):
   trust [PATH]               Approve a .byn file (default: ./.byn)
