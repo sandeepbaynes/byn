@@ -608,11 +608,37 @@ func (s *Store) CaptureRowKeysWithPassword(ctx context.Context, password []byte,
 	return s.captureRowKeys(ctx, vk, scope, names)
 }
 
+// fetchEnvVarInherited fetches an env_var row in envID, falling back to the
+// project's default env when the row is absent and the scope env is not already
+// the default — the SAME inheritance rule GetEnvVar / ListEnvVars apply to
+// reads. Returns the row, the env id it was actually found in (so in-place
+// migrations update the right row), and whether it was found. Row keys are
+// env-agnostic (entryAAD carries vault+kind+name only), so a key captured
+// against the default-env row decrypts it regardless of the caller's scope env.
+func (s *Store) fetchEnvVarInherited(ctx context.Context, projectID, envID int64, scopeEnv, name string) (entryRow, int64, bool, error) {
+	r, found, err := s.fetchEntry(ctx, projectID, envID, kindAADEnvVar, name)
+	if err != nil || found {
+		return r, envID, found, err
+	}
+	if scopeEnv == DefaultEnvName {
+		return entryRow{}, envID, false, nil
+	}
+	defaultEnvID, derr := s.envIDByName(ctx, projectID, DefaultEnvName)
+	if derr != nil {
+		return entryRow{}, envID, false, derr
+	}
+	r, found, err = s.fetchEntry(ctx, projectID, defaultEnvID, kindAADEnvVar, name)
+	return r, defaultEnvID, found, err
+}
+
 // captureRowKeys is the shared core: derive each var's row key and, if the row
 // is still legacy v1, re-seal it under that row key (migrate to v2) so the
-// captured key decrypts it. Missing vars are skipped. A migration failure aborts
-// the whole capture (no partial capability); partially-migrated rows are still
-// valid and re-converge on the next call.
+// captured key decrypts it. Missing vars are skipped. A var absent from the
+// requested env falls back to the project's default env (read-inheritance
+// parity — see fetchEnvVarInherited); without this, a trusted exec silently
+// omits vars that `byn get`/`byn ls` show via inheritance. A migration failure
+// aborts the whole capture (no partial capability); partially-migrated rows are
+// still valid and re-converge on the next call.
 func (s *Store) captureRowKeys(ctx context.Context, vaultKey []byte, scope Scope, names []string) (map[string][]byte, error) {
 	projectID, envID, err := s.scopeIDs(ctx, scope)
 	if err != nil {
@@ -620,7 +646,7 @@ func (s *Store) captureRowKeys(ctx context.Context, vaultKey []byte, scope Scope
 	}
 	out := make(map[string][]byte, len(names))
 	for _, name := range names {
-		r, found, ferr := s.fetchEntry(ctx, projectID, envID, kindAADEnvVar, name)
+		r, rowEnvID, found, ferr := s.fetchEnvVarInherited(ctx, projectID, envID, scope.Env, name)
 		if ferr != nil {
 			zeroRowKeys(out)
 			return nil, ferr
@@ -649,7 +675,7 @@ func (s *Store) captureRowKeys(ctx context.Context, vaultKey []byte, scope Scope
 			}
 			if _, uerr := s.db.ExecContext(ctx,
 				`UPDATE entries SET value=?, aad_version=? WHERE project_id=? AND env_id=? AND kind='env_var' AND name=?`,
-				ct, aadVersionRowKey, projectID, envID, name); uerr != nil {
+				ct, aadVersionRowKey, projectID, rowEnvID, name); uerr != nil {
 				zero(krow)
 				zeroRowKeys(out)
 				return nil, uerr
@@ -675,14 +701,16 @@ func zeroRowKeys(m map[string][]byte) {
 //
 // The row must be stored under the per-row scheme (aad_version=2); a legacy v1
 // row is refused (a capture would have migrated it — refusing surfaces a stale
-// capability rather than silently failing the AEAD). Returns ErrNotFound if the
-// var is absent.
+// capability rather than silently failing the AEAD). A var absent from the
+// requested env falls back to the project's default env (read-inheritance
+// parity; the row key is env-agnostic so the same key decrypts either row).
+// Returns ErrNotFound if the var is absent from both.
 func (s *Store) OpenEnvVarWithRowKey(ctx context.Context, scope Scope, name string, rowKey []byte) ([]byte, error) {
 	projectID, envID, err := s.scopeIDs(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
-	r, found, err := s.fetchEntry(ctx, projectID, envID, kindAADEnvVar, name)
+	r, _, found, err := s.fetchEnvVarInherited(ctx, projectID, envID, scope.Env, name)
 	if err != nil {
 		return nil, err
 	}

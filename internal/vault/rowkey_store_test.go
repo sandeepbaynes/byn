@@ -288,3 +288,100 @@ func TestOpenEnvVarWithRowKey_RefusesLegacyV1(t *testing.T) {
 		t.Fatal("a v1 row must be refused under the per-row-key read path")
 	}
 }
+
+// ── Env-inheritance parity for the exec capability path ─────────────────────
+// Reads (GetEnvVar / ListEnvVars) fall back from a non-default env to the
+// project's default env for missing names. The capability capture + open path
+// must apply the SAME fallback, or a var whose value lives only in default is
+// silently absent from trusted exec while `byn get` shows it (real incident:
+// example-project EXAMPLE_TIMEOUT_SECONDS, 2026-07-28).
+
+// TestCaptureRowKeys_InheritsDefaultEnv: capturing in a non-default env picks
+// up a var that exists only in the default env.
+func TestCaptureRowKeys_InheritsDefaultEnv(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "INHERITED", []byte("from-default"), PutOpt{}); err != nil {
+		t.Fatalf("put default: %v", err)
+	}
+	if err := st.CreateEnv(ctx, DefaultProjectName, "stg"); err != nil {
+		t.Fatalf("create env: %v", err)
+	}
+	stg := Scope{Project: DefaultProjectName, Env: "stg"}
+	keys, err := st.CaptureRowKeys(ctx, stg, []string{"INHERITED", "ABSENT"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	rk, ok := keys["INHERITED"]
+	if !ok {
+		t.Fatal("INHERITED must be captured via default-env fallback")
+	}
+	if _, ok := keys["ABSENT"]; ok {
+		t.Fatal("ABSENT must still be skipped")
+	}
+	// The captured key must decrypt through the same scope the exec uses.
+	val, err := st.OpenEnvVarWithRowKey(ctx, stg, "INHERITED", rk)
+	if err != nil {
+		t.Fatalf("open with row key (inherited): %v", err)
+	}
+	if string(val) != "from-default" {
+		t.Fatalf("value=%q, want from-default", val)
+	}
+}
+
+// TestCaptureRowKeys_ScopeRowShadowsDefault: when both envs have the var, the
+// non-default env's own row wins (same shadowing rule as GetEnvVar).
+func TestCaptureRowKeys_ScopeRowShadowsDefault(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "SHADOWED", []byte("default-val"), PutOpt{}); err != nil {
+		t.Fatalf("put default: %v", err)
+	}
+	if err := st.CreateEnv(ctx, DefaultProjectName, "stg"); err != nil {
+		t.Fatalf("create env: %v", err)
+	}
+	stg := Scope{Project: DefaultProjectName, Env: "stg"}
+	if err := st.PutEnvVar(ctx, stg, "SHADOWED", []byte("stg-val"), PutOpt{}); err != nil {
+		t.Fatalf("put stg: %v", err)
+	}
+	keys, err := st.CaptureRowKeys(ctx, stg, []string{"SHADOWED"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	val, err := st.OpenEnvVarWithRowKey(ctx, stg, "SHADOWED", keys["SHADOWED"])
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if string(val) != "stg-val" {
+		t.Fatalf("value=%q, want stg-val (scope row must shadow default)", val)
+	}
+}
+
+// TestOpenEnvVarWithRowKey_InheritsDefaultEnv: the locked-exec read path
+// applies the same default-env fallback as GetEnvVar.
+func TestOpenEnvVarWithRowKey_InheritsDefaultEnv(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "RO_INHERIT", []byte("dv"), PutOpt{}); err != nil {
+		t.Fatalf("put default: %v", err)
+	}
+	if err := st.CreateEnv(ctx, DefaultProjectName, "stg"); err != nil {
+		t.Fatalf("create env: %v", err)
+	}
+	keys, err := st.CaptureRowKeys(ctx, defaultScope(), []string{"RO_INHERIT"})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	stg := Scope{Project: DefaultProjectName, Env: "stg"}
+	val, err := st.OpenEnvVarWithRowKey(ctx, stg, "RO_INHERIT", keys["RO_INHERIT"])
+	if err != nil {
+		t.Fatalf("open inherited: %v", err)
+	}
+	if string(val) != "dv" {
+		t.Fatalf("value=%q, want dv", val)
+	}
+	// A name in neither env is still ErrNotFound.
+	if _, err := st.OpenEnvVarWithRowKey(ctx, stg, "NOPE", keys["RO_INHERIT"]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing name err=%v, want ErrNotFound", err)
+	}
+}
