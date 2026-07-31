@@ -3,6 +3,8 @@ package vault
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
@@ -151,7 +153,9 @@ func TestCaptureRowKeys_ReturnsDecryptingKeys(t *testing.T) {
 		if keys[n] == nil {
 			t.Fatalf("no key captured for %q", n)
 		}
-		pt, err := vcrypto.DecryptWithAAD(keys[n], rowCiphertext(t, st, n), st.entryAAD(kindAADEnvVar, n))
+		// Go through the production read path so the test follows whatever
+		// scheme the row is actually stored under, rather than pinning one AAD.
+		pt, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), n, keys[n])
 		if err != nil {
 			t.Fatalf("decrypt %q with captured key: %v", n, err)
 		}
@@ -161,8 +165,8 @@ func TestCaptureRowKeys_ReturnsDecryptingKeys(t *testing.T) {
 	}
 }
 
-// TestCaptureRowKeys_MigratesV1: capturing a legacy v1 var migrates it to v2 and
-// the returned key decrypts the migrated row.
+// TestCaptureRowKeys_MigratesV1: capturing a legacy v1 var migrates it to the
+// current scheme and the returned key decrypts the migrated row.
 func TestCaptureRowKeys_MigratesV1(t *testing.T) {
 	st, _ := newOpenedVault(t)
 	ctx := context.Background()
@@ -177,7 +181,7 @@ func TestCaptureRowKeys_MigratesV1(t *testing.T) {
 	if v := rowAADVersion(t, st, "OLD"); v != currentAADVersion {
 		t.Fatalf("after capture aad_version=%d, want %d (migrated)", v, currentAADVersion)
 	}
-	pt, err := vcrypto.DecryptWithAAD(keys["OLD"], rowCiphertext(t, st, "OLD"), st.entryAAD(kindAADEnvVar, "OLD"))
+	pt, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "OLD", keys["OLD"])
 	if err != nil {
 		t.Fatalf("decrypt migrated with captured key: %v", err)
 	}
@@ -232,7 +236,7 @@ func TestCaptureRowKeysWithPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture w/ password: %v", err)
 	}
-	pt, err := vcrypto.DecryptWithAAD(keys["V"], rowCiphertext(t, st, "V"), st.entryAAD(kindAADEnvVar, "V"))
+	pt, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "V", keys["V"])
 	if err != nil || string(pt) != "secret" {
 		t.Fatalf("decrypt: pt=%q err=%v", pt, err)
 	}
@@ -384,4 +388,196 @@ func TestOpenEnvVarWithRowKey_InheritsDefaultEnv(t *testing.T) {
 	if _, err := st.OpenEnvVarWithRowKey(ctx, stg, "NOPE", keys["RO_INHERIT"]); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing name err=%v, want ErrNotFound", err)
 	}
+}
+
+// A grant is sealed against a scope, so the key it hands out must open entries
+// that did not exist when the grant was made. This is the whole point of the
+// scope-key layer: under the flat scheme a capability froze the exact set of
+// rows present at grant time, and every new variable forced a re-trust.
+func TestEnvKey_OpensRowsCreatedAfterCapture(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+
+	projectID, envID, err := st.scopeIDs(ctx, defaultScope())
+	if err != nil {
+		t.Fatalf("scope ids: %v", err)
+	}
+	vk := st.snapshotVaultKey()
+	if vk == nil {
+		t.Fatal("vault locked")
+	}
+	kenv, err := st.EnvKey(vk, projectID, envID)
+	if err != nil {
+		t.Fatalf("env key: %v", err)
+	}
+
+	// The variable is written only AFTER the scope key was taken.
+	if err := st.PutEnvVar(ctx, defaultScope(), "ADDED_LATER", []byte("v"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	krow, err := vcrypto.DeriveRowKeyFromEnvKey(kenv, rowAAD(kindAADEnvVar, "ADDED_LATER"))
+	if err != nil {
+		t.Fatalf("row key from env key: %v", err)
+	}
+	pt, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "ADDED_LATER", krow)
+	if err != nil {
+		t.Fatalf("open row created after capture: %v", err)
+	}
+	if string(pt) != "v" {
+		t.Fatalf("value=%q, want v", pt)
+	}
+}
+
+// A scope key must not travel: holding one env's key must not open another
+// env's row of the same name. Under the flat scheme both derived the same key.
+func TestEnvKey_DoesNotCrossEnvs(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	other := Scope{Project: DefaultProjectName, Env: "staging"}
+	if err := st.CreateEnv(ctx, DefaultProjectName, "staging"); err != nil {
+		t.Fatalf("create env: %v", err)
+	}
+	if err := st.PutEnvVar(ctx, defaultScope(), "SHARED", []byte("from-default"), PutOpt{}); err != nil {
+		t.Fatalf("put default: %v", err)
+	}
+	if err := st.PutEnvVar(ctx, other, "SHARED", []byte("from-staging"), PutOpt{}); err != nil {
+		t.Fatalf("put staging: %v", err)
+	}
+
+	vk := st.snapshotVaultKey()
+	stagingProj, stagingEnv, err := st.scopeIDs(ctx, other)
+	if err != nil {
+		t.Fatalf("scope ids: %v", err)
+	}
+	kenv, err := st.EnvKey(vk, stagingProj, stagingEnv)
+	if err != nil {
+		t.Fatalf("env key: %v", err)
+	}
+	krow, err := vcrypto.DeriveRowKeyFromEnvKey(kenv, rowAAD(kindAADEnvVar, "SHARED"))
+	if err != nil {
+		t.Fatalf("row key: %v", err)
+	}
+
+	if pt, err := st.OpenEnvVarWithRowKey(ctx, other, "SHARED", krow); err != nil {
+		t.Fatalf("staging key must open its own row: %v", err)
+	} else if string(pt) != "from-staging" {
+		t.Fatalf("staging value=%q", pt)
+	}
+	if _, err := st.OpenEnvVarWithRowKey(ctx, defaultScope(), "SHARED", krow); err == nil {
+		t.Fatal("staging scope key opened the default env's row — scopes are not isolated")
+	}
+}
+
+// Rows written before the scope-key scheme must stay readable forever; nothing
+// is rewritten until the row is next written.
+func TestMixedAADVersions_StayReadable(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "LEGACY", []byte("old-value"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	rewriteAsLegacyV1(t, st, "LEGACY", []byte("old-value"))
+	if err := st.PutEnvVar(ctx, defaultScope(), "MODERN", []byte("new-value"), PutOpt{}); err != nil {
+		t.Fatalf("put modern: %v", err)
+	}
+	if v := rowAADVersion(t, st, "MODERN"); v != currentAADVersion {
+		t.Fatalf("new write aad_version=%d, want %d", v, currentAADVersion)
+	}
+	for name, want := range map[string]string{"LEGACY": "old-value", "MODERN": "new-value"} {
+		e, err := st.GetEnvVar(ctx, defaultScope(), name)
+		if err != nil {
+			t.Fatalf("get %q: %v", name, err)
+		}
+		if string(e.Value) != want {
+			t.Fatalf("%q = %q, want %q", name, e.Value, want)
+		}
+	}
+}
+
+// An existing vault must upgrade in place on open: the sync columns appear, the
+// version advances, and every value written under the old schema still reads.
+func TestMigrateV4toV5_InPlace(t *testing.T) {
+	st, dir := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.PutEnvVar(ctx, defaultScope(), "BEFORE", []byte("kept"), PutOpt{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Rewind to v4: drop the columns v5 adds and reset the recorded version.
+	db, err := openDB(ctx, filepath.Join(Dir(dir, DefaultVaultName), dbFilename))
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE entries DROP COLUMN lamport`,
+		`ALTER TABLE entries DROP COLUMN origin_device`,
+		`UPDATE meta SET value = '4' WHERE key = 'schema_version'`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("rewind (%s): %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	st2 := reopenVault(t, dir)
+	var got string
+	if err := st2.db.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&got); err != nil {
+		t.Fatalf("read version: %v", err)
+	}
+	if got != "5" {
+		t.Fatalf("schema_version=%s after open, want 5", got)
+	}
+	var lamport int64
+	if err := st2.db.QueryRowContext(ctx,
+		`SELECT lamport FROM entries WHERE name = 'BEFORE'`).Scan(&lamport); err != nil {
+		t.Fatalf("sync columns missing after migrate: %v", err)
+	}
+	e, err := st2.GetEnvVar(ctx, defaultScope(), "BEFORE")
+	if err != nil {
+		t.Fatalf("read pre-migration value: %v", err)
+	}
+	if string(e.Value) != "kept" {
+		t.Fatalf("value=%q, want kept", e.Value)
+	}
+
+	// Upgrading is one-way, so the pre-migration snapshot must exist and be a
+	// readable vault in its own right.
+	bak := filepath.Join(Dir(dir, DefaultVaultName), dbFilename+".v4.bak")
+	if _, err := os.Stat(bak); err != nil {
+		t.Fatalf("no pre-migration backup written: %v", err)
+	}
+	bdb, err := openDB(ctx, bak)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer func() { _ = bdb.Close() }()
+	var ver string
+	if err := bdb.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&ver); err != nil {
+		t.Fatalf("read backup version: %v", err)
+	}
+	if ver != "4" {
+		t.Fatalf("backup schema_version=%s, want 4 (the version left behind)", ver)
+	}
+}
+
+// reopenVault opens an existing vault directory again, running whatever schema
+// migrations the on-disk version calls for.
+func reopenVault(t *testing.T, dir string) *Store {
+	t.Helper()
+	st, err := Open(context.Background(), dir, DefaultVaultName)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Unlock([]byte(testPassword)); err != nil {
+		t.Fatalf("unlock after reopen: %v", err)
+	}
+	return st
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -52,7 +53,7 @@ const (
 	// slot. v4: file_meta.sha256_plain renamed to sha256_hmac (keyed
 	// HMAC-SHA256 under a vault-key-derived subkey; eliminates the
 	// offline guess-confirmation oracle).
-	schemaVersion = 4
+	schemaVersion = 5
 
 	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
 	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of
@@ -298,7 +299,7 @@ func Open(ctx context.Context, root, vaultName string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := verifySchema(ctx, db); err != nil {
+	if err := verifySchema(ctx, db, dbPath); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -654,19 +655,37 @@ func (s *Store) captureRowKeys(ctx context.Context, vaultKey []byte, scope Scope
 		if !found {
 			continue // not created yet — no capability entry for it
 		}
-		krow, kerr := vcrypto.DeriveRowKey(vaultKey, s.entryAAD(kindAADEnvVar, name))
+		// Hand back the key that actually opens THIS row. Rows written under
+		// the current scheme derive through their scope key; rows still on the
+		// flat v2 scheme keep their flat key. Re-sealing a v2 row to v3 here
+		// would silently break capabilities already issued against it, so rows
+		// migrate only when they are next written.
+		// Hand back the key that actually opens THIS row. A row already on the
+		// flat v2 scheme keeps its flat key: re-sealing it to v3 here would
+		// silently break capabilities already issued against it, so it migrates
+		// only when next written. A legacy v1 row is sealed with the vault key
+		// itself — exactly what a capability must not carry — so it is migrated
+		// now, straight to the current scheme.
+		var krow []byte
+		var kerr error
+		if r.AADVersion == aadVersionRowKey {
+			krow, kerr = vcrypto.DeriveRowKey(vaultKey, s.entryAAD(kindAADEnvVar, name))
+		} else {
+			krow, kerr = s.v3RowKey(vaultKey, projectID, rowEnvID, kindAADEnvVar, name)
+		}
 		if kerr != nil {
 			zeroRowKeys(out)
 			return nil, kerr
 		}
-		if r.AADVersion != aadVersionRowKey {
-			pt, oerr := s.openEntry(vaultKey, r.AADVersion, kindAADEnvVar, name, r.Value)
+		if r.AADVersion == aadVersionVaultKey {
+			pt, oerr := s.openEntry(vaultKey, r.AADVersion, projectID, rowEnvID, kindAADEnvVar, name, r.Value)
 			if oerr != nil {
 				zero(krow)
 				zeroRowKeys(out)
 				return nil, fmt.Errorf("vault: migrate %q: %w", name, oerr)
 			}
-			ct, eerr := vcrypto.EncryptWithAAD(krow, pt, s.entryAAD(kindAADEnvVar, name))
+			ct, eerr := vcrypto.EncryptWithAAD(krow, pt,
+				s.entryAADV3(projectID, rowEnvID, kindAADEnvVar, name))
 			zero(pt)
 			if eerr != nil {
 				zero(krow)
@@ -675,7 +694,7 @@ func (s *Store) captureRowKeys(ctx context.Context, vaultKey []byte, scope Scope
 			}
 			if _, uerr := s.db.ExecContext(ctx,
 				`UPDATE entries SET value=?, aad_version=? WHERE project_id=? AND env_id=? AND kind='env_var' AND name=?`,
-				ct, aadVersionRowKey, projectID, rowEnvID, name); uerr != nil {
+				ct, aadVersionEnvKey, projectID, rowEnvID, name); uerr != nil {
 				zero(krow)
 				zeroRowKeys(out)
 				return nil, uerr
@@ -717,10 +736,15 @@ func (s *Store) OpenEnvVarWithRowKey(ctx context.Context, scope Scope, name stri
 	if !found {
 		return nil, ErrNotFound
 	}
-	if r.AADVersion != aadVersionRowKey {
+	switch r.AADVersion {
+	case aadVersionRowKey:
+		return vcrypto.DecryptWithAAD(rowKey, r.Value, s.entryAAD(kindAADEnvVar, name))
+	case aadVersionEnvKey:
+		return vcrypto.DecryptWithAAD(rowKey, r.Value,
+			s.entryAADV3(r.ProjectID, r.EnvID, kindAADEnvVar, name))
+	default:
 		return nil, fmt.Errorf("vault: %q is not stored under a per-row key (aad_version=%d); re-trust the .byn", name, r.AADVersion)
 	}
-	return vcrypto.DecryptWithAAD(rowKey, r.Value, s.entryAAD(kindAADEnvVar, name))
 }
 
 // IsLocked reports whether the vault is currently locked.
@@ -1011,14 +1035,14 @@ func (s *Store) PutEnvVar(ctx context.Context, scope Scope, name string, value [
 	}
 	defer zero(key)
 
-	ct, err := s.sealEntry(key, kindAADEnvVar, name, value)
-	if err != nil {
-		return fmt.Errorf("vault: encrypt: %w", err)
-	}
-
 	projectID, envID, err := s.scopeIDs(ctx, scope)
 	if err != nil {
 		return err
+	}
+
+	ct, err := s.sealEntry(key, projectID, envID, kindAADEnvVar, name, value)
+	if err != nil {
+		return fmt.Errorf("vault: encrypt: %w", err)
 	}
 
 	now := nowUnix()
@@ -1267,11 +1291,11 @@ func (s *Store) RenameEnvVar(ctx context.Context, scope Scope, oldName, newName 
 	}
 	// The row key is bound to the row identity (name), so a rename re-seals under
 	// the NEW name's key — and opportunistically migrates a legacy v1 row to v2.
-	pt, err := s.openEntry(key, oldVer, kindAADEnvVar, oldName, ctOld)
+	pt, err := s.openEntry(key, oldVer, projectID, envID, kindAADEnvVar, oldName, ctOld)
 	if err != nil {
 		return fmt.Errorf("vault: decrypt during rename: %w", err)
 	}
-	ctNew, err := s.sealEntry(key, kindAADEnvVar, newName, pt)
+	ctNew, err := s.sealEntry(key, projectID, envID, kindAADEnvVar, newName, pt)
 	if err != nil {
 		zero(pt)
 		return fmt.Errorf("vault: encrypt during rename: %w", err)
@@ -1309,41 +1333,112 @@ func (s *Store) entryAAD(kind, name string) []byte {
 const (
 	aadVersionVaultKey = 1 // legacy: the row is sealed directly with the vault key
 	aadVersionRowKey   = 2 // per-row key: vcrypto.DeriveRowKey(vaultKey, row identity)
+	aadVersionEnvKey   = 3 // scope key: row key derived from the (project, env) K_env
 
-	// currentAADVersion is the scheme all new writes use. Per-row keys let the
-	// daemon hand out decryption capability for the specific rows a trusted .byn
-	// allowlists (autonomous exec) without exposing the vault key.
-	currentAADVersion = aadVersionRowKey
+	// currentAADVersion is the scheme all new writes use. Deriving row keys
+	// through a per-(project, env) scope key means a trusted .byn can be granted
+	// a whole scope once, and the daemon can then open entries added later —
+	// under v2 the grant froze the exact set of rows that existed at the time,
+	// so every new variable demanded another re-trust. It also confines a grant
+	// to one project and env; v2 row keys were derived from vault‖kind‖name
+	// alone, so the same name in another scope shared a key.
+	currentAADVersion = aadVersionEnvKey
 )
 
-// sealEntry encrypts an entry value under its per-row key (currentAADVersion).
-// The row identity (entryAAD) is both the AEAD AAD and the row-key derivation
-// context. Caller must hold a non-nil vault key.
-func (s *Store) sealEntry(vaultKey []byte, kind, name string, value []byte) ([]byte, error) {
-	rid := s.entryAAD(kind, name)
-	krow, err := vcrypto.DeriveRowKey(vaultKey, rid)
+// scopeAAD constructs the scope identity bound into K_env: vault_id || 0x1F ||
+// project_id || 0x1F || env_id. Numeric IDs are stable for the life of a row —
+// renaming a project or env does not re-key its entries.
+func (s *Store) scopeAAD(projectID, envID int64) []byte {
+	const sep = 0x1F
+	b := make([]byte, 0, len(s.vaultID)+42)
+	b = append(b, s.vaultID...)
+	b = append(b, sep)
+	b = strconv.AppendInt(b, projectID, 10)
+	b = append(b, sep)
+	b = strconv.AppendInt(b, envID, 10)
+	return b
+}
+
+// rowAAD constructs a v3 row's identity WITHIN its scope: kind || 0x1F || name.
+// The scope is already bound by the K_env this is expanded under, so it is not
+// repeated here.
+func rowAAD(kind, name string) []byte {
+	const sep = 0x1F
+	b := make([]byte, 0, len(kind)+1+len(name))
+	b = append(b, kind...)
+	b = append(b, sep)
+	b = append(b, name...)
+	return b
+}
+
+// EnvKey derives the scope key covering (projectID, envID). It is the unit a
+// trust grant seals: whoever holds it can derive the row key for any entry in
+// that scope, including entries written after the grant, and for no other
+// scope. Callers must zero the returned key.
+func (s *Store) EnvKey(vaultKey []byte, projectID, envID int64) ([]byte, error) {
+	return vcrypto.DeriveEnvKey(vaultKey, s.scopeAAD(projectID, envID))
+}
+
+// v3RowKey derives one row's key by way of its scope key.
+func (s *Store) v3RowKey(vaultKey []byte, projectID, envID int64, kind, name string) ([]byte, error) {
+	kenv, err := s.EnvKey(vaultKey, projectID, envID)
+	if err != nil {
+		return nil, err
+	}
+	defer zero(kenv)
+	return vcrypto.DeriveRowKeyFromEnvKey(kenv, rowAAD(kind, name))
+}
+
+// sealEntry encrypts an entry value under the current scheme: a row key derived
+// from the entry's (project, env) scope key. The full row identity still serves
+// as the AEAD AAD, so a ciphertext cannot be moved between scopes or names.
+// Caller must hold a non-nil vault key.
+func (s *Store) sealEntry(vaultKey []byte, projectID, envID int64, kind, name string, value []byte) ([]byte, error) {
+	krow, err := s.v3RowKey(vaultKey, projectID, envID, kind, name)
 	if err != nil {
 		return nil, err
 	}
 	defer zero(krow)
-	return vcrypto.EncryptWithAAD(krow, value, rid)
+	return vcrypto.EncryptWithAAD(krow, value, s.entryAADV3(projectID, envID, kind, name))
+}
+
+// entryAADV3 binds a v3 ciphertext to its scope as well as its name, so a row
+// cannot be lifted into another project or env even by an attacker who can
+// write the database directly.
+func (s *Store) entryAADV3(projectID, envID int64, kind, name string) []byte {
+	const sep = 0x1F
+	b := s.scopeAAD(projectID, envID)
+	b = append(b, sep)
+	b = append(b, kind...)
+	b = append(b, sep)
+	b = append(b, name...)
+	return b
 }
 
 // openEntry decrypts an entry value, choosing the key by the row's stored
-// aad_version: v1 uses the vault key directly (legacy rows), v2 derives the
-// per-row key. An unknown version is corruption / out-of-band tampering.
-func (s *Store) openEntry(vaultKey []byte, aadVersion int, kind, name string, ct []byte) ([]byte, error) {
-	rid := s.entryAAD(kind, name)
+// aad_version: v1 uses the vault key directly (legacy rows), v2 derives a flat
+// per-row key, v3 derives it through the row's scope key. Older rows stay
+// readable indefinitely — nothing is rewritten until the row is next written.
+// An unknown version is corruption / out-of-band tampering.
+func (s *Store) openEntry(vaultKey []byte, aadVersion int, projectID, envID int64, kind, name string, ct []byte) ([]byte, error) {
 	switch aadVersion {
 	case aadVersionVaultKey:
-		return vcrypto.DecryptWithAAD(vaultKey, ct, rid)
+		return vcrypto.DecryptWithAAD(vaultKey, ct, s.entryAAD(kind, name))
 	case aadVersionRowKey:
+		rid := s.entryAAD(kind, name)
 		krow, err := vcrypto.DeriveRowKey(vaultKey, rid)
 		if err != nil {
 			return nil, err
 		}
 		defer zero(krow)
 		return vcrypto.DecryptWithAAD(krow, ct, rid)
+	case aadVersionEnvKey:
+		krow, err := s.v3RowKey(vaultKey, projectID, envID, kind, name)
+		if err != nil {
+			return nil, err
+		}
+		defer zero(krow)
+		return vcrypto.DecryptWithAAD(krow, ct, s.entryAADV3(projectID, envID, kind, name))
 	default:
 		return nil, fmt.Errorf("vault: unknown aad_version=%d for %q", aadVersion, name)
 	}
@@ -1396,6 +1491,13 @@ type entryRow struct {
 	AADVersion int
 	CreatedAt  int64
 	UpdatedAt  int64
+
+	// ProjectID/EnvID record where the row was actually read from, which for an
+	// inherited lookup is the default env rather than the caller's scope. A v3
+	// row key is derived from that scope, so the read path must use the row's
+	// own ids, not the ones the caller asked for.
+	ProjectID int64
+	EnvID     int64
 }
 
 func (s *Store) fetchEntry(ctx context.Context, projectID, envID int64, kind, name string) (entryRow, bool, error) {
@@ -1404,6 +1506,7 @@ func (s *Store) fetchEntry(ctx context.Context, projectID, envID int64, kind, na
 		`SELECT name, kind, value, aad_version, created_at, updated_at
 		 FROM entries WHERE project_id = ? AND env_id = ? AND kind = ? AND name = ?`,
 		projectID, envID, kind, name).Scan(&r.Name, &r.Kind, &r.Value, &r.AADVersion, &r.CreatedAt, &r.UpdatedAt)
+	r.ProjectID, r.EnvID = projectID, envID
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, false, nil
 	}
@@ -1418,7 +1521,7 @@ func (s *Store) fetchEntry(ctx context.Context, projectID, envID int64, kind, na
 // the caller surfaces verbatim (callers above this layer don't see
 // the raw AEAD).
 func (s *Store) decryptEntry(key []byte, r entryRow, source Source) (Entry, error) {
-	pt, err := s.openEntry(key, r.AADVersion, r.Kind, r.Name, r.Value)
+	pt, err := s.openEntry(key, r.AADVersion, r.ProjectID, r.EnvID, r.Kind, r.Name, r.Value)
 	if err != nil {
 		return Entry{}, fmt.Errorf("vault: decrypt %q: %w", r.Name, err)
 	}
