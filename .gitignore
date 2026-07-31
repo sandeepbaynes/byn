@@ -30,3 +30,5 @@ internaldocs
 /docs/index.html
 /docs/*/index.html
 /docs/*/*/index.html
+# local agent testbed: throwaway test-vault credentials, never commit
+/testbed/TEST-VAULT-PASSWORD
