@@ -60,7 +60,7 @@ func vaultOrDefault(s string) string {
 func runEnvCreate(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("env create", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	name := scope.Env
@@ -92,7 +92,7 @@ func runEnvList(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("env list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -129,7 +129,7 @@ func runEnvDelete(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("env delete", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	name := scope.Env
@@ -170,7 +170,7 @@ func runEnvClear(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	yes := fs.Bool("yes", false, "confirm the deletion (without it, prints a preview and exits non-zero)")
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	target := scope.Env
@@ -212,7 +212,7 @@ func runEnvRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("env rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() != 2 {

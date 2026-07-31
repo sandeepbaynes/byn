@@ -205,6 +205,17 @@ func runExec(args []string, scope cliScope) int {
 	//     the alias is expanded SERVER-side (childArgv[0] is unknown until the
 	//     daemon returns ResolvedArgv). Direct exec only for v1.
 	//   - --no-privsep, or privsep off (the DEFAULT) → LEGACY, byte-for-byte.
+	// An alias silently took the legacy path, so the child ran as the caller
+	// with none of privsep's isolation — the ergonomic form was the unprotected
+	// one. Say so rather than degrade quietly; the direct form is the fix.
+	if privsepOn && scope.SourcePath != "" && isAliasExec {
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Warning:"),
+			dim("alias exec runs without privilege separation — the child runs as you, "+
+				"and other processes at your UID can read its environment."))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("For isolation:"),
+			cyan("byn exec -- <command>")+dim(" (pin it in [exec] actions)"))
+	}
+
 	if privsepOn && scope.SourcePath != "" && !isAliasExec {
 		if rc, handled := runExecPrivsep(client, req, childArgv); handled {
 			return rc

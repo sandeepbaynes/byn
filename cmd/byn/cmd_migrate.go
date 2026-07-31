@@ -62,7 +62,7 @@ func runMigrateWith(args []string, deps migrateDeps, stdout, stderr io.Writer) i
 	fs.SetOutput(stderr)
 	from := fs.String("from", "", "import an external vault from this directory (default: relocate legacy ~/.byn)")
 	force := fs.Bool("force", false, "replace a non-empty destination (refused otherwise)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() > 0 {
