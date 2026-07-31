@@ -8,7 +8,7 @@ ordinary work*, not while hunting for bugs.
 
 ## Status
 
-Items 4–8 are **fixed** in commit `8b9efa5`; each is marked inline below.
+Items 4–8 are **fixed** in `8b9efa5`, item 9 in `3c229c5`; each is marked inline.
 Items 1–3 and the build-artifact trap are architectural and are what byn v2
 exists to solve — see the plan.
 
@@ -85,6 +85,24 @@ a directory fine. Only `byn trust diff ./.byn` works.
 Asking for help fails with `auth: not a terminal`. Documentation should never
 need authentication.
 
+### 9. Killing `byn exec` left orphaned servers holding ports — FIXED
+
+Found by running example-project's api dev server under `byn exec` and killing
+the wrapper. Two `_byn-exec` processes survived, still bound to ports 8083 and
+8583, invisible to `byn ps`, and unkillable by the owner (EPERM across the UID
+boundary). Recovery needed `byn-exec-helper --kill-pgrp` by hand.
+
+Cause: the helper sets pdeathsig *after* its UID drop (correct — a credential
+change clears it), but pdeathsig is also cleared on fork, so it only ever
+reaches the process the helper exec'd into. `pnpm → tsx watch → node` means the
+real server is a grandchild and outlives everything.
+
+Fixed in `3c229c5`: the wrapper sweeps its own process group through the helper
+on exit — signal path and after `Wait` — skipping the sweep unless it leads the
+group, so a failed `Setpgid` cannot aim the signal at the caller's shell job.
+This is the same class of bug the sandbox spike hit, and it is why
+example-project grew ~100 lines of kill-wrapper shell.
+
 ## The build-artifact trap, reproduced in two commands
 
 `byn exec -- ./build.sh` created `.next/` and `node_modules/.vite/` owned by
@@ -127,3 +145,6 @@ Adds requirements the plan did not have:
   non-interactive path is broken, which alone explains a lot of agent pain.
 - **Aliases must not be a security downgrade** — same enforcement on every
   exec route, or refuse the route.
+- **The wrapper's lifetime must bound the whole subtree** (#9). pdeathsig
+  cannot express this; v2's PID-namespace sandbox gets it from the kernel,
+  since killing pid 1 of a namespace takes everything in it.
