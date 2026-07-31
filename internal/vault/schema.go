@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -80,6 +81,8 @@ var schemaStatements = []string{
 		name        TEXT    NOT NULL,
 		value       BLOB    NOT NULL,
 		aad_version INTEGER NOT NULL DEFAULT 1,
+		lamport       INTEGER NOT NULL DEFAULT 0,
+		origin_device TEXT,
 		deleted_at  INTEGER,
 		require_2fa INTEGER NOT NULL DEFAULT 0 CHECK (require_2fa IN (0,1)),
 		created_at  INTEGER NOT NULL,
@@ -284,7 +287,7 @@ func bootstrapDefaults(ctx context.Context, db *sql.DB) error {
 
 // verifySchema confirms an existing DB is at a version this binary
 // understands. Future versions will add migration logic here.
-func verifySchema(ctx context.Context, db *sql.DB) error {
+func verifySchema(ctx context.Context, db *sql.DB, dbPath string) error {
 	var raw string
 	err := db.QueryRowContext(ctx,
 		`SELECT value FROM meta WHERE key = ?`, metaKeySchemaVersion).Scan(&raw)
@@ -304,15 +307,100 @@ func verifySchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("%w: on-disk version %d > supported %d (downgrade?)", ErrSchemaUnknown, n, schemaVersion)
 	}
 	if n < schemaVersion {
-		// v3 → v4: replace sha256_plain (unkeyed oracle) with sha256_hmac.
-		if n == 3 && schemaVersion == 4 {
-			if merr := migrateV3toV4(ctx, db); merr != nil {
-				return fmt.Errorf("vault: migrate v3→v4: %w", merr)
-			}
-			return nil
+		// Migrations run in sequence so a v3 vault reaches the current version
+		// in one open, rather than only the single step the binary happens to
+		// name. Each step bumps meta.schema_version itself, so an interrupted
+		// run resumes from wherever it stopped.
+		// Upgrading is a one-way door: an older binary refuses a newer vault.
+		// Snapshot first, through SQLite's own backup path rather than a file
+		// copy, so a WAL mid-checkpoint cannot produce a torn backup — and so a
+		// migration that fails halfway leaves the user something to go back to.
+		if bak, berr := backupBeforeMigrate(ctx, db, dbPath, n); berr != nil {
+			return fmt.Errorf("vault: pre-migration backup: %w", berr)
+		} else if bak != "" {
+			defer func() { _ = os.Chmod(bak, 0o600) }()
 		}
-		// Any other version mismatch is unsupported (pre-1.0 waiver).
-		return fmt.Errorf("%w: on-disk version %d < supported %d (pre-1.0: re-init the vault)", ErrSchemaUnknown, n, schemaVersion)
+		for n < schemaVersion {
+			step, ok := schemaMigrations[n]
+			if !ok {
+				return fmt.Errorf("%w: on-disk version %d < supported %d (pre-1.0: re-init the vault)",
+					ErrSchemaUnknown, n, schemaVersion)
+			}
+			if merr := step(ctx, db); merr != nil {
+				return fmt.Errorf("vault: migrate v%d→v%d: %w", n, n+1, merr)
+			}
+			n++
+		}
+		return nil
+	}
+	return nil
+}
+
+// backupBeforeMigrate writes a verified snapshot of the vault next to it,
+// named for the version being left behind. VACUUM INTO is SQLite's supported
+// snapshot primitive: it reads through the same connection (so WAL content is
+// included) and refuses to overwrite an existing file, which makes a second
+// attempt after a crash non-destructive. Returns the path written, or "" when a
+// snapshot for this version already exists.
+func backupBeforeMigrate(ctx context.Context, db *sql.DB, dbPath string, fromVersion int) (string, error) {
+	if dbPath == "" { // in-memory or test DB with no file to snapshot
+		return "", nil
+	}
+	bak := fmt.Sprintf("%s.v%d.bak", dbPath, fromVersion)
+	if _, err := os.Stat(bak); err == nil {
+		return "", nil // an earlier attempt already snapshotted this version
+	}
+	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, bak); err != nil {
+		return "", err
+	}
+	// Confirm the snapshot is readable and self-consistent before touching the
+	// original. A backup nobody checked is not a backup.
+	check, err := openDB(ctx, bak)
+	if err != nil {
+		return "", fmt.Errorf("reopen snapshot: %w", err)
+	}
+	defer func() { _ = check.Close() }()
+	var result string
+	if err := check.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&result); err != nil {
+		return "", fmt.Errorf("verify snapshot: %w", err)
+	}
+	if result != "ok" {
+		return "", fmt.Errorf("snapshot failed integrity check: %s", result)
+	}
+	return bak, nil
+}
+
+// schemaMigrations maps an on-disk version to the step that upgrades it to the
+// next one.
+var schemaMigrations = map[int]func(context.Context, *sql.DB) error{
+	3: migrateV3toV4,
+	4: migrateV4toV5,
+}
+
+// migrateV4toV5 adds the per-entry sync columns. lamport plus origin_device
+// order writes across machines without a clock both sides trust, and they are
+// added now — ahead of sync itself — so entries written by this version are
+// already orderable when a peer appears. Existing rows default to lamport 0 and
+// a NULL origin, which reads as "written before this vault ever synced".
+//
+// The row-key scheme is deliberately NOT rewritten here: entries keep their
+// recorded aad_version and stay readable, and only the next write to a row
+// re-seals it under the current scheme.
+func migrateV4toV5(ctx context.Context, db *sql.DB) error {
+	for _, stmt := range []string{
+		`ALTER TABLE entries ADD COLUMN lamport INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE entries ADD COLUMN origin_device TEXT`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			// A partially-applied migration (interrupted between the two
+			// ALTERs) must be resumable, so an existing column is not an error.
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("add sync columns: %w", err)
+			}
+		}
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE meta SET value = '5' WHERE key = 'schema_version'`); err != nil {
+		return fmt.Errorf("bump schema version: %w", err)
 	}
 	return nil
 }
