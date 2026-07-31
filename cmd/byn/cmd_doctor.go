@@ -23,7 +23,7 @@ func runDoctor(args []string, _ cliScope) int {
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	repair := fs.Bool("repair", false, "apply fixes for failing provisioning/health checks (requires root)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()

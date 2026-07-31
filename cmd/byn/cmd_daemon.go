@@ -100,7 +100,7 @@ func runDaemonRestart(args []string) int {
 func runDaemonReload(args []string) int {
 	fs := flag.NewFlagSet("daemon reload", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -158,7 +158,7 @@ func runDaemonStart(args []string) int {
 	fs.SetOutput(os.Stderr)
 	foreground := fs.Bool("foreground", false, "run in foreground (do not detach)")
 	allowRoot := fs.Bool("allow-root", false, "override the refusal to run as root (NOT recommended)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -297,7 +297,7 @@ func waitForSocket(dir string, timeout time.Duration) bool {
 func runDaemonStop(args []string) int {
 	fs := flag.NewFlagSet("daemon stop", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -351,7 +351,7 @@ func runDaemonStatus(args []string) int {
 	fs := flag.NewFlagSet("daemon status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit StatusResp as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()

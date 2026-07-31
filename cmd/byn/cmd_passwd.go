@@ -23,7 +23,7 @@ func runPasswd(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("passwd", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "read current then new password from stdin (two lines)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()

@@ -32,7 +32,7 @@ func runUninstallWith(args []string, euid func() int, getenv func(string) string
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	purge := fs.Bool("purge", false, "also delete the vault and all secrets (no confirmation prompt)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() > 0 {

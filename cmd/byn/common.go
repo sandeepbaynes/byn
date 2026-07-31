@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,51 @@ const (
 	exitDaemonDown = 2
 	exitDaemonErr  = 3
 )
+
+// parseFlags parses args allowing flags to appear after positional arguments.
+//
+// Go's flag package stops at the first non-flag argument, so `byn put NAME
+// --password-stdin` left the flag unparsed and passed it on as the secret
+// value — the form byn's own documentation recommends. Anything after a bare
+// "--" is left alone, and args containing one are passed through untouched so
+// separator-based commands keep their exact semantics.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	for _, a := range args {
+		if a == "--" {
+			return fs.Parse(args)
+		}
+	}
+
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if len(a) < 2 || a[0] != '-' {
+			positional = append(positional, a)
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			name = name[:eq]
+			flags = append(flags, a)
+			continue
+		}
+		f := fs.Lookup(name)
+		// An unknown flag is forwarded as-is so fs.Parse reports it. A known
+		// non-boolean flag also consumes the next token as its value.
+		if f != nil && !isBoolFlag(f) && i+1 < len(args) {
+			flags = append(flags, a, args[i+1])
+			i++
+			continue
+		}
+		flags = append(flags, a)
+	}
+	return fs.Parse(append(flags, positional...))
+}
+
+func isBoolFlag(f *flag.Flag) bool {
+	bf, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && bf.IsBoolFlag()
+}
 
 // defaultDir returns the active data root (internal/paths): the fixed per-OS
 // system path once an install is provisioned there, else the legacy per-user

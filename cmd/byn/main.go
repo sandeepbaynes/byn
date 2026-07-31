@@ -143,6 +143,18 @@ func run(args []string) int {
 			}
 		}
 	}
+	// Nested subcommands ("byn vault init help", "byn trust diff help") never
+	// reached wantsHelp, which only fires on a lone "help" token, so they ran
+	// the real command and died on auth. Documentation must never require a
+	// terminal. Restricted to the subcommand-bearing verbs so that value-taking
+	// commands keep treating "help" as a possible secret name.
+	switch cmd {
+	case "vault", "project", "env", "trust", "audit", "daemon":
+		if n := len(helpArgs); n > 1 && helpArgs[n-1] == "help" {
+			return printCommandHelp(cmd)
+		}
+	}
+
 	if wantsHelp(helpArgs) {
 		return printCommandHelp(cmd)
 	}

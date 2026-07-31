@@ -52,7 +52,7 @@ func runVaultList(args []string) int {
 	fs := flag.NewFlagSet("vault list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -89,7 +89,7 @@ func runVaultDelete(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("vault delete", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	name := scope.Vault
@@ -129,7 +129,7 @@ func runVaultRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("vault rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	var oldName, newName string

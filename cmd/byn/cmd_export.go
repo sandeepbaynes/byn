@@ -34,7 +34,7 @@ func runExport(args []string, scope cliScope) int {
 	output := fs.String("output", "-", "output path or '-' for stdout")
 	pwStdin := fs.Bool("password-stdin", false,
 		"read the master password from stdin for non-interactive authorization")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 
