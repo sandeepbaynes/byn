@@ -677,6 +677,22 @@ func invokeExecHelper(token []byte) int {
 	// Signal() returns EPERM. We cannot forward in that case, but we CAN exit
 	// this wrapper — byn-exec-helper sets pdeathsig=SIGTERM after its UID drop,
 	// so the kernel delivers SIGTERM to the exec'd target when this parent exits.
+	// pdeathsig only reaches the process the helper exec'd into; it is cleared
+	// on fork, so grandchildren (a dev server's `tsx watch` → node, say) outlive
+	// this wrapper, keep their ports bound, and are invisible to `byn ps`. The
+	// owner cannot signal them either — they are _byn-exec. Sweeping the process
+	// group through the helper on the way out is what actually reaps the subtree.
+	reapGroup := func() {
+		pgid, err := syscall.Getpgid(os.Getpid())
+		// Only sweep a group this wrapper leads. If Setpgid above failed we are
+		// still in the caller's group, and signalling it would take out the
+		// user's shell job rather than our child.
+		if err != nil || pgid != os.Getpid() {
+			return
+		}
+		_ = exec.Command(helperPath, "--kill-pgrp", strconv.Itoa(pgid)).Run() //nolint:gosec // operator-installed helper at a fixed path
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
@@ -684,8 +700,9 @@ func invokeExecHelper(token []byte) int {
 		for s := range sigCh {
 			if cmd.Process != nil {
 				if err := cmd.Process.Signal(s); errors.Is(err, syscall.EPERM) {
-					// Privsep child: can't signal across UID boundary. Exit so
-					// pdeathsig kills the target.
+					// Privsep child: can't signal across the UID boundary.
+					// Reap the whole group, then exit.
+					reapGroup()
 					if sig, ok := s.(syscall.Signal); ok {
 						os.Exit(128 + int(sig))
 					}
@@ -696,6 +713,9 @@ func invokeExecHelper(token []byte) int {
 	}()
 
 	werr := cmd.Wait()
+	// The direct child is gone; anything it forked is not. Sweep before
+	// returning so the wrapper's lifetime really does bound the subtree.
+	reapGroup()
 	if werr == nil {
 		return 0
 	}
