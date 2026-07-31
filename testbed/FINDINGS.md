@@ -6,6 +6,24 @@ Recorded 2026-07-30 by driving byn from a non-TTY shell against a throwaway
 The point of this log is that everything below was hit *while trying to do
 ordinary work*, not while hunting for bugs.
 
+## Status
+
+Items 4–8 are **fixed** in commit `8b9efa5`; each is marked inline below.
+Items 1–3 and the build-artifact trap are architectural and are what byn v2
+exists to solve — see the plan.
+
+**Verifying the fixes needs the new binary installed**, because the action
+resolution runs daemon-side:
+
+```sh
+sudo make install && sudo systemctl restart byn.service
+cd testbed && printf '%s' "$(cat TEST-VAULT-PASSWORD)" | byn trust --password-stdin .
+byn exec -- ./build.sh      # must run; before the fix: "command not pinned"
+```
+
+`testbed/.byn` deliberately pins only relative paths, so it fails against an
+old daemon and passes against a fixed one.
+
 ## Blockers that stop an agent dead
 
 ### 1. One `.byn` edit blocks every command in the project
@@ -30,7 +48,7 @@ re-authentication, so the agent must hold the master password to work at all
 
 ## Bugs (not just friction)
 
-### 4. Flags placed after positional args are swallowed as positionals
+### 4. Flags placed after positional args are swallowed as positionals — FIXED
 - `byn trust . --password-stdin` → tries to trust a file literally named
   `--password-stdin`.
 - `byn put NAME --password-stdin` → treats `--password-stdin` as the secret
@@ -41,7 +59,7 @@ re-authentication, so the agent must hold the master password to work at all
 Following the manual verbatim fails, and the error blames the user for a
 security mistake they did not make. Flags must precede positionals.
 
-### 5. Relative-path `[exec] actions` silently never match under privsep
+### 5. Relative-path `[exec] actions` silently never match under privsep — FIXED
 `.byn` pinned `./build.sh`; `byn exec -- ./build.sh` was refused with
 "command not pinned". `cmd/byn/cmd_exec.go:551` rewrites `childArgv[0]` to an
 absolute path before the daemon matches actions, so the pattern the user
@@ -49,7 +67,7 @@ wrote can never match. Only after adding the absolute path did it run. The
 docs' own examples are relative-looking, and nothing warns at trust time that
 a pinned action is unmatchable.
 
-### 6. Alias exec silently bypasses privsep
+### 6. Alias exec silently bypasses privsep — WARNS NOW (full fix deferred to v2)
 `byn exec build` (alias → `./build.sh`) ran as **uid 1000**, the real user.
 The identical script via `byn exec -- <abs>/build.sh` ran as **uid 962**
 (`_byn-exec`). Aliases take the legacy in-process path
@@ -58,12 +76,12 @@ form is the unprotected one, with no warning — and because relative-path
 actions fail to match (#5), aliases are exactly what a frustrated user
 reaches for.
 
-### 7. The remediation command byn prints rejects the argument style byn accepts
+### 7. The remediation command byn prints rejects the argument style byn accepts — FIXED
 The error says to run `byn trust diff <path>`. `byn trust diff .` answers
 "is not trusted" and suggests `byn trust <dir>` — while `byn trust .` accepts
 a directory fine. Only `byn trust diff ./.byn` works.
 
-### 8. `byn vault init help` requires a terminal
+### 8. `byn vault init help` requires a terminal — FIXED
 Asking for help fails with `auth: not a terminal`. Documentation should never
 need authentication.
 

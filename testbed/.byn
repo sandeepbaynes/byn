@@ -9,10 +9,7 @@ actions = [
     "./app.sh {{args}}",
     "./build.sh",
     "./server.sh",
-    "/home/sandeepbaynes/Documents/code-and-stuff/byn/testbed/app.sh {{args}}",
-    "/home/sandeepbaynes/Documents/code-and-stuff/byn/testbed/build.sh",
-    "/home/sandeepbaynes/Documents/code-and-stuff/byn/testbed/server.sh",
-    "/home/sandeepbaynes/Documents/code-and-stuff/byn/testbed/clean.sh",
+    "./clean.sh",
     "env",
 ]
 
