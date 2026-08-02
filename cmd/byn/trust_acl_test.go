@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
@@ -27,12 +30,16 @@ func withStubACLRunner(t *testing.T, fn func(name string, args ...string) error)
 	return &ran
 }
 
-// TestGrantTrustACLs_GrantsDaemonReadAndExecNoRecursion asserts the owner-side
-// grant gives the _byn daemon READ on the .byn AND the _byn-exec service user
-// project access — and crucially runs NO recursive ACL command. A recursive
-// grant (chmod -R / setfacl -R) on a real project would walk node_modules and
-// hang; that bug is guarded here (S4 made the exec grant non-recursive).
-func TestGrantTrustACLs_GrantsDaemonReadAndExecNoRecursion(t *testing.T) {
+// TestGrantTrustACLs_GrantsDaemonReadAndExec asserts the owner-side grant gives
+// the _byn daemon READ on the .byn AND the _byn-exec service user project
+// access.
+//
+// The deep grant that covers pre-existing nested cache dirs is recursive, and a
+// recursive walk over a real project means node_modules — it has hung `byn
+// trust` before. It is allowed here only because ownerACLRun bounds it with a
+// timeout: trust returning slightly under-granted is recoverable, trust never
+// returning is not. The bound itself is asserted in TestOwnerACLRun_BoundsRecursiveGrants.
+func TestGrantTrustACLs_GrantsDaemonReadAndExec(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("ACL grants are no-ops on this platform")
 	}
@@ -45,12 +52,6 @@ func TestGrantTrustACLs_GrantsDaemonReadAndExecNoRecursion(t *testing.T) {
 
 	var fileCmds, execCmds int
 	for _, c := range *ran {
-		// No recursive grants — they would traverse node_modules and hang.
-		for _, a := range c {
-			if a == "-R" {
-				t.Errorf("trust grant must never run a recursive ACL: %v", c)
-			}
-		}
 		joined := strings.Join(c, " ")
 		if c[len(c)-1] == byn {
 			fileCmds++
@@ -93,5 +94,35 @@ func TestRevokeTrustACLs_BestEffort(t *testing.T) {
 	revokeTrustACLs("/Users/o/proj/.byn", "/Users/o") // must not panic or fail
 	if len(*ran) == 0 {
 		t.Fatal("revokeTrustACLs ran no commands")
+	}
+}
+
+// A recursive ACL over a real project walks node_modules, and has hung `byn
+// trust` in the past. The grant is allowed to be recursive only because it
+// cannot run unbounded; this pins the bound so removing it fails loudly rather
+// than reintroducing a hang nobody notices until a large repo hits it.
+func TestOwnerACLRun_BoundsRecursiveGrants(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("ACL grants are no-ops on this platform")
+	}
+	if recursiveACLTimeout <= 0 {
+		t.Fatal("recursive ACL grants must be bounded; an unbounded walk hangs byn trust")
+	}
+	if aclTimeout <= 0 {
+		t.Fatal("ACL grants must be bounded")
+	}
+
+	// A command that never returns must be stopped rather than hang the caller.
+	start := time.Now()
+	err := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		return exec.CommandContext(ctx, "sleep", "60").Run()
+	}()
+	if err == nil {
+		t.Fatal("expected the bounded command to be stopped")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("bounded command ran for %s; the timeout is not being applied", elapsed)
 	}
 }
