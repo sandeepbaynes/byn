@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/sandeepbaynes/byn/internal/approval"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/vault"
 )
 
 func approvalEntry(r approval.Request) ipc.ApprovalEntry {
@@ -67,12 +69,17 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 				"approving grants authority, so it needs the master password",
 				"byn approve "+req.ID)
 		}
-		st, _, errEnv := d.scopeFor(env.ID, ipc.Scope{Vault: pending.Vault})
+		vaultName := defaultIfEmpty(pending.Vault, vault.DefaultVaultName)
+		st, errEnv := d.storeForVault(env.ID, vaultName)
 		if errEnv != nil {
 			return errEnv
 		}
-		if verr := st.VerifyPassword(req.Password); verr != nil {
-			return mapVaultErr(env.ID, verr)
+		// A recorded decision is not the point — the grant is. Marking the
+		// request approved without re-granting would leave the .byn exactly as
+		// it was, so the next exec would raise the same question again and the
+		// caller would never get past it.
+		if errEnv := d.applyTrustApproval(ctx, env.ID, vaultName, st, pending, req.Password); errEnv != nil {
+			return errEnv
 		}
 	}
 
@@ -89,4 +96,36 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 		return internalErr(env.ID, rerr)
 	}
 	return resp
+}
+
+// applyTrustApproval re-grants the .byn a widening request was raised for, so
+// approving actually changes what the caller can do. It runs the same
+// authorization and record-writing path `byn trust` does, which keeps one
+// definition of what a grant means rather than a second, weaker one reachable
+// through the queue.
+func (d *Daemon) applyTrustApproval(ctx context.Context, id, vaultName string,
+	st *vault.Store, pending approval.Request, password []byte) *ipc.Envelope {
+
+	if pending.Kind != approval.KindTrustWidening {
+		return nil
+	}
+	vkKey, le := d.authorizeTrustGrant(ctx, id, vaultName, st, password, nil)
+	if le != nil {
+		return le
+	}
+	defer zeroBytes(vkKey)
+
+	body, _, rerr := readBynFile(pending.Subject)
+	if rerr != nil {
+		return ipc.NewError(id, ipc.CodeBadRequest,
+			fmt.Sprintf("re-reading %s: %v", pending.Subject, rerr),
+			"the file changed or was removed since the request was raised")
+	}
+	if _, _, _, _, terr := d.putTrustRecordWithKey(
+		ctx, st, vaultName, pending.Subject, body, vkKey, password); terr != nil {
+		return ipc.NewError(id, ipc.CodeBadRequest,
+			fmt.Sprintf("granting %s: %v", pending.Subject, terr),
+			"fix the .byn and raise the request again")
+	}
+	return nil
 }
