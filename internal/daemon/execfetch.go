@@ -248,9 +248,18 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		// request for new authority — blocking on them stopped every command in
 		// the project until a human retyped the master password.
 		if status == trust.VerifyChanged {
-			if effective, _, ok := reconcileChanged(rec, body); ok {
+			effective, delta, ok := reconcileChanged(rec, body)
+			switch {
+			case ok:
 				status = trust.VerifyTrusted
 				rec = applyPolicy(rec, effective)
+			case delta.NeedsApproval():
+				// Genuinely asking for more than was granted. Raise it for a
+				// human and tell the caller where to look, instead of dying on
+				// a password prompt no agent can answer.
+				le := d.raiseTrustApproval(ctx, id, canon, vaultName, req, delta)
+				auditExec(le)
+				return nil, nil, false, false, false, le
 			}
 		}
 		if status != trust.VerifyTrusted {

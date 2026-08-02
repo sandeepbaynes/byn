@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sandeepbaynes/byn/internal/approval"
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/config"
@@ -181,6 +182,12 @@ type Daemon struct {
 	// fp-MAC layer degrades; the vault-key MAC still protects records).
 	fpMACKey []byte
 
+	// approvals holds decisions a human still owes. It is separate from the
+	// vault so a request can be raised, listed, and answered while the vault is
+	// locked — the whole point is that an agent blocked on consent does not have
+	// to stall until someone unlocks anything.
+	approvals *approval.Store
+
 	// spawner runs exec children SERVER-side under privilege separation (NU-5):
 	// the helper drops the child to the _byn-exec service user. It is non-nil
 	// ONLY when privsep is provisioned (`byn setup` created the service users +
@@ -316,6 +323,7 @@ func New(cfg Config) (*Daemon, error) {
 	d.authProviders.Register(&passkeyProvider{d: d})
 	// Trust-store machine-fingerprint MAC key, derived once. A failure here
 	// degrades only the fp-MAC layer (the vault-key MAC still protects records).
+	d.approvals = approval.Open(d.cfg.Dir)
 	if id, err := machineid.ID(); err == nil {
 		d.fpMACKey = id
 	} else {
