@@ -44,8 +44,9 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 			continue
 		}
 		name := strings.TrimLeft(a, "-")
-		if eq := strings.IndexByte(name, '='); eq >= 0 {
-			name = name[:eq]
+		// A --flag=value token is self-contained: forward it whole and let
+		// fs.Parse split it, rather than looking the name up here.
+		if strings.IndexByte(name, '=') >= 0 {
 			flags = append(flags, a)
 			continue
 		}
