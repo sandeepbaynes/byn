@@ -308,6 +308,10 @@ func runPut(args []string, scope cliScope) int {
 		return exitErr
 	}
 
+	// Storing a first secret should not require knowing a vault has to exist
+	// first; if it does not, the retry helper creates it and runs this again.
+	setFirstRunTarget(newClient(dir, scope.Vault), scope.Vault)
+
 	// putCall issues the IPC put with the given password (nil = no auth yet).
 	putCall := func(pw []byte) error {
 		return newClient(dir, scope.Vault).Call(ipc.OpPut,

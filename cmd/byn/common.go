@@ -193,6 +193,17 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 		return exitOK
 	}
 
+	// A first command against a vault that does not exist yet is not a failure
+	// to report — it is a vault the user has just asked for. Create it (with a
+	// password they choose) and run what they actually typed.
+	if isNotInitErr(err) {
+		if c := firstRunClient; c != nil && offerVaultInit(c, firstRunVault, jsonMode) {
+			if err = call(nil); err == nil {
+				return exitOK
+			}
+		}
+	}
+
 	locked := isLockedErr(err)
 	authRequired := isAuthRequiredErr(err)
 
@@ -271,4 +282,19 @@ func authorizingPasswordWithLeadIn(pwStdin bool, leadIn string) (pw []byte, wipe
 		return nil, func() {}, err
 	}
 	return buf.Bytes(), buf.Wipe, nil
+}
+
+// firstRunClient / firstRunVault let mutateWithAuthRetry reach the daemon to
+// create a missing vault. They are set by the command handlers that already
+// build a client, rather than threaded through every call site, because the
+// retry helper is shared by a dozen commands whose signatures would otherwise
+// all have to change for this one case.
+var (
+	firstRunClient *ipc.Client
+	firstRunVault  string
+)
+
+// setFirstRunTarget records which client and vault a lazy init should use.
+func setFirstRunTarget(c *ipc.Client, vault string) {
+	firstRunClient, firstRunVault = c, vault
 }
