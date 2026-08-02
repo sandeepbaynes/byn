@@ -849,3 +849,53 @@ func TestExecFetchPresentationChange_KeepsRelativeActionsMatching(t *testing.T) 
 		t.Fatalf("relative action stopped matching after a comment edit: %v", err)
 	}
 }
+
+// Authority changing hands has to be reviewable after the fact. A raised
+// request and the decision that answers it are both security events — the
+// first records that something asked for more than it had, the second records
+// who granted it and through which surface.
+func TestApprovals_AreAudited(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+	putVar(t, c, ipc.Scope{}, "EXTRA", []byte("v2"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	writeFileContent(t, byn, "[scope]\n\n[exec]\nenv = [\"SECRET\", \"EXTRA\"]\nactions = [\"true\"]\n")
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}}); err == nil {
+		t.Fatal("widening was not queued")
+	}
+
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	var out ipc.ApprovalDecideResp
+	if derr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: list.Entries[0].ID, Approve: true, Password: pw, Via: "portal",
+	}, &out); derr != nil {
+		t.Fatalf("decide: %v", derr)
+	}
+
+	var tail ipc.AuditTailResp
+	if aerr := c.Call(ipc.OpAuditTail, ipc.AuditTailReq{Vault: "default", Lines: 50}, &tail); aerr != nil {
+		t.Fatalf("audit tail: %v", aerr)
+	}
+	var sawRaise, sawDecision bool
+	for _, e := range tail.Events {
+		if strings.Contains(e.Command, "approval raised") {
+			sawRaise = true
+		}
+		if strings.Contains(e.Command, "approved via portal") {
+			sawDecision = true
+		}
+	}
+	if !sawRaise {
+		t.Error("the raised request is not in the audit log")
+	}
+	if !sawDecision {
+		t.Error("the decision is not in the audit log, or does not record where it was made")
+	}
+}
