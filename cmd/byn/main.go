@@ -369,7 +369,14 @@ Diagnostics:
 Trust (.byn TOFU):
   trust [PATH]               Approve a .byn file (default: ./.byn)
   trust list                 List trusted paths (also: --json)
+  trust diff [PATH]          Show what changed since the file was trusted
   untrust [PATH]             Revoke trust (default: ./.byn)
+
+Approvals (decisions a .byn is waiting on):
+  approve                    List what is waiting (also: --json)
+  approve <id>...            Grant it (asks for the master password)
+  approve --deny <id>...     Refuse it (no password: refusing grants nothing)
+  approve --all              Answer every pending request in one go
 
 System (run with sudo — these manage the _byn service):
   setup                      Provision the _byn/_byn-exec service users

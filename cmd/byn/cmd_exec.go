@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/privsep"
@@ -75,6 +76,13 @@ func runExec(args []string, scope cliScope) int {
 	// used only if FREE — otherwise byn fails with a clear message instead of
 	// letting node die with EADDRINUSE. `=0` lets each process self-allocate.
 	// Injected via NODE_OPTIONS so it reaches node/tsx/etc.
+	// --wait-approval lets a caller that would rather block do so, instead of
+	// polling: a pending decision is answered by a person on human time, and
+	// some callers prefer to sit on it. The default stays non-blocking, because
+	// a caller that cannot be interrupted must not be made to wait by default.
+	args, waitApproval, hasWait := stripWaitApproval(args)
+	_ = hasWait
+
 	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
 	if hasInspect {
 		if err := applyInspect(inspectBrk, inspectVal); err != nil {
@@ -226,9 +234,33 @@ func runExec(args []string, scope cliScope) int {
 
 	var fetched ipc.ExecFetchResp
 	callErr := client.Call(ipc.OpExecFetch, req, &fetched)
+
+	// A queued decision is answered by a person, on human time. A caller that
+	// would rather block than poll can say so; the default stays non-blocking,
+	// because a caller that must not be interrupted should not be made to wait.
+	if hasWait && isApprovalPendingErr(callErr) {
+		if again, ok := waitForApproval(client, req, waitApproval, callErr); ok {
+			fetched, callErr = again, nil
+		} else {
+			callErr = ok2err(callErr)
+		}
+	}
+
 	switch {
 	case callErr == nil:
 		// success — fall through
+	case isApprovalPendingErr(callErr):
+		// Not a refusal: a person has been asked, and retrying after they
+		// answer will succeed. Report it as its own thing so a caller does not
+		// treat it as permanent failure.
+		var em *ipc.ErrResponse
+		if errors.As(callErr, &em) {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+			if em.Recover != "" {
+				fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Try:"), cyan(em.Recover))
+			}
+		}
+		return exitApprovalPending
 	case isAuthRequiredErr(callErr):
 		// Auth_required fires for two cases:
 		//   (a) ad-hoc exec (Path == "") with no session present
@@ -832,4 +864,96 @@ func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s pins NO specific actions — \"*\" lets ANY command run re-auth-free.", sourcePath)))
 	}
+}
+
+// stripWaitApproval removes the byn-exec `--wait-approval[=DURATION]` flag from
+// the byn-owned part of args, using the same boundary rule as stripNoPrivsep:
+// tokens at or after `--` (or a bare alias name) belong to the child.
+//
+// Without it, a caller that hits a pending decision gets an id and exits, which
+// is right for anything that must not block. A caller that would rather wait —
+// a one-shot script a person is watching — can ask to.
+func stripWaitApproval(args []string) ([]string, time.Duration, bool) {
+	out := make([]string, 0, len(args))
+	wait := time.Duration(0)
+	found := false
+	boundary := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if boundary {
+			out = append(out, a)
+			continue
+		}
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		switch {
+		case a == "--wait-approval":
+			found, wait = true, defaultApprovalWait
+			// An explicit duration may follow as its own token.
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				if d, err := time.ParseDuration(args[i+1]); err == nil {
+					wait = d
+					i++
+				}
+			}
+		case strings.HasPrefix(a, "--wait-approval="):
+			found = true
+			wait = defaultApprovalWait
+			if d, err := time.ParseDuration(strings.TrimPrefix(a, "--wait-approval=")); err == nil {
+				wait = d
+			}
+		default:
+			out = append(out, a)
+		}
+	}
+	return out, wait, found
+}
+
+// defaultApprovalWait is how long --wait-approval waits when given no duration.
+// It is a couple of minutes rather than seconds: the thing being waited on is a
+// person noticing a request, and a timeout shorter than that just reports
+// failure for something that was going to succeed.
+const defaultApprovalWait = 2 * time.Minute
+
+// exitApprovalPending is returned when the run needs a decision nobody has made
+// yet. It is deliberately distinct from the generic failure code: the work was
+// not refused, and a caller that retries after the decision lands will succeed.
+const exitApprovalPending = 75 // EX_TEMPFAIL: try again later
+
+func isApprovalPendingErr(err error) bool {
+	var er *ipc.ErrResponse
+	return errors.As(err, &er) && er.Code == ipc.CodeApprovalPending
+}
+
+// ok2err returns the original error unchanged; it exists so the wait path reads
+// as "either we got through, or we are back where we started".
+func ok2err(err error) error { return err }
+
+// waitForApproval re-attempts the fetch until the decision lands or the budget
+// runs out. It polls rather than holding a connection open, so a daemon restart
+// mid-wait costs one interval instead of the whole wait.
+func waitForApproval(client *ipc.Client, req ipc.ExecFetchReq, budget time.Duration, first error) (ipc.ExecFetchResp, bool) {
+	var em *ipc.ErrResponse
+	if errors.As(first, &em) {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+	}
+	deadline := time.Now().Add(budget)
+	const interval = 2 * time.Second
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		var resp ipc.ExecFetchResp
+		err := client.Call(ipc.OpExecFetch, req, &resp)
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "%s\n", dim("approved — continuing"))
+			return resp, true
+		}
+		if !isApprovalPendingErr(err) {
+			return ipc.ExecFetchResp{}, false // something else went wrong
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", dim("still waiting after "+budget.String()+" — giving up for now"))
+	return ipc.ExecFetchResp{}, false
 }

@@ -1614,6 +1614,80 @@ SEE ALSO
        byn(1) — discovery walk + .byn file format
 `,
 
+	"approve": `NAME
+       byn-approve - answer decisions a .byn is waiting on
+
+SYNOPSIS
+       byn approve [--json]
+       byn approve [--password-stdin] ID...
+       byn approve --deny ID...
+       byn approve --all [--password-stdin]
+
+DESCRIPTION
+       When a .byn asks for more authority than it was granted, byn does
+       not stop the caller at a password prompt it cannot answer. It
+       records the request, returns its id, and exits with the
+       approval_pending code. The work resumes on its next attempt, once
+       someone has answered here.
+
+       That matters most for agents. A prompt only a person can clear
+       stops every caller in the project, not just the one that raised
+       it, and an agent has no terminal to clear it at.
+
+       With no arguments, lists what is waiting: the file, what would be
+       granted in plain words, and how long it has been waiting. Entries
+       marked "!" are the consequential ones — a wildcard, a scope move,
+       write access to a credential directory, or an [auth] gate being
+       relaxed.
+
+       Approving grants authority, so it asks for the master password,
+       exactly as "byn trust" does. Approving re-grants the .byn, so the
+       caller's next attempt succeeds.
+
+       Denying grants nothing and needs no password. Refusing is meant to
+       be the cheaper action: if saying no costs more than saying yes,
+       people learn to say yes.
+
+       A request repeatedly denied goes on hold and stops being askable
+       for a while, so a caller cannot re-ask until someone gives in.
+       Identical requests collapse onto one entry with a retry count
+       rather than stacking up.
+
+OPTIONS
+       --deny
+           Refuse the named requests instead of granting them.
+
+       --all
+           Answer every pending request. One password covers the batch,
+           so clearing a backlog does not become its own chore.
+
+       --password-stdin
+           Read the master password from stdin instead of prompting.
+
+       --json
+           List pending requests as JSON (listing only).
+
+EXIT STATUS
+       0    Listed, or every named request was answered.
+       1    A request could not be answered (unknown id, wrong password).
+
+EXAMPLES
+       See what is waiting:
+           $ byn approve
+
+       Grant one request:
+           $ byn approve 45e16b0d2abe
+
+       Refuse one:
+           $ byn approve --deny 45e16b0d2abe
+
+       Clear the backlog non-interactively:
+           $ echo "$BYN_PW" | byn approve --all --password-stdin
+
+SEE ALSO
+       byn-trust(1), byn-exec(1)
+`,
+
 	"untrust": `NAME
        byn-untrust - revoke trust for a .byn file
 
