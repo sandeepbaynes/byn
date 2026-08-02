@@ -51,6 +51,18 @@ linters:
       - path: internal/hwkey/macos\.go
         linters:
           - gocritic
+      # The sandbox spike is a research harness, not a shipped binary: it
+      # deliberately ignores errors from probes that are EXPECTED to fail (that
+      # is what it is measuring) and drives syscalls that gosec flags on sight.
+      # It is kept in-tree because it documents why the exec design is what it
+      # is and fails loudly if the finding ever regresses — but it should not
+      # set the bar for production code, in either direction.
+      - path: cmd/sandbox-spike/
+        linters:
+          - errcheck
+          - gosec
+          - gocritic
+          - revive
 
 formatters:
   enable:
