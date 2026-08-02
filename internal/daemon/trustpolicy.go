@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"path/filepath"
+
 	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/trust"
 )
@@ -62,7 +64,11 @@ func reconcileChanged(rec trust.Record, currentBody []byte) (effective trust.Pol
 // reconcileChanged found to be no wider than the grant, which makes every
 // difference a restriction.
 func applyPolicy(rec trust.Record, p trust.Policy) trust.Record {
-	rec.Actions = p.Actions
+	// Actions must go through the same resolution a grant applies, or a pattern
+	// written as "./build.sh" stops matching: exec absolutizes the target before
+	// the daemon compares, so the record needs the resolved twin alongside the
+	// literal the author wrote.
+	rec.Actions = withResolvedActionTargets(p.Actions, filepath.Dir(rec.Path))
 	rec.Auth = p.Auth
 	rec.Aliases = p.Aliases
 	rec.EnvGrants = p.EnvGrants
