@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/sandeepbaynes/byn/internal/approval"
+	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
@@ -91,6 +92,19 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
+	// The decision is the moment authority changes hands, so it belongs in the
+	// log with WHERE it was made — terminal, portal, or phone. An approval
+	// nobody can audit is an approval nobody can review after the fact.
+	outcome := audit.OutcomeDenied
+	if decided.Status == approval.StatusApproved {
+		outcome = audit.OutcomeOK
+	}
+	d.auditEmit(ctx, defaultIfEmpty(pending.Vault, vault.DefaultVaultName), audit.Event{
+		Op:      string(ipc.OpApprovalDecide),
+		Outcome: outcome,
+		BynPath: pending.Subject,
+		Command: string(decided.Status) + " via " + decided.DecidedVia + " (" + decided.ID + ")",
+	})
 	resp, rerr := ipc.NewResponse(env.ID, ipc.ApprovalDecideResp{Entry: approvalEntry(decided)})
 	if rerr != nil {
 		return internalErr(env.ID, rerr)
