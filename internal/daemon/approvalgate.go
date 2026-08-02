@@ -54,8 +54,11 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 	// A request is a security event in its own right: it records that something
 	// asked for authority it did not have, whether or not anyone ever answers.
 	d.auditEmit(ctx, vaultName, audit.Event{
-		Op:      string(ipc.OpApprovalList), // "approval.*" family
-		Outcome: audit.OutcomeDenied,        // nothing was granted by asking
+		// Not one of the IPC ops: raising is something the daemon does on the
+		// caller's behalf, and logging it as "approval.list" would misname the
+		// event for whoever reads the log back.
+		Op:      "approval.raise",
+		Outcome: audit.OutcomeDenied, // nothing was granted by asking
 		BynPath: canon,
 		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; "),
 	})
