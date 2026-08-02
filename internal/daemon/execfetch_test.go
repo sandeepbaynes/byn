@@ -777,6 +777,16 @@ func TestApprovalLoop_BlockedThenApprovedThenRuns(t *testing.T) {
 	if decided.Entry.Status != "approved" {
 		t.Fatalf("status = %s, want approved", decided.Entry.Status)
 	}
+
+	// The decision has to APPLY, not just be recorded: the agent's next attempt
+	// must go through, and the newly-granted variable must actually arrive.
+	resp, rerr := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if rerr != nil {
+		t.Fatalf("still blocked after approval: %v", rerr)
+	}
+	if m := valueMap(resp.Values); m["LATER"] != "later-val" {
+		t.Errorf("approved variable was not injected: values=%v", m)
+	}
 }
 
 // Refusing must cost nothing: it grants no authority, so it needs no password.
