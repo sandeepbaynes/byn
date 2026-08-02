@@ -45,6 +45,7 @@ discovery > daemon default.
 | `1` | Generic error (bad input, runtime failure, lint-style problem) |
 | `2` | Daemon unreachable — recovery hint printed to stderr |
 | `3` | Daemon returned a typed error (wrong password, locked, not found, audit chain broken, etc.) |
+| `75` | A decision is queued and nobody has answered it yet (`EX_TEMPFAIL`). Not a refusal — retry after `byn approve` |
 
 Use these for scripting:
 
@@ -52,6 +53,14 @@ Use these for scripting:
 byn get DB_URL || case $? in
     2) echo "start the daemon" ;;
     3) echo "unlock the vault" ;;
+esac
+
+# An agent that must not block can carry on and retry later:
+byn exec -- ./build.sh
+case $? in
+    0)  ;;                                  # ran
+    75) echo "waiting on a human; will retry" ;;
+    *)  echo "actually failed" ;;
 esac
 ```
 
@@ -761,3 +770,55 @@ enabled = true
 - [Glossary](glossary.md) — `scope`, `AAD`, `TOFU`, `fingerprint`,
   `audit chain`.
 - [Troubleshooting](troubleshooting.md) — common errors with each command.
+
+---
+
+## Approvals
+
+When a `.byn` asks for more authority than it was granted, `byn exec` does not
+stop at a password prompt no agent can answer. It queues the decision, prints
+its id, and exits `75`. The work resumes on the next attempt once someone has
+answered.
+
+### `byn approve [--json]`
+
+Lists what is waiting: the file, what would be granted **in plain words**, how
+long it has waited, and how many times it has been re-asked. Entries marked `!`
+are the consequential ones — a wildcard, a scope move, write access to a
+credential directory, or an `[auth]` gate being relaxed.
+
+```
+  45e16b0d2abe  /home/u/proj/.byn
+      injects PSQL_CREDENTIALS
+      asked 3m12s ago, retried 2×
+```
+
+### `byn approve [--password-stdin] ID...`
+
+Grants the request. Takes the master password, exactly as `byn trust` does,
+because approving grants authority. It re-grants the `.byn`, so the caller's
+next attempt succeeds — recording a decision without applying it would leave
+the caller stuck asking forever.
+
+### `byn approve --deny ID...`
+
+Refuses. Needs no password, because refusing grants nothing. This asymmetry is
+deliberate: if saying no costs more than saying yes, people learn to say yes.
+
+A request denied repeatedly goes on hold and stops being askable for a while,
+so a caller cannot re-ask until someone gives in.
+
+### `byn approve --all [--password-stdin]`
+
+Answers every pending request; one password covers the batch, so clearing a
+backlog does not become its own chore.
+
+### `byn exec --wait-approval[=DURATION] -- COMMAND`
+
+Blocks until the decision lands instead of returning `75` immediately. Defaults
+to two minutes — what is being waited on is a person noticing a request. It
+polls rather than holding a connection, so a daemon restart mid-wait costs one
+interval rather than the whole wait.
+
+The default remains non-blocking: a caller that must not be interrupted should
+not be made to wait by default.
