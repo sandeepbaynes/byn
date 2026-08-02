@@ -662,3 +662,65 @@ func TestExecFetchInheritedVarThroughAllowlist(t *testing.T) {
 		t.Errorf("SHARED = %q, want shared-value", m["SHARED"])
 	}
 }
+
+// The multi-agent case: one agent adds a variable, and every other agent picks
+// it up on its next exec. Under per-row capture, "*" froze to the variables that
+// existed at grant time, so the new variable was silently absent and the only
+// cure was a human retyping the master password — which stalled every agent on
+// the project.
+func TestExecFetchWildcard_PicksUpVariableAddedAfterGrant(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "EXISTING", []byte("before-val"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = \"*\"\n")
+	grantBynFile(t, c, byn, pw)
+
+	// Added after the grant, with no re-trust and no edit to the .byn.
+	putVar(t, c, ipc.Scope{}, "PSQL_CREDENTIALS", []byte("postgres://after"))
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
+	if err != nil {
+		t.Fatalf("exec.fetch: %v", err)
+	}
+	m := valueMap(resp.Values)
+	if m["EXISTING"] != "before-val" {
+		t.Errorf("EXISTING = %q, want before-val", m["EXISTING"])
+	}
+	if m["PSQL_CREDENTIALS"] != "postgres://after" {
+		t.Errorf("variable added after the grant was not injected: values=%v", m)
+	}
+}
+
+// A wildcard grant covers one scope, not the vault: it must not reach a project
+// or env nobody approved.
+func TestExecFetchWildcard_ScopeKeyDoesNotCrossScopes(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "IN_SCOPE", []byte("visible"))
+
+	other := ipc.Scope{Env: "staging"}
+	mustCreateEnv(t, c, "staging")
+	putVar(t, c, other, "OUT_OF_SCOPE", []byte("hidden"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = \"*\"\n")
+	grantBynFile(t, c, byn, pw)
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
+	if err != nil {
+		t.Fatalf("exec.fetch: %v", err)
+	}
+	if m := valueMap(resp.Values); m["OUT_OF_SCOPE"] != "" {
+		t.Errorf("a grant for the default env reached the staging env: values=%v", m)
+	}
+}
+
+func mustCreateEnv(t *testing.T, c *ipc.Client, name string) {
+	t.Helper()
+	if err := c.Call(ipc.OpEnvCreate,
+		ipc.EnvCreateReq{Project: "default", Name: name}, &ipc.EnvCreateResp{}); err != nil {
+		t.Fatalf("create env %q: %v", name, err)
+	}
+}
