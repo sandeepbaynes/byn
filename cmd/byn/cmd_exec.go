@@ -225,7 +225,7 @@ func runExec(args []string, scope cliScope) int {
 	}
 
 	if privsepOn && scope.SourcePath != "" && !isAliasExec {
-		if rc, handled := runExecPrivsep(client, req, childArgv); handled {
+		if rc, handled := runExecPrivsep(client, req, childArgv, waitApproval, hasWait); handled {
 			return rc
 		}
 		// Not handled ⇒ the daemon predates exec.spawn (unknown_op). Fall through
@@ -572,7 +572,8 @@ func portIsFree(host string, port int) bool {
 // enabled but `byn setup` never run) is a HARD error with an actionable hint —
 // we never silently fall back to an owner-UID in-process run, because the user
 // explicitly opted into privsep.
-func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string) (rc int, handled bool) {
+func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string,
+	waitApproval time.Duration, hasWait bool) (rc int, handled bool) {
 	// Resolve the child binary in PATH. Same failure mode as the legacy path.
 	absTarget, err := exec.LookPath(childArgv[0])
 	if err != nil {
@@ -603,6 +604,15 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 	}
 	var authResp ipc.ExecAuthorizeResp
 	callErr := client.Call(ipc.OpExecAuthorize, authReq, &authResp)
+
+	// A queued decision is answered on human time. Callers that asked to wait
+	// do so here too — privsep is the DEFAULT path, so handling this only on the
+	// legacy one would mean the flag did nothing for most users.
+	if hasWait && isApprovalPendingErr(callErr) {
+		if again, ok := waitForAuthorize(client, authReq, waitApproval, callErr); ok {
+			authResp, callErr = again, nil
+		}
+	}
 
 	// Auth retry: an auth_required reply on a TTY prompts once and retries with
 	// the password attached. Same UX as the legacy exec.fetch path.
@@ -644,9 +654,47 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 	case isUnknownOpErr(callErr):
 		// Daemon predates exec.authorize — signal the caller to use the legacy path.
 		return 0, false
+	case isApprovalPendingErr(callErr):
+		// Nothing was refused: a person has been asked. Report it as its own
+		// outcome so a caller does not treat a pause as permanent failure.
+		var em *ipc.ErrResponse
+		if errors.As(callErr, &em) {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+			if em.Recover != "" {
+				fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Try:"), cyan(em.Recover))
+			}
+		}
+		return exitApprovalPending, true
 	default:
 		return handleExecFetchError(callErr), true
 	}
+}
+
+// waitForAuthorize is waitForApproval for the privsep path: re-attempt the
+// authorize call until the decision lands or the budget runs out.
+func waitForAuthorize(client *ipc.Client, req ipc.ExecAuthorizeReq,
+	budget time.Duration, first error) (ipc.ExecAuthorizeResp, bool) {
+
+	var em *ipc.ErrResponse
+	if errors.As(first, &em) {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+	}
+	deadline := time.Now().Add(budget)
+	const interval = 2 * time.Second
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		var resp ipc.ExecAuthorizeResp
+		err := client.Call(ipc.OpExecAuthorize, req, &resp)
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "%s\n", dim("approved — continuing"))
+			return resp, true
+		}
+		if !isApprovalPendingErr(err) {
+			return ipc.ExecAuthorizeResp{}, false
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", dim("still waiting after "+budget.String()+" — giving up for now"))
+	return ipc.ExecAuthorizeResp{}, false
 }
 
 // execHelperRunner invokes the privsep helper to redeem the token and run the
