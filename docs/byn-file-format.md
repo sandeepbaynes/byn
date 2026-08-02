@@ -248,9 +248,9 @@ after.
   symlink to `/private/tmp`, so the same file appears under two
   paths.)
 - **sha256** — SHA-256 of the file's bytes.
-- **mtime** — modification time at trust-grant time (v2 records). A
-  `touch` that changes only the mtime is flagged as CHANGED, forcing
-  re-trust; use `byn trust diff PATH` to confirm nothing changed.
+- **mtime** — modification time at trust-grant time. Recorded, but no
+  longer decisive on its own: a `touch` that changes only the mtime is
+  reconciled as an unchanged policy and does not force a re-trust.
 - **snapshot** — full file body at grant time, used by `byn trust diff`.
 - **MACs** — machine-fingerprint MAC + vault-key MAC (v2). Detects
   forged records and records copied from another machine.
@@ -270,11 +270,66 @@ MAC-verify the `.byn` (machine-fingerprint + vault-key MACs, see
 
 | State | What `byn exec` does |
 |---|---|
-| Trusted (path + hash match, mtime match, MACs valid) | **Inject** the allowlisted vars |
+| Trusted (hash matches, MACs valid) | **Inject** the allowlisted vars |
+| Changed, but asking for no more than was granted | **Inject** — see "A change is judged by what it asks for" below |
+| Changed, asking for MORE than was granted | **Queue a decision** and exit 75 with the request id — `byn approve <id>` |
 | Untrusted (no record) | **Abort** — `byn trust PATH` |
-| Changed (hash or mtime differs) | **Abort** — re-approve with `byn trust PATH` (use `byn trust diff PATH` to see what changed) |
 | Tampered (a MAC failed — forged / copied from another machine) | **Abort** — re-establish with `byn trust PATH` |
-| Stale (record predates v2 hardening) | **Abort** — re-trust to add mtime + snapshot protection |
+| Stale (record predates MAC hardening) | **Abort** — re-trust to add snapshot protection |
+
+### A change is judged by what it asks for, not by its bytes
+
+Trust used to be pinned to the file's exact bytes and mtime, so any edit
+blocked every command in the project until a human retyped the master
+password. A reordered list, an added comment, a reformatted table, and the
+`git checkout` that rewrites mtimes all landed there — and none of them ask
+for anything new. An agent cannot answer that prompt, so one edit stalled
+every agent working in the project.
+
+byn now compares the **policy** a file requests — scope, the `[exec] env`
+allowlist, pinned actions, writable paths, aliases, and `[auth]` overrides —
+against the policy that was granted:
+
+- **Nothing new requested** → the run proceeds. Formatting, comments, and
+  ordering carry no authority.
+- **Less requested** (a variable or action removed) → applies immediately,
+  with no re-approval. Nobody has to consent to being granted *less*, and
+  prompting for it only teaches people the prompt is noise. Enforcement
+  follows the current file, so a removed variable stops being injected at
+  once rather than lingering until the next re-trust.
+- **More requested** → a decision is queued and the caller is told its id
+  instead of dying on a prompt. See [Approvals](#approvals).
+
+Four kinds of widening are treated as high-risk however small the diff
+looks: introducing a wildcard, moving `[scope]`, granting write access to a
+credential directory (`.ssh`, `.aws`, `.gnupg`, …), and relaxing an `[auth]`
+gate. `get = "none"` turns every secret in scope into something any process
+at your UID can print, so it must never read as a routine list addition.
+
+### Approvals
+
+When a `.byn` asks for more than it was granted, `byn exec` does not stop at
+a password prompt. It records the request, prints its id, and exits **75**
+(`EX_TEMPFAIL`) — a distinct outcome from refusal, because retrying after
+someone answers will succeed.
+
+```sh
+byn approve                     # what is waiting, and why
+byn approve <id>                # grant it (asks for the master password)
+byn approve --deny <id>         # refuse it (no password needed)
+byn approve --all               # answer everything in one go
+byn exec --wait-approval -- CMD # block until answered, instead of polling
+```
+
+Approving grants authority, so it takes the master password exactly as
+`byn trust` does, and it re-grants the file so the caller's next attempt
+succeeds. Denying grants nothing and needs no password — refusing is meant
+to be the cheaper action.
+
+Identical requests collapse onto one entry with a retry count, requests are
+capped per project, and a question denied repeatedly goes on hold. An
+approver worn down by a flood is how these systems get beaten in practice,
+so the volume is bounded by design rather than left to the caller's manners.
 
 ### Granting trust is a separate, password-gated act
 
@@ -290,9 +345,9 @@ reasons, both from the "owned by you, operated by many" threat model
 
 - A y/N prompt can be answered by the very agent that planted the file
   — it controls the CLI's stdin. A password it doesn't have cannot be.
-- A previously-trusted `.byn` that *changed* would otherwise be silently
-  re-trusted on a "y". Now a change is **refused** until a human
-  re-approves it with the password.
+- A previously-trusted `.byn` that asks for MORE would otherwise be
+  silently re-trusted on a "y". Now such a change waits for a human, who
+  approves it with the password.
 
 So the human approves once, in a deliberate password-gated step; the
 agent uses the result from then on but can never grant — or silently
