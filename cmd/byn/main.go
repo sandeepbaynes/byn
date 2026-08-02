@@ -191,6 +191,8 @@ func run(args []string) int {
 		return runLock(rest, scope)
 	case "passwd", "password":
 		return runPasswd(rest, scope)
+	case "approve":
+		return runApprove(rest, scope)
 	case "put":
 		return runPut(rest, scope)
 	case "get", "cat":

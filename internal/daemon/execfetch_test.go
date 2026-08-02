@@ -724,3 +724,86 @@ func mustCreateEnv(t *testing.T, c *ipc.Client, name string) {
 		t.Fatalf("create env %q: %v", name, err)
 	}
 }
+
+// The loop this whole feature exists for: an agent hits a widening, gets a
+// reference instead of a dead end, a person answers it, and the agent's next
+// attempt goes through — with nobody having to be at a terminal in between.
+func TestApprovalLoop_BlockedThenApprovedThenRuns(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("secret-val"))
+	putVar(t, c, ipc.Scope{}, "LATER", []byte("later-val"))
+
+	byn := writeBynContent(t,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	// The .byn now asks for a variable nobody approved.
+	writeFileContent(t, byn,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\", \"LATER\"]\nactions = [\"true\"]\n")
+
+	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", code)
+	}
+
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	if len(list.Entries) != 1 {
+		t.Fatalf("got %d pending, want 1", len(list.Entries))
+	}
+	entry := list.Entries[0]
+	if len(entry.Summary) == 0 {
+		t.Error("the approver is shown no reason for the request")
+	}
+
+	// Approving grants authority, so it needs the master password.
+	var denied ipc.ApprovalDecideResp
+	noPW := c.Call(ipc.OpApprovalDecide,
+		ipc.ApprovalDecideReq{ID: entry.ID, Approve: true}, &denied)
+	if noPW == nil {
+		t.Fatal("approval was granted without the master password")
+	}
+
+	var decided ipc.ApprovalDecideResp
+	if derr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: entry.ID, Approve: true, Password: pw, Via: "terminal",
+	}, &decided); derr != nil {
+		t.Fatalf("decide: %v", derr)
+	}
+	if decided.Entry.Status != "approved" {
+		t.Fatalf("status = %s, want approved", decided.Entry.Status)
+	}
+}
+
+// Refusing must cost nothing: it grants no authority, so it needs no password.
+// Making refusal the expensive option is how people learn to just say yes.
+func TestApprovalDeny_NeedsNoPassword(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	writeFileContent(t, byn, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\", \"curl {{url}}\"]\n")
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}}); err == nil {
+		t.Fatal("widening was not queued")
+	}
+
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	var out ipc.ApprovalDecideResp
+	if derr := c.Call(ipc.OpApprovalDecide,
+		ipc.ApprovalDecideReq{ID: list.Entries[0].ID, Approve: false}, &out); derr != nil {
+		t.Fatalf("deny needed credentials: %v", derr)
+	}
+	if out.Entry.Status != "denied" {
+		t.Fatalf("status = %s, want denied", out.Entry.Status)
+	}
+}
