@@ -885,7 +885,7 @@ func TestApprovals_AreAudited(t *testing.T) {
 	}
 	var sawRaise, sawDecision bool
 	for _, e := range tail.Events {
-		if strings.Contains(e.Command, "approval raised") {
+		if e.Op == "approval.raise" && strings.Contains(e.Command, "approval raised") {
 			sawRaise = true
 		}
 		if strings.Contains(e.Command, "approved via portal") {
