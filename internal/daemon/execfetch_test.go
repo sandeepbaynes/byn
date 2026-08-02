@@ -207,13 +207,8 @@ func TestExecFetchChangedDenied(t *testing.T) {
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\n")
 	grantBynFile(t, c, byn, pw)
 
-	// Append a byte to change the content.
-	f, err := os.OpenFile(byn, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = f.WriteString(" ")
-	_ = f.Close()
+	// Ask for a variable that was never granted — a widening.
+	appendToFile(t, byn, "env = [\"SECRET\", \"SMUGGLED\"]\n")
 
 	_, fetchErr := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
 	if code := errCode(t, fetchErr); code != ipc.CodeTrustDenied {
@@ -224,6 +219,79 @@ func TestExecFetchChangedDenied(t *testing.T) {
 		if !strings.Contains(er.Message, "CHANGED") {
 			t.Errorf("message %q should contain CHANGED", er.Message)
 		}
+	}
+}
+
+// A .byn whose bytes changed but whose authority did not must keep working.
+// Reformatting, an added comment, and a branch switch that only rewrites mtimes
+// all look like this, and blocking on them used to stop every command in the
+// project until a human retyped the master password.
+func TestExecFetchPresentationChangeAllowed(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("secret-val"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	appendToFile(t, byn, "\n# a comment carries no authority\n")
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if err != nil {
+		t.Fatalf("presentation-only change was rejected: %v", err)
+	}
+	if m := valueMap(resp.Values); m["SECRET"] == "" {
+		t.Errorf("SECRET not injected after a comment edit; values=%v", m)
+	}
+}
+
+// Dropping a variable is a narrowing: it applies at once, with no re-approval,
+// and the variable must actually stop being injected rather than lingering in
+// the capability sealed at grant time.
+func TestExecFetchNarrowingAppliesImmediately(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("secret-val"))
+	putVar(t, c, ipc.Scope{}, "OTHER", []byte("other-val"))
+
+	byn := writeBynContent(t,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\", \"OTHER\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	writeFileContent(t, byn,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if err != nil {
+		t.Fatalf("narrowing was rejected: %v", err)
+	}
+	m := valueMap(resp.Values)
+	if m["SECRET"] == "" {
+		t.Errorf("SECRET should still be injected; values=%v", m)
+	}
+	if _, present := m["OTHER"]; present {
+		t.Errorf("OTHER was removed from the allowlist but is still injected; values=%v", m)
+	}
+}
+
+func appendToFile(t *testing.T, path, s string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFileContent(t *testing.T, path, s string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(s), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

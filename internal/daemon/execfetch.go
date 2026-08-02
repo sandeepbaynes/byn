@@ -242,6 +242,17 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			auditExec(ie)
 			return nil, nil, false, false, false, ie
 		}
+		// A changed file is only a problem if it asks for more than was
+		// granted. Reformatting, a reordered list, an added comment, or a branch
+		// switch that rewrites mtimes all land here, and none of them are a
+		// request for new authority — blocking on them stopped every command in
+		// the project until a human retyped the master password.
+		if status == trust.VerifyChanged {
+			if effective, _, ok := reconcileChanged(rec, body); ok {
+				status = trust.VerifyTrusted
+				rec = applyPolicy(rec, effective)
+			}
+		}
 		if status != trust.VerifyTrusted {
 			le := ipc.NewError(id, ipc.CodeTrustDenied,
 				trustDenyMessage(canon, status), "byn trust "+canon)
@@ -486,8 +497,20 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 		}
 	}()
 
+	// The capability's keys are the allowlist as it stood at grant time. If the
+	// file has since dropped a variable, that is a narrowing the author asked
+	// for and it applies immediately — so injection is intersected with the
+	// allowlist currently in force. (A file that ADDED a name never reaches
+	// here: that is a widening and is refused until approved.)
+	allowed := rec.EnvAllowlist()
+
 	values := make([]ipc.ExecFetchValue, 0, len(rowKeys))
 	for name, rk := range rowKeys {
+		if allowed != nil {
+			if _, ok := allowed[name]; !ok {
+				continue
+			}
+		}
 		val, verr := st.OpenEnvVarWithRowKey(ctx, scope, name, rk)
 		if verr != nil {
 			if errors.Is(verr, vault.ErrNotFound) {
