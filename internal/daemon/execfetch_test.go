@@ -807,3 +807,35 @@ func TestApprovalDeny_NeedsNoPassword(t *testing.T) {
 		t.Fatalf("status = %s, want denied", out.Entry.Status)
 	}
 }
+
+// A relative action must keep matching after a presentation-only edit. Applying
+// the current file's policy re-derives the action list, and the resolved
+// absolute twin has to be re-derived with it — exec absolutizes the target
+// before matching, so dropping the twin silently un-pins every relative action.
+// The unit tests missed this; only running a real command caught it.
+func TestExecFetchPresentationChange_KeepsRelativeActionsMatching(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	byn := filepath.Join(dir, ".byn")
+	body := "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"./run.sh\"]\n"
+	if err := os.WriteFile(byn, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	grantBynFile(t, c, byn, pw)
+	appendToFile(t, byn, "\n# an edit that grants nothing\n")
+
+	// exec resolves ./run.sh to its absolute path before the daemon matches.
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "./run.sh", Argv: []string{script},
+	}); err != nil {
+		t.Fatalf("relative action stopped matching after a comment edit: %v", err)
+	}
+}
