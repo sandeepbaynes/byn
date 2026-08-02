@@ -1690,3 +1690,101 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	}
 	return os.Rename(tmpPath, path)
 }
+
+// CapScopeKeyName is the reserved map key under which a sealed exec capability
+// carries a scope key instead of a per-row key. It is "*" because that is the
+// authority it represents, and because "*" can never collide with a real entry
+// name (ValidateName rejects it).
+const CapScopeKeyName = "*"
+
+// CaptureScopeKey returns the scope key covering the given scope, for sealing
+// into a wildcard exec capability.
+//
+// Capturing per-row keys froze a grant to the rows that existed at that moment,
+// so a variable added afterwards was silently absent from exec — the file said
+// "*" but the capability disagreed, and the only cure was re-typing the master
+// password. A scope key covers the whole (project, env), including entries
+// written later, which is what "*" was always supposed to mean.
+func (s *Store) CaptureScopeKey(ctx context.Context, scope Scope) ([]byte, error) {
+	vk := s.snapshotVaultKey()
+	if vk == nil {
+		return nil, ErrLocked
+	}
+	defer zero(vk)
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.EnvKey(vk, projectID, envID)
+}
+
+// CaptureScopeKeyWithPassword is CaptureScopeKey for a locked vault, verifying
+// the master password to obtain the vault key without unlocking.
+func (s *Store) CaptureScopeKeyWithPassword(ctx context.Context, password []byte, scope Scope) ([]byte, error) {
+	wrapped, err := os.ReadFile(filepath.Join(s.dir, wrappedFilename)) // #nosec G304 -- path is store-configured
+	if err != nil {
+		return nil, fmt.Errorf("vault: read wrapped key: %w", err)
+	}
+	vk, err := vcrypto.Unwrap(password, wrapped)
+	if err != nil {
+		return nil, err
+	}
+	defer zero(vk)
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.EnvKey(vk, projectID, envID)
+}
+
+// OpenEnvVarWithScopeKey decrypts one env var using a scope key recovered from a
+// wildcard exec capability — no vault key, no unlock. Entries still stored under
+// an older scheme cannot be derived from a scope key; they are reported as
+// unavailable so the caller can fall back rather than silently omit the value.
+func (s *Store) OpenEnvVarWithScopeKey(ctx context.Context, scope Scope, name string, scopeKey []byte) ([]byte, error) {
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	r, rowEnvID, found, err := s.fetchEnvVarInherited(ctx, projectID, envID, scope.Env, name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	if r.AADVersion != aadVersionEnvKey {
+		return nil, errScopeKeyUnsupported
+	}
+	// An inherited read resolves in the project's default env, whose rows derive
+	// from that env's key rather than the caller's.
+	key := scopeKey
+	if rowEnvID != envID {
+		vk := s.snapshotVaultKey()
+		if vk == nil {
+			return nil, errScopeKeyUnsupported
+		}
+		defer zero(vk)
+		k, kerr := s.EnvKey(vk, projectID, rowEnvID)
+		if kerr != nil {
+			return nil, kerr
+		}
+		defer zero(k)
+		key = k
+	}
+	krow, err := vcrypto.DeriveRowKeyFromEnvKey(key, rowAAD(kindAADEnvVar, name))
+	if err != nil {
+		return nil, err
+	}
+	defer zero(krow)
+	return vcrypto.DecryptWithAAD(krow, r.Value,
+		s.entryAADV3(projectID, rowEnvID, kindAADEnvVar, name))
+}
+
+// errScopeKeyUnsupported marks an entry a scope key cannot open — one still
+// sealed under an older per-row scheme.
+var errScopeKeyUnsupported = errors.New("vault: entry predates scope keys")
+
+// ErrScopeKeyUnsupported reports whether err means an entry is stored under a
+// scheme a scope key cannot derive.
+func ErrScopeKeyUnsupported(err error) bool { return errors.Is(err, errScopeKeyUnsupported) }

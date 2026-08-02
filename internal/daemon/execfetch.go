@@ -504,8 +504,41 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// here: that is a widening and is refused until approved.)
 	allowed := rec.EnvAllowlist()
 
+	// A wildcard grant carries the scope key, which derives a row key for any
+	// entry in the scope — including ones written after the grant. Without it,
+	// "*" meant only the variables that existed at grant time, so a variable
+	// another agent added was silently missing until someone re-trusted.
+	scopeKey, hasScopeKey := rowKeys[vault.CapScopeKeyName]
+
 	values := make([]ipc.ExecFetchValue, 0, len(rowKeys))
+	seen := make(map[string]struct{}, len(rowKeys))
+	if hasScopeKey {
+		infos, lerr := st.ListEnvVars(ctx, scope)
+		if lerr != nil {
+			return nil, internalErr(id, fmt.Errorf("list scope for wildcard capability: %w", lerr))
+		}
+		for _, info := range infos {
+			val, verr := st.OpenEnvVarWithScopeKey(ctx, scope, info.Name, scopeKey)
+			if verr != nil {
+				// Entries still on an older scheme cannot be derived from a
+				// scope key; the per-row keys captured alongside cover them.
+				if vault.ErrScopeKeyUnsupported(verr) || errors.Is(verr, vault.ErrNotFound) {
+					continue
+				}
+				return nil, internalErr(id, fmt.Errorf("decrypt %q via scope key: %w", info.Name, verr))
+			}
+			seen[info.Name] = struct{}{}
+			values = append(values, ipc.ExecFetchValue{Name: info.Name, Value: val})
+		}
+	}
+
 	for name, rk := range rowKeys {
+		if name == vault.CapScopeKeyName {
+			continue
+		}
+		if _, done := seen[name]; done {
+			continue
+		}
 		if allowed != nil {
 			if _, ok := allowed[name]; !ok {
 				continue

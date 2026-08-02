@@ -218,7 +218,7 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 			names = append(names, m.Name)
 		}
 	}
-	if len(names) == 0 {
+	if len(names) == 0 && !wildcard {
 		return nil, nil // nothing to inject → no capability
 	}
 
@@ -237,6 +237,35 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 			zeroBytes(k)
 		}
 	}()
+
+	// A wildcard grant also carries the scope key, so exec can derive a row key
+	// for entries written AFTER this grant. Capturing only per-row keys froze
+	// "*" to the variables that happened to exist at grant time: the file said
+	// "everything in this scope", the capability disagreed, and adding a
+	// variable silently produced nothing until someone retyped the master
+	// password. Per-row keys are still captured alongside it so entries left on
+	// an older scheme keep working until they are next written.
+	if wildcard {
+		var scopeKey []byte
+		var skerr error
+		if len(password) > 0 {
+			scopeKey, skerr = st.CaptureScopeKeyWithPassword(ctx, password, scope)
+		} else {
+			scopeKey, skerr = st.CaptureScopeKey(ctx, scope)
+		}
+		if skerr != nil {
+			return nil, scopeOptional(skerr)
+		}
+		if scopeKey != nil {
+			if rowKeys == nil {
+				rowKeys = make(map[string][]byte, 1)
+			}
+			rowKeys[vault.CapScopeKeyName] = scopeKey
+		}
+	}
+	if len(rowKeys) == 0 {
+		return nil, nil
+	}
 
 	capKey, err := vcrypto.DeriveCapKey(d.fpMACKey)
 	if err != nil {
