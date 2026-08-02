@@ -59,6 +59,45 @@ func (s *Server) handleTrust(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// GET /api/approvals — decisions a .byn is waiting on.
+//
+// Listing needs no credentials: an entry describes what is being ASKED for and
+// never carries a secret, and someone has to be able to see what is waiting
+// before they can answer it.
+func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
+	var resp ipc.ApprovalListResp
+	if !s.run(w, r, ipc.OpApprovalList, ipc.ApprovalListReq{Status: r.URL.Query().Get("status")}, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// POST /api/approvals/decide {id, approve, password} — answer one.
+//
+// Approving grants authority, so the daemon requires the master password just
+// as it does at the terminal. Denying grants nothing and needs none: refusing
+// has to stay the cheaper action, or people learn to approve by reflex.
+func (s *Server) handleApprovalDecide(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		ID       string `json:"id"`
+		Approve  bool   `json:"approve"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req := ipc.ApprovalDecideReq{ID: b.ID, Approve: b.Approve, Via: "portal"}
+	if b.Password != "" {
+		req.Password = []byte(b.Password)
+	}
+	var resp ipc.ApprovalDecideResp
+	if !s.run(w, r, ipc.OpApprovalDecide, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // POST /api/trust/remove {path} — revoke trust for a `.byn` file.
 func (s *Server) handleTrustRemove(w http.ResponseWriter, r *http.Request) {
 	var b struct {

@@ -167,6 +167,16 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return mk(ipc.TrustListResp{Entries: []ipc.TrustEntry{{Path: "/proj/.byn", SHA256: "deadbeef"}}})
 	case ipc.OpTrustRemove:
 		return mk(ipc.TrustRemoveResp{Removed: true})
+	case ipc.OpApprovalList:
+		return mk(ipc.ApprovalListResp{Entries: []ipc.ApprovalEntry{{
+			ID: "abc123", Kind: "trust_widening", Subject: "/proj/.byn",
+			Summary: []string{"injects PSQL_CREDENTIALS"}, HighRisk: true, Status: "pending",
+		}}})
+	case ipc.OpApprovalDecide:
+		var req ipc.ApprovalDecideReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		lastApprovalDecide = req
+		return mk(ipc.ApprovalDecideResp{Entry: ipc.ApprovalEntry{ID: req.ID, Status: "approved"}})
 	case ipc.OpPasskeyRegisterBegin:
 		return mk(ipc.PasskeyRegisterBeginResp{CeremonyID: "creg", Options: json.RawMessage(`{"publicKey":{"challenge":"AA"}}`)})
 	case ipc.OpPasskeyRegisterFinish:
@@ -1389,5 +1399,61 @@ func TestFSReadFile_EmptyPath(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("fs/readfile empty path = %d, want 400", resp.StatusCode)
+	}
+}
+
+// lastApprovalDecide captures what the portal forwarded, so the tests can check
+// the password reaches the daemon rather than being dropped client-side.
+var lastApprovalDecide ipc.ApprovalDecideReq
+
+func TestApprovals_ListAndDecide(t *testing.T) {
+	ts, c := newTestServer(t, &fakeDisp{})
+
+	r := getURL(t, c, ts.URL+"/api/approvals?status=pending")
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/approvals = %d", r.StatusCode)
+	}
+	var list ipc.ApprovalListResp
+	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Entries) != 1 || list.Entries[0].ID != "abc123" {
+		t.Fatalf("entries = %+v", list.Entries)
+	}
+	// The approver has to be shown WHAT is being granted; a card with no reason
+	// is one nobody can decide from.
+	if len(list.Entries[0].Summary) == 0 {
+		t.Error("approval entry carries no summary")
+	}
+	if !list.Entries[0].HighRisk {
+		t.Error("high-risk flag lost in transit")
+	}
+
+	// Approving grants authority, so the password must reach the daemon.
+	lastApprovalDecide = ipc.ApprovalDecideReq{}
+	r2 := post(t, c, ts.URL+"/api/approvals/decide", "http://localhost:2967",
+		map[string]any{"id": "abc123", "approve": true, "password": "hunter2"})
+	defer r2.Body.Close()
+	if r2.StatusCode != http.StatusOK {
+		t.Fatalf("POST decide = %d", r2.StatusCode)
+	}
+	if string(lastApprovalDecide.Password) != "hunter2" {
+		t.Errorf("password not forwarded: %q", lastApprovalDecide.Password)
+	}
+	if lastApprovalDecide.Via != "portal" {
+		t.Errorf("Via = %q, want portal (so the audit shows where it was decided)", lastApprovalDecide.Via)
+	}
+
+	// Denying grants nothing, so it must work with no credential at all.
+	lastApprovalDecide = ipc.ApprovalDecideReq{}
+	r3 := post(t, c, ts.URL+"/api/approvals/decide", "http://localhost:2967",
+		map[string]any{"id": "abc123", "approve": false})
+	defer r3.Body.Close()
+	if r3.StatusCode != http.StatusOK {
+		t.Fatalf("POST deny = %d", r3.StatusCode)
+	}
+	if len(lastApprovalDecide.Password) != 0 {
+		t.Error("deny should not carry a password")
 	}
 }

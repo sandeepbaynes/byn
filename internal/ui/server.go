@@ -175,6 +175,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/audit/verify", s.only(http.MethodGet, s.handleAuditVerify))
 	s.mux.HandleFunc("/api/trust", s.only(http.MethodGet, s.handleTrust))
 	s.mux.HandleFunc("/api/trust/remove", s.sameOrigin(s.only(http.MethodPost, s.handleTrustRemove)))
+	s.mux.HandleFunc("/api/approvals", s.only(http.MethodGet, s.handleApprovals))
+	s.mux.HandleFunc("/api/approvals/decide", s.sameOrigin(s.only(http.MethodPost, s.handleApprovalDecide)))
 
 	// Per-vault lock state (no portal session). Unlock carries the master
 	// password; lock needs none — both are sameOrigin-gated against CSRF.
