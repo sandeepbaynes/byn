@@ -130,33 +130,19 @@ func TestNU2_MtimeRetrust_Diff(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	// Exec must now fail with CHANGED (mtime mismatch).
-	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
-	if code == 0 {
-		t.Fatal("exec after touch should fail; got code 0")
-	}
-	if !strings.Contains(stderr, "CHANGED") {
-		t.Errorf("stderr should mention CHANGED after touch:\n%s", stderr)
+	// A touch changes no authority, so exec must simply carry on. Every `git
+	// checkout` rewrites mtimes; treating that as tampering blocked whole
+	// projects on an edit nobody made.
+	if so, se, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env"); code != 0 {
+		t.Fatalf("touch alone blocked exec: code=%d stdout=%q stderr=%q", code, so, se)
 	}
 
-	// `byn trust diff` must exit 1 and mention "content identical" / "modification time".
-	diffStdout, diffStderr, diffCode := s.run("", "trust", "diff", dotPath)
-	_ = diffStdout
-	if diffCode == 0 {
-		t.Fatal("byn trust diff should exit 1 for mtime-only change; got 0")
-	}
+	// The diff still reports the touch, because it is a real difference worth
+	// being able to see — it just is not one that needs re-approving.
+	diffStdout, diffStderr, _ := s.run("", "trust", "diff", dotPath)
 	combined := diffStdout + diffStderr
-	if !strings.Contains(combined, "content identical") || !strings.Contains(combined, "modification time") {
-		t.Errorf("byn trust diff output should mention 'content identical' and 'modification time':\n%s", combined)
-	}
-
-	// Re-trust → exec works again.
-	if _, se, code := s.runInDir(projDir, nu2PW+"\n", nil,
-		"trust", "--password-stdin", dotPath); code != 0 {
-		t.Fatalf("re-trust after mtime: code=%d stderr=%q", code, se)
-	}
-	if _, se, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env"); code != 0 {
-		t.Fatalf("exec after re-trust: code=%d stderr=%q", code, se)
+	if !strings.Contains(combined, "content identical") {
+		t.Errorf("trust diff should still identify a touch-only change:\n%s", combined)
 	}
 }
 

@@ -110,30 +110,38 @@ func TestE2E_ExecFetch_ChangedBynDenied(t *testing.T) {
 		t.Fatalf("first exec (should succeed): code=%d\nstdout=%q\nstderr=%q", code, so, se)
 	}
 
-	// Tamper: append a comment line to the trusted .byn.
+	// A comment grants nothing, so it must not stop the project. Blocking on
+	// edits like this is what made one agent's change stall every other agent
+	// working there until a human retyped the master password.
 	f, err := os.OpenFile(dotPath, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open .byn for append: %v", err)
 	}
-	if _, err := f.WriteString("# tampered\n"); err != nil {
+	if _, err := f.WriteString("# a comment carries no authority\n"); err != nil {
 		f.Close()
-		t.Fatalf("append tamper: %v", err)
+		t.Fatalf("append comment: %v", err)
 	}
 	f.Close()
 
-	// Second exec must fail with trust_denied / CHANGED.
+	if so, se, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env"); code != 0 {
+		t.Fatalf("presentation-only edit blocked exec: code=%d\nstdout=%q\nstderr=%q", code, so, se)
+	}
+
+	// Asking for a variable nobody approved is different in kind: it queues a
+	// decision and reports where to answer it, rather than refusing outright.
+	widened := "[scope]\nproject = \"alpha\"\n[exec]\nenv = [\"DB_URL\", \"SMUGGLED\"]\nactions = [\"/usr/bin/env\"]\n"
+	if err := os.WriteFile(dotPath, []byte(widened), 0o600); err != nil {
+		t.Fatalf("widen .byn: %v", err)
+	}
 	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
 	if code == 0 {
-		t.Fatal("exec on changed .byn should fail; got code 0")
+		t.Fatal("a widening ran without approval")
 	}
-	if code != exitDaemonErrCode {
-		t.Errorf("exec changed .byn: code = %d, want %d", code, exitDaemonErrCode)
+	if !strings.Contains(stderr, "approval") {
+		t.Errorf("stderr should name the queued approval:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "CHANGED") {
-		t.Errorf("stderr should mention CHANGED:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "byn trust") {
-		t.Errorf("stderr should mention 'byn trust' recovery:\n%s", stderr)
+	if !strings.Contains(stderr, "SMUGGLED") {
+		t.Errorf("stderr should say what is being asked for:\n%s", stderr)
 	}
 
 	// Audit log must contain both the allowed exec and the denied exec.
