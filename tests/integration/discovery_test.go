@@ -145,13 +145,18 @@ func TestE2E_Discovery_TamperedReprompts(t *testing.T) {
 	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"evil\"\n"), 0o600); err != nil {
 		t.Fatalf("retmper: %v", err)
 	}
-	// A changed-since-trusted file must hard-fail exec (no silent re-trust).
+	// Re-aiming the file at a different project points every grant at different
+	// data, so it must never take effect on its own. It is not refused outright
+	// either: a decision is queued and the caller is told where to answer it.
 	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "true")
 	if code == 0 {
-		t.Fatalf("exec on a changed .byn should fail")
+		t.Fatalf("a scope move took effect with no approval")
 	}
-	if !strings.Contains(stderr, "CHANGED") {
-		t.Fatalf("changed-file rejection should say CHANGED:\n%s", stderr)
+	if !strings.Contains(stderr, "approval") {
+		t.Fatalf("rejection should name the queued approval:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "scope moves") {
+		t.Fatalf("rejection should say the scope moved:\n%s", stderr)
 	}
 }
 
