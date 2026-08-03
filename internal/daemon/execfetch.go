@@ -384,9 +384,9 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 					// command the .byn genuinely pins.
 					candidates := [][]string{resolvedArgv}
 					if len(resolvedArgv) > 0 {
-						if real, rerr := filepath.EvalSymlinks(resolvedArgv[0]); rerr == nil && real != resolvedArgv[0] {
+						if resolved, rerr := filepath.EvalSymlinks(resolvedArgv[0]); rerr == nil && resolved != resolvedArgv[0] {
 							alt := append([]string(nil), resolvedArgv...)
-							alt[0] = real
+							alt[0] = resolved
 							candidates = append(candidates, alt)
 						}
 					}

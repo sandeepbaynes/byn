@@ -103,7 +103,7 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), merr)
 			return exitErr
 		}
-		fmt.Fprintln(os.Stdout, string(out))
+		_, _ = fmt.Fprintln(os.Stdout, string(out))
 		return exitOK
 	}
 	if len(resp.Entries) == 0 {
@@ -115,9 +115,9 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 		if e.HighRisk {
 			marker = boldYellow("!")
 		}
-		fmt.Fprintf(os.Stdout, "%s %s  %s\n", marker, cyan(e.ID), e.Subject)
+		_, _ = fmt.Fprintf(os.Stdout, "%s %s  %s\n", marker, cyan(e.ID), e.Subject)
 		for _, line := range e.Summary {
-			fmt.Fprintf(os.Stdout, "      %s\n", line)
+			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", line)
 		}
 		age := time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second)
 		detail := fmt.Sprintf("asked %s ago", age)
@@ -127,7 +127,7 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 		if e.HighRisk {
 			detail += " — high risk"
 		}
-		fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
+		_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
 	}
 	fmt.Fprintf(os.Stderr, "\n%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Refuse:"), cyan("byn approve --deny <id>"))
