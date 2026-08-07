@@ -25,7 +25,7 @@ func runInit(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "read password from stdin (no prompt, no confirmation)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -85,7 +85,7 @@ func runUnlock(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("unlock", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "read password from stdin (no prompt)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -187,7 +187,7 @@ func runLock(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	all := fs.Bool("all", false, "lock every unlocked vault")
 	sessionOnly := fs.Bool("session", false, "end this terminal's session only (does not lock the vault)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -232,7 +232,7 @@ func runPut(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	createOnly := fs.Bool("create-only", false, "fail if name already exists")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	switch {
@@ -345,7 +345,7 @@ func runGet(args []string, scope cliScope) int {
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit {name,value} JSON instead of raw")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() != 1 {
@@ -405,7 +405,7 @@ func runList(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON array")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 
@@ -482,7 +482,7 @@ func runDelete(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() != 1 {
@@ -509,7 +509,7 @@ func runRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() != 2 {

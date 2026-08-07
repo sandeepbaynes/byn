@@ -99,6 +99,12 @@ func readTargetIDs() (uid, gid int, err error) {
 }
 
 func main() {
+	// kill-pgrp mode: drop to _byn-exec and send SIGTERM to the given process
+	// group, killing all _byn-exec descendants of a privsep exec wrapper.
+	if pgid, ok := killPgrpRequested(os.Args); ok {
+		killPgrpMain(pgid)
+		return
+	}
 	// Option A (Terminal-anchored exec): the CLI invokes us with --redeem and the
 	// one-time token on fd 3. We redeem it with the daemon for the authorized
 	// argv+env, then drop + exec. The legacy server-side `-- TARGET` mode (the

@@ -105,3 +105,74 @@ func TestBynWrite_NotADirectory(t *testing.T) {
 		t.Fatalf("code = %v, want bad_request", code)
 	}
 }
+
+func TestWithResolvedActionTargets(t *testing.T) {
+	base := "/home/u/proj"
+	cases := []struct {
+		name    string
+		in      string
+		want    []string
+		comment string
+	}{
+		{
+			name: "relative target gains an absolute twin",
+			in:   "./build.sh",
+			want: []string{"./build.sh", "/home/u/proj/build.sh"},
+		},
+		{
+			name: "placeholders are preserved on the resolved copy",
+			in:   "./app.sh {{args}}",
+			want: []string{"./app.sh {{args}}", "/home/u/proj/app.sh {{args}}"},
+		},
+		{
+			name: "nested relative path",
+			in:   ".venv/bin/python {{args}}",
+			want: []string{".venv/bin/python {{args}}", "/home/u/proj/.venv/bin/python {{args}}"},
+		},
+		{
+			name:    "bare command is left alone",
+			in:      "pytest {{args}}",
+			want:    []string{"pytest {{args}}"},
+			comment: "resolved through PATH by the CLI, argv[0] is not rewritten",
+		},
+		{
+			name: "absolute target is already canonical",
+			in:   "/usr/bin/make build",
+			want: []string{"/usr/bin/make build"},
+		},
+		{
+			name: "parent-relative path",
+			in:   "../tools/gen.sh",
+			want: []string{"../tools/gen.sh", "/home/u/tools/gen.sh"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := withResolvedActionTargets([]string{tc.in}, base)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// A pattern that is already absolute must not be duplicated, and an input that
+// resolves onto an existing entry must collapse rather than appear twice.
+func TestWithResolvedActionTargets_NoDuplicates(t *testing.T) {
+	got := withResolvedActionTargets(
+		[]string{"./build.sh", "/home/u/proj/build.sh"}, "/home/u/proj")
+	want := []string{"./build.sh", "/home/u/proj/build.sh"}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] got %q, want %q", i, got[i], want[i])
+		}
+	}
+}

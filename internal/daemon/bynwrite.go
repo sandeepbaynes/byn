@@ -59,6 +59,45 @@ type trustGrantPolicy struct {
 	ActionsWildcard bool
 }
 
+// withResolvedActionTargets returns actions plus, for every pattern whose
+// command is a relative path (a leading "./", "../", or any token containing a
+// separator), a copy resolved against baseDir — the .byn file's own directory.
+//
+// `byn exec` resolves a relative target to an absolute path before the daemon
+// matches (cmd_exec.go, so validateAbsTarget passes), which meant a pattern
+// written as "./build.sh" could never match and the command was refused as "not
+// pinned". Both forms are kept because the legacy in-process route (aliases,
+// ad-hoc) matches the argv as typed. baseDir comes from the trusted file's own
+// canonical path, never from the client, so this cannot be steered at exec time
+// to make an unrelated binary match.
+func withResolvedActionTargets(actions []string, baseDir string) []string {
+	out := make([]string, 0, len(actions))
+	seen := make(map[string]struct{}, len(actions))
+	add := func(a string) {
+		if _, dup := seen[a]; dup {
+			return
+		}
+		seen[a] = struct{}{}
+		out = append(out, a)
+	}
+	for _, a := range actions {
+		add(a)
+		fields := strings.Fields(a)
+		if len(fields) == 0 {
+			continue
+		}
+		target := fields[0]
+		// Bare command names are resolved through PATH by the CLI and keep
+		// their argv[0], so only separator-bearing relative paths need this.
+		if filepath.IsAbs(target) || !strings.ContainsRune(target, filepath.Separator) {
+			continue
+		}
+		fields[0] = filepath.Join(baseDir, target)
+		add(strings.Join(fields, " "))
+	}
+	return out
+}
+
 // putTrustRecordWithKey mints the fp + vk MACs from an already-derived vk-MAC
 // key and records the FULL v2 trust record: canonical path, hash, mtime,
 // snapshot (full file body), and the policy tables (Actions, Auth, Scope)
@@ -105,7 +144,7 @@ func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vau
 	// Build the actions list (nil when empty/absent so omitempty works).
 	var actions []string
 	if len(parsed.Exec.Actions) > 0 {
-		actions = []string(parsed.Exec.Actions)
+		actions = withResolvedActionTargets([]string(parsed.Exec.Actions), filepath.Dir(canon))
 	}
 	// Build the auth map (nil when empty so omitempty works).
 	var authMap map[string]string
@@ -179,7 +218,7 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 			names = append(names, m.Name)
 		}
 	}
-	if len(names) == 0 {
+	if len(names) == 0 && !wildcard {
 		return nil, nil // nothing to inject → no capability
 	}
 
@@ -198,6 +237,35 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 			zeroBytes(k)
 		}
 	}()
+
+	// A wildcard grant also carries the scope key, so exec can derive a row key
+	// for entries written AFTER this grant. Capturing only per-row keys froze
+	// "*" to the variables that happened to exist at grant time: the file said
+	// "everything in this scope", the capability disagreed, and adding a
+	// variable silently produced nothing until someone retyped the master
+	// password. Per-row keys are still captured alongside it so entries left on
+	// an older scheme keep working until they are next written.
+	if wildcard {
+		var scopeKey []byte
+		var skerr error
+		if len(password) > 0 {
+			scopeKey, skerr = st.CaptureScopeKeyWithPassword(ctx, password, scope)
+		} else {
+			scopeKey, skerr = st.CaptureScopeKey(ctx, scope)
+		}
+		if skerr != nil {
+			return nil, scopeOptional(skerr)
+		}
+		if scopeKey != nil {
+			if rowKeys == nil {
+				rowKeys = make(map[string][]byte, 1)
+			}
+			rowKeys[vault.CapScopeKeyName] = scopeKey
+		}
+	}
+	if len(rowKeys) == 0 {
+		return nil, nil
+	}
 
 	capKey, err := vcrypto.DeriveCapKey(d.fpMACKey)
 	if err != nil {

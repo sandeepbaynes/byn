@@ -72,6 +72,8 @@ const (
 	// Trust store (global, not per-vault): the TOFU list of approved
 	// `.byn` files. The portal lists and can revoke entries; granting is
 	// gated by the master password (proof-of-presence).
+	OpApprovalList   Op = "approval.list"
+	OpApprovalDecide Op = "approval.decide"
 	OpTrustList      Op = "trust.list"
 	OpTrustRemove    Op = "trust.remove"
 	OpTrustGrant     Op = "trust.grant"
@@ -147,6 +149,7 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpAuditReseal, OpDoctor,
+	OpApprovalList, OpApprovalDecide,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
 	OpExecFetch, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
@@ -218,8 +221,13 @@ const (
 	CodeFingerprint   ErrCode = "fingerprint_mismatch"
 
 	// Exec / per-action authorization (NU-1).
-	CodeTrustDenied  ErrCode = "trust_denied"  // .byn untrusted/changed/tampered — exec blocked
-	CodeAuthRequired ErrCode = "auth_required" // auth gate: supply password/presence token or session
+	CodeTrustDenied ErrCode = "trust_denied" // .byn untrusted/changed/tampered — exec blocked
+	// CodeApprovalPending means the request needs a human decision and one has
+	// been queued. Distinct from trust_denied because nothing was refused: a
+	// caller that retries after the decision lands will succeed, so this must
+	// not read as a permanent failure.
+	CodeApprovalPending ErrCode = "approval_pending"
+	CodeAuthRequired    ErrCode = "auth_required" // auth gate: supply password/presence token or session
 
 	// Project / env.
 	CodeProjectNotFound ErrCode = "project_not_found"
@@ -1424,3 +1432,46 @@ type SessionEndReq struct{} //nolint:gosec // G101: req type, not a static crede
 // SessionEndResp is empty — the op is idempotent; the caller should not
 // branch on whether a token was actually present.
 type SessionEndResp struct{} //nolint:gosec // G101: resp type, not a static credential
+
+// ---- Approval queue --------------------------------------------------------
+
+// ApprovalListReq lists queued decisions. An empty Status returns everything
+// still on file.
+type ApprovalListReq struct {
+	Status string `json:"status,omitempty"`
+}
+
+// ApprovalEntry is one queued decision, flattened for the wire.
+type ApprovalEntry struct {
+	ID         string   `json:"id"`
+	Kind       string   `json:"kind"`
+	Vault      string   `json:"vault,omitempty"`
+	Subject    string   `json:"subject"`
+	Summary    []string `json:"summary,omitempty"`
+	HighRisk   bool     `json:"high_risk,omitempty"`
+	Status     string   `json:"status"`
+	CreatedAt  int64    `json:"created_at"`
+	ExpiresAt  int64    `json:"expires_at"`
+	Repeats    int      `json:"repeats,omitempty"`
+	DecidedVia string   `json:"decided_via,omitempty"`
+}
+
+// ApprovalListResp returns the queue, newest first.
+type ApprovalListResp struct {
+	Entries []ApprovalEntry `json:"entries"`
+}
+
+// ApprovalDecideReq answers one queued decision. Approving a trust widening
+// re-grants the .byn, so it carries the same proof of presence a grant does.
+type ApprovalDecideReq struct {
+	ID       string `json:"id"`
+	Approve  bool   `json:"approve"`
+	Via      string `json:"via,omitempty"`
+	Password []byte `json:"password,omitempty"`
+}
+
+// ApprovalDecideResp reports what the request now says. Deciding is idempotent,
+// so this may describe a decision made earlier through another surface.
+type ApprovalDecideResp struct {
+	Entry ApprovalEntry `json:"entry"`
+}

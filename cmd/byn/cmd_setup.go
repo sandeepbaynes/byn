@@ -45,7 +45,7 @@ func runSetupWith(args []string, euid func() int, stdin io.Reader, stdout, stder
 	fs.SetOutput(stderr)
 	uninstall := fs.Bool("uninstall", false, "reverse a previous setup (uninstall the service + helper; keeps the vault)")
 	purge := fs.Bool("purge", false, "with --uninstall, ALSO remove the system data dir (the vault) — destructive")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() > 0 {

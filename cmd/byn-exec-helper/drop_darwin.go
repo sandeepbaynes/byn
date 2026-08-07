@@ -72,6 +72,11 @@ func dropTo(uid, gid int) error {
 // dropTo has the same shape as the Linux helper.
 func setUndumpable() error { return nil }
 
+// setPdeathsig is a no-op on macOS: there is no PR_SET_PDEATHSIG equivalent.
+// On macOS, `byn kill` sends SIGTERM to the byn exec wrapper, which exits and
+// lets the user signal the target manually if needed.
+func setPdeathsig() error { return nil }
+
 // readEnvFD reads NUL-delimited KEY=VALUE pairs from the given file descriptor.
 // fd 3 is used by convention so env vars are never visible on argv.
 func readEnvFD(fd uintptr) ([]string, error) {

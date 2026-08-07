@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/privsep"
@@ -18,11 +20,38 @@ import (
 // security authority, independently read+validate the real .byn instead of
 // trusting content the (possibly compromised) CLI sends.
 var ownerACLRun = func(name string, args ...string) error {
+	// A recursive grant walks the whole project, and on a real one that means
+	// node_modules: it has hung `byn trust` before (fixed in 4b233ba, then
+	// reintroduced). Bounding it keeps the deep grant's benefit for pre-existing
+	// nested cache dirs while making the hang impossible — trust returning
+	// slightly under-granted is recoverable, trust never returning is not.
+	timeout := aclTimeout
+	for _, a := range args {
+		if a == "-R" {
+			timeout = recursiveACLTimeout
+			break
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	// #nosec G204 -- name is a fixed binary ("chmod"/"setfacl") chosen by the
 	// privsep ACL code; args are file paths + fixed ACE strings, run via
 	// exec.Command (no shell) so path metacharacters cannot inject.
-	return exec.Command(name, args...).Run()
+	err := exec.CommandContext(ctx, name, args...).Run()
+	if ctx.Err() != nil {
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Note:"),
+			dim(fmt.Sprintf("%s took longer than %s and was stopped; deeply nested build caches may need `byn doctor --repair`", name, timeout)))
+		return nil // best-effort: an incomplete deep grant must not fail the trust
+	}
+	return err
 }
+
+// ACL commands are quick on a single path and unbounded on a tree, so the
+// recursive form gets its own, larger budget rather than sharing one.
+const (
+	aclTimeout          = 10 * time.Second
+	recursiveACLTimeout = 20 * time.Second
+)
 
 // cliPrivsepProvisioned reports whether this machine is provisioned for privsep
 // — i.e. the _byn service user exists, so the daemon runs as _byn and cannot

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/privsep"
@@ -75,6 +76,13 @@ func runExec(args []string, scope cliScope) int {
 	// used only if FREE — otherwise byn fails with a clear message instead of
 	// letting node die with EADDRINUSE. `=0` lets each process self-allocate.
 	// Injected via NODE_OPTIONS so it reaches node/tsx/etc.
+	// --wait-approval lets a caller that would rather block do so, instead of
+	// polling: a pending decision is answered by a person on human time, and
+	// some callers prefer to sit on it. The default stays non-blocking, because
+	// a caller that cannot be interrupted must not be made to wait by default.
+	args, waitApproval, hasWait := stripWaitApproval(args)
+	_ = hasWait
+
 	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
 	if hasInspect {
 		if err := applyInspect(inspectBrk, inspectVal); err != nil {
@@ -205,8 +213,19 @@ func runExec(args []string, scope cliScope) int {
 	//     the alias is expanded SERVER-side (childArgv[0] is unknown until the
 	//     daemon returns ResolvedArgv). Direct exec only for v1.
 	//   - --no-privsep, or privsep off (the DEFAULT) → LEGACY, byte-for-byte.
+	// An alias silently took the legacy path, so the child ran as the caller
+	// with none of privsep's isolation — the ergonomic form was the unprotected
+	// one. Say so rather than degrade quietly; the direct form is the fix.
+	if privsepOn && scope.SourcePath != "" && isAliasExec {
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Warning:"),
+			dim("alias exec runs without privilege separation — the child runs as you, "+
+				"and other processes at your UID can read its environment."))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("For isolation:"),
+			cyan("byn exec -- <command>")+dim(" (pin it in [exec] actions)"))
+	}
+
 	if privsepOn && scope.SourcePath != "" && !isAliasExec {
-		if rc, handled := runExecPrivsep(client, req, childArgv); handled {
+		if rc, handled := runExecPrivsep(client, req, childArgv, waitApproval, hasWait); handled {
 			return rc
 		}
 		// Not handled ⇒ the daemon predates exec.spawn (unknown_op). Fall through
@@ -215,9 +234,33 @@ func runExec(args []string, scope cliScope) int {
 
 	var fetched ipc.ExecFetchResp
 	callErr := client.Call(ipc.OpExecFetch, req, &fetched)
+
+	// A queued decision is answered by a person, on human time. A caller that
+	// would rather block than poll can say so; the default stays non-blocking,
+	// because a caller that must not be interrupted should not be made to wait.
+	if hasWait && isApprovalPendingErr(callErr) {
+		if again, ok := waitForApproval(client, req, waitApproval, callErr); ok {
+			fetched, callErr = again, nil
+		} else {
+			callErr = ok2err(callErr)
+		}
+	}
+
 	switch {
 	case callErr == nil:
 		// success — fall through
+	case isApprovalPendingErr(callErr):
+		// Not a refusal: a person has been asked, and retrying after they
+		// answer will succeed. Report it as its own thing so a caller does not
+		// treat it as permanent failure.
+		var em *ipc.ErrResponse
+		if errors.As(callErr, &em) {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+			if em.Recover != "" {
+				fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Try:"), cyan(em.Recover))
+			}
+		}
+		return exitApprovalPending
 	case isAuthRequiredErr(callErr):
 		// Auth_required fires for two cases:
 		//   (a) ad-hoc exec (Path == "") with no session present
@@ -313,7 +356,14 @@ func runExec(args []string, scope cliScope) int {
 	// (last value wins per POSIX, and most shells/libs follow that). This
 	// means a stored DB_URL overrides any DB_URL already exported in the
 	// parent shell — usually what the user wants.
+	//
+	// BYN_EXEC_PID stamps the current PID into the child's environment.
+	// After syscall.Exec the PID is unchanged, so "byn ps" can find the
+	// running child by scanning /proc/*/environ for entries where the
+	// BYN_EXEC_PID value matches the process's own PID. Children of the
+	// child inherit the var but have different PIDs, so they are excluded.
 	envv := append(os.Environ(), extraEnv...)
+	envv = append(envv, "BYN_EXEC_PID="+strconv.Itoa(os.Getpid()))
 
 	// Replace the process. On success, this never returns.
 	// gosec G204 flags subprocess launches with variable paths;
@@ -522,7 +572,8 @@ func portIsFree(host string, port int) bool {
 // enabled but `byn setup` never run) is a HARD error with an actionable hint —
 // we never silently fall back to an owner-UID in-process run, because the user
 // explicitly opted into privsep.
-func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string) (rc int, handled bool) {
+func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string,
+	waitApproval time.Duration, hasWait bool) (rc int, handled bool) {
 	// Resolve the child binary in PATH. Same failure mode as the legacy path.
 	absTarget, err := exec.LookPath(childArgv[0])
 	if err != nil {
@@ -553,6 +604,15 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 	}
 	var authResp ipc.ExecAuthorizeResp
 	callErr := client.Call(ipc.OpExecAuthorize, authReq, &authResp)
+
+	// A queued decision is answered on human time. Callers that asked to wait
+	// do so here too — privsep is the DEFAULT path, so handling this only on the
+	// legacy one would mean the flag did nothing for most users.
+	if hasWait && isApprovalPendingErr(callErr) {
+		if again, ok := waitForAuthorize(client, authReq, waitApproval, callErr); ok {
+			authResp, callErr = again, nil
+		}
+	}
 
 	// Auth retry: an auth_required reply on a TTY prompts once and retries with
 	// the password attached. Same UX as the legacy exec.fetch path.
@@ -594,9 +654,47 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 	case isUnknownOpErr(callErr):
 		// Daemon predates exec.authorize — signal the caller to use the legacy path.
 		return 0, false
+	case isApprovalPendingErr(callErr):
+		// Nothing was refused: a person has been asked. Report it as its own
+		// outcome so a caller does not treat a pause as permanent failure.
+		var em *ipc.ErrResponse
+		if errors.As(callErr, &em) {
+			fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+			if em.Recover != "" {
+				fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Try:"), cyan(em.Recover))
+			}
+		}
+		return exitApprovalPending, true
 	default:
 		return handleExecFetchError(callErr), true
 	}
+}
+
+// waitForAuthorize is waitForApproval for the privsep path: re-attempt the
+// authorize call until the decision lands or the budget runs out.
+func waitForAuthorize(client *ipc.Client, req ipc.ExecAuthorizeReq,
+	budget time.Duration, first error) (ipc.ExecAuthorizeResp, bool) {
+
+	var em *ipc.ErrResponse
+	if errors.As(first, &em) {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+	}
+	deadline := time.Now().Add(budget)
+	const interval = 2 * time.Second
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		var resp ipc.ExecAuthorizeResp
+		err := client.Call(ipc.OpExecAuthorize, req, &resp)
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "%s\n", dim("approved — continuing"))
+			return resp, true
+		}
+		if !isApprovalPendingErr(err) {
+			return ipc.ExecAuthorizeResp{}, false
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", dim("still waiting after "+budget.String()+" — giving up for now"))
+	return ipc.ExecAuthorizeResp{}, false
 }
 
 // execHelperRunner invokes the privsep helper to redeem the token and run the
@@ -635,6 +733,14 @@ func invokeExecHelper(token []byte) int {
 	cmd.Stderr = os.Stderr
 	cmd.ExtraFiles = []*os.File{r} // ExtraFiles[0] → fd 3 in the helper
 
+	// Create a new process group so all _byn-exec descendants share one PGID
+	// (equal to this wrapper's PID). byn kill then uses byn-exec-helper
+	// --kill-pgrp to signal the entire subtree atomically. In a shell with job
+	// control the foreground group is already this process's PID, so Setpgid
+	// is a no-op. In make/script context (job control off) it detaches the
+	// service from the terminal's PGID so kill(-pgid) is safe.
+	_ = syscall.Setpgid(0, 0)
+
 	if err := cmd.Start(); err != nil {
 		_ = r.Close()
 		fmt.Fprintf(os.Stderr, "%s starting privsep helper: %v\n", boldRed("Error:"), err)
@@ -646,18 +752,50 @@ func invokeExecHelper(token []byte) int {
 	// after it execs). The child shares our tty + process group, so tty-generated
 	// signals reach it directly too; forwarding additionally covers signals sent to
 	// byn specifically.
+	//
+	// In privsep mode the child runs as _byn-exec (a different UID), so
+	// Signal() returns EPERM. We cannot forward in that case, but we CAN exit
+	// this wrapper — byn-exec-helper sets pdeathsig=SIGTERM after its UID drop,
+	// so the kernel delivers SIGTERM to the exec'd target when this parent exits.
+	// pdeathsig only reaches the process the helper exec'd into; it is cleared
+	// on fork, so grandchildren (a dev server's `tsx watch` → node, say) outlive
+	// this wrapper, keep their ports bound, and are invisible to `byn ps`. The
+	// owner cannot signal them either — they are _byn-exec. Sweeping the process
+	// group through the helper on the way out is what actually reaps the subtree.
+	reapGroup := func() {
+		pgid, err := syscall.Getpgid(os.Getpid())
+		// Only sweep a group this wrapper leads. If Setpgid above failed we are
+		// still in the caller's group, and signalling it would take out the
+		// user's shell job rather than our child.
+		if err != nil || pgid != os.Getpid() {
+			return
+		}
+		_ = exec.Command(helperPath, "--kill-pgrp", strconv.Itoa(pgid)).Run() //nolint:gosec // operator-installed helper at a fixed path
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 	go func() {
 		for s := range sigCh {
 			if cmd.Process != nil {
-				_ = cmd.Process.Signal(s)
+				if err := cmd.Process.Signal(s); errors.Is(err, syscall.EPERM) {
+					// Privsep child: can't signal across the UID boundary.
+					// Reap the whole group, then exit.
+					reapGroup()
+					if sig, ok := s.(syscall.Signal); ok {
+						os.Exit(128 + int(sig))
+					}
+					os.Exit(1)
+				}
 			}
 		}
 	}()
 
 	werr := cmd.Wait()
+	// The direct child is gone; anything it forked is not. Sweep before
+	// returning so the wrapper's lifetime really does bound the subtree.
+	reapGroup()
 	if werr == nil {
 		return 0
 	}
@@ -774,4 +912,96 @@ func handleExecFetchError(err error) int {
 // Also prints the [exec] actions wildcard warning when ActionsWildcard=true.
 func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
 	renderScopeNotes(sourcePath, resp.Wildcard, resp.NoneDeclared, resp.ActionsWildcard, len(resp.Values))
+}
+
+// stripWaitApproval removes the byn-exec `--wait-approval[=DURATION]` flag from
+// the byn-owned part of args, using the same boundary rule as stripNoPrivsep:
+// tokens at or after `--` (or a bare alias name) belong to the child.
+//
+// Without it, a caller that hits a pending decision gets an id and exits, which
+// is right for anything that must not block. A caller that would rather wait —
+// a one-shot script a person is watching — can ask to.
+func stripWaitApproval(args []string) ([]string, time.Duration, bool) {
+	out := make([]string, 0, len(args))
+	wait := time.Duration(0)
+	found := false
+	boundary := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if boundary {
+			out = append(out, a)
+			continue
+		}
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		switch {
+		case a == "--wait-approval":
+			found, wait = true, defaultApprovalWait
+			// An explicit duration may follow as its own token.
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				if d, err := time.ParseDuration(args[i+1]); err == nil {
+					wait = d
+					i++
+				}
+			}
+		case strings.HasPrefix(a, "--wait-approval="):
+			found = true
+			wait = defaultApprovalWait
+			if d, err := time.ParseDuration(strings.TrimPrefix(a, "--wait-approval=")); err == nil {
+				wait = d
+			}
+		default:
+			out = append(out, a)
+		}
+	}
+	return out, wait, found
+}
+
+// defaultApprovalWait is how long --wait-approval waits when given no duration.
+// It is a couple of minutes rather than seconds: the thing being waited on is a
+// person noticing a request, and a timeout shorter than that just reports
+// failure for something that was going to succeed.
+const defaultApprovalWait = 2 * time.Minute
+
+// exitApprovalPending is returned when the run needs a decision nobody has made
+// yet. It is deliberately distinct from the generic failure code: the work was
+// not refused, and a caller that retries after the decision lands will succeed.
+const exitApprovalPending = 75 // EX_TEMPFAIL: try again later
+
+func isApprovalPendingErr(err error) bool {
+	var er *ipc.ErrResponse
+	return errors.As(err, &er) && er.Code == ipc.CodeApprovalPending
+}
+
+// ok2err returns the original error unchanged; it exists so the wait path reads
+// as "either we got through, or we are back where we started".
+func ok2err(err error) error { return err }
+
+// waitForApproval re-attempts the fetch until the decision lands or the budget
+// runs out. It polls rather than holding a connection open, so a daemon restart
+// mid-wait costs one interval instead of the whole wait.
+func waitForApproval(client *ipc.Client, req ipc.ExecFetchReq, budget time.Duration, first error) (ipc.ExecFetchResp, bool) {
+	var em *ipc.ErrResponse
+	if errors.As(first, &em) {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Waiting on approval:"), em.Message)
+	}
+	deadline := time.Now().Add(budget)
+	const interval = 2 * time.Second
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		var resp ipc.ExecFetchResp
+		err := client.Call(ipc.OpExecFetch, req, &resp)
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "%s\n", dim("approved — continuing"))
+			return resp, true
+		}
+		if !isApprovalPendingErr(err) {
+			return ipc.ExecFetchResp{}, false // something else went wrong
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", dim("still waiting after "+budget.String()+" — giving up for now"))
+	return ipc.ExecFetchResp{}, false
 }

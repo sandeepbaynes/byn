@@ -67,6 +67,12 @@ type Record struct {
 	// cannot be added, removed, or swapped after trust. Empty for .byn files with
 	// no [exec] env allowlist, and for records granted before this existed.
 	ExecCapability []byte `json:"exec_capability,omitempty"`
+	// EnvGrants is the [exec] env allowlist currently in force. It is set from
+	// the live file when a changed .byn is accepted as no wider than its grant,
+	// so a variable the author has removed stops being injected immediately
+	// rather than lingering until the next re-trust. Not persisted: the sealed
+	// capability remains the record's durable allowlist.
+	EnvGrants []string `json:"-"`
 }
 
 // Store is the file content.

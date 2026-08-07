@@ -1,0 +1,18 @@
+[scope]
+vault   = "agenttest"
+project = "testbed"
+env     = "default"
+
+[exec]
+env = ["TESTBED_DB_URL", "TESTBED_API_KEY", "TESTBED_REGION", "TESTBED_NEW_VAR"]
+actions = [
+    "./app.sh {{args}}",
+    "./build.sh",
+    "./server.sh",
+    "./clean.sh",
+    "env",
+]
+
+[aliases]
+build = "./build.sh"
+serve = "./server.sh"

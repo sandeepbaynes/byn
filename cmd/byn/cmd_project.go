@@ -43,7 +43,7 @@ func runProject(args []string, scope cliScope) int {
 func runProjectCreate(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("project create", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	name := scope.Project
@@ -75,7 +75,7 @@ func runProjectList(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("project list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -107,7 +107,7 @@ func runProjectDelete(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("project delete", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	name := scope.Project
@@ -145,7 +145,7 @@ func runProjectRename(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("project rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if fs.NArg() != 2 {

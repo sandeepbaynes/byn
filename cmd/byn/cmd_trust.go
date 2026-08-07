@@ -55,7 +55,7 @@ func runTrustAdd(args []string) int {
 	pwStdin := fs.Bool("password-stdin", false, "read the master password from stdin instead of prompting")
 	pathsCSV := fs.String("paths", "", "comma-separated .byn files or directories to trust")
 	recursive := fs.Bool("recursive", false, "walk each given directory for every .byn under it")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 
@@ -361,7 +361,7 @@ func runUntrust(args []string, _ cliScope) int {
 	fs.SetOutput(os.Stderr)
 	pathsCSV := fs.String("paths", "", "comma-separated .byn files or directories to untrust")
 	recursive := fs.Bool("recursive", false, "walk each given directory for every .byn under it")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	inputs := append([]string{}, fs.Args()...)
@@ -426,7 +426,7 @@ func runTrustList(args []string) int {
 	fs := flag.NewFlagSet("trust list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -471,6 +471,12 @@ func runTrustDiff(args []string) int {
 	// Absolutize against the caller's cwd: the daemon resolves a relative path
 	// against ITS OWN cwd, not the user's shell (see absForDaemon).
 	path := absForDaemon(args[0])
+	// Accept a directory the same way `byn trust` does. The error text that
+	// sends users here prints a directory, so rejecting one made the suggested
+	// remedy fail.
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, ".byn")
+	}
 
 	dir, err := defaultDir()
 	if err != nil {

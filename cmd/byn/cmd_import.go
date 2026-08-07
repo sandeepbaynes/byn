@@ -42,7 +42,7 @@ func runImport(args []string, scope cliScope) int {
 	yes := fs.Bool("yes", false, "skip the confirmation prompt for --replace")
 	pwStdin := fs.Bool("password-stdin", false,
 		"read the master password from stdin for non-interactive authorization")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if *replace && *skipExisting {

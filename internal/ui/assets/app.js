@@ -205,6 +205,9 @@ function locationToRoute() {
   if (p === "/trust") {
     return { view: "trust", scope: null, studioPath: "" };
   }
+  if (p === "/approvals") {
+    return { view: "approvals", scope: null, studioPath: "" };
+  }
   if (p === "/audit") {
     return { view: "audit", scope: null, studioPath: "" };
   }
@@ -1089,8 +1092,28 @@ async function syncStatus() {
 // startStatusSync polls the daemon every 2s. Recursive setTimeout (not
 // setInterval) so a slow poll never overlaps the next.
 function startStatusSync() {
-  const tick = async () => { await syncStatus(); setTimeout(tick, 2000); };
+  const tick = async () => {
+    await syncStatus();
+    await syncApprovalBadge();
+    setTimeout(tick, 2000);
+  };
   setTimeout(tick, 2000);
+}
+
+// A queued decision is worth noticing without navigating to look for it: the
+// caller that raised it is paused until someone answers, and a request nobody
+// sees is the same as one nobody answered.
+async function syncApprovalBadge() {
+  const badge = document.getElementById("approvals-badge");
+  if (!badge) return;
+  try {
+    const data = await api("GET", "/api/approvals?status=pending");
+    const n = (data.entries || []).length;
+    badge.textContent = String(n);
+    badge.hidden = n === 0;
+  } catch (_) {
+    badge.hidden = true; // a failed poll should not paint a stale count
+  }
 }
 // changePassword rotates a vault's master password. Only the wrapping
 // changes — the vault key and all secrets are untouched, and the lock state
@@ -1298,6 +1321,7 @@ function renderContent() {
   renderCrumbs();
   if (state.view === "audit") return renderAuditView();
   if (state.view === "trust") return renderTrustView();
+  if (state.view === "approvals") return renderApprovalsView();
   if (state.view === "settings") return renderSettingsView();
   if (state.view === "studio") return; // studio manages its own DOM
   if (state.view === "projects") return renderProjectsView();
@@ -1442,6 +1466,109 @@ function fmtAuditTime(tsNanos) {
 }
 
 // ---- trust list view ----------------------------------------------------
+
+function toggleApprovals() {
+  if (state.view === "approvals") { leaveOverlayView(); return; }
+  navigateGuarded("/approvals");
+}
+
+// A .byn that asks for more than it was granted parks a decision here instead
+// of stopping the caller at a prompt it cannot answer. What the approver reads
+// is the semantic diff — what would be granted, in words — because a hash is a
+// fact nobody can make a decision from.
+async function renderApprovalsView() {
+  const box = $("#content-body"); box.innerHTML = "";
+  box.appendChild(el("div", "browse-head", "waiting on you"));
+  let data;
+  try { data = await api("GET", "/api/approvals?status=pending"); }
+  catch (e) { box.appendChild(emptyHint(e.message)); return; }
+  const entries = data.entries || [];
+  if (!entries.length) { box.appendChild(emptyHint("nothing waiting")); return; }
+
+  const tbl = el("div", "trust-tbl");
+  for (const a of entries) {
+    const card = el("div", "approval-card" + (a.high_risk ? " high-risk" : ""));
+
+    const head = el("div", "approval-head");
+    if (a.high_risk) {
+      const flag = el("span", "approval-risk", "high risk");
+      flag.title = "granting this is unusually consequential";
+      head.appendChild(flag);
+    }
+    const subj = el("span", "t-path", a.subject); subj.title = a.subject;
+    head.appendChild(subj);
+    card.appendChild(head);
+
+    const why = el("ul", "approval-why");
+    for (const line of (a.summary || [])) why.appendChild(el("li", "", line));
+    card.appendChild(why);
+
+    const meta = [];
+    if (a.created_at) meta.push("asked " + relTime(a.created_at));
+    if (a.repeats) meta.push("retried " + a.repeats + "\u00d7");
+    card.appendChild(el("div", "approval-meta", meta.join(" \u00b7 ")));
+
+    const acts = el("div", "trust-row-acts");
+    const grant = el("button", "btn btn-primary sm", "approve");
+    grant.onclick = () => decideApproval(a, true);
+    acts.appendChild(grant);
+    const refuse = el("button", "btn btn-ghost sm", "deny");
+    refuse.onclick = () => decideApproval(a, false);
+    acts.appendChild(refuse);
+    card.appendChild(acts);
+
+    tbl.appendChild(card);
+  }
+  box.appendChild(tbl);
+}
+
+function relTime(unixSecs) {
+  const secs = Math.max(0, Math.floor(Date.now() / 1000 - unixSecs));
+  if (secs < 60) return secs + "s ago";
+  if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+  if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+  return Math.floor(secs / 86400) + "d ago";
+}
+
+// Approving grants authority, so it asks for the master password exactly as the
+// terminal does. Denying grants nothing and asks for none: refusing has to stay
+// the cheaper action, or people learn to approve by reflex.
+async function decideApproval(entry, approve) {
+  let password = "";
+  if (approve) {
+    // Show what is being granted at the moment of granting it — an approval
+    // screen that hides the diff behind a link is one nobody reads.
+    const summary = (entry.summary || []).map((l) => "  \u2022 " + l).join("\n");
+    const r = await openDialog({
+      title: "Approve this request",
+      okText: "approve",
+      message: entry.subject + "\n\nThis would grant:\n" + summary +
+        "\n\nApproving re-trusts the file, so the caller's next attempt succeeds.",
+      fields: [
+        { key: "password", label: "master password", type: "password",
+          validate: (v) => (v ? null : "password required") },
+      ],
+    });
+    if (!r) return;
+    password = r.password;
+    r.password = "";
+  } else {
+    const ok = await openDialog({
+      title: "Deny this request", danger: true, okText: "deny",
+      message: entry.subject + "\n\nThe caller will be told it was refused. " +
+        "Denying the same request repeatedly puts it on hold.",
+    });
+    if (!ok) return;
+  }
+  try {
+    await api("POST", "/api/approvals/decide",
+      { id: entry.id, approve: approve, password: password });
+    toast(approve ? "approved" : "denied");
+  } catch (e) {
+    toast(e.message, true);
+  }
+  renderApprovalsView();
+}
 
 function toggleTrust() {
   if (state.view === "trust") { leaveOverlayView(); return; }
@@ -5352,6 +5479,7 @@ function wire() {
   });
   $("#audit-btn").addEventListener("click", toggleAudit);
   $("#trust-btn").addEventListener("click", toggleTrust);
+  $("#approvals-btn").addEventListener("click", toggleApprovals);
   $("#byn-btn").addEventListener("click", generateByn);
   $("#settings-btn").addEventListener("click", toggleSettings);
   $("#help-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleHelp(); });

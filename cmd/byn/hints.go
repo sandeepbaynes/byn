@@ -5,7 +5,7 @@
 //
 // Examples:
 //
-//	Put DB_URL in maison-agent/staging.
+//	Put DB_URL in myproject/staging.
 //	Created project "billing" in vault "default".
 //	Imported 12 entries into default/billing/default.
 //

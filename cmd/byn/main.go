@@ -117,6 +117,18 @@ func run(args []string) int {
 			}
 		}
 	}
+	// Nested subcommands ("byn vault init help", "byn trust diff help") never
+	// reached wantsHelp, which only fires on a lone "help" token, so they ran
+	// the real command and died on auth. Documentation must never require a
+	// terminal. Restricted to the subcommand-bearing verbs so that value-taking
+	// commands keep treating "help" as a possible secret name.
+	switch cmd {
+	case "vault", "project", "env", "trust", "audit", "daemon":
+		if n := len(helpArgs); n > 1 && helpArgs[n-1] == "help" {
+			return printCommandHelp(cmd)
+		}
+	}
+
 	if wantsHelp(helpArgs) {
 		return printCommandHelp(cmd)
 	}
@@ -175,6 +187,8 @@ func run(args []string) int {
 		return runLock(rest, scope)
 	case "passwd", "password":
 		return runPasswd(rest, scope)
+	case "approve":
+		return runApprove(rest, scope)
 	case "put":
 		return runPut(rest, scope)
 	case "get", "cat":
@@ -201,6 +215,10 @@ func run(args []string) int {
 		return runExport(rest, scope)
 	case "audit":
 		return runAudit(rest, scope)
+	case "ps":
+		return runPS(rest)
+	case "kill":
+		return runKill(rest)
 	case "doctor":
 		return runDoctor(rest, scope)
 	case "web", "ui":
@@ -232,7 +250,7 @@ func skipDiscoveryFor(cmd string) bool {
 	switch cmd {
 	case "trust", "untrust", "daemon", "start", "stop", "restart", "reload",
 		"version", "--version", "-v",
-		"help", "--help", "-h", "doctor", "web", "ui", "setup", "uninstall", "config-auth", "migrate":
+		"help", "--help", "-h", "doctor", "web", "ui", "setup", "uninstall", "config-auth", "migrate", "ps", "kill":
 		return true
 	}
 	return false
@@ -341,11 +359,20 @@ Diagnostics:
   doctor [--repair]          Health + provisioning checks; sudo --repair heals (also: --json)
   audit tail [--lines N]     Print recent audit-log events (also: --json)
   audit verify               Re-walk the per-vault HMAC chain (also: --json)
+  ps                         List running byn exec processes and their commands
+  kill [--all] [<pid>...]    Stop one or all running byn exec processes (SIGTERM)
 
 Trust (.byn TOFU):
   trust [PATH]               Approve a .byn file (default: ./.byn)
   trust list                 List trusted paths (also: --json)
+  trust diff [PATH]          Show what changed since the file was trusted
   untrust [PATH]             Revoke trust (default: ./.byn)
+
+Approvals (decisions a .byn is waiting on):
+  approve                    List what is waiting (also: --json)
+  approve <id>...            Grant it (asks for the master password)
+  approve --deny <id>...     Refuse it (no password: refusing grants nothing)
+  approve --all              Answer every pending request in one go
 
 System (run with sudo — these manage the _byn service):
   setup                      Provision the _byn/_byn-exec service users

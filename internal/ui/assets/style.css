@@ -1399,3 +1399,42 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   fill: none; stroke: currentColor;
   overflow: visible; pointer-events: none;
 }
+
+/* ---- approvals ---------------------------------------------------------- */
+
+/* One card per decision. The reason is part of the card rather than behind a
+   link: an approval screen that hides what it grants is one nobody reads. */
+.approval-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.approval-card.high-risk { border-color: var(--warn, #d08b28); }
+.approval-head { display: flex; align-items: center; gap: 8px; }
+.approval-risk {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--warn, #d08b28);
+  color: #1a1a1a;
+}
+.approval-why { margin: 0; padding-left: 18px; }
+.approval-why li { margin: 2px 0; }
+.approval-meta { font-size: 12px; opacity: 0.65; }
+.approvals-badge {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warn, #d08b28);
+  color: #1a1a1a;
+  font-size: 11px;
+  text-align: center;
+}

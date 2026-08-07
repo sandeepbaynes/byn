@@ -207,13 +207,8 @@ func TestExecFetchChangedDenied(t *testing.T) {
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\n")
 	grantBynFile(t, c, byn, pw)
 
-	// Append a byte to change the content.
-	f, err := os.OpenFile(byn, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = f.WriteString(" ")
-	_ = f.Close()
+	// Ask for a variable that was never granted — a widening.
+	appendToFile(t, byn, "env = [\"SECRET\", \"SMUGGLED\"]\n")
 
 	_, fetchErr := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
 	if code := errCode(t, fetchErr); code != ipc.CodeTrustDenied {
@@ -224,6 +219,79 @@ func TestExecFetchChangedDenied(t *testing.T) {
 		if !strings.Contains(er.Message, "CHANGED") {
 			t.Errorf("message %q should contain CHANGED", er.Message)
 		}
+	}
+}
+
+// A .byn whose bytes changed but whose authority did not must keep working.
+// Reformatting, an added comment, and a branch switch that only rewrites mtimes
+// all look like this, and blocking on them used to stop every command in the
+// project until a human retyped the master password.
+func TestExecFetchPresentationChangeAllowed(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("secret-val"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	appendToFile(t, byn, "\n# a comment carries no authority\n")
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if err != nil {
+		t.Fatalf("presentation-only change was rejected: %v", err)
+	}
+	if m := valueMap(resp.Values); m["SECRET"] == "" {
+		t.Errorf("SECRET not injected after a comment edit; values=%v", m)
+	}
+}
+
+// Dropping a variable is a narrowing: it applies at once, with no re-approval,
+// and the variable must actually stop being injected rather than lingering in
+// the capability sealed at grant time.
+func TestExecFetchNarrowingAppliesImmediately(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("secret-val"))
+	putVar(t, c, ipc.Scope{}, "OTHER", []byte("other-val"))
+
+	byn := writeBynContent(t,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\", \"OTHER\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	writeFileContent(t, byn,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if err != nil {
+		t.Fatalf("narrowing was rejected: %v", err)
+	}
+	m := valueMap(resp.Values)
+	if m["SECRET"] == "" {
+		t.Errorf("SECRET should still be injected; values=%v", m)
+	}
+	if _, present := m["OTHER"]; present {
+		t.Errorf("OTHER was removed from the allowlist but is still injected; values=%v", m)
+	}
+}
+
+func appendToFile(t *testing.T, path, s string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFileContent(t *testing.T, path, s string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(s), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -592,5 +660,242 @@ func TestExecFetchInheritedVarThroughAllowlist(t *testing.T) {
 	m := valueMap(resp.Values)
 	if m["SHARED"] != "shared-value" {
 		t.Errorf("SHARED = %q, want shared-value", m["SHARED"])
+	}
+}
+
+// The multi-agent case: one agent adds a variable, and every other agent picks
+// it up on its next exec. Under per-row capture, "*" froze to the variables that
+// existed at grant time, so the new variable was silently absent and the only
+// cure was a human retyping the master password — which stalled every agent on
+// the project.
+func TestExecFetchWildcard_PicksUpVariableAddedAfterGrant(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "EXISTING", []byte("before-val"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = \"*\"\n")
+	grantBynFile(t, c, byn, pw)
+
+	// Added after the grant, with no re-trust and no edit to the .byn.
+	putVar(t, c, ipc.Scope{}, "PSQL_CREDENTIALS", []byte("postgres://after"))
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
+	if err != nil {
+		t.Fatalf("exec.fetch: %v", err)
+	}
+	m := valueMap(resp.Values)
+	if m["EXISTING"] != "before-val" {
+		t.Errorf("EXISTING = %q, want before-val", m["EXISTING"])
+	}
+	if m["PSQL_CREDENTIALS"] != "postgres://after" {
+		t.Errorf("variable added after the grant was not injected: values=%v", m)
+	}
+}
+
+// A wildcard grant covers one scope, not the vault: it must not reach a project
+// or env nobody approved.
+func TestExecFetchWildcard_ScopeKeyDoesNotCrossScopes(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "IN_SCOPE", []byte("visible"))
+
+	other := ipc.Scope{Env: "staging"}
+	mustCreateEnv(t, c, "staging")
+	putVar(t, c, other, "OUT_OF_SCOPE", []byte("hidden"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = \"*\"\n")
+	grantBynFile(t, c, byn, pw)
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Argv: []string{"any-cmd"}})
+	if err != nil {
+		t.Fatalf("exec.fetch: %v", err)
+	}
+	if m := valueMap(resp.Values); m["OUT_OF_SCOPE"] != "" {
+		t.Errorf("a grant for the default env reached the staging env: values=%v", m)
+	}
+}
+
+func mustCreateEnv(t *testing.T, c *ipc.Client, name string) {
+	t.Helper()
+	if err := c.Call(ipc.OpEnvCreate,
+		ipc.EnvCreateReq{Project: "default", Name: name}, &ipc.EnvCreateResp{}); err != nil {
+		t.Fatalf("create env %q: %v", name, err)
+	}
+}
+
+// The loop this whole feature exists for: an agent hits a widening, gets a
+// reference instead of a dead end, a person answers it, and the agent's next
+// attempt goes through — with nobody having to be at a terminal in between.
+func TestApprovalLoop_BlockedThenApprovedThenRuns(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("secret-val"))
+	putVar(t, c, ipc.Scope{}, "LATER", []byte("later-val"))
+
+	byn := writeBynContent(t,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	// The .byn now asks for a variable nobody approved.
+	writeFileContent(t, byn,
+		"[scope]\n\n[exec]\nenv = [\"SECRET\", \"LATER\"]\nactions = [\"true\"]\n")
+
+	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", code)
+	}
+
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	if len(list.Entries) != 1 {
+		t.Fatalf("got %d pending, want 1", len(list.Entries))
+	}
+	entry := list.Entries[0]
+	if len(entry.Summary) == 0 {
+		t.Error("the approver is shown no reason for the request")
+	}
+
+	// Approving grants authority, so it needs the master password.
+	var denied ipc.ApprovalDecideResp
+	noPW := c.Call(ipc.OpApprovalDecide,
+		ipc.ApprovalDecideReq{ID: entry.ID, Approve: true}, &denied)
+	if noPW == nil {
+		t.Fatal("approval was granted without the master password")
+	}
+
+	var decided ipc.ApprovalDecideResp
+	if derr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: entry.ID, Approve: true, Password: pw, Via: "terminal",
+	}, &decided); derr != nil {
+		t.Fatalf("decide: %v", derr)
+	}
+	if decided.Entry.Status != "approved" {
+		t.Fatalf("status = %s, want approved", decided.Entry.Status)
+	}
+
+	// The decision has to APPLY, not just be recorded: the agent's next attempt
+	// must go through, and the newly-granted variable must actually arrive.
+	resp, rerr := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}})
+	if rerr != nil {
+		t.Fatalf("still blocked after approval: %v", rerr)
+	}
+	if m := valueMap(resp.Values); m["LATER"] != "later-val" {
+		t.Errorf("approved variable was not injected: values=%v", m)
+	}
+}
+
+// Refusing must cost nothing: it grants no authority, so it needs no password.
+// Making refusal the expensive option is how people learn to just say yes.
+func TestApprovalDeny_NeedsNoPassword(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	writeFileContent(t, byn, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\", \"curl {{url}}\"]\n")
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}}); err == nil {
+		t.Fatal("widening was not queued")
+	}
+
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	var out ipc.ApprovalDecideResp
+	if derr := c.Call(ipc.OpApprovalDecide,
+		ipc.ApprovalDecideReq{ID: list.Entries[0].ID, Approve: false}, &out); derr != nil {
+		t.Fatalf("deny needed credentials: %v", derr)
+	}
+	if out.Entry.Status != "denied" {
+		t.Fatalf("status = %s, want denied", out.Entry.Status)
+	}
+}
+
+// A relative action must keep matching after a presentation-only edit. Applying
+// the current file's policy re-derives the action list, and the resolved
+// absolute twin has to be re-derived with it — exec absolutizes the target
+// before matching, so dropping the twin silently un-pins every relative action.
+// The unit tests missed this; only running a real command caught it.
+func TestExecFetchPresentationChange_KeepsRelativeActionsMatching(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	byn := filepath.Join(dir, ".byn")
+	body := "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"./run.sh\"]\n"
+	if err := os.WriteFile(byn, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	grantBynFile(t, c, byn, pw)
+	appendToFile(t, byn, "\n# an edit that grants nothing\n")
+
+	// exec resolves ./run.sh to its absolute path before the daemon matches.
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "./run.sh", Argv: []string{script},
+	}); err != nil {
+		t.Fatalf("relative action stopped matching after a comment edit: %v", err)
+	}
+}
+
+// Authority changing hands has to be reviewable after the fact. A raised
+// request and the decision that answers it are both security events — the
+// first records that something asked for more than it had, the second records
+// who granted it and through which surface.
+func TestApprovals_AreAudited(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+	putVar(t, c, ipc.Scope{}, "EXTRA", []byte("v2"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+	writeFileContent(t, byn, "[scope]\n\n[exec]\nenv = [\"SECRET\", \"EXTRA\"]\nactions = [\"true\"]\n")
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: "true", Argv: []string{"true"}}); err == nil {
+		t.Fatal("widening was not queued")
+	}
+
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	var out ipc.ApprovalDecideResp
+	if derr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: list.Entries[0].ID, Approve: true, Password: pw, Via: "portal",
+	}, &out); derr != nil {
+		t.Fatalf("decide: %v", derr)
+	}
+
+	var tail ipc.AuditTailResp
+	if aerr := c.Call(ipc.OpAuditTail, ipc.AuditTailReq{Vault: "default", Lines: 50}, &tail); aerr != nil {
+		t.Fatalf("audit tail: %v", aerr)
+	}
+	var sawRaise, sawDecision bool
+	for _, e := range tail.Events {
+		if e.Op == "approval.raise" && strings.Contains(e.Command, "approval raised") {
+			sawRaise = true
+		}
+		if strings.Contains(e.Command, "approved via portal") {
+			sawDecision = true
+		}
+	}
+	if !sawRaise {
+		t.Error("the raised request is not in the audit log")
+	}
+	if !sawDecision {
+		t.Error("the decision is not in the audit log, or does not record where it was made")
 	}
 }

@@ -307,10 +307,12 @@ func TestBynWrite_TrustNow_StoresV2(t *testing.T) {
 
 // ---- changed message includes "trust diff" ----------------------------------
 
-// TestChangedMessage_IncludesTrustDiff verifies that the exec-fetch error
-// message for a changed .byn includes "trust diff" so users know to run
-// `byn trust diff` (spec §1a notice).
-func TestChangedMessage_IncludesTrustDiff(t *testing.T) {
+// TestChangedMessage_QueuesApprovalWithReason verifies that a .byn asking for
+// more than it was granted queues a decision and says so, rather than ending at
+// a password prompt no agent can answer. The message has to carry both what is
+// being asked for and where to answer it, because the caller that reads it is
+// usually not a person.
+func TestChangedMessage_QueuesApprovalWithReason(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -324,12 +326,25 @@ func TestChangedMessage_IncludesTrustDiff(t *testing.T) {
 	}
 
 	_, fetchErr := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
-	if code := errCode(t, fetchErr); code != ipc.CodeTrustDenied {
-		t.Fatalf("code = %v, want trust_denied", code)
+	if code := errCode(t, fetchErr); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", code)
 	}
 	msg := errMsg(t, fetchErr)
-	if !strings.Contains(msg, "trust diff") {
-		t.Errorf("changed message %q should contain 'trust diff'", msg)
+	if !strings.Contains(msg, "scope moves") {
+		t.Errorf("message %q should say what widened", msg)
+	}
+	if !strings.Contains(msg, "approval") {
+		t.Errorf("message %q should name the queued approval", msg)
+	}
+
+	// Asking again must land on the same card: a retrying agent cannot be
+	// allowed to bury the approver in identical requests.
+	_, second := execFetch(t, c, ipc.ExecFetchReq{Path: byn})
+	if errCode(t, second) != ipc.CodeApprovalPending {
+		t.Fatalf("second attempt: code = %v, want approval_pending", errCode(t, second))
+	}
+	if errMsg(t, second) != msg {
+		t.Errorf("retry produced a different approval:\n first=%q\nsecond=%q", msg, errMsg(t, second))
 	}
 }
 

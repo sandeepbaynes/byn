@@ -278,6 +278,10 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleAuditReseal(ctx, env)
 	case ipc.OpDoctor:
 		return d.handleDoctor(ctx, env)
+	case ipc.OpApprovalList:
+		return d.handleApprovalList(env)
+	case ipc.OpApprovalDecide:
+		return d.handleApprovalDecide(ctx, env)
 	case ipc.OpTrustList:
 		return d.handleTrustList(env)
 	case ipc.OpTrustRemove:

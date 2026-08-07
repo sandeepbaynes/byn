@@ -59,7 +59,7 @@ func runAuditView(args []string, scope cliScope) int {
 	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
 	beforeF := fs.Int("before", 0, "older page: only events with index (#N) below this")
 	sinceF := fs.Int("since", 0, "forward: only events with index (#N) above this (to consume new events)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -101,7 +101,7 @@ func runAuditTail(args []string, scope cliScope) int {
 	scopeF := fs.String("scope", "", "filter: events in a matching project[/env] (substring)")
 	beforeF := fs.Int("before", 0, "older page: only events with index (#N) below this")
 	sinceF := fs.Int("since", 0, "forward: only events with index (#N) above this (to consume new events)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if *linesAlias >= 0 {
@@ -316,7 +316,7 @@ func runAuditVerify(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("audit verify", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
@@ -357,7 +357,7 @@ func runAuditReseal(args []string, scope cliScope) int {
 	reason := fs.String("reason", "", "why the chain broke (recorded in the marker)")
 	assumeYes := fs.Bool("yes", false, "skip the confirmation prompt (requires --reason)")
 	jsonOut := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	dir, err := defaultDir()
