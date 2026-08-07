@@ -47,6 +47,10 @@ func SealCapability(capKey []byte, rowKeys map[string][]byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// plain holds a (base64) copy of every per-row key — zero it once sealed so
+	// the marshaled copy doesn't outlive the call on the heap. Callers zero the
+	// map values; this closes the copy json.Marshal makes.
+	defer zero(plain)
 	return EncryptWithAAD(capKey, plain, capAAD)
 }
 
@@ -61,6 +65,10 @@ func OpenCapability(capKey, blob []byte) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// plain is the decrypted JSON of every row key; zero it before returning so
+	// a full copy of the capability's key material doesn't linger on the heap.
+	// The unmarshaled map (m) holds the live keys the caller zeroes.
+	defer zero(plain)
 	var m map[string][]byte
 	if err := json.Unmarshal(plain, &m); err != nil {
 		return nil, ErrTampered

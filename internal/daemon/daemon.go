@@ -169,6 +169,10 @@ type Daemon struct {
 
 	limiter *auth.RateLimiter
 
+	// authAttemptMu serializes password-verification attempts across the daemon
+	// so at most one is ever in flight. See beginAuthAttempt for why.
+	authAttemptMu sync.Mutex
+
 	// authProviders is the pluggable auth-provider registry. Two built-in
 	// providers are registered in New(): "password" and "passkey". The EE
 	// superset binary registers additional providers at startup.
@@ -218,6 +222,15 @@ type Daemon struct {
 	// the next unlock doesn't need to reopen the DB.
 	vaultsMu sync.RWMutex
 	vaults   map[string]*vaultEntry
+
+	// openMu serializes the SLOW path of opening/adopting a vault (disk +
+	// SQLite open, audit-logger construction) so it happens WITHOUT holding
+	// vaultsMu. Holding the exclusive vaultsMu across that I/O made every
+	// concurrent lookupVault (RLock) block behind one cold open — daemon-wide
+	// head-of-line blocking. With openMu, vaultsMu is held only for the brief
+	// map read/insert, and cold opens of the same vault are still serialized
+	// (no double-open) without stalling lookups of already-open vaults.
+	openMu sync.Mutex
 
 	// listener/conn state
 	listenerMu sync.Mutex
@@ -813,9 +826,13 @@ func (d *Daemon) openVault(ctx context.Context, name string) (*vaultEntry, error
 	if e := d.lookupVault(name); e != nil {
 		return e, nil
 	}
-	d.vaultsMu.Lock()
-	defer d.vaultsMu.Unlock()
-	if e, ok := d.vaults[name]; ok {
+	// Serialize cold opens (openMu) but do the disk + SQLite work OUTSIDE
+	// vaultsMu, so concurrent lookups of already-open vaults don't block.
+	d.openMu.Lock()
+	defer d.openMu.Unlock()
+	// Re-check under openMu: another caller may have finished opening while we
+	// waited (openMu serializes opens, so this is the authoritative check).
+	if e := d.lookupVault(name); e != nil {
 		return e, nil
 	}
 	st, err := vault.Open(ctx, d.cfg.Dir, name)
@@ -828,7 +845,9 @@ func (d *Daemon) openVault(ctx context.Context, name string) (*vaultEntry, error
 		return nil, fmt.Errorf("daemon: audit logger for %s: %w", name, err)
 	}
 	e := &vaultEntry{name: name, store: st, auditor: logger}
+	d.vaultsMu.Lock()
 	d.vaults[name] = e
+	d.vaultsMu.Unlock()
 	return e, nil
 }
 
@@ -836,18 +855,24 @@ func (d *Daemon) openVault(ctx context.Context, name string) (*vaultEntry, error
 // by vault.Init) under name. Replaces any existing entry, closing the
 // old Store first.
 func (d *Daemon) adoptVault(ctx context.Context, name string, st *vault.Store) (*vaultEntry, error) {
-	d.vaultsMu.Lock()
-	defer d.vaultsMu.Unlock()
-	if old, ok := d.vaults[name]; ok {
-		_ = old.store.Close()
-	}
+	// Serialize against openVault (openMu) so the two can't both construct an
+	// entry for name; do the audit-logger I/O and old-Store close OUTSIDE
+	// vaultsMu (held only for the brief map read/insert).
+	d.openMu.Lock()
+	defer d.openMu.Unlock()
 	logger, err := audit.New(ctx, d.cfg.Dir, st.VaultID(), name, st)
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("daemon: audit logger for %s: %w", name, err)
 	}
 	e := &vaultEntry{name: name, store: st, auditor: logger}
+	d.vaultsMu.Lock()
+	old := d.vaults[name]
 	d.vaults[name] = e
+	d.vaultsMu.Unlock()
+	if old != nil {
+		_ = old.store.Close()
+	}
 	return e, nil
 }
 
@@ -892,18 +917,44 @@ func (d *Daemon) allVaultsOnDisk() ([]string, error) {
 
 // ---- internal -----------------------------------------------------------
 
+// handlePidFile claims the pid file for this process. Creation is atomic
+// (O_CREATE|O_EXCL) so two racing starts cannot both believe they own it: the
+// loser gets ErrExist, re-checks liveness, and — if the owner is alive —
+// returns an error BEFORE reaching bind(), so it never removes the winner's
+// pid file. A stale pid file (dead owner, unreadable, or garbage) is removed
+// and creation retried once. The authoritative single-instance guard remains
+// bind()'s socket probe; this only keeps the pid-file bookkeeping honest.
+//
+// When this returns nil, THIS process created the file, so the caller may
+// safely remove it on a subsequent bind() failure — it is removing its own.
 func (d *Daemon) handlePidFile() error {
-	if data, err := os.ReadFile(d.pidPath); err == nil {
-		var pid int
-		if _, err := fmt.Sscanf(string(data), "%d", &pid); err == nil && pid > 0 {
-			if processAlive(pid) {
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(d.pidPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, werr := fmt.Fprintf(f, "%d\n", os.Getpid())
+			cerr := f.Close()
+			if werr != nil || cerr != nil {
+				_ = os.Remove(d.pidPath) // our own partial file
+				return fmt.Errorf("daemon: write pid file %s: %w", d.pidPath, errors.Join(werr, cerr))
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("daemon: create pid file %s: %w", d.pidPath, err)
+		}
+		// The file exists. If its owner is alive, another daemon holds it.
+		if data, rerr := os.ReadFile(d.pidPath); rerr == nil {
+			var pid int
+			if _, serr := fmt.Sscanf(string(data), "%d", &pid); serr == nil && pid > 0 && processAlive(pid) {
 				return fmt.Errorf("daemon: another daemon appears to be running (pid %d at %s)", pid, d.pidPath)
 			}
 		}
+		// Stale — remove and retry the atomic create. If we lose the retry
+		// race to a fresh start, the next O_EXCL fails ErrExist and we
+		// re-evaluate liveness above rather than clobbering a live owner.
 		_ = os.Remove(d.pidPath)
 	}
-	pid := os.Getpid()
-	return os.WriteFile(d.pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o600)
+	return fmt.Errorf("daemon: could not claim pid file %s (racing another start?)", d.pidPath)
 }
 
 func (d *Daemon) bind() error {

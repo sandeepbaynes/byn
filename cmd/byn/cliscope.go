@@ -14,12 +14,14 @@ import (
 //
 // Precedence (highest first):
 //
-//  1. CLI flag      (--vault NAME / --project NAME / --env NAME)
-//  2. Env var       (BYN_VAULT / BYN_PROJECT / BYN_ENV)
-//  3. Daemon default ("default")
+//  1. CLI flag       (--vault NAME / --project NAME / --env NAME)
+//  2. Env var        (BYN_VAULT / BYN_PROJECT / BYN_ENV)
+//  3. `.byn` discovery (nearest ancestor `.byn`; see discovery.go)
+//  4. Daemon default  ("default")
 //
-// .byn file discovery is planned for a future iteration but not
-// wired here yet.
+// preParseGlobals resolves layers 1–2 into a cliScope; run() then folds
+// discovery (layer 3) UNDER it via mergeDiscoveryScope, so an explicit flag or
+// env var always wins over a discovered `.byn`.
 type cliScope struct {
 	Vault   string
 	Project string

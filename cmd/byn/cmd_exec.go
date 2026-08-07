@@ -674,21 +674,35 @@ func invokeExecHelper(token []byte) int {
 // renderAuthorizeNotes prints the wildcard / empty-allowlist / actions-wildcard
 // notes the daemon flagged at authorize time (same wording as renderAllowlistNotes,
 // minus the injected-var count which the CLI no longer sees under token redemption).
-func renderAuthorizeNotes(resp ipc.ExecAuthorizeResp, sourcePath string) {
+// renderScopeNotes prints the trusted-.byn wildcard / empty-allowlist / actions-
+// wildcard notices shared by the exec.authorize and exec.fetch responses. A
+// varCount >= 0 includes the injected-var count in the wildcard warning
+// (exec.fetch, which has resolved the values); varCount < 0 omits it
+// (exec.authorize, which runs before injection). Output is byte-identical to
+// the two former copies.
+func renderScopeNotes(sourcePath string, wildcard, noneDeclared, actionsWildcard bool, varCount int) {
 	if sourcePath == "" {
 		return
 	}
-	if resp.Wildcard {
-		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
-			yellow(fmt.Sprintf("%s permits ALL scoped vars via \"*\" — any secret added later is auto-injected.", sourcePath)))
-	} else if resp.NoneDeclared {
+	if wildcard {
+		msg := fmt.Sprintf("%s permits ALL scoped vars via \"*\" — any secret added later is auto-injected.", sourcePath)
+		if varCount >= 0 {
+			msg = fmt.Sprintf("%s permits ALL %d scoped var(s) via \"*\" — any secret added later is auto-injected.",
+				sourcePath, varCount)
+		}
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"), yellow(msg))
+	} else if noneDeclared {
 		fmt.Fprintf(os.Stderr, "%s\n",
 			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", sourcePath)))
 	}
-	if resp.ActionsWildcard {
+	if actionsWildcard {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s pins NO specific actions — \"*\" lets ANY command run re-auth-free.", sourcePath)))
 	}
+}
+
+func renderAuthorizeNotes(resp ipc.ExecAuthorizeResp, sourcePath string) {
+	renderScopeNotes(sourcePath, resp.Wildcard, resp.NoneDeclared, resp.ActionsWildcard, -1)
 }
 
 // scopeHasByn reports whether the exec request is bound to a trusted .byn (so
@@ -759,19 +773,5 @@ func handleExecFetchError(err error) int {
 // the daemon's flags request (messages match the pre-NU client-side text).
 // Also prints the [exec] actions wildcard warning when ActionsWildcard=true.
 func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
-	if sourcePath == "" {
-		return
-	}
-	if resp.Wildcard {
-		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
-			yellow(fmt.Sprintf("%s permits ALL %d scoped var(s) via \"*\" — any secret added later is auto-injected.",
-				sourcePath, len(resp.Values))))
-	} else if resp.NoneDeclared {
-		fmt.Fprintf(os.Stderr, "%s\n",
-			dim(fmt.Sprintf("note: %s declares no [exec] env vars — injecting none.", sourcePath)))
-	}
-	if resp.ActionsWildcard {
-		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
-			yellow(fmt.Sprintf("%s pins NO specific actions — \"*\" lets ANY command run re-auth-free.", sourcePath)))
-	}
+	renderScopeNotes(sourcePath, resp.Wildcard, resp.NoneDeclared, resp.ActionsWildcard, len(resp.Values))
 }

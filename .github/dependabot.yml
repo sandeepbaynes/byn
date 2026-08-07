@@ -1,0 +1,25 @@
+# Dependabot keeps dependencies patched — important for a secrets vault, where
+# a vulnerable transitive dependency is a direct security concern. Grouped,
+# weekly PRs keep the noise low.
+version: 2
+updates:
+  # Go module dependencies.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions used by the workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

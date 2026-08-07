@@ -26,8 +26,11 @@ const SaltSize = 32
 // doesn't invalidate existing wraps.
 //
 // Defaults (DefaultArgon2Params) target ~1s on a modern laptop:
-// time=2, memory=64MiB, threads=4. See RFC 9106 §4 for the rationale
-// behind the i+d hybrid (Argon2id).
+// time=3, memory=64MiB, threads=4 — RFC 9106 §4's memory-constrained
+// ("second recommended") profile (m=64 MiB, t=3). See RFC 9106 §4 for the
+// rationale behind the i+d hybrid (Argon2id). Params are persisted per-wrap,
+// so raising this default only strengthens NEW wraps; existing vaults keep the
+// params stored in their header until re-wrapped (e.g. via `byn passwd`).
 type Argon2Params struct {
 	Time    uint32 // iterations
 	Memory  uint32 // KiB
@@ -35,9 +38,10 @@ type Argon2Params struct {
 }
 
 // DefaultArgon2Params is the cost profile used when no override is
-// supplied. Conservative for laptops, mild for servers.
+// supplied. Conservative for laptops, mild for servers. time=3 matches
+// RFC 9106's memory-constrained recommendation at 64 MiB.
 var DefaultArgon2Params = Argon2Params{
-	Time:    2,
+	Time:    3,
 	Memory:  64 * 1024,
 	Threads: 4,
 }

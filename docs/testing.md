@@ -17,9 +17,13 @@ make test-integration      # integration suite (slow — each runs Argon2id)
 Or directly:
 
 ```sh
-go test -race ./...
-go test -tags=integration ./tests/integration/... -timeout=600s
+go test -tags=byntest -race ./...
+go test -tags='integration byntest' ./tests/integration/... -timeout=600s
 ```
+
+> The `byntest` build tag is required — it compiles the test-only data-dir
+> seam (see below). `make test` adds it for you; the raw commands above must
+> include it or tests fail to find the seam.
 
 ### Coverage
 
@@ -31,8 +35,8 @@ open coverage.html
 ### Single test
 
 ```sh
-go test -race -run TestPutGetRoundtrip ./internal/daemon/...
-go test -tags=integration -run TestE2E_Import_Dotenv ./tests/integration/
+go test -tags=byntest -race -run TestPutGetRoundtrip ./internal/daemon/...
+go test -tags='integration byntest' -run TestE2E_Import_Dotenv ./tests/integration/
 ```
 
 ### Lint

@@ -49,6 +49,11 @@ func (p *passwordProvider) Verify(ctx context.Context, r auth.VerifyRequest) (au
 	}
 	st := entry.store
 
+	// Serialize the check→verify→record window (defeats parallel guessing;
+	// see beginAuthAttempt). This is the choke point for the trust/delete/
+	// authorize paths, which reach the limiter only through this provider.
+	defer p.d.beginAuthAttempt()()
+
 	// Rate-limit check. *auth.RetryAfterError is returned directly —
 	// mapProviderErr uses errors.As to extract it; no wrapper needed.
 	if err := p.d.limiter.Check(); err != nil {

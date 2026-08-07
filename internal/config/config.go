@@ -189,5 +189,13 @@ func (c Config) validate() error {
 		return fmt.Errorf("ui.reveal_hide_after %v must not be negative (use \"0s\" to disable auto-hide)",
 			time.Duration(c.UI.RevealHideAfter))
 	}
+	if time.Duration(c.Security.SessionTTL) < 0 {
+		return fmt.Errorf("security.session_ttl %v must not be negative (use \"0s\" to disable)",
+			time.Duration(c.Security.SessionTTL))
+	}
+	if time.Duration(c.Security.SessionIdle) < 0 {
+		return fmt.Errorf("security.session_idle %v must not be negative (use \"0s\" to inherit daemon.idle_timeout)",
+			time.Duration(c.Security.SessionIdle))
+	}
 	return nil
 }

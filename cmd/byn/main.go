@@ -44,9 +44,8 @@ func run(args []string) int {
 	//   byn exec --vault acme -- ...
 	// The pre-parser stops at a literal `--` so child arguments to
 	// `exec` are not consumed.
-	// Detect agent-mode (--json) and discovery opt-out BEFORE the
-	// pre-parser so we can pass the right flags to discoverScope.
-	agentMode := jsonModeFromArgs(args)
+	// Detect the discovery opt-out BEFORE the pre-parser so the flag is
+	// stripped from the scrubbed argv.
 	noDiscovery := noDiscoveryFromArgs(args)
 	if noDiscovery {
 		args = stripFlagToken(args, "--no-discovery")
@@ -58,31 +57,6 @@ func run(args []string) int {
 		return exitErr
 	}
 	args = scrubbed
-
-	// `.byn` discovery + TOFU. Walk parents from CWD; fold the
-	// result UNDER any explicit CLI flags or env vars. Errors here are
-	// fatal (we don't want to silently apply the wrong scope).
-	//
-	// Skip for subcommands that manage trust itself or have no scope:
-	// otherwise an untrusted .byn would prevent the user from ever
-	// running `byn trust` to fix it.
-	if !noDiscovery && len(args) > 0 && !skipDiscoveryFor(args[0]) {
-		cwd, _ := os.Getwd()
-		home, _ := os.UserHomeDir()
-		bynDir, derr := defaultDir()
-		if derr == nil {
-			discScope, srcPath, derr := discoverScope(cwd, home, bynDir, agentMode)
-			if derr != nil {
-				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), derr)
-				return exitErr
-			}
-			if srcPath != "" {
-				scope = mergeDiscoveryScope(scope, discScope)
-				scope.SourcePath = srcPath // byn exec verifies trust against this
-				hintf("Using scope from %s: %s.", srcPath, scope)
-			}
-		}
-	}
 
 	if len(args) == 0 {
 		// No subcommand → open the TUI. Daemon-down, no-vault, and
@@ -145,6 +119,28 @@ func run(args []string) int {
 	}
 	if wantsHelp(helpArgs) {
 		return printCommandHelp(cmd)
+	}
+
+	// `.byn` discovery + TOFU. Walk parents from CWD; fold the result UNDER any
+	// explicit CLI flags or env vars. Errors here are fatal (we don't want to
+	// silently apply the wrong scope). Runs AFTER help/version interception so a
+	// malformed `.byn` in the CWD cannot break `byn <cmd> --help`.
+	//
+	// Skip for subcommands that manage trust itself or have no scope: otherwise
+	// an untrusted .byn would prevent the user from ever running `byn trust`.
+	if !noDiscovery && !skipDiscoveryFor(cmd) {
+		cwd, _ := os.Getwd()
+		home, _ := os.UserHomeDir()
+		discScope, srcPath, derr := discoverScope(cwd, home)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), derr)
+			return exitErr
+		}
+		if srcPath != "" {
+			scope = mergeDiscoveryScope(scope, discScope)
+			scope.SourcePath = srcPath // byn exec verifies trust against this
+			hintf("Using scope from %s: %s.", srcPath, scope)
+		}
 	}
 
 	// Enforce WHO each command must run as (owner vs root) BEFORE dispatch, so a

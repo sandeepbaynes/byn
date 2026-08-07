@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,6 +25,14 @@ import (
 // connReadTimeout caps how long the daemon will wait for a single
 // envelope on an accepted connection.
 const connReadTimeout = 30 * time.Second
+
+// connWriteTimeout caps how long a single response write may block. Without
+// it, a local peer that stops reading (e.g. shrinks its receive buffer and
+// never drains) would wedge the handler goroutine on ipc.WriteFrame's blocking
+// Write indefinitely — leaking the goroutine and stalling Shutdown's wg.Wait
+// forever. The response is bounded (MaxFrameSize = 1 MiB), so a cooperative
+// peer never approaches this deadline.
+const connWriteTimeout = 30 * time.Second
 
 func (d *Daemon) handleConn(conn net.Conn) {
 	// Peer-UID enforcement (and capture the peer PID for the audit trail).
@@ -115,8 +124,29 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		root = withExecSpawnFDs(root, fds[0], fds[1], fds[2])
 	}
 
-	resp := d.dispatch(root, env)
+	resp := d.safeDispatch(root, env)
+	_ = conn.SetWriteDeadline(time.Now().Add(connWriteTimeout))
 	_ = ipc.WriteFrame(conn, resp)
+}
+
+// safeDispatch runs dispatch with a panic barrier so a bug in any single op
+// handler (index-out-of-range, nil-deref, etc.) cannot take down the whole
+// daemon — every vault, every other in-flight connection. The panic is logged
+// with a stack trace (to daemon.log) and converted into a CodeInternal
+// response frame for the offending request only. Without this, the per-conn
+// goroutine spawned in serve() has no recover, so any handler panic is fatal
+// to the process.
+func (d *Daemon) safeDispatch(ctx context.Context, env *ipc.Envelope) (resp *ipc.Envelope) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 8192)
+			n := runtime.Stack(buf, false)
+			log.Printf("byn daemon: PANIC handling op %q: %v\n%s", env.Op, r, buf[:n])
+			resp = ipc.NewError(env.ID, ipc.CodeInternal,
+				"internal error handling the request", "")
+		}
+	}()
+	return d.dispatch(ctx, env)
 }
 
 // execSpawnFDTimeout bounds how long the daemon waits for the client's
@@ -448,6 +478,7 @@ func (d *Daemon) handleVaultUnlock(ctx context.Context, env *ipc.Envelope) *ipc.
 		return ipc.NewError(env.ID, ipc.CodeBadName, err.Error(), "")
 	}
 
+	defer d.beginAuthAttempt()()
 	if le := d.rateLimitCheck(env.ID); le != nil {
 		return le
 	}
@@ -638,6 +669,7 @@ func (d *Daemon) handleVaultPasswd(ctx context.Context, env *ipc.Envelope) *ipc.
 		return ipc.NewError(env.ID, ipc.CodeBadRequest, "new password must not be empty", "")
 	}
 	// Rate-limit like unlock — this verifies the current password.
+	defer d.beginAuthAttempt()()
 	if le := d.rateLimitCheck(env.ID); le != nil {
 		return le
 	}
@@ -1629,9 +1661,27 @@ func requireUnlocked(id string, st *vault.Store) *ipc.Envelope {
 	return nil
 }
 
+// beginAuthAttempt serializes password-verification attempts across the daemon
+// so at most one is ever in flight; the caller must defer the returned release.
+//
+// Why: the limiter's Check() and RecordFailure() are separate calls, so N
+// concurrent unlock attempts could all pass Check() BEFORE any failure was
+// recorded — the exponential backoff then throttled only SEQUENTIAL guessing,
+// not parallel guessing (Argon2's ~1s cost was the sole brake). Serializing
+// the whole check→verify→record sequence means the second attempt only runs
+// after the first has recorded its failure and extended NextAttemptAt, so it
+// sees the backoff. The daemon is single-user, so serializing auth attempts is
+// acceptable and is precisely the intent. Release-safe on every return path.
+func (d *Daemon) beginAuthAttempt() func() {
+	d.authAttemptMu.Lock()
+	return d.authAttemptMu.Unlock
+}
+
 // rateLimitCheck returns a CodeRateLimited envelope when the shared auth
 // limiter is in backoff, or nil when an attempt is allowed right now. Used
 // by every password-verifying op: unlock, authorized delete, and passwd.
+// Callers must first hold beginAuthAttempt so the check→verify→record window
+// is serialized (see beginAuthAttempt).
 func (d *Daemon) rateLimitCheck(id string) *ipc.Envelope {
 	err := d.limiter.Check()
 	if err == nil {

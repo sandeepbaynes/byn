@@ -24,7 +24,7 @@ func TestDiscoverScope_NoFileReturnsEmpty(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "")
 	startDir := t.TempDir()
 	homeDir := t.TempDir() // unrelated path -> walk terminates at root
-	sc, src, err := discoverScope(startDir, homeDir, t.TempDir(), false)
+	sc, src, err := discoverScope(startDir, homeDir)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestDiscoverScope_NoFileReturnsEmpty(t *testing.T) {
 
 func TestDiscoverScope_NoDiscoveryEnv(t *testing.T) {
 	t.Setenv("BYN_NO_DISCOVERY", "1")
-	sc, src, err := discoverScope(t.TempDir(), t.TempDir(), t.TempDir(), false)
+	sc, src, err := discoverScope(t.TempDir(), t.TempDir())
 	if err != nil || src != "" || !reflect.DeepEqual(sc, cliScope{}) {
 		t.Fatalf("expected zero result")
 	}
@@ -50,7 +50,7 @@ func TestDiscoverScope_EmptyFileIsStopMarker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(start, ".byn"), nil, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	sc, src, err := discoverScope(start, t.TempDir(), t.TempDir(), false)
+	sc, src, err := discoverScope(start, t.TempDir())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -71,13 +71,17 @@ func TestDiscoverScope_ResolvesUntrusted(t *testing.T) {
 	if err := os.WriteFile(tpath, body, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	// discoverScope canonicalizes the walk (symlinks resolved), so the returned
+	// source path is the canonical form of tpath — matching trust.Canonicalize,
+	// which `byn exec` applies when verifying trust.
+	wantSrc := filepath.Join(canonDir(start), ".byn")
 	for _, agent := range []bool{true, false} {
-		sc, src, err := discoverScope(start, t.TempDir(), bynDir, agent)
+		sc, src, err := discoverScope(start, t.TempDir())
 		if err != nil {
 			t.Fatalf("agent=%v: untrusted .byn should resolve, got %v", agent, err)
 		}
-		if src != tpath || sc.Vault != "acme" {
-			t.Fatalf("agent=%v: scope=%+v src=%q", agent, sc, src)
+		if src != wantSrc || sc.Vault != "acme" {
+			t.Fatalf("agent=%v: scope=%+v src=%q want %q", agent, sc, src, wantSrc)
 		}
 	}
 	if st, _ := trust.Status(bynDir, trust.Canonicalize(tpath), trust.Hash(body)); st == trust.StatusTrusted {
@@ -100,7 +104,7 @@ func TestDiscoverScope_ResolvesChanged(t *testing.T) {
 	if err := os.WriteFile(tpath, []byte("[scope]\nvault = \"evil\"\n"), 0o600); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	sc, _, err := discoverScope(start, t.TempDir(), bynDir, false)
+	sc, _, err := discoverScope(start, t.TempDir())
 	if err != nil {
 		t.Fatalf("changed .byn should resolve in discovery, got %v", err)
 	}
@@ -119,7 +123,7 @@ func TestDiscoverScope_TrustedParses(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	trustByn(t, bynDir, tpath, body)
-	sc, src, err := discoverScope(start, t.TempDir(), bynDir, false)
+	sc, src, err := discoverScope(start, t.TempDir())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -141,7 +145,7 @@ func TestDiscoverScope_TrustedButBadTOML(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	trustByn(t, bynDir, tpath, body)
-	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
+	_, _, err := discoverScope(start, t.TempDir())
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
@@ -157,7 +161,7 @@ func TestDiscoverScope_TrustedUnknownKeyRejected(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	trustByn(t, bynDir, tpath, body)
-	_, _, err := discoverScope(start, t.TempDir(), bynDir, false)
+	_, _, err := discoverScope(start, t.TempDir())
 	if err == nil {
 		t.Fatal("expected unknown-key rejection")
 	}
