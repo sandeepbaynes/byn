@@ -25,7 +25,7 @@ const SaltSize = 32
 // derivation. Persisted alongside the ciphertext so changing defaults
 // doesn't invalidate existing wraps.
 //
-// Defaults (DefaultArgon2Params) target ~1s on a modern laptop:
+// Defaults (DefaultArgon2Params) target ~1–1.5s on a modern laptop:
 // time=3, memory=64MiB, threads=4 — RFC 9106 §4's memory-constrained
 // ("second recommended") profile (m=64 MiB, t=3). See RFC 9106 §4 for the
 // rationale behind the i+d hybrid (Argon2id). Params are persisted per-wrap,

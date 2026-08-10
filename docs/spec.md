@@ -71,7 +71,7 @@ MUST fail unwrap.
 1.2.4. Argon2id parameters: time ∈ [1, 16], memory ∈ [8 MiB, 1 GiB],
 threads ∈ [1, 16], key length = 32. Defaults (`DefaultArgon2Params`):
 time=3, memory=64 MiB, threads=4 (RFC 9106 memory-constrained profile,
-~1s on a laptop). Params are persisted per-wrap, so a default change only
+~1–1.5s on a laptop). Params are persisted per-wrap, so a default change only
 affects new wraps; existing headers keep their stored params.
 Out-of-range parameters in a stored header MUST be rejected at unwrap.
 

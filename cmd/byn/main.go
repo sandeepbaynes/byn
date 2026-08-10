@@ -61,8 +61,11 @@ func run(args []string) int {
 	if len(args) == 0 {
 		// No subcommand → open the TUI. Daemon-down, no-vault, and
 		// locked states are handled inside runTUI with appropriate
-		// recovery hints. Scope flags (and discovered .byn scope)
-		// pre-position the rail cursor and pre-unlock the right vault.
+		// recovery hints. Scope flags pre-position the rail cursor and
+		// pre-unlock the right vault.
+		//
+		// `.byn` discovery does NOT run on this path (it is keyed off a
+		// subcommand, below), so the bare TUI sees flags and env vars only.
 		return runTUI(nil, scope)
 	}
 	cmd, rest := args[0], args[1:]

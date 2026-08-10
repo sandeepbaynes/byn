@@ -41,8 +41,10 @@ byn safely.
 The memory-hard password-hashing function we use to derive a vault
 key's wrapping key from the master password.
 
-Default parameters (`DefaultArgon2Params`): time=2, memory=64 MiB,
-threads=4, key length=32 — tuned for ~1s on a laptop. Bounds: time ∈
+Default parameters (`DefaultArgon2Params`): time=3, memory=64 MiB,
+threads=4, key length=32 — RFC 9106 memory-constrained profile, ~1–1.5s
+on a laptop. Params are persisted per-wrap, so a default change affects
+only new wraps. Bounds: time ∈
 [1, 16], memory ∈ [8 MiB, 1 GiB], threads ∈ [1, 16] — the upper limits
 prevent DoS via malicious headers, the lower limits reject trivial
 attacker-supplied params.

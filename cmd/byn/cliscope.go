@@ -84,9 +84,13 @@ var globalFlags = map[string]struct{}{
 }
 
 // jsonModeFromArgs reports whether `--json` appears anywhere before the
-// `--` separator AND before any exec passthrough boundary. Used to gate
-// `.byn` TOFU prompting — when --json is set we must NEVER prompt (agent
-// mode); we hard-fail instead.
+// `--` separator AND before any exec passthrough boundary.
+//
+// It once gated `.byn` TOFU prompting (hard-fail instead of prompt in agent
+// mode). Discovery no longer gates on trust at all — `byn exec` verifies it
+// instead, and the daemon never prompts — so this has no production caller
+// today. Retained (with its tests) for the exec-boundary semantics, which the
+// per-command --json flags rely on.
 //
 // Exec passthrough boundary: `byn exec alias --json` — the `--json` after
 // the alias name is meant for the child and must NOT flip agent mode.

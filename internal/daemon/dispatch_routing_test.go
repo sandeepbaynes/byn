@@ -9,7 +9,7 @@ import (
 )
 
 // TestDispatch_UnknownOpRejected pins the dispatch routing table's default
-// arm: an op the daemon does not recognize is rejected with CodeBadRequest and
+// arm: an op the daemon does not recognize is rejected with CodeUnknownOp and
 // an "unknown op" message — never silently dropped or mis-routed.
 func TestDispatch_UnknownOpRejected(t *testing.T) {
 	_, c := startTestDaemon(t)
