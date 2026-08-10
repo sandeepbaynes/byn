@@ -123,7 +123,11 @@ func handleCallError(err error) int {
 	}
 	if errors.Is(err, ipc.ErrDaemonDown) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red("byn daemon is not running."))
-		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn start"))
+		cmd, note := daemonDownRemedy(cliPrivsepProvisioned())
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan(cmd))
+		if note != "" {
+			fmt.Fprintf(os.Stderr, "%s\n", dim(note))
+		}
 		return exitDaemonDown
 	}
 	var ipcErr *ipc.ErrResponse
@@ -298,4 +302,18 @@ var (
 // setFirstRunTarget records which client and vault a lazy init should use.
 func setFirstRunTarget(c *ipc.Client, vault string) {
 	firstRunClient, firstRunVault = c, vault
+}
+
+// daemonDownRemedy returns the command that will actually bring the daemon back,
+// and a note explaining why it needs root when it does.
+//
+// Where byn runs under a service user, `byn start` refuses and prints a
+// DIFFERENT command — so naming it here cost the reader a round trip to learn
+// something byn already knew. A recovery hint that does not recover is worse
+// than none: it spends the reader's trust before the real answer arrives.
+func daemonDownRemedy(privsepProvisioned bool) (cmd, note string) {
+	if privsepProvisioned {
+		return "sudo byn restart", "(it runs as the _byn service, so bringing it up needs root)"
+	}
+	return "byn start", ""
 }

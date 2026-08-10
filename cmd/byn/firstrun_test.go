@@ -32,3 +32,20 @@ func TestIsNotInitErr(t *testing.T) {
 		t.Error("nil is not an error")
 	}
 }
+
+// A recovery hint that does not recover is worse than none: it spends the
+// reader's trust before the real answer arrives. Under a service user
+// `byn start` refuses and names a different command, so the first message has
+// to be the one that works.
+func TestDaemonDownRemedy(t *testing.T) {
+	cmd, note := daemonDownRemedy(true)
+	if cmd != "sudo byn restart" {
+		t.Errorf("provisioned: cmd = %q, want the command that actually works", cmd)
+	}
+	if note == "" {
+		t.Error("provisioned: no explanation for why root is needed")
+	}
+	if cmd, _ := daemonDownRemedy(false); cmd != "byn start" {
+		t.Errorf("unprovisioned: cmd = %q, want byn start", cmd)
+	}
+}
