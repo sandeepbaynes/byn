@@ -4,6 +4,7 @@ package privsep
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,7 +16,7 @@ import (
 // root, and rwX on the home ancestor (not execute-only — workspace tooling needs
 // to list parent dirs, and nested-project trusts must not downgrade rwX to x).
 func TestACLGrantCommands_Linux(t *testing.T) {
-	cmds := aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec")
+	cmds := aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec", "")
 	require.Len(t, cmds, 3)
 
 	assert.Equal(t,
@@ -32,7 +33,7 @@ func TestACLGrantCommands_Linux(t *testing.T) {
 // TestACLGrantCommands_Linux_HomeEqualsProject drops the home command when home
 // == project (no separate traversal grant needed).
 func TestACLGrantCommands_Linux_HomeEqualsProject(t *testing.T) {
-	cmds := aclGrantCommands("/srv/p", "/srv/p", "_byn-exec")
+	cmds := aclGrantCommands("/srv/p", "/srv/p", "_byn-exec", "")
 	require.Len(t, cmds, 2)
 	for _, c := range cmds {
 		assert.Equal(t, "/srv/p", c[len(c)-1])
@@ -41,7 +42,7 @@ func TestACLGrantCommands_Linux_HomeEqualsProject(t *testing.T) {
 
 // TestACLGrantCommands_Linux_EmptyHome drops the home command when home is "".
 func TestACLGrantCommands_Linux_EmptyHome(t *testing.T) {
-	cmds := aclGrantCommands("/srv/p", "", "_byn-exec")
+	cmds := aclGrantCommands("/srv/p", "", "_byn-exec", "")
 	require.Len(t, cmds, 2)
 }
 
@@ -65,7 +66,7 @@ func TestACLRevokeCommands_Linux(t *testing.T) {
 // TestACLGrantCommands_Linux_DeepPath grants the exec child rwX on every
 // intermediate dir up to home — the real-world 0700 ~/Documents case.
 func TestACLGrantCommands_Linux_DeepPath(t *testing.T) {
-	cmds := aclGrantCommands("/home/o/Documents/proj", "/home/o", "_byn-exec")
+	cmds := aclGrantCommands("/home/o/Documents/proj", "/home/o", "_byn-exec", "")
 	// rwX on project + default ACL + rwX on [/home/o/Documents, /home/o]
 	require.Len(t, cmds, 4)
 	targets := map[string]bool{}
@@ -276,4 +277,35 @@ func TestRevokeBynReadACL_Linux_RunsAll(t *testing.T) {
 	}, "/home/o/proj/.byn", "/home/o")
 	require.ErrorIs(t, err, sentinel)
 	assert.Equal(t, 1, calls)
+}
+
+// Files the exec child creates must stay writable by the project's owner.
+// Without an inherited entry for them, every build artifact belongs to the
+// service user with the owner in "other", and deleting one needs write on its
+// directory — the trap behind `sudo rm -rf .next`.
+func TestACLGrantCommands_OwnerGetsInheritedAccess(t *testing.T) {
+	cmds := aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec", "o")
+	var ownerDefault, maskDefault bool
+	for _, c := range cmds {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "-d") && strings.Contains(joined, "u:o:rwX") {
+			ownerDefault = true
+		}
+		if strings.Contains(joined, "-d") && strings.Contains(joined, "m::rwX") {
+			maskDefault = true
+		}
+	}
+	if !ownerDefault {
+		t.Error("no inherited entry for the owner; artifacts would be undeletable")
+	}
+	if !maskDefault {
+		t.Error("no default mask; inherited entries can be masked down to read-only")
+	}
+
+	// An unnamed owner must change nothing, so callers that cannot resolve a
+	// username behave exactly as before.
+	if len(aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec", "")) !=
+		len(aclGrantCommands("/home/o/proj", "/home/o", "_byn-exec", "_byn-exec")) {
+		t.Error("empty and self-named owner should both add nothing")
+	}
 }

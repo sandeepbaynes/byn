@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"time"
 
@@ -80,7 +81,14 @@ func grantTrustACLs(canonBynPath, home string) error {
 	if err := privsep.GrantBynReadACL(ownerACLRun, canonBynPath, home); err != nil {
 		return err
 	}
-	if err := privsep.GrantProjectACL(ownerACLRun, filepath.Dir(canonBynPath), home); err != nil {
+	// Name the owner so files the exec child creates inherit an entry for them.
+	// Without it a build run under byn leaves .next and node_modules/.vite owned
+	// by the service user and undeletable by the person who owns the project.
+	owner := ""
+	if u, uerr := user.Current(); uerr == nil {
+		owner = u.Username
+	}
+	if err := privsep.GrantProjectACLFor(ownerACLRun, filepath.Dir(canonBynPath), home, owner); err != nil {
 		return err
 	}
 	// Tool-state auto-grant (Hybrid): grant _byn-exec read/write on the curated

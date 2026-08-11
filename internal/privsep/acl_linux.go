@@ -28,10 +28,27 @@ import (
 // writable by ownership and do not need an ACL.
 //
 // X = +x only on dirs/already-exec files (not data files) — POSIX ACL X-flag.
-func aclGrantCommands(projectDir, homeDir, user string) [][]string {
+func aclGrantCommands(projectDir, homeDir, user, owner string) [][]string {
 	cmds := [][]string{
 		{"setfacl", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
 		{"setfacl", "-d", "-m", fmt.Sprintf("u:%s:rwX", user), projectDir},
+	}
+	// The same default entry for the OWNER. Without it every file the exec
+	// child creates — .next, node_modules/.vite, dist — belongs to the service
+	// user with the owner in "other", and the owner cannot delete a single one
+	// of them: removing a file needs write on its directory. That is the trap
+	// behind `sudo rm -rf .next` and the clean-script workarounds, and it makes
+	// a build run under byn poison the next one run without it.
+	//
+	// A default entry only affects files created LATER, which is why this alone
+	// cannot rescue a tree that is already stuck — see RepairOwnerAccess.
+	if owner != "" && owner != user {
+		cmds = append(cmds,
+			[]string{"setfacl", "-d", "-m", fmt.Sprintf("u:%s:rwX", owner), projectDir},
+			// A default mask that permits rw; without it the inherited entries
+			// can be masked down to r-- and the grant silently does nothing.
+			[]string{"setfacl", "-d", "-m", "m::rwX", projectDir},
+		)
 	}
 	// rwX on every ancestor ABOVE the project dir up to home so a restrictive
 	// intermediate (e.g. a 0700 ~/Documents) can't block the child from reaching
@@ -74,7 +91,13 @@ func aclRevokeCommands(projectDir, _, user string) [][]string {
 // accessible by ownership and do not require an ACL; setfacl -R exits non-zero
 // when it encounters such files, which is expected and harmless.
 func GrantProjectACL(run func(name string, args ...string) error, projectDir, homeDir string) error {
-	for _, c := range aclGrantCommands(projectDir, homeDir, ExecUser) {
+	return GrantProjectACLFor(run, projectDir, homeDir, "")
+}
+
+// GrantProjectACLFor is GrantProjectACL with the owner named, so files the exec
+// child creates stay writable by the person who owns the project.
+func GrantProjectACLFor(run func(name string, args ...string) error, projectDir, homeDir, owner string) error {
+	for _, c := range aclGrantCommands(projectDir, homeDir, ExecUser, owner) {
 		if err := run(c[0], c[1:]...); err != nil {
 			return err
 		}

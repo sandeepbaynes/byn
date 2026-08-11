@@ -191,6 +191,8 @@ func run(args []string) int {
 		return runLock(rest, scope)
 	case "passwd", "password":
 		return runPasswd(rest, scope)
+	case "repair":
+		return runRepairArtifacts(rest, scope)
 	case "approve":
 		return runApprove(rest, scope)
 	case "put":
@@ -377,6 +379,10 @@ Approvals (decisions a .byn is waiting on):
   approve <id>...            Grant it (asks for the master password)
   approve --deny <id>...     Refuse it (no password: refusing grants nothing)
   approve --all              Answer every pending request in one go
+
+Repair:
+  repair [DIR]               Give yourself back access to build artifacts a
+                             privsep exec child created (default: .)
 
 System (run with sudo — these manage the _byn service):
   setup                      Provision the _byn/_byn-exec service users
