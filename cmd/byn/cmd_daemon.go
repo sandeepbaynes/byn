@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -281,7 +282,16 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 	// daemon is ready.
 	if !waitForSocket(dir, 3*time.Second) {
 		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after 3s.\n", childPID)
-		fmt.Fprintf(os.Stderr, "Check %s for errors.\n", logPath)
+		fmt.Fprintf(os.Stderr, "Expected socket: %s\n", activeSocketPath(dir))
+		// Show why, rather than only where to look. The daemon writes its
+		// failure to the log and exits, so a caller that cannot open that file
+		// — a CI runner, a script, anyone reading a transcript after the fact —
+		// is left with "it did not start" and no way to find out more.
+		if tail := tailFile(logPath, 2048); tail != "" {
+			fmt.Fprintf(os.Stderr, "Last output from %s:\n%s\n", logPath, tail)
+		} else {
+			fmt.Fprintf(os.Stderr, "Check %s for errors.\n", logPath)
+		}
 		return exitErr
 	}
 	fmt.Fprintf(os.Stderr, "byn daemon started (pid %d, socket %s).\n",
@@ -424,4 +434,31 @@ func runDaemonStatus(args []string) int {
 		}
 	}
 	return exitOK
+}
+
+// tailFile returns up to the last n bytes of a file, or "" if it cannot be
+// read. Used to put a daemon's own error in front of whoever ran the command
+// instead of pointing at a path they may not be able to open.
+func tailFile(path string, n int64) string {
+	f, err := os.Open(path) // #nosec G304 -- path is the daemon log this process just wrote
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	start := int64(0)
+	if fi.Size() > n {
+		start = fi.Size() - n
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
