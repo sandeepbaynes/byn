@@ -20,7 +20,19 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	cmd.Dir = cwd
 	// BYN_ALLOW_ROOT=1: the root-integration job has no non-root user; bypass the
 	// root-policy guard (unit-tested separately) so owner commands run.
-	cmd.Env = append([]string{"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester", "BYN_ALLOW_ROOT=1"}, env...)
+	// PATH has to be here. `byn exec -- sleep 5` resolves a bare command name
+	// through PATH before the daemon ever sees it, so an environment without
+	// one fails at lookup with "executable file not found" — a fault in the
+	// harness that reads exactly like a fault in privsep. Inherit the real PATH
+	// and fall back to a sane default when the parent has none.
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	}
+	cmd.Env = append([]string{
+		"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester",
+		"BYN_ALLOW_ROOT=1", "PATH=" + path,
+	}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {
