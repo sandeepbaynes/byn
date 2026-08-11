@@ -90,6 +90,14 @@ func runDoctor(args []string, _ cliScope) int {
 	}
 
 	fmt.Println("Provisioning & health:")
+	// A stuck build tree is the failure people meet as an EACCES from a build
+	// tool long after byn was involved, with nothing pointing back here. Name
+	// it where they are already looking for problems.
+	if cwd, cerr := os.Getwd(); cerr == nil {
+		if c, applies := checkStuckArtifacts(cwd); applies {
+			local = append(local, c)
+		}
+	}
 	for _, c := range local {
 		printHealCheck(c)
 	}

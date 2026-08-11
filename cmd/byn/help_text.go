@@ -1614,6 +1614,55 @@ SEE ALSO
        byn(1) — discovery walk + .byn file format
 `,
 
+	"repair": `NAME
+       byn-repair - give yourself back access to files a privsep exec created
+
+SYNOPSIS
+       byn repair [DIR]
+
+DESCRIPTION
+       Under privilege separation the exec child runs as a service user, so
+       everything it writes — .next, node_modules/.vite, dist, __pycache__ —
+       belongs to that user. Deleting a file needs write permission on its
+       DIRECTORY, so the person who owns the project cannot remove any of it:
+       the next build run outside byn fails with EACCES, and a project ends up
+       poisoned by having been built once under byn.
+
+       Trusting a .byn now sets a default ACL so anything created from that
+       point stays writable by the owner. A default entry only applies to
+       files created after it is set, so a project built before that — or
+       before this version — still has a stuck tree. This command fixes it.
+
+       DIR defaults to the current directory and is searched recursively.
+
+       Only a file's owner or root may change its ACL, so the work happens in
+       byn-exec-helper, running as the service user. It reads the calling
+       user's id from the kernel rather than accepting a name, so it can only
+       ever grant access to whoever ran it. It adds an entry and nothing else:
+       no chown, no change to anyone else's access, and files the service user
+       does not own are left alone.
+
+       Nothing to repair is reported as success — running it on a clean tree
+       is harmless.
+
+EXIT STATUS
+       0    Repaired, or nothing needed repairing.
+       1    The helper could not be run, or the directory is unreadable.
+
+EXAMPLES
+       Fix the project you are standing in:
+           $ byn repair
+
+       Fix one that is elsewhere:
+           $ byn repair ~/code/api
+
+       Then delete what was stuck:
+           $ rm -rf .next
+
+SEE ALSO
+       byn-exec(1), byn-trust(1), byn-doctor(1)
+`,
+
 	"approve": `NAME
        byn-approve - answer decisions a .byn is waiting on
 
