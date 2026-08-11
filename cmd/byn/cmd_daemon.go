@@ -281,8 +281,18 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 	// Wait briefly for the socket to appear so the user knows the
 	// daemon is ready.
 	if !waitForSocketPID(dir, childPID, daemonReadyTimeout) {
-		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after 3s.\n", childPID)
-		fmt.Fprintf(os.Stderr, "Expected socket: %s\n", activeSocketPath(dir))
+		sock := activeSocketPath(dir)
+		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after %s.\n",
+			childPID, daemonReadyTimeout)
+		// Say whether the socket is missing or merely unanswerable: those have
+		// completely different causes, and the reader cannot tell them apart
+		// from "not ready".
+		if _, serr := os.Stat(sock); serr != nil {
+			fmt.Fprintf(os.Stderr, "Expected socket %s — not present (%v)\n", sock, serr)
+		} else {
+			fmt.Fprintf(os.Stderr, "Expected socket %s — present, but it did not answer; still alive: %v\n",
+				sock, processAlive(childPID))
+		}
 		// Show why, rather than only where to look. The daemon writes its
 		// failure to the log and exits, so a caller that cannot open that file
 		// — a CI runner, a script, anyone reading a transcript after the fact —
