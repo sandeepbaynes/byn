@@ -379,7 +379,12 @@ func runDaemonStop(args []string) int {
 	}
 	// Under privsep, bootout the _byn service (a SIGTERM is futile — KeepAlive
 	// respawns it). The root-policy guard already required root here.
-	if daemonProvisioned() {
+	//
+	// A daemon started in place with --allow-root is the exception, for the same
+	// reason it is on the start path: booting out the service does nothing to a
+	// daemon this data dir owns, so `daemon stop` reported success and left it
+	// running. When the pidfile here names a live process, stop THAT.
+	if daemonProvisioned() && !localDaemonRunning(dir) {
 		if err := stopServiceFn(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: stop the _byn service: %v\n", err)
 			return exitErr
@@ -516,4 +521,16 @@ func tailFile(path string, n int64) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// localDaemonRunning reports whether this data dir has its own live daemon,
+// as opposed to being served by the system service. It is what lets stop and
+// start act on the daemon in front of them rather than on the one the
+// provisioning marker implies.
+func localDaemonRunning(dir string) bool {
+	pid, ok, err := daemonPID(dir)
+	if err != nil || !ok || pid <= 0 {
+		return false
+	}
+	return processAlive(pid)
 }
