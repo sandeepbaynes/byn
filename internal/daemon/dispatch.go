@@ -39,7 +39,14 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	// rejected up front.
 	peerKnown := err == nil
 	peerIsHelper := peerKnown && d.isExecHelperUID(uid)
-	if peerKnown && uid != d.ownerUID && !peerIsHelper {
+	// A daemon deliberately run as root with --allow-root must still answer
+	// root. Provisioning records the human owner, so a root-run daemon
+	// allowlisted someone else and refused the very caller that started it —
+	// a daemon nobody can talk to, which is not a safer state, just a broken
+	// one. This widens nothing in a normal install: AllowRoot is off, and the
+	// daemon refuses to run as root at all without it.
+	peerIsAllowedRoot := peerKnown && uid == 0 && d.cfg.AllowRoot
+	if peerKnown && uid != d.ownerUID && !peerIsHelper && !peerIsAllowedRoot {
 		_ = ipc.WriteFrame(conn, ipc.NewError("", ipc.CodeBadRequest,
 			fmt.Sprintf("connection from uid %d rejected (owner uid is %d)", uid, d.ownerUID),
 			""))

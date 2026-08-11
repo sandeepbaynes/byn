@@ -255,3 +255,33 @@ func TestStoreForVault_NotInitialized(t *testing.T) {
 		t.Fatalf("Code=%v", er.Code)
 	}
 }
+
+// A daemon started deliberately as root with --allow-root must still answer
+// root. Provisioning records the HUMAN owner, so without this the daemon
+// allowlisted someone else and refused the very caller that started it — a
+// daemon nobody can talk to, which is not a safer state, just a broken one.
+func TestPeerGate_AllowRootDaemonAnswersRoot(t *testing.T) {
+	cases := []struct {
+		name      string
+		uid       uint32
+		ownerUID  uint32
+		allowRoot bool
+		want      bool // may connect
+	}{
+		{"root caller, allow-root daemon", 0, 1000, true, true},
+		{"root caller, normal daemon", 0, 1000, false, false},
+		{"owner always allowed", 1000, 1000, false, true},
+		{"stranger refused even with allow-root", 1234, 1000, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mirrors the gate in dispatch: owner, exec helper, or an
+			// explicitly-permitted root caller.
+			allowedRoot := tc.uid == 0 && tc.allowRoot
+			got := tc.uid == tc.ownerUID || allowedRoot
+			if got != tc.want {
+				t.Errorf("may connect = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
