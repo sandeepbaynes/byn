@@ -280,7 +280,7 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 
 	// Wait briefly for the socket to appear so the user knows the
 	// daemon is ready.
-	if !waitForSocket(dir, 3*time.Second) {
+	if !waitForSocketPID(dir, childPID, daemonReadyTimeout) {
 		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after 3s.\n", childPID)
 		fmt.Fprintf(os.Stderr, "Expected socket: %s\n", activeSocketPath(dir))
 		// Show why, rather than only where to look. The daemon writes its
@@ -300,15 +300,49 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 }
 
 func waitForSocket(dir string, timeout time.Duration) bool {
+	return waitForSocketPID(dir, 0, timeout)
+}
+
+// daemonReadyTimeout is how long to wait for a freshly spawned daemon to answer.
+//
+// It was three seconds, which is comfortable on a warm laptop and not on a cold
+// CI runner: the daemon there reported itself started AFTER the parent had
+// already given up, so a working daemon was reported as a failure. Waiting
+// longer costs nothing when the daemon is healthy, because the loop exits as
+// soon as it answers.
+const daemonReadyTimeout = 20 * time.Second
+
+// waitForSocketPID polls until the daemon answers, the child dies, or time runs
+// out. childPID may be 0 when the caller has no child to watch.
+//
+// Watching the child is what makes the longer timeout affordable: a daemon that
+// failed to start is usually gone within milliseconds, and noticing that is far
+// quicker than waiting out a window sized for the slowest machine that should
+// still succeed.
+func waitForSocketPID(dir string, childPID int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	c := newClient(dir, "")
 	for time.Now().Before(deadline) {
 		if err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err == nil {
 			return true
 		}
+		if childPID > 0 && !processAlive(childPID) {
+			// It exited rather than bound. Its reason is in the log the caller
+			// is about to print; waiting out the rest of the window adds delay
+			// and tells nobody anything.
+			return false
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+// processAlive reports whether a pid still exists. Signal 0 performs the
+// permission and existence checks without delivering anything.
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	// EPERM means it exists and belongs to someone else — alive either way.
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func runDaemonStop(args []string) int {
