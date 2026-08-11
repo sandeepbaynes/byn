@@ -171,7 +171,14 @@ func runDaemonStart(args []string) int {
 	}
 	// Under privsep the daemon is the _byn launchd/systemd service — never spawn
 	// it as the owner. Report status and delegate to the root path.
-	if daemonProvisioned() {
+	//
+	// --allow-root is the deliberate exception: it exists so a harness running
+	// as root can bring a daemon up in place. Checking provisioning first made
+	// the flag unreachable on exactly the machines it was written for — once
+	// `byn setup` succeeds, the delegate answered "run sudo byn restart" to a
+	// caller that had already said it wanted the daemon here, in this process
+	// tree, under its own data dir.
+	if daemonProvisioned() && !*allowRoot {
 		return startProvisionedDelegate(dir)
 	}
 	// Detached: re-exec ourselves with --foreground in a new session.
