@@ -474,6 +474,9 @@ func runTrustDiff(args []string) int {
 	// Accept a directory the same way `byn trust` does. The error text that
 	// sends users here prints a directory, so rejecting one made the suggested
 	// remedy fail.
+	// #nosec G703 -- naming the file to inspect IS this command's argument;
+	// the path is only stat'd here, and the daemon re-canonicalizes and
+	// authorizes it independently before reading anything.
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		path = filepath.Join(path, ".byn")
 	}

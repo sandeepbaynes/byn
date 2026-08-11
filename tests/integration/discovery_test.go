@@ -20,7 +20,19 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	cmd.Dir = cwd
 	// BYN_ALLOW_ROOT=1: the root-integration job has no non-root user; bypass the
 	// root-policy guard (unit-tested separately) so owner commands run.
-	cmd.Env = append([]string{"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester", "BYN_ALLOW_ROOT=1"}, env...)
+	// PATH has to be here. `byn exec -- sleep 5` resolves a bare command name
+	// through PATH before the daemon ever sees it, so an environment without
+	// one fails at lookup with "executable file not found" — a fault in the
+	// harness that reads exactly like a fault in privsep. Inherit the real PATH
+	// and fall back to a sane default when the parent has none.
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	}
+	cmd.Env = append([]string{
+		"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester",
+		"BYN_ALLOW_ROOT=1", "PATH=" + path,
+	}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {
@@ -145,13 +157,18 @@ func TestE2E_Discovery_TamperedReprompts(t *testing.T) {
 	if err := os.WriteFile(dotPath, []byte("[scope]\nproject = \"evil\"\n"), 0o600); err != nil {
 		t.Fatalf("retmper: %v", err)
 	}
-	// A changed-since-trusted file must hard-fail exec (no silent re-trust).
+	// Re-aiming the file at a different project points every grant at different
+	// data, so it must never take effect on its own. It is not refused outright
+	// either: a decision is queued and the caller is told where to answer it.
 	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "true")
 	if code == 0 {
-		t.Fatalf("exec on a changed .byn should fail")
+		t.Fatalf("a scope move took effect with no approval")
 	}
-	if !strings.Contains(stderr, "CHANGED") {
-		t.Fatalf("changed-file rejection should say CHANGED:\n%s", stderr)
+	if !strings.Contains(stderr, "approval") {
+		t.Fatalf("rejection should name the queued approval:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "scope moves") {
+		t.Fatalf("rejection should say the scope moved:\n%s", stderr)
 	}
 }
 

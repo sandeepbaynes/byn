@@ -39,7 +39,14 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	// rejected up front.
 	peerKnown := err == nil
 	peerIsHelper := peerKnown && d.isExecHelperUID(uid)
-	if peerKnown && uid != d.ownerUID && !peerIsHelper {
+	// A daemon deliberately run as root with --allow-root must still answer
+	// root. Provisioning records the human owner, so a root-run daemon
+	// allowlisted someone else and refused the very caller that started it —
+	// a daemon nobody can talk to, which is not a safer state, just a broken
+	// one. This widens nothing in a normal install: AllowRoot is off, and the
+	// daemon refuses to run as root at all without it.
+	peerIsAllowedRoot := peerKnown && uid == 0 && d.cfg.AllowRoot
+	if peerKnown && uid != d.ownerUID && !peerIsHelper && !peerIsAllowedRoot {
 		_ = ipc.WriteFrame(conn, ipc.NewError("", ipc.CodeBadRequest,
 			fmt.Sprintf("connection from uid %d rejected (owner uid is %d)", uid, d.ownerUID),
 			""))
@@ -72,7 +79,15 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	// any other op. ErrNotUnix (in-proc/tests) is exempt here — those paths gate on
 	// the caller UID inside handleExecRedeem instead.
 	if peerKnown {
-		isOwner := uid == d.ownerUID
+		// The same rule the connection gate uses, so the two cannot disagree.
+		// isExecHelperUID treats root as the helper, which is right when the
+		// helper is the only thing that ever runs as root — but a daemon
+		// started with --allow-root has a root OPERATOR too, and classifying it
+		// as the helper restricted it to redeeming exec tokens. Provisioning
+		// records the human owner (a sudo caller records SUDO_UID, not 0), so
+		// root matched neither owner nor a permitted peer and every ordinary
+		// request was refused.
+		isOwner := uid == d.ownerUID || peerIsAllowedRoot
 		if env.Op == ipc.OpExecRedeem && !peerIsHelper {
 			_ = ipc.WriteFrame(conn, ipc.NewError(env.ID, ipc.CodeBadRequest,
 				"exec.redeem is restricted to the privsep exec helper", ""))

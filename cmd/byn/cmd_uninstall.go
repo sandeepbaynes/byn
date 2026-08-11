@@ -88,11 +88,12 @@ func runUninstallWith(args []string, euid func() int, getenv func(string) string
 		}
 	}
 
-	if doPurge && vaultDir != "" {
+	switch {
+	case doPurge && vaultDir != "":
 		_, _ = fmt.Fprintf(stdout, "byn uninstalled — binaries and vault removed.\n")
-	} else if vaultDir != "" {
+	case vaultDir != "":
 		_, _ = fmt.Fprintf(stdout, "byn uninstalled — binaries removed, vault kept at %s.\n", vaultDir)
-	} else {
+	default:
 		_, _ = fmt.Fprintln(stdout, "byn uninstalled.")
 	}
 	return exitOK

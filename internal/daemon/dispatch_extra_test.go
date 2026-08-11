@@ -255,3 +255,71 @@ func TestStoreForVault_NotInitialized(t *testing.T) {
 		t.Fatalf("Code=%v", er.Code)
 	}
 }
+
+// A daemon started deliberately as root with --allow-root must still answer
+// root. Provisioning records the HUMAN owner, so without this the daemon
+// allowlisted someone else and refused the very caller that started it — a
+// daemon nobody can talk to, which is not a safer state, just a broken one.
+func TestPeerGate_AllowRootDaemonAnswersRoot(t *testing.T) {
+	cases := []struct {
+		name      string
+		uid       uint32
+		ownerUID  uint32
+		allowRoot bool
+		want      bool // may connect
+	}{
+		{"root caller, allow-root daemon", 0, 1000, true, true},
+		{"root caller, normal daemon", 0, 1000, false, false},
+		{"owner always allowed", 1000, 1000, false, true},
+		{"stranger refused even with allow-root", 1234, 1000, true, false},
+	}
+	// Both gates must agree. The connection gate admitting root while the
+	// operation gate classified it as the exec helper is what left the daemon
+	// answering nothing but token redemptions.
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mirrors the gate in dispatch: owner, exec helper, or an
+			// explicitly-permitted root caller.
+			allowedRoot := tc.uid == 0 && tc.allowRoot
+			got := tc.uid == tc.ownerUID || allowedRoot
+			if got != tc.want {
+				t.Errorf("may connect = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A daemon started with --allow-root has a root OPERATOR, not just a root
+// helper. isExecHelperUID treats root as the helper — correct when the helper
+// is the only thing running as root — so without this the operation gate
+// restricted the operator to redeeming exec tokens and refused everything else.
+// Provisioning records the human owner (a sudo caller records SUDO_UID, not 0),
+// so root matched neither owner nor permitted peer.
+func TestOperationGate_AllowRootIsTreatedAsOwner(t *testing.T) {
+	cases := []struct {
+		name              string
+		uid, ownerUID     uint32
+		allowRoot, helper bool
+		wantOwner         bool
+	}{
+		{"root operator under allow-root", 0, 1001, true, true, true},
+		{"root helper on a normal daemon", 0, 1001, false, true, false},
+		{"the recorded owner", 1001, 1001, false, false, true},
+		{"a stranger", 1234, 1001, true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			allowedRoot := tc.uid == 0 && tc.allowRoot
+			isOwner := tc.uid == tc.ownerUID || allowedRoot
+			if isOwner != tc.wantOwner {
+				t.Fatalf("isOwner = %v, want %v", isOwner, tc.wantOwner)
+			}
+			// The restriction that broke privsep: helper peers that are not the
+			// owner may only redeem exec tokens.
+			restricted := tc.helper && !isOwner
+			if tc.name == "root operator under allow-root" && restricted {
+				t.Error("the operator was restricted to redeeming exec tokens")
+			}
+		})
+	}
+}

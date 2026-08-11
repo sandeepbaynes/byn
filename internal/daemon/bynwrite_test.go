@@ -176,3 +176,25 @@ func TestWithResolvedActionTargets_NoDuplicates(t *testing.T) {
 		}
 	}
 }
+
+// The record's path is symlink-resolved but `byn exec` only absolutizes argv[0]
+// — it does not resolve symlinks. Where a project sits under a symlink (macOS
+// puts temp dirs under /var -> /private/var) the two spellings differ, and a
+// twin for only one of them means a relative action never matches.
+func TestWithResolvedActionTargets_BothPathSpellings(t *testing.T) {
+	got := withResolvedActionTargets([]string{"./run.sh"},
+		"/private/var/p", "/var/p")
+	want := []string{"./run.sh", "/private/var/p/run.sh", "/var/p/run.sh"}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] got %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Identical spellings must not produce a duplicate.
+	if g := withResolvedActionTargets([]string{"./run.sh"}, "/p", "/p"); len(g) != 2 {
+		t.Errorf("duplicate twin for identical dirs: %q", g)
+	}
+}

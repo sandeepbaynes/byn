@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -374,6 +375,21 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 					// Empty resolvedArgv (old CLI / version skew, or alias that
 					// expanded to nothing) is treated as unmatched → fail-closed.
 					matched := false
+					// Match the argv as sent AND with argv[0] symlink-resolved.
+					// Trust records canonicalize their path, but `byn exec`
+					// only absolutizes argv[0], so under a symlinked project
+					// dir (macOS temp dirs live under /var -> /private/var) the
+					// pinned pattern and the incoming command are the same file
+					// spelled two ways. Comparing one spelling refuses a
+					// command the .byn genuinely pins.
+					candidates := [][]string{resolvedArgv}
+					if len(resolvedArgv) > 0 {
+						if resolved, rerr := filepath.EvalSymlinks(resolvedArgv[0]); rerr == nil && resolved != resolvedArgv[0] {
+							alt := append([]string(nil), resolvedArgv...)
+							alt[0] = resolved
+							candidates = append(candidates, alt)
+						}
+					}
 					if len(resolvedArgv) > 0 {
 						for _, a := range rec.Actions {
 							if a == "*" {
@@ -384,8 +400,13 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 								// Defense in depth: bad pattern → skip (non-matching).
 								continue
 							}
-							if pat.Match(resolvedArgv) {
-								matched = true
+							for _, cand := range candidates {
+								if pat.Match(cand) {
+									matched = true
+									break
+								}
+							}
+							if matched {
 								break
 							}
 						}
