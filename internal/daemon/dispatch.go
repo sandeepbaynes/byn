@@ -79,7 +79,15 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	// any other op. ErrNotUnix (in-proc/tests) is exempt here — those paths gate on
 	// the caller UID inside handleExecRedeem instead.
 	if peerKnown {
-		isOwner := uid == d.ownerUID
+		// The same rule the connection gate uses, so the two cannot disagree.
+		// isExecHelperUID treats root as the helper, which is right when the
+		// helper is the only thing that ever runs as root — but a daemon
+		// started with --allow-root has a root OPERATOR too, and classifying it
+		// as the helper restricted it to redeeming exec tokens. Provisioning
+		// records the human owner (a sudo caller records SUDO_UID, not 0), so
+		// root matched neither owner nor a permitted peer and every ordinary
+		// request was refused.
+		isOwner := uid == d.ownerUID || peerIsAllowedRoot
 		if env.Op == ipc.OpExecRedeem && !peerIsHelper {
 			_ = ipc.WriteFrame(conn, ipc.NewError(env.ID, ipc.CodeBadRequest,
 				"exec.redeem is restricted to the privsep exec helper", ""))
