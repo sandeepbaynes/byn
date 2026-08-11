@@ -81,8 +81,23 @@ func aclRevokeCommands(projectDir, _, user string) [][]string {
 // run executes a command WITHOUT a shell (exec.Command, not sh -c), so the
 // project path — which may contain shell metacharacters — cannot inject.
 func GrantProjectACL(run func(name string, args ...string) error, projectDir, homeDir string) error {
+	return GrantProjectACLFor(run, projectDir, homeDir, "")
+}
+
+// GrantProjectACLFor is GrantProjectACL with the owner named, so files the exec
+// child creates stay writable by the person who owns the project. Without it
+// every build artifact belongs to the service user and the owner cannot delete
+// it — removing a file needs write on its directory.
+func GrantProjectACLFor(run func(name string, args ...string) error, projectDir, homeDir, owner string) error {
 	for _, c := range aclGrantCommands(projectDir, homeDir, ExecUser) {
 		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	// The owner's inherited ACE. projectACEPerms already carries the
+	// file_inherit/directory_inherit flags, so new artifacts pick it up.
+	if owner != "" && owner != ExecUser {
+		if err := run("chmod", "+a", aceArg(owner, projectACEPerms), projectDir); err != nil {
 			return err
 		}
 	}
