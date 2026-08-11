@@ -69,6 +69,18 @@ install: build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
 	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
+	@# The helper that actually RUNS lives in libexec with file capabilities,
+	@# put there by `byn setup`. Installing only to bindir left it untouched:
+	@# it drifted six weeks behind the CLI it shares an exec-token protocol
+	@# with, and the mismatch surfaced as a helper that did not understand a
+	@# flag byn had just started sending. Refresh it in place when it exists —
+	@# never create it here, since an unprovisioned machine has no service user
+	@# for it to drop to.
+	@if [ -x /usr/local/libexec/byn-exec-helper ]; then \
+		install -o root -g root -m 0755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
+		setcap cap_setuid,cap_setgid+ep /usr/local/libexec/byn-exec-helper && \
+		echo "Refreshed /usr/local/libexec/byn-exec-helper (privsep helper)"; \
+	fi
 	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
 		echo "Signing installed binaries with: $(CODESIGN_IDENTITY)"; \
 		codesign --force --identifier com.sandeepbaynes.byn \

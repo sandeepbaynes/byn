@@ -98,6 +98,9 @@ func runDoctor(args []string, _ cliScope) int {
 			local = append(local, c)
 		}
 	}
+	if c, applies := checkHelperFresh(); applies {
+		local = append(local, c)
+	}
 	for _, c := range local {
 		printHealCheck(c)
 	}
