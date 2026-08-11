@@ -105,6 +105,12 @@ func main() {
 		killPgrpMain(pgid)
 		return
 	}
+	// repair-owner mode: drop to _byn-exec and give the owner an ACL entry on
+	// the files it created, which only the file's owner or root can do.
+	if dir, ok := repairOwnerRequested(os.Args); ok {
+		repairOwnerMain(dir)
+		return
+	}
 	// Option A (Terminal-anchored exec): the CLI invokes us with --redeem and the
 	// one-time token on fd 3. We redeem it with the daemon for the authorized
 	// argv+env, then drop + exec. The legacy server-side `-- TARGET` mode (the
