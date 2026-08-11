@@ -280,7 +280,7 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 
 	// Wait briefly for the socket to appear so the user knows the
 	// daemon is ready.
-	if !waitForSocketPID(dir, childPID, daemonReadyTimeout) {
+	if ready, lastErr := waitForSocketErr(dir, childPID, daemonReadyTimeout); !ready {
 		sock := activeSocketPath(dir)
 		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after %s.\n",
 			childPID, daemonReadyTimeout)
@@ -290,8 +290,8 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 		if _, serr := os.Stat(sock); serr != nil {
 			fmt.Fprintf(os.Stderr, "Expected socket %s — not present (%v)\n", sock, serr)
 		} else {
-			fmt.Fprintf(os.Stderr, "Expected socket %s — present, but it did not answer; still alive: %v\n",
-				sock, processAlive(childPID))
+			fmt.Fprintf(os.Stderr, "Expected socket %s — present, but it did not answer (%v); still alive: %v\n",
+				sock, lastErr, processAlive(childPID))
 		}
 		// Show why, rather than only where to look. The daemon writes its
 		// failure to the log and exits, so a caller that cannot open that file
@@ -330,21 +330,32 @@ const daemonReadyTimeout = 20 * time.Second
 // quicker than waiting out a window sized for the slowest machine that should
 // still succeed.
 func waitForSocketPID(dir string, childPID int, timeout time.Duration) bool {
+	ok, _ := waitForSocketErr(dir, childPID, timeout)
+	return ok
+}
+
+// waitForSocketErr is waitForSocketPID that also returns the last failure. The
+// reason a daemon will not answer — refused, timed out, wrong path — is the
+// whole diagnosis, and reporting only "not ready" threw it away every time.
+func waitForSocketErr(dir string, childPID int, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	c := newClient(dir, "")
+	var last error
 	for time.Now().Before(deadline) {
-		if err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err == nil {
-			return true
+		err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{})
+		if err == nil {
+			return true, nil
 		}
+		last = err
 		if childPID > 0 && !processAlive(childPID) {
 			// It exited rather than bound. Its reason is in the log the caller
 			// is about to print; waiting out the rest of the window adds delay
 			// and tells nobody anything.
-			return false
+			return false, last
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
+	return false, last
 }
 
 // processAlive reports whether a pid still exists. Signal 0 performs the
