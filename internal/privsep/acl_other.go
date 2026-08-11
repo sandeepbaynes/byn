@@ -9,6 +9,11 @@ func GrantProjectACL(_ func(name string, args ...string) error, _, _ string) err
 	return nil
 }
 
+// GrantProjectACLFor is a no-op on unsupported platforms. See GrantProjectACL.
+func GrantProjectACLFor(_ func(name string, args ...string) error, _, _, _ string) error {
+	return nil
+}
+
 // RevokeProjectACL is a no-op on unsupported platforms. See GrantProjectACL.
 func RevokeProjectACL(_ func(name string, args ...string) error, _, _ string) error {
 	return nil
