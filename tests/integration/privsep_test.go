@@ -64,7 +64,11 @@ func requireRootLinux(t *testing.T) {
 func buildHelper(t *testing.T, bynBin string) string {
 	t.Helper()
 	helper := filepath.Join(filepath.Dir(bynBin), "byn-exec-helper")
-	cmd := exec.Command("go", "build", "-o", helper, "./cmd/byn-exec-helper")
+	// The same byntest tag the test byn is built with. Without it the helper
+	// resolves production paths and dials /var/lib/byn/daemon.sock while every
+	// other party is using the test data dir — so token redemption failed
+	// against a socket that does not exist on the runner.
+	cmd := exec.Command("go", "build", "-tags", "byntest", "-o", helper, "./cmd/byn-exec-helper")
 	cmd.Dir = repoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build byn-exec-helper: %v\n%s", err, out)
