@@ -50,10 +50,15 @@ const (
 type Status string
 
 const (
-	StatusPending  Status = "pending"
+	// StatusPending means nobody has answered yet.
+	StatusPending Status = "pending"
+	// StatusApproved means a person granted it.
 	StatusApproved Status = "approved"
-	StatusDenied   Status = "denied"
-	StatusExpired  Status = "expired"
+	// StatusDenied means a person refused it.
+	StatusDenied Status = "denied"
+	// StatusExpired means it lapsed unanswered — distinct from denied, so a
+	// caller can ask again rather than treat silence as refusal.
+	StatusExpired Status = "expired"
 )
 
 // Kind classifies what is being asked for.

@@ -44,8 +44,9 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 			continue
 		}
 		name := strings.TrimLeft(a, "-")
-		if eq := strings.IndexByte(name, '='); eq >= 0 {
-			name = name[:eq]
+		// A --flag=value token is self-contained: forward it whole and let
+		// fs.Parse split it, rather than looking the name up here.
+		if strings.IndexByte(name, '=') >= 0 {
 			flags = append(flags, a)
 			continue
 		}
@@ -122,7 +123,11 @@ func handleCallError(err error) int {
 	}
 	if errors.Is(err, ipc.ErrDaemonDown) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"), red("byn daemon is not running."))
-		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan("byn start"))
+		cmd, note := daemonDownRemedy(cliPrivsepProvisioned())
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Run:"), cyan(cmd))
+		if note != "" {
+			fmt.Fprintf(os.Stderr, "%s\n", dim(note))
+		}
 		return exitDaemonDown
 	}
 	var ipcErr *ipc.ErrResponse
@@ -191,6 +196,17 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 	err := call(nil)
 	if err == nil {
 		return exitOK
+	}
+
+	// A first command against a vault that does not exist yet is not a failure
+	// to report — it is a vault the user has just asked for. Create it (with a
+	// password they choose) and run what they actually typed.
+	if isNotInitErr(err) {
+		if c := firstRunClient; c != nil && offerVaultInit(c, firstRunVault, jsonMode) {
+			if err = call(nil); err == nil {
+				return exitOK
+			}
+		}
 	}
 
 	locked := isLockedErr(err)
@@ -271,4 +287,33 @@ func authorizingPasswordWithLeadIn(pwStdin bool, leadIn string) (pw []byte, wipe
 		return nil, func() {}, err
 	}
 	return buf.Bytes(), buf.Wipe, nil
+}
+
+// firstRunClient / firstRunVault let mutateWithAuthRetry reach the daemon to
+// create a missing vault. They are set by the command handlers that already
+// build a client, rather than threaded through every call site, because the
+// retry helper is shared by a dozen commands whose signatures would otherwise
+// all have to change for this one case.
+var (
+	firstRunClient *ipc.Client
+	firstRunVault  string
+)
+
+// setFirstRunTarget records which client and vault a lazy init should use.
+func setFirstRunTarget(c *ipc.Client, vault string) {
+	firstRunClient, firstRunVault = c, vault
+}
+
+// daemonDownRemedy returns the command that will actually bring the daemon back,
+// and a note explaining why it needs root when it does.
+//
+// Where byn runs under a service user, `byn start` refuses and prints a
+// DIFFERENT command — so naming it here cost the reader a round trip to learn
+// something byn already knew. A recovery hint that does not recover is worse
+// than none: it spends the reader's trust before the real answer arrives.
+func daemonDownRemedy(privsepProvisioned bool) (cmd, note string) {
+	if privsepProvisioned {
+		return "sudo byn restart", "(it runs as the _byn service, so bringing it up needs root)"
+	}
+	return "byn start", ""
 }

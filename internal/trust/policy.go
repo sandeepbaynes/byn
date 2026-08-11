@@ -94,7 +94,8 @@ func (p Policy) Hash() string {
 	n := NormalizePolicy(p)
 	h := sha256.New()
 	write := func(label, s string) {
-		fmt.Fprintf(h, "%s\x1f%s\x1e", label, s)
+		// hash.Hash.Write never returns an error, per its own contract.
+		_, _ = fmt.Fprintf(h, "%s\x1f%s\x1e", label, s)
 	}
 	write("vault", n.Vault)
 	write("project", n.Project)

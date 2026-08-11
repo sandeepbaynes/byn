@@ -10,18 +10,6 @@ import (
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
 
-// rowCiphertext reads the raw stored ciphertext for an env_var by name.
-func rowCiphertext(t *testing.T, st *Store, name string) []byte {
-	t.Helper()
-	var ct []byte
-	if err := st.db.QueryRowContext(context.Background(),
-		`SELECT value FROM entries WHERE kind='env_var' AND name=?`, name).Scan(&ct); err != nil {
-		t.Fatalf("read ciphertext for %q: %v", name, err)
-	}
-	return ct
-}
-
-// rowAADVersion reads the stored aad_version for an env_var by name.
 func rowAADVersion(t *testing.T, st *Store, name string) int {
 	t.Helper()
 	var ver int

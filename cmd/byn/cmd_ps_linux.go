@@ -38,6 +38,8 @@ func findBynExecProcs() []bynExecProc {
 		}
 		dir := "/proc/" + e.Name()
 
+		// #nosec G304 -- dir is "/proc/<pid>" built from a numeric procfs entry
+		// we just enumerated; no caller-supplied path reaches this.
 		cb, err := os.ReadFile(dir + "/cmdline")
 		if err != nil || len(cb) == 0 {
 			continue
@@ -55,6 +57,7 @@ func findBynExecProcs() []bynExecProc {
 		}
 
 		// Path 2: process replaced via syscall.Exec — look for BYN_EXEC_PID=<pid>.
+		// #nosec G304 -- same fixed procfs path as above.
 		eb, err := os.ReadFile(dir + "/environ")
 		if err != nil || len(eb) == 0 {
 			continue

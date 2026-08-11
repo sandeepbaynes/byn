@@ -68,7 +68,14 @@ func applyPolicy(rec trust.Record, p trust.Policy) trust.Record {
 	// written as "./build.sh" stops matching: exec absolutizes the target before
 	// the daemon compares, so the record needs the resolved twin alongside the
 	// literal the author wrote.
-	rec.Actions = withResolvedActionTargets(p.Actions, filepath.Dir(rec.Path))
+	// Both spellings of the directory, for the same reason the grant path uses
+	// both: the record path is symlink-resolved and exec's argv[0] is not.
+	dir := filepath.Dir(rec.Path)
+	resolved := dir
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		resolved = r
+	}
+	rec.Actions = withResolvedActionTargets(p.Actions, dir, resolved)
 	rec.Auth = p.Auth
 	rec.Aliases = p.Aliases
 	rec.EnvGrants = p.EnvGrants

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -171,7 +172,14 @@ func runDaemonStart(args []string) int {
 	}
 	// Under privsep the daemon is the _byn launchd/systemd service — never spawn
 	// it as the owner. Report status and delegate to the root path.
-	if daemonProvisioned() {
+	//
+	// --allow-root is the deliberate exception: it exists so a harness running
+	// as root can bring a daemon up in place. Checking provisioning first made
+	// the flag unreachable on exactly the machines it was written for — once
+	// `byn setup` succeeds, the delegate answered "run sudo byn restart" to a
+	// caller that had already said it wanted the daemon here, in this process
+	// tree, under its own data dir.
+	if daemonProvisioned() && !*allowRoot {
 		return startProvisionedDelegate(dir)
 	}
 	// Detached: re-exec ourselves with --foreground in a new session.
@@ -272,9 +280,28 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 
 	// Wait briefly for the socket to appear so the user knows the
 	// daemon is ready.
-	if !waitForSocket(dir, 3*time.Second) {
-		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after 3s.\n", childPID)
-		fmt.Fprintf(os.Stderr, "Check %s for errors.\n", logPath)
+	if ready, lastErr := waitForSocketErr(dir, childPID, daemonReadyTimeout); !ready {
+		sock := activeSocketPath(dir)
+		fmt.Fprintf(os.Stderr, "Warning: daemon process spawned (pid %d) but socket not ready after %s.\n",
+			childPID, daemonReadyTimeout)
+		// Say whether the socket is missing or merely unanswerable: those have
+		// completely different causes, and the reader cannot tell them apart
+		// from "not ready".
+		if _, serr := os.Stat(sock); serr != nil {
+			fmt.Fprintf(os.Stderr, "Expected socket %s — not present (%v)\n", sock, serr)
+		} else {
+			fmt.Fprintf(os.Stderr, "Expected socket %s — present, but it did not answer (%v); still alive: %v\n",
+				sock, lastErr, processAlive(childPID))
+		}
+		// Show why, rather than only where to look. The daemon writes its
+		// failure to the log and exits, so a caller that cannot open that file
+		// — a CI runner, a script, anyone reading a transcript after the fact —
+		// is left with "it did not start" and no way to find out more.
+		if tail := tailFile(logPath, 2048); tail != "" {
+			fmt.Fprintf(os.Stderr, "Last output from %s:\n%s\n", logPath, tail)
+		} else {
+			fmt.Fprintf(os.Stderr, "Check %s for errors.\n", logPath)
+		}
 		return exitErr
 	}
 	fmt.Fprintf(os.Stderr, "byn daemon started (pid %d, socket %s).\n",
@@ -283,15 +310,60 @@ func runDaemonDetached(dir string, allowRoot bool) int {
 }
 
 func waitForSocket(dir string, timeout time.Duration) bool {
+	return waitForSocketPID(dir, 0, timeout)
+}
+
+// daemonReadyTimeout is how long to wait for a freshly spawned daemon to answer.
+//
+// It was three seconds, which is comfortable on a warm laptop and not on a cold
+// CI runner: the daemon there reported itself started AFTER the parent had
+// already given up, so a working daemon was reported as a failure. Waiting
+// longer costs nothing when the daemon is healthy, because the loop exits as
+// soon as it answers.
+const daemonReadyTimeout = 20 * time.Second
+
+// waitForSocketPID polls until the daemon answers, the child dies, or time runs
+// out. childPID may be 0 when the caller has no child to watch.
+//
+// Watching the child is what makes the longer timeout affordable: a daemon that
+// failed to start is usually gone within milliseconds, and noticing that is far
+// quicker than waiting out a window sized for the slowest machine that should
+// still succeed.
+func waitForSocketPID(dir string, childPID int, timeout time.Duration) bool {
+	ok, _ := waitForSocketErr(dir, childPID, timeout)
+	return ok
+}
+
+// waitForSocketErr is waitForSocketPID that also returns the last failure. The
+// reason a daemon will not answer — refused, timed out, wrong path — is the
+// whole diagnosis, and reporting only "not ready" threw it away every time.
+func waitForSocketErr(dir string, childPID int, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	c := newClient(dir, "")
+	var last error
 	for time.Now().Before(deadline) {
-		if err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{}); err == nil {
-			return true
+		err := c.Call(ipc.OpStatus, ipc.StatusReq{}, &ipc.StatusResp{})
+		if err == nil {
+			return true, nil
+		}
+		last = err
+		if childPID > 0 && !processAlive(childPID) {
+			// It exited rather than bound. Its reason is in the log the caller
+			// is about to print; waiting out the rest of the window adds delay
+			// and tells nobody anything.
+			return false, last
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
+	return false, last
+}
+
+// processAlive reports whether a pid still exists. Signal 0 performs the
+// permission and existence checks without delivering anything.
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	// EPERM means it exists and belongs to someone else — alive either way.
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func runDaemonStop(args []string) int {
@@ -307,7 +379,12 @@ func runDaemonStop(args []string) int {
 	}
 	// Under privsep, bootout the _byn service (a SIGTERM is futile — KeepAlive
 	// respawns it). The root-policy guard already required root here.
-	if daemonProvisioned() {
+	//
+	// A daemon started in place with --allow-root is the exception, for the same
+	// reason it is on the start path: booting out the service does nothing to a
+	// daemon this data dir owns, so `daemon stop` reported success and left it
+	// running. When the pidfile here names a live process, stop THAT.
+	if daemonProvisioned() && !localDaemonRunning(dir) {
 		if err := stopServiceFn(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: stop the _byn service: %v\n", err)
 			return exitErr
@@ -417,4 +494,43 @@ func runDaemonStatus(args []string) int {
 		}
 	}
 	return exitOK
+}
+
+// tailFile returns up to the last n bytes of a file, or "" if it cannot be
+// read. Used to put a daemon's own error in front of whoever ran the command
+// instead of pointing at a path they may not be able to open.
+func tailFile(path string, n int64) string {
+	f, err := os.Open(path) // #nosec G304 -- path is the daemon log this process just wrote
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	start := int64(0)
+	if fi.Size() > n {
+		start = fi.Size() - n
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// localDaemonRunning reports whether this data dir has its own live daemon,
+// as opposed to being served by the system service. It is what lets stop and
+// start act on the daemon in front of them rather than on the one the
+// provisioning marker implies.
+func localDaemonRunning(dir string) bool {
+	pid, ok, err := daemonPID(dir)
+	if err != nil || !ok || pid <= 0 {
+		return false
+	}
+	return processAlive(pid)
 }

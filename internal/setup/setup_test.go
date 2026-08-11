@@ -13,20 +13,20 @@ type recorder struct {
 	calls []string
 
 	// fakeable knobs
-	sudoUID          int
-	sudoOK           bool
-	legacyDir        string
-	legacyExists     bool
-	legacyErr        error
-	daemonUID        int
-	daemonGID        int
-	daemonErr        error
-	installHelperEr  error
-	installSvcErr    error
-	relocateErr      error
-	writeOwnerErr    error
-	verifyErr        error
-	grantHomeErr     error
+	sudoUID         int
+	sudoOK          bool
+	legacyDir       string
+	legacyExists    bool
+	legacyErr       error
+	daemonUID       int
+	daemonGID       int
+	daemonErr       error
+	installHelperEr error
+	installSvcErr   error
+	relocateErr     error
+	writeOwnerErr   error
+	verifyErr       error
+	grantHomeErr    error
 
 	// recorded values
 	relocateUID, relocateGID int

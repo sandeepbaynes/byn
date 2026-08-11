@@ -70,7 +70,7 @@ type trustGrantPolicy struct {
 // ad-hoc) matches the argv as typed. baseDir comes from the trusted file's own
 // canonical path, never from the client, so this cannot be steered at exec time
 // to make an unrelated binary match.
-func withResolvedActionTargets(actions []string, baseDir string) []string {
+func withResolvedActionTargets(actions []string, baseDirs ...string) []string {
 	out := make([]string, 0, len(actions))
 	seen := make(map[string]struct{}, len(actions))
 	add := func(a string) {
@@ -92,8 +92,19 @@ func withResolvedActionTargets(actions []string, baseDir string) []string {
 		if filepath.IsAbs(target) || !strings.ContainsRune(target, filepath.Separator) {
 			continue
 		}
-		fields[0] = filepath.Join(baseDir, target)
-		add(strings.Join(fields, " "))
+		// A twin per base directory. The record's path is symlink-resolved,
+		// but `byn exec` only absolutizes argv[0] — it does not resolve
+		// symlinks — so on a system where the project sits under one (macOS
+		// puts temp dirs under /var -> /private/var) the two spellings differ
+		// and a single twin would never match.
+		for _, base := range baseDirs {
+			if base == "" {
+				continue
+			}
+			twin := append([]string(nil), fields...)
+			twin[0] = filepath.Join(base, target)
+			add(strings.Join(twin, " "))
+		}
 	}
 	return out
 }
@@ -144,7 +155,8 @@ func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vau
 	// Build the actions list (nil when empty/absent so omitempty works).
 	var actions []string
 	if len(parsed.Exec.Actions) > 0 {
-		actions = withResolvedActionTargets([]string(parsed.Exec.Actions), filepath.Dir(canon))
+		actions = withResolvedActionTargets([]string(parsed.Exec.Actions),
+			filepath.Dir(canon), filepath.Dir(path))
 	}
 	// Build the auth map (nil when empty so omitempty works).
 	var authMap map[string]string
