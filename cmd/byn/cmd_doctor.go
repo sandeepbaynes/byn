@@ -94,11 +94,11 @@ func runDoctor(args []string, _ cliScope) int {
 	// tool long after byn was involved, with nothing pointing back here. Name
 	// it where they are already looking for problems.
 	if cwd, cerr := os.Getwd(); cerr == nil {
-		if c, applies := checkStuckArtifacts(cwd); applies {
+		if c, applies := checkStuckArtifacts(env, cwd); applies {
 			local = append(local, c)
 		}
 	}
-	if c, applies := checkHelperFresh(); applies {
+	if c, applies := checkHelperFresh(env); applies {
 		local = append(local, c)
 	}
 	for _, c := range local {

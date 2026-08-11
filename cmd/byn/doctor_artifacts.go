@@ -24,9 +24,9 @@ const artifactScanLimit = 20000
 // after byn was involved, with nothing pointing back at byn. Naming it here,
 // with the command that fixes it, is the difference between a confusing
 // afternoon and a ten-second repair.
-func checkStuckArtifacts(cwd string) (healCheck, bool) {
+func checkStuckArtifacts(env healEnv, cwd string) (healCheck, bool) {
 	c := healCheck{Name: "build artifacts writable"}
-	if !cliPrivsepProvisioned() {
+	if !env.provisioned() {
 		return c, false // nothing runs as another user here
 	}
 	state, err := privsep.LookupState()
@@ -90,12 +90,12 @@ func checkStuckArtifacts(cwd string) (healCheck, bool) {
 // understand something byn has started sending — an error about a flag, from a
 // binary nobody remembers installing. Comparing mtimes catches it without
 // needing a version handshake.
-func checkHelperFresh() (healCheck, bool) {
+func checkHelperFresh(env healEnv) (healCheck, bool) {
 	c := healCheck{Name: "privsep helper up to date"}
-	if !cliPrivsepProvisioned() {
+	if !env.provisioned() {
 		return c, false
 	}
-	helper := privsep.HelperDestPath()
+	helper := env.helperPath
 	hi, herr := os.Stat(helper)
 	if herr != nil {
 		return c, false // not installed here; provisioning checks cover that
