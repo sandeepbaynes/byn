@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -33,6 +34,19 @@ func runRepairArtifacts(args []string, _ cliScope) int {
 		fmt.Fprintf(os.Stderr, "%s\n", dim("privsep is not provisioned here, so nothing runs as another user — nothing to repair."))
 		return exitOK
 	}
+	// Put the inherited entry back FIRST. Repairing only the files that exist
+	// treats the symptom: without a default ACL on the directory, the very next
+	// build creates a fresh set of artifacts nobody can delete, and the repair
+	// has to be run again forever. A project trusted before this existed — or
+	// one whose ACL was cleared — needs the cause fixed too.
+	if u, uerr := user.Current(); uerr == nil {
+		home, _ := os.UserHomeDir()
+		if gerr := privsep.GrantProjectACLFor(ownerACLRun, abs, home, u.Username); gerr != nil {
+			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Note:"),
+				dim(fmt.Sprintf("could not refresh the inherited ACL on %s: %v", abs, gerr)))
+		}
+	}
+
 	// The helper reads the caller's uid itself rather than taking a username
 	// from us, so there is no name to pass and nothing to spoof.
 	helper := privsep.HelperDestPath()
