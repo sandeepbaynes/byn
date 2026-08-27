@@ -298,6 +298,11 @@ func TestE2E_GoldenPath(t *testing.T) {
 // Mirror of common.exitDaemonErr from the CLI package (not exported).
 const exitDaemonErrCode = 3
 
+// exitApprovalPendingCode is EX_TEMPFAIL: the work was not refused, it is
+// waiting on a person, and a caller that retries after the decision lands will
+// succeed.
+const exitApprovalPendingCode = 75
+
 // TestE2E_StatusOnly verifies the daemon lifecycle + status flow,
 // which doesn't require password prompts.
 func TestE2E_StatusOnly(t *testing.T) {
