@@ -387,16 +387,21 @@ func TestE2E_ExecFetch_LockedExecDenied(t *testing.T) {
 	}
 
 	// exec of an UNPINNED command on a trusted .byn (no [exec] actions), locked,
-	// non-TTY → denied: there is no way to authorize the unpinned command.
+	// non-TTY. The command still does not run, but a caller with no credential
+	// to offer is handed a decision to chase rather than a dead end — this is
+	// the gate agents meet most often.
 	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "/usr/bin/env")
 	if code == 0 {
-		t.Fatal("unpinned exec with locked vault should fail; got code 0")
+		t.Fatal("unpinned exec with locked vault should not run; got code 0")
 	}
-	if code != exitDaemonErrCode {
-		t.Errorf("exec denied: code = %d, want %d", code, exitDaemonErrCode)
+	if code != exitApprovalPendingCode {
+		t.Errorf("exec denied: code = %d, want %d (approval pending)", code, exitApprovalPendingCode)
 	}
 	if !strings.Contains(stderr, "[exec] actions") {
-		t.Errorf("stderr should mention the unpinned-actions denial:\n%s", stderr)
+		t.Errorf("stderr should still say why it was refused:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "approval") {
+		t.Errorf("stderr should name the queued approval:\n%s", stderr)
 	}
 }
 
