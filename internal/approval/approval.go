@@ -67,6 +67,9 @@ type Kind string
 const (
 	// KindTrustWidening is a .byn asking for more authority than was granted.
 	KindTrustWidening Kind = "trust_widening"
+	// KindActionUnpinned is a caller wanting to run a command the trusted .byn
+	// does not pin.
+	KindActionUnpinned Kind = "action_unpinned"
 )
 
 var (

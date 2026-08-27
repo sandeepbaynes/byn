@@ -324,6 +324,7 @@ func runExec(args []string, scope cliScope) int {
 		return handleExecFetchError(callErr)
 	}
 	renderAllowlistNotes(fetched, scope.SourcePath)
+	renderMissingValues(fetched.MissingValues, scope.SourcePath)
 
 	// Use the daemon's ResolvedArgv as the authoritative argv. For direct exec
 	// this matches childArgv. For alias exec this is the expanded form. The CLI
@@ -816,6 +817,7 @@ func renderAuthorizeNotes(resp ipc.ExecAuthorizeResp, sourcePath string) {
 	if sourcePath == "" {
 		return
 	}
+	renderMissingValues(resp.MissingValues, sourcePath)
 	if resp.Wildcard {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s permits ALL scoped vars via \"*\" — any secret added later is auto-injected.", sourcePath)))
@@ -1004,4 +1006,23 @@ func waitForApproval(client *ipc.Client, req ipc.ExecFetchReq, budget time.Durat
 	}
 	fmt.Fprintf(os.Stderr, "%s\n", dim("still waiting after "+budget.String()+" — giving up for now"))
 	return ipc.ExecFetchResp{}, false
+}
+
+// renderMissingValues warns about names a .byn allowlists that the vault has no
+// value for.
+//
+// Injection skips them silently, so the program starts normally and dies at
+// first use — often deep in a test run, with nothing tying the crash back to a
+// missing secret. Naming them here, at the moment the program is launched,
+// turns that into an immediate answer. It is a warning rather than a refusal
+// because byn cannot know whether the program treats the variable as optional.
+func renderMissingValues(missing []string, sourcePath string) {
+	if len(missing) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+		yellow(fmt.Sprintf("%s allowlists %d variable(s) the vault has no value for: %s",
+			sourcePath, len(missing), strings.Join(missing, ", "))))
+	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("The child will start without them."),
+		dim("Set one with: echo -n VALUE | byn put "+missing[0]))
 }

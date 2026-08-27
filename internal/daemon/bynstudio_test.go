@@ -427,8 +427,11 @@ func TestBynSimulate_AliasExtraArgsNoMatch_Auth(t *testing.T) {
 		Alias: "deploy",
 		Argv:  []string{"-f", "prod.yaml"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Errorf("exec.fetch alias (auth): code = %v, want auth_required", code)
+	// An unpinned command now raises a decision instead of demanding a
+	// credential the caller may not have. simulate still PREDICTS "auth"
+	// above — it describes the gate, and must not enqueue anything itself.
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Errorf("exec.fetch alias (auth): code = %v, want approval_pending", code)
 	}
 }
 
@@ -511,8 +514,11 @@ func TestBynSimulate_Unmatched_Auth(t *testing.T) {
 
 	// Cross-check: exec.fetch → auth_required.
 	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: p, Argv: []string{"kubectl", "get", "pods"}})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Errorf("exec.fetch unmatched: code = %v, want auth_required", code)
+	// An unpinned command now raises a decision instead of demanding a
+	// credential the caller may not have. simulate still PREDICTS "auth"
+	// above — it describes the gate, and must not enqueue anything itself.
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Errorf("exec.fetch unmatched: code = %v, want approval_pending", code)
 	}
 }
 
@@ -530,8 +536,11 @@ func TestBynSimulate_EmptyActions_Auth(t *testing.T) {
 
 	// Cross-check.
 	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: p, Argv: []string{"ls", "-la"}})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Errorf("exec.fetch empty actions: code = %v, want auth_required", code)
+	// An unpinned command now raises a decision instead of demanding a
+	// credential the caller may not have. simulate still PREDICTS "auth"
+	// above — it describes the gate, and must not enqueue anything itself.
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Errorf("exec.fetch empty actions: code = %v, want approval_pending", code)
 	}
 }
 

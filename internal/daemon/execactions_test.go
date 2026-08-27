@@ -133,8 +133,11 @@ func TestActionsUnmatchedNoCreds(t *testing.T) {
 		Command: "other-cmd",
 		Argv:    []string{"other-cmd"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("unmatched cmd: code = %v, want auth_required", code)
+	// An unpinned command raises a decision rather than demanding a credential
+	// the caller may not have; the command still does not run until someone
+	// answers, so the authority boundary is unchanged.
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("unmatched cmd: code = %v, want approval_pending", code)
 	}
 	var er *ipc.ErrResponse
 	if errors.As(err, &er) {
@@ -154,8 +157,8 @@ func TestActionsUnmatchedNoCreds(t *testing.T) {
 	if ev.Outcome != "denied" {
 		t.Errorf("outcome = %q, want denied", ev.Outcome)
 	}
-	if ev.ErrorCode != string(ipc.CodeAuthRequired) {
-		t.Errorf("error_code = %q, want auth_required", ev.ErrorCode)
+	if ev.ErrorCode != string(ipc.CodeApprovalPending) {
+		t.Errorf("error_code = %q, want approval_pending", ev.ErrorCode)
 	}
 }
 
@@ -207,8 +210,8 @@ func TestActionsEmptyEveryCommandNeedsAuth(t *testing.T) {
 		Command: "any-cmd",
 		Argv:    []string{"any-cmd"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("empty actions no creds: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("empty actions no creds: code = %v, want approval_pending", code)
 	}
 
 	// With password: succeeds.
@@ -245,8 +248,8 @@ func TestActionsAbsentEveryCommandNeedsAuth(t *testing.T) {
 		Command: "any-cmd",
 		Argv:    []string{"any-cmd"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("absent actions no creds: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("absent actions no creds: code = %v, want approval_pending", code)
 	}
 
 	// With password: succeeds.
@@ -437,8 +440,8 @@ func TestActionsExtraFlagNoMatch(t *testing.T) {
 		Argv:    []string{"aws", "s3", "ls", "--human"},
 	})
 	// Must require auth (extra flag → no match).
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("extra flag: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("extra flag: code = %v, want approval_pending", code)
 	}
 }
 
@@ -456,8 +459,8 @@ func TestActionsSubsetNoMatch(t *testing.T) {
 		Command: "aws s3 ls",
 		Argv:    []string{"aws", "s3", "ls"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("subset argv: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("subset argv: code = %v, want approval_pending", code)
 	}
 }
 
@@ -476,8 +479,8 @@ func TestActionsEmptyArgvFailsClosed(t *testing.T) {
 		Command: "some-cmd",
 		// Argv intentionally absent (nil) — simulates old CLI.
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("empty Argv: code = %v, want auth_required (fail-closed)", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("empty Argv: code = %v, want approval_pending (fail-closed)", code)
 	}
 }
 
@@ -519,17 +522,17 @@ func TestActionsIndependentOfPerActionAuthFlag(t *testing.T) {
 			Command: "other-cmd",
 			Argv:    []string{"other-cmd"},
 		})
-		if code := errCode(t, err); code != ipc.CodeAuthRequired {
-			t.Fatalf("unmatched: code = %v, want auth_required", code)
+		if code := errCode(t, err); code != ipc.CodeApprovalPending {
+			t.Fatalf("unmatched: code = %v, want approval_pending", code)
 		}
 	})
 }
 
 // ── audit rows ───────────────────────────────────────────────────────────────
 
-// TestActionsUnmatchedAuditedAsAuthRequired: an unmatched-action denial
+// TestActionsUnmatchedAuditedAsApprovalPending: an unmatched-action denial
 // produces an audit row with outcome=denied and error_code=auth_required.
-func TestActionsUnmatchedAuditedAsAuthRequired(t *testing.T) {
+func TestActionsUnmatchedAuditedAsApprovalPending(t *testing.T) {
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -543,8 +546,8 @@ func TestActionsUnmatchedAuditedAsAuthRequired(t *testing.T) {
 		Command: cmd,
 		Argv:    []string{"unlisted-cmd"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", code)
 	}
 
 	ev := findExecAudit(t, c, cmd)
@@ -554,8 +557,8 @@ func TestActionsUnmatchedAuditedAsAuthRequired(t *testing.T) {
 	if ev.Outcome != "denied" {
 		t.Errorf("outcome = %q, want denied", ev.Outcome)
 	}
-	if ev.ErrorCode != string(ipc.CodeAuthRequired) {
-		t.Errorf("error_code = %q, want auth_required", ev.ErrorCode)
+	if ev.ErrorCode != string(ipc.CodeApprovalPending) {
+		t.Errorf("error_code = %q, want approval_pending", ev.ErrorCode)
 	}
 	if ev.BynPath != canon {
 		t.Errorf("byn_path = %q, want %q", ev.BynPath, canon)
@@ -627,8 +630,8 @@ func TestActionsUnmatchedNoCredsFlagOff(t *testing.T) {
 		Argv:    []string{"other-cmd"},
 		// No password or presence token.
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("no session + unmatched + no creds: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("no session + unmatched + no creds: code = %v, want approval_pending", code)
 	}
 	var er *ipc.ErrResponse
 	if errors.As(err, &er) {
@@ -653,8 +656,8 @@ func TestActionsUnmatchedNoCredsFlagOn(t *testing.T) {
 		Command: "other-cmd",
 		Argv:    []string{"other-cmd"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("unmatched + no creds: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("unmatched + no creds: code = %v, want approval_pending", code)
 	}
 }
 
@@ -810,8 +813,8 @@ func TestActionsTokenWiseMatchSpaceInArg(t *testing.T) {
 		Command: "pnpm run start",
 		Argv:    []string{"pnpm", "run start"}, // "run start" is ONE token with a space
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("space-in-arg: code = %v, want auth_required (token-wise mismatch)", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("space-in-arg: code = %v, want approval_pending (token-wise mismatch)", code)
 	}
 }
 

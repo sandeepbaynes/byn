@@ -2011,7 +2011,11 @@ func outcomeFor(resp *ipc.Envelope) (outcome, code string) {
 		return audit.OutcomeNotFound, string(resp.Err.Code)
 	case ipc.CodeLocked, ipc.CodeWrongPassword, ipc.CodeRateLimited, ipc.CodeAlreadyExists,
 		ipc.CodeAlreadyInit, ipc.CodeBadName, ipc.CodeBadRequest, ipc.CodeEnvProtected,
-		ipc.CodeTrustDenied, ipc.CodeAuthRequired:
+		ipc.CodeTrustDenied, ipc.CodeAuthRequired,
+		// Waiting on a decision is a denial for audit purposes: the operation
+		// did not happen. Recording it as an "error" would file a routine,
+		// expected outcome next to genuine faults.
+		ipc.CodeApprovalPending:
 		return audit.OutcomeDenied, string(resp.Err.Code)
 	default:
 		return audit.OutcomeError, string(resp.Err.Code)

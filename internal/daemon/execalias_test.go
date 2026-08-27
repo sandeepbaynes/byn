@@ -160,8 +160,8 @@ build = "npm run build"
 		Alias:   "build",
 		Argv:    []string{"--prod"}, // extra arg → resolved becomes ["npm","run","build","--prod"]
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("strict pattern + extra args: code = %v, want auth_required", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("strict pattern + extra args: code = %v, want approval_pending", code)
 	}
 }
 
@@ -354,8 +354,8 @@ func TestExecFetchBadPatternInRecord(t *testing.T) {
 		Command: "good-cmd",
 		Argv:    []string{"good-cmd"},
 	})
-	if code := errCode(t, execErr); code != ipc.CodeAuthRequired {
-		t.Fatalf("bad pattern in record: code = %v, want auth_required (defense in depth)", code)
+	if code := errCode(t, execErr); code != ipc.CodeApprovalPending {
+		t.Fatalf("bad pattern in record: code = %v, want approval_pending (defense in depth: still not run)", code)
 	}
 	// With password it must succeed (bad pattern is skipped, not fatal).
 	resp, err := execFetch(t, c, ipc.ExecFetchReq{
@@ -409,7 +409,7 @@ actions = ["deploy --id {{uuid}}"]
 		Path: byn,
 		Argv: []string{"deploy", "--id", "not-a-uuid"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
 		t.Fatalf("non-UUID pattern: code = %v, want auth_required", code)
 	}
 }
@@ -473,7 +473,7 @@ actions = ["git commit {{args}}"]
 		Path: byn,
 		Argv: []string{"git", "push"},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
 		t.Fatalf("wrong base: code = %v, want auth_required", code)
 	}
 }
@@ -721,7 +721,7 @@ scrape = "scrape"
 		Alias: "scrape",
 		Argv:  []string{evilURL},
 	})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
 		t.Fatalf("evil URL host: code = %v, want auth_required", code)
 	}
 }
