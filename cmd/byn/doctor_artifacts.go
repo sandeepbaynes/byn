@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/sandeepbaynes/byn/internal/bynfile"
-	"github.com/sandeepbaynes/byn/internal/ipc"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sandeepbaynes/byn/internal/bynfile"
+	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
 
