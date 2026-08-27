@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/sandeepbaynes/byn/internal/bynfile"
+	"github.com/sandeepbaynes/byn/internal/ipc"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -117,5 +120,65 @@ func checkHelperFresh(env healEnv) (healCheck, bool) {
 	c.Detail = fmt.Sprintf("%s is older than byn (%s vs %s) and they share the exec protocol",
 		helper, hi.ModTime().Format("2006-01-02"), si.ModTime().Format("2006-01-02"))
 	c.Fix = "sudo byn setup"
+	return c, true
+}
+
+// checkInjectableNames reports whether the .byn in scope will actually receive
+// the variables it allowlists.
+//
+// The only sanctioned probe was an exact-match `byn list NAME`, one call per
+// name, which makes "will this service start with what it needs?" tedious
+// enough to skip — and skipping it is how a missing value becomes a crash
+// halfway through a test run instead of a message before launch.
+//
+// It reports names, never values, so it stays safe to run anywhere.
+func checkInjectableNames() (healCheck, bool) {
+	c := healCheck{Name: "declared variables have values"}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return c, false
+	}
+	bynPath := filepath.Join(cwd, ".byn")
+	body, rerr := os.ReadFile(bynPath) // #nosec G304 -- the .byn in the caller's own directory
+	if rerr != nil {
+		return c, false // no .byn here; nothing is declared
+	}
+	f, perr := bynfile.Parse(body)
+	if perr != nil {
+		return c, false // malformed: the trust path reports that far better
+	}
+	declared := []string(f.Exec.Env)
+	if len(declared) == 0 || f.AllowsAll() {
+		return c, false // nothing named to check against
+	}
+
+	dir, derr := defaultDir()
+	if derr != nil {
+		return c, false
+	}
+	var resp ipc.ListResp
+	if cerr := newClient(dir, f.Scope.Vault).Call(ipc.OpList, ipc.ListReq{
+		Scope: ipc.Scope{Vault: f.Scope.Vault, Project: f.Scope.Project, Env: f.Scope.Env},
+	}, &resp); cerr != nil {
+		return c, false // locked or unreachable: not this check's story to tell
+	}
+	have := make(map[string]struct{}, len(resp.Secrets))
+	for _, e := range resp.Secrets {
+		have[e.Name] = struct{}{}
+	}
+	var missing []string
+	for _, n := range declared {
+		if _, ok := have[n]; !ok {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) == 0 {
+		c.OK = true
+		c.Detail = fmt.Sprintf("all %d declared in %s", len(declared), filepath.Base(bynPath))
+		return c, true
+	}
+	c.Detail = fmt.Sprintf("%s declares %s with no value in the vault",
+		filepath.Base(bynPath), strings.Join(missing, ", "))
+	c.Fix = "echo -n VALUE | byn put " + missing[0]
 	return c, true
 }
