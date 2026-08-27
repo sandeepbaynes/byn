@@ -997,6 +997,11 @@ type ExecFetchResp struct {
 	// (alias base + extra args). The CLI executes exactly this, ignoring the
 	// locally-constructed argv — single source of truth.
 	ResolvedArgv []string `json:"resolved_argv,omitempty"`
+	// MissingValues are names the .byn allowlists that the vault has no value
+	// for. They are reported rather than refused: byn does not know whether a
+	// variable is optional to the program, but it does know the program will
+	// not receive it, and saying so at exec time beats a crash at first use.
+	MissingValues []string `json:"missing_values,omitempty"`
 }
 
 // ExecSpawnReq runs a byn exec child SERVER-side under privsep (NU-5). It
@@ -1043,6 +1048,9 @@ type ExecAuthorizeResp struct {
 	Wildcard        bool   `json:"wildcard,omitempty"`
 	NoneDeclared    bool   `json:"none_declared,omitempty"`
 	ActionsWildcard bool   `json:"actions_wildcard,omitempty"`
+	// MissingValues are names the .byn allowlists that the vault has no value
+	// for; see ExecFetchResp.MissingValues.
+	MissingValues []string `json:"missing_values,omitempty"`
 }
 
 // ExecRedeemReq is sent by the privsep helper (peercred MUST be root or

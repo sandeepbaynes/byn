@@ -469,7 +469,7 @@ func TestExecFetchAdHocPresenceTokenSucceeds(t *testing.T) {
 // vault is locked. (Autonomous trusted exec runs PINNED actions while locked —
 // covered by the capability tests.) ------------------------------------------
 
-func TestExecFetchLockedUnpinnedNeedsAuth(t *testing.T) {
+func TestExecFetchLockedUnpinnedQueuesApproval(t *testing.T) {
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -482,8 +482,8 @@ func TestExecFetchLockedUnpinnedNeedsAuth(t *testing.T) {
 
 	const cmd = "byn exec locked-test"
 	_, err := execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: cmd})
-	if code := errCode(t, err); code != ipc.CodeAuthRequired {
-		t.Fatalf("code = %v, want auth_required (unpinned command on a trusted .byn)", code)
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending (unpinned command on a trusted .byn)", code)
 	}
 
 	// Audit trail must record the denied exec.
@@ -494,7 +494,7 @@ func TestExecFetchLockedUnpinnedNeedsAuth(t *testing.T) {
 	if ev.Outcome != "denied" {
 		t.Errorf("outcome = %q, want denied", ev.Outcome)
 	}
-	if ev.ErrorCode != string(ipc.CodeAuthRequired) {
+	if ev.ErrorCode != string(ipc.CodeApprovalPending) {
 		t.Errorf("error_code = %q, want %q", ev.ErrorCode, string(ipc.CodeAuthRequired))
 	}
 	if ev.BynPath != trust.Canonicalize(byn) {
@@ -897,5 +897,69 @@ func TestApprovals_AreAudited(t *testing.T) {
 	}
 	if !sawDecision {
 		t.Error("the decision is not in the audit log, or does not record where it was made")
+	}
+}
+
+// The gate agents meet most often: running a command the .byn does not pin.
+// It used to end at "auth: not a terminal" — nothing a caller without a
+// terminal can act on — so the run stopped and a person had to add the command
+// to [exec] actions and re-trust. It must hand back a decision instead.
+func TestExecFetch_UnpinnedCommandQueuesApproval(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	// A command the .byn does not pin, from a caller with no credential.
+	_, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "rm -rf .next", Argv: []string{"rm", "-rf", ".next"},
+	})
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending (was a dead end for agents)", code)
+	}
+	msg := errMsg(t, err)
+	if !strings.Contains(msg, "approval") {
+		t.Errorf("message should name the queued approval:\n%s", msg)
+	}
+	if !strings.Contains(msg, "rm") {
+		t.Errorf("message should say which command was refused:\n%s", msg)
+	}
+
+	// It reaches the queue with the command spelled out, so whoever answers can
+	// see what they are being asked to allow.
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); lerr != nil {
+		t.Fatalf("list: %v", lerr)
+	}
+	if len(list.Entries) != 1 {
+		t.Fatalf("got %d pending, want 1", len(list.Entries))
+	}
+	if len(list.Entries[0].Summary) == 0 || !strings.Contains(list.Entries[0].Summary[0], "rm") {
+		t.Errorf("card does not say what would run: %+v", list.Entries[0].Summary)
+	}
+}
+
+// A caller that CAN authenticate is unaffected: supplying the password still
+// authorizes the command directly rather than queueing a decision nobody needs.
+func TestExecFetch_UnpinnedWithPasswordStillAuthorizes(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("v"))
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SECRET\"]\nactions = [\"true\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "echo hi", Argv: []string{"echo", "hi"}, Password: pw,
+	})
+	if err != nil {
+		t.Fatalf("password did not authorize an unpinned command: %v", err)
+	}
+	if m := valueMap(resp.Values); m["SECRET"] != "v" {
+		t.Errorf("values not injected: %v", m)
 	}
 }

@@ -81,3 +81,55 @@ func fingerprintOf(subject string, summary []string) string {
 func requestorOf(req ipc.ExecFetchReq) approval.Requestor {
 	return approval.Requestor{Exe: req.Command}
 }
+
+// raiseActionApproval records that a caller wants to run a command the trusted
+// .byn does not pin, and returns the error it sees.
+//
+// This is the gate agents meet most often. It used to end at "auth: not a
+// terminal", which is not something a caller without a terminal can act on —
+// the run stopped and a person had to add the command to [exec] actions and
+// re-trust. Turning it into a decision keeps the same authority boundary (the
+// command still does not run until a human agrees) while removing the dead end.
+func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName string,
+	req ipc.ExecFetchReq, resolvedArgv []string) *ipc.Envelope {
+
+	cmd := strings.Join(resolvedArgv, " ")
+	if cmd == "" {
+		cmd = req.Command
+	}
+	if len(cmd) > 200 { // the card is read by a person; keep it legible
+		cmd = cmd[:200] + "…"
+	}
+	summary := []string{"runs " + cmd}
+
+	pending, err := d.approvals.Enqueue(approval.Request{
+		Kind:        approval.KindActionUnpinned,
+		Vault:       vaultName,
+		Subject:     canon,
+		Fingerprint: fingerprintOf(canon, summary),
+		Summary:     summary,
+		Requestor:   requestorOf(req),
+	})
+	switch {
+	case errors.Is(err, approval.ErrOnHold):
+		return ipc.NewError(id, ipc.CodeTrustDenied,
+			fmt.Sprintf("%s is not pinned in %s and that request was already refused", cmd, canon),
+			"pin it in [exec] actions and re-trust, or wait for the hold to lapse")
+	case errors.Is(err, approval.ErrRateLimited):
+		return ipc.NewError(id, ipc.CodeTrustDenied,
+			fmt.Sprintf("%s has too many approvals already waiting", canon),
+			"answer the pending requests first: byn approve")
+	case err != nil:
+		return internalErr(id, fmt.Errorf("queue approval: %w", err))
+	}
+
+	d.auditEmit(ctx, vaultName, audit.Event{
+		Op: "approval.raise", Outcome: audit.OutcomeDenied, BynPath: canon,
+		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; "),
+	})
+	return ipc.NewError(id, ipc.CodeApprovalPending,
+		fmt.Sprintf("%s is not pinned in %s [exec] actions — approval %s is waiting",
+			cmd, canon, pending.ID),
+		"approve it with: byn approve "+pending.ID+
+			", or pin it in [exec] actions and re-trust")
+}

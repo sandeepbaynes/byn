@@ -141,7 +141,7 @@ func (d *Daemon) handleExecSpawn(ctx context.Context, env *ipc.Envelope) *ipc.En
 
 	// Shared authorization gate — identical to exec.fetch (already audited on
 	// denial; the success path audits the authorization exactly once).
-	values, resolvedArgv, _, _, _, le := d.authorizeExec(ctx, env.ID, req.ExecFetchReq)
+	values, resolvedArgv, _, _, _, _, le := d.authorizeExec(ctx, env.ID, req.ExecFetchReq)
 	if le != nil {
 		return le
 	}
