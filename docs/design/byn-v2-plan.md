@@ -196,7 +196,19 @@ Two deferred decisions worth revisiting:
   fix needs the daemon to expand the alias before the CLI resolves a target,
   which is a protocol change.
 - **Explicit-name grants still freeze to their list.** Only `"*"` auto-flows.
-  Conservative on purpose; revisit if it produces approval churn in practice.
+  ~~Conservative on purpose; revisit if it produces approval churn in practice.~~
+  **Revisited — it did.** Every variable an agent introduced stopped its own
+  run. Explicit lists now auto-flow a variable the *caller itself created*:
+  self-authored grants (`internal/trust/authored.go`), recorded at `put`,
+  MAC-bound, and applied at reconcile when the value was created after the
+  grant, has never been overwritten, and the command runs under the same origin
+  that created it. The capability is re-sealed at `put` so a locked daemon can
+  still inject it. Pre-existing secrets, overwritten values, and other origins
+  are unchanged — they are real widenings and still queue.
+
+  The origin is the creating caller's parent process, matched by walking the
+  requester's ancestors. Session ids do not work: agent harnesses start each
+  tool call in a fresh session, so two calls from one agent do not share one.
 
 0. **Done (v1):** env-inheritance fix committed as `ba26df6`.
 1. **Sandbox spike** — riskiest piece first: prove userns + idmapped-mount ownership end-to-end against the A1 compatibility matrix (Fedora SELinux enforcing, Ubuntu 24.04 package+tarball, WSL2 ±systemd, devcontainer, NFS-homed project), with the live-probe + degradation-ladder logic as the spike's skeleton. Each cell: works, or degrades cleanly with a named doctor remediation.

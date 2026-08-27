@@ -754,7 +754,11 @@ func (d *Daemon) handleTrustList(env *ipc.Envelope) *ipc.Envelope {
 	}
 	entries := make([]ipc.TrustEntry, 0, len(store.Records))
 	for _, r := range store.Records {
-		entries = append(entries, ipc.TrustEntry{Path: r.Path, SHA256: r.SHA256})
+		var authored []string
+		for _, a := range r.SelfAuthored {
+			authored = append(authored, a.Name)
+		}
+		entries = append(entries, ipc.TrustEntry{Path: r.Path, SHA256: r.SHA256, SelfAuthored: authored})
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustListResp{Entries: entries})
 	if err != nil {
@@ -1284,6 +1288,11 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	}
 	var resp *ipc.Envelope
 	err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: true})
+	// A create, not an overwrite: the caller supplied a value that did not
+	// exist, so it is theirs. Note the authorship (see authored.go) — it is
+	// what lets them wire the name into .byn later without stopping for an
+	// approval to read back what they just wrote.
+	created := err == nil
 	if errors.Is(err, vault.ErrExists) && !req.CreateOnly {
 		// Row exists in this scope — this is an overwrite, needs auth check.
 		vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
@@ -1292,11 +1301,19 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 			return le
 		}
 		err = st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{})
+		if err == nil {
+			// The stored value is no longer the original author's, so their
+			// claim to already know it does not survive (see authored.go).
+			d.forgetSelfAuthored(ctx, st, req.Scope.Vault, scope, req.Name)
+		}
 	}
 	if err != nil {
 		resp = mapVaultErr(env.ID, err)
 	} else {
 		d.touchVault(req.Scope.Vault)
+		if created {
+			d.recordSelfAuthored(ctx, st, req.Scope.Vault, scope, req.Name)
+		}
 		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
 		if oerr != nil {
 			resp = internalErr(env.ID, oerr)
@@ -1409,6 +1426,8 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		resp = mapVaultErr(env.ID, err)
 	} else {
 		d.touchVault(req.Scope.Vault)
+		// The author's value is gone; authorship of the name goes with it.
+		d.forgetSelfAuthored(ctx, st, req.Scope.Vault, scope, req.Name)
 		out, err := ipc.NewResponse(env.ID, ipc.DeleteResp{})
 		if err != nil {
 			resp = internalErr(env.ID, err)
@@ -1486,6 +1505,9 @@ func (d *Daemon) handleRename(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		resp = mapVaultErr(env.ID, err)
 	} else {
 		d.touchVault(req.Scope.Vault)
+		// The old name no longer names the author's value, and nobody authored
+		// the new one — a rename is not a create.
+		d.forgetSelfAuthored(ctx, st, req.Scope.Vault, scope, req.OldName, req.NewName)
 		out, err := ipc.NewResponse(env.ID, ipc.RenameResp{})
 		if err != nil {
 			resp = internalErr(env.ID, err)

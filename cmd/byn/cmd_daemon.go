@@ -448,6 +448,9 @@ func runDaemonStatus(args []string) int {
 	}
 	fmt.Printf("daemon:  running (version %s, protocol %d..%d)\n",
 		resp.Version, resp.ProtocolMin, resp.ProtocolMax)
+	if note := staleDaemonNote(resp.Version, version); note != "" {
+		fmt.Println(note)
+	}
 	fmt.Printf("socket:  %s\n", resp.SocketPath)
 	fmt.Printf("uptime:  %s\n", time.Since(resp.StartedAt).Round(time.Second))
 	if resp.FDAGranted != nil {
