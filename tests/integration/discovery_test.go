@@ -29,10 +29,14 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	if path == "" {
 		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	}
-	cmd.Env = append([]string{
+	base := []string{
 		"BYN_TEST_DIR=" + s.dir, "HOME=" + cwd, "USER=tester",
 		"BYN_ALLOW_ROOT=1", "PATH=" + path,
-	}, env...)
+	}
+	if !s.realPrivsep {
+		base = append(base, "BYN_TEST_UNPROVISIONED=1")
+	}
+	cmd.Env = append(base, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {
@@ -118,14 +122,18 @@ func TestE2E_Discovery_TrustThenList(t *testing.T) {
 	}
 	// Trust list should include the file.
 	stdout, _ = s.mustRun("", "trust", "list", "--json")
-	var records []map[string]string
+	// Decoded into a struct, not a map, so a new field in the response — which
+	// this only ever needed the path from — does not fail it.
+	var records []struct {
+		Path string `json:"path"`
+	}
 	if err := json.Unmarshal([]byte(stdout), &records); err != nil {
 		t.Fatalf("trust list --json: %v\n%s", err, stdout)
 	}
 	expect, _ := filepath.EvalSymlinks(dotBynPath)
 	found := false
 	for _, r := range records {
-		if r["path"] == expect || r["path"] == dotBynPath {
+		if r.Path == expect || r.Path == dotBynPath {
 			found = true
 		}
 	}

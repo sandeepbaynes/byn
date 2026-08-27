@@ -20,6 +20,15 @@ import (
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
 
+// cliProvisioned reports whether byn is privsep-provisioned on this machine.
+func cliProvisioned() bool {
+	if forcedUnprovisioned() {
+		return false
+	}
+	s, err := privsep.LookupState()
+	return err == nil && s.Provisioned
+}
+
 // rootClass is how a top-level command relates to the root/owner identity split.
 type rootClass int
 
@@ -82,7 +91,3 @@ func enforceRootPolicy(cmd string, euid int, provisionedFn func() bool, w io.Wri
 // cliProvisioned reports whether byn is privsep-provisioned (the _byn-exec
 // service user exists) — i.e. the daemon runs as _byn and service-management
 // commands need root. Daemon-independent: works while the daemon is down.
-func cliProvisioned() bool {
-	s, err := privsep.LookupState()
-	return err == nil && s.Provisioned
-}

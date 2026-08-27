@@ -76,6 +76,13 @@ type session struct {
 	// is written by byn unlock).  Auth-gated CLI calls must supply the password
 	// explicitly via --password-stdin; pw is the credential for those calls.
 	pw string
+	// realPrivsep keeps byn's real provisioning detection for this session.
+	// Off by default: an E2E session drives its own daemon in a temp dir, which
+	// a provisioned byn correctly refuses to spawn as the owner — so on a
+	// machine where byn is actually installed, every one of these tests failed
+	// while passing in CI. The privsep suite sets it, because provisioning is
+	// the thing it is testing.
+	realPrivsep bool
 }
 
 func newSession(t *testing.T) *session {
@@ -99,6 +106,9 @@ func (s *session) run(stdin string, args ...string) (string, string, int) {
 	// user), so owner commands would otherwise be refused by the root-policy
 	// guard. The guard itself is unit-tested in cmd/byn/rootpolicy_test.go.
 	cmd.Env = append(os.Environ(), "BYN_TEST_DIR="+s.dir, "BYN_ALLOW_ROOT=1")
+	if !s.realPrivsep {
+		cmd.Env = append(cmd.Env, "BYN_TEST_UNPROVISIONED=1")
+	}
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} else {

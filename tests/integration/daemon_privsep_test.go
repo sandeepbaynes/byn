@@ -170,6 +170,9 @@ func TestPrivsep_DaemonPosture(t *testing.T) {
 
 	// --- PHASE 2: PROVISION via setup.Provision with production primitives. ---
 	s := newSession(t)
+	// This suite provisions real service accounts and asserts on how byn
+	// behaves once privsep is in force, so it must use the real detection.
+	s.realPrivsep = true
 	helper := buildHelper(t, s.bin)
 	sudoUID := simulatedSudoUID(t)
 
@@ -254,6 +257,7 @@ func TestPrivsep_DaemonPosture(t *testing.T) {
 func assertFailClosedUnprovisioned(t *testing.T) {
 	t.Helper()
 	s := newSession(t)
+	s.realPrivsep = true // this suite tests privsep itself; keep real detection
 
 	// privsep on BEFORE the daemon starts (config is read once at start).
 	writePrivsepConfig(t, s.dir)
@@ -322,6 +326,7 @@ func assertProvisionedDaemonRejectsRoot(t *testing.T, sudoUID int) {
 	// (BYN_TEST_DIR). Drive a daemon there with a fresh session pinned to that
 	// dir, with privsep ON so the provisioned spawner is built too.
 	s := newSession(t)
+	s.realPrivsep = true // this suite tests privsep itself; keep real detection
 	// Re-point this session at the provisioned system data dir so the daemon
 	// reads the owner record written by Provision.
 	s.dir = paths.SystemDataDir()
@@ -360,6 +365,7 @@ func assertExecChildDropsAndNoLeak(t *testing.T, execu, daemonu int) {
 	readerUID := unprivReaderUID(t, execu)
 
 	s := newSession(t)
+	s.realPrivsep = true // this suite tests privsep itself; keep real detection
 	writePrivsepConfig(t, s.dir)
 
 	if _, se, code := s.run("", "daemon", "start", "--allow-root"); code != 0 {
