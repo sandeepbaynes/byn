@@ -61,6 +61,9 @@ const (
 // daemon's version or its [security] privsep config flag: the file-access
 // problem is a property of the daemon's UID (provisioned), not that flag.
 func cliPrivsepProvisioned() bool {
+	if forcedUnprovisioned() {
+		return false
+	}
 	_, _, err := privsep.LookupDaemonUser()
 	return err == nil
 }
