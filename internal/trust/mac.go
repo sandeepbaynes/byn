@@ -165,6 +165,27 @@ func macPreimageV2(domain, path, sha256hex string, r *Record) []byte {
 		b = writeField(b, string(r.ExecCapability))
 	}
 
+	// Self-authored grants: bind the list so an attacker cannot hand themselves
+	// a free widening by claiming their process authored a variable it did not.
+	// Appended ONLY when non-empty, for the same backward-compatible reason as
+	// the capability above: a record without the field produces exactly the
+	// preimage it did before this existed. Adding entries to a record that had
+	// none flips the MAC (the verify recomputes WITH the field against a tag
+	// computed without it), and clearing them flips it the other way, so every
+	// edit is caught in both directions.
+	if len(r.SelfAuthored) > 0 {
+		binary.BigEndian.PutUint32(countBuf[:], uint32(len(r.SelfAuthored))) // #nosec G115 -- slice lengths are tiny
+		b = append(b, countBuf[:]...)
+		authored := append([]AuthoredGrant(nil), r.SelfAuthored...)
+		sort.Slice(authored, func(i, j int) bool { return authored[i].Name < authored[j].Name })
+		for _, a := range authored {
+			b = writeField(b, a.Name)
+			b = writeField(b, strconv.Itoa(a.OriginPID))
+			b = writeField(b, strconv.FormatUint(a.OriginStart, 10))
+			b = writeField(b, strconv.FormatInt(a.AtUnixNano, 10))
+		}
+	}
+
 	return b
 }
 

@@ -251,6 +251,23 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		// the project until a human retyped the master password.
 		if status == trust.VerifyChanged {
 			effective, delta, ok := reconcileChanged(rec, body)
+			// A widening made entirely of variables this same caller created
+			// discloses nothing it does not already hold, so it is granted here
+			// rather than parked for a human who would only be rubber-stamping
+			// the agent's own value back to it.
+			if !ok && d.forgivesSelfAuthored(ctx, st, rec, delta, vault.Scope{
+				Project: defaultIfEmpty(rec.ScopeProject, vault.DefaultProjectName),
+				Env:     defaultIfEmpty(rec.ScopeEnv, vault.DefaultEnvName),
+			}) {
+				ok = true
+				d.auditEmit(ctx, vaultName, audit.Event{
+					Project: rec.ScopeProject,
+					Env:     rec.ScopeEnv,
+					BynPath: canon,
+					Op:      "trust_self_authored_grant",
+					Outcome: audit.OutcomeOK,
+				})
+			}
 			switch {
 			case ok:
 				status = trust.VerifyTrusted

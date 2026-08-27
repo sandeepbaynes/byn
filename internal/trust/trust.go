@@ -73,6 +73,12 @@ type Record struct {
 	// rather than lingering until the next re-trust. Not persisted: the sealed
 	// capability remains the record's durable allowlist.
 	EnvGrants []string `json:"-"`
+	// SelfAuthored records variables this project's own callers created after
+	// the grant (see authored.go). Adding one of them to [exec] env is not a
+	// disclosure — whoever created the value already had it — so it is granted
+	// without a prompt instead of stalling an agent mid-run. MAC-bound like the
+	// policy tables, so it cannot be forged in after trust.
+	SelfAuthored []AuthoredGrant `json:"self_authored,omitempty"`
 }
 
 // Store is the file content.

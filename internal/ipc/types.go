@@ -727,6 +727,12 @@ type TrustListReq struct{}
 type TrustEntry struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
+	// SelfAuthored names variables this project may inject because a caller
+	// created them here, rather than because a human approved them. They are
+	// granted without a prompt (see internal/trust/authored.go), so listing
+	// them is how that stays inspectable instead of invisible. Optional: an
+	// older daemon simply omits it.
+	SelfAuthored []string `json:"self_authored,omitempty"`
 }
 
 // TrustListResp returns every trusted `.byn` file.

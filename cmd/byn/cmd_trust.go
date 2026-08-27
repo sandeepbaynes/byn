@@ -449,6 +449,13 @@ func runTrustList(args []string) int {
 	}
 	for _, e := range resp.Entries {
 		fmt.Printf("%-12s  %s\n", e.SHA256[:12], e.Path)
+		if len(e.SelfAuthored) > 0 {
+			// These were granted without anyone being asked, so say so plainly
+			// rather than letting them look like part of the approved policy.
+			fmt.Printf("%-12s  %s %s\n", "",
+				dim("also injects (created here, never approved):"),
+				dim(strings.Join(e.SelfAuthored, ", ")))
+		}
 	}
 	return exitOK
 }

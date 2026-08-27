@@ -1683,6 +1683,20 @@ DESCRIPTION
        stops every caller in the project, not just the one that raised
        it, and an agent has no terminal to clear it at.
 
+       Some additions never reach here at all. Adding a variable to
+       [exec] env is normally a widening, but not when the caller adding
+       it is the one that created the value: it already has it, so being
+       asked to approve reading it back protects nothing. byn grants
+       those itself, and only when all three hold — the value was
+       created after this .byn was trusted, has not been overwritten
+       since, and the command is running under the same shell or agent
+       that created it. A secret that was already in the vault, one that
+       someone else replaced, or a request from another terminal is a
+       real widening and still waits for you.
+
+       "byn trust list" shows which variables a project injects that way,
+       and both the grant and its revocation are in the audit log.
+
        With no arguments, lists what is waiting: the file, what would be
        granted in plain words, and how long it has been waiting. Entries
        marked "!" are the consequential ones — a wildcard, a scope move,

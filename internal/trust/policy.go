@@ -145,9 +145,14 @@ type Delta struct {
 
 // Widening is one way a policy asks for more than was granted.
 type Widening struct {
-	Kind     string // "env", "action", "writable", "alias", "auth", "scope"
-	Detail   string // human-readable description of what is being asked for
-	HighRisk bool   // true when granting it is unusually consequential
+	Kind   string // "env", "action", "writable", "alias", "auth", "scope"
+	Detail string // human-readable description of what is being asked for
+	// Name is the bare thing being asked for, when the widening is about one
+	// named item (currently: the variable, for Kind "env"). Callers that decide
+	// per item read this rather than parsing Detail, which is prose meant for
+	// people and free to change.
+	Name     string
+	HighRisk bool // true when granting it is unusually consequential
 }
 
 // NeedsApproval reports whether a human must see this change. Narrowing-only
@@ -206,6 +211,7 @@ func ComparePolicies(granted, requested Policy) Delta {
 			}
 			d.Widenings = append(d.Widenings, Widening{
 				Kind:   "env",
+				Name:   name,
 				Detail: "injects " + name,
 			})
 		}
