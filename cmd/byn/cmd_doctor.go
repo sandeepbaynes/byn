@@ -98,6 +98,11 @@ func runDoctor(args []string, _ cliScope) int {
 			local = append(local, c)
 		}
 	}
+	if mounts, merr := os.ReadFile("/proc/mounts"); merr == nil {
+		if c, applies := checkProcVisibility(env, string(mounts)); applies {
+			local = append(local, c)
+		}
+	}
 	if c, applies := checkHelperFresh(env); applies {
 		local = append(local, c)
 	}
