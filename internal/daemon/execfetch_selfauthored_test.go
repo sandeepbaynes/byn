@@ -1354,3 +1354,35 @@ func TestUnattendedDelete(t *testing.T) {
 		setShares(true)
 	})
 }
+
+// A wildcard scope declares every name, so nothing in it is deletable without a
+// credential.
+//
+// Written because I told the agent using byn that this holds before I had
+// tested it. Under `env = "*"` every value in the scope is something a program
+// may receive, so "no .byn declares this name" is never true there — and the
+// delete rule has to read it that way round, or a wildcard project would be the
+// one place an agent could remove anything it had created.
+func TestUnattendedDelete_WildcardScopeRefusesEverything(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("v"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "SCRATCH", Value: []byte("v"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := c.Call(ipc.OpDelete, ipc.DeleteReq{
+		Scope: ipc.Scope{}, Name: "SCRATCH",
+	}, &ipc.DeleteResp{}); err == nil {
+		t.Fatal("a wildcard grant declares every name; nothing under it may be deleted without a credential")
+	}
+}
