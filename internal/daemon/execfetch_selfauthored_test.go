@@ -517,3 +517,44 @@ func TestLockedVault_ValueSurvivesA_LaterUnlock(t *testing.T) {
 		t.Fatalf("owner read %q, want tok-locked", got.Value)
 	}
 }
+
+// A STALE session token must not make an agent look attended.
+//
+// This is what actually broke it on a real machine. The CLI keeps its session
+// token on disk and sends it with every call, so one left behind by an earlier
+// unlock — the daemon has since restarted, the session expired, someone ran
+// `byn lock` — arrives on requests that have no human behind them at all.
+// Treating "a token was sent" as "a person is here" put `byn put` straight back
+// to demanding a password on a locked vault: the exact symptom the unattended
+// path exists to remove.
+//
+// No existing test could catch it, because tests build their clients fresh and
+// never carry a dead token.
+func TestStaleSessionDoesNotCountAsAttended(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"AGENT_TOKEN\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+
+	// A token from a daemon that no longer exists — what the CLI keeps on disk
+	// and goes on sending after a restart. It is well-formed and completely
+	// dead, and the client has no way to know that.
+	c.Session = []byte("0123456789abcdef0123456789abcdef")
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Value: []byte("tok"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("a dead session token must not block an unattended write: %v", err)
+	}
+	var got ipc.GetResp
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Scope: ipc.Scope{}, Name: "AGENT_TOKEN"}, &got); err != nil {
+		t.Fatalf("read-back with the same dead token: %v", err)
+	}
+	if string(got.Value) != "tok" {
+		t.Fatalf("read back %q, want tok", got.Value)
+	}
+}
