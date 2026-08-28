@@ -43,6 +43,14 @@ type Record struct {
 	// v2 fingerprint: change-then-revert still forces re-trust. mtime is
 	// forgeable (`touch -t`) — a tamper-detection SIGNAL, not a guarantee.
 	MTimeUnixNano int64 `json:"mtime_unix_nano,omitempty"`
+	// GrantedAtUnixNano is when the grant was actually made, by the daemon's
+	// clock. Distinct from MTimeUnixNano, which is the FILE's timestamp: a
+	// filesystem records mtime at coarser resolution — roughly a millisecond on
+	// a normal Linux filesystem — so a file written after an event can carry a
+	// timestamp before it. Anything deciding "did this happen before the grant?"
+	// must compare two readings of the same clock, or it is wrong by up to that
+	// margin. Zero on records granted before this field existed.
+	GrantedAtUnixNano int64 `json:"granted_at_unix_nano,omitempty"`
 	// Snapshot is the full .byn content at grant (a manifest, not a
 	// secret) — the diff base for `byn trust diff`.
 	Snapshot string `json:"snapshot,omitempty"`
@@ -73,12 +81,6 @@ type Record struct {
 	// rather than lingering until the next re-trust. Not persisted: the sealed
 	// capability remains the record's durable allowlist.
 	EnvGrants []string `json:"-"`
-	// SelfAuthored records variables this project's own callers created after
-	// the grant (see authored.go). Adding one of them to [exec] env is not a
-	// disclosure — whoever created the value already had it — so it is granted
-	// without a prompt instead of stalling an agent mid-run. MAC-bound like the
-	// policy tables, so it cannot be forged in after trust.
-	SelfAuthored []AuthoredGrant `json:"self_authored,omitempty"`
 }
 
 // Store is the file content.

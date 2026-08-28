@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
-	"github.com/sandeepbaynes/byn/internal/trust"
+	"github.com/sandeepbaynes/byn/internal/vault"
 )
 
 // A variable the caller created itself is not a secret being disclosed to it.
@@ -14,12 +14,29 @@ import (
 // stubOrigin pins the process-identity lookups so a single test process can act
 // as one consistent agent. The lookups themselves are covered against the real
 // process tree in procorigin_test.go.
-func stubOrigin(t *testing.T, shares bool) {
+func stubOrigin(t *testing.T, shares bool) func(bool) {
 	t.Helper()
 	origCaller, origShares := callerOriginFn, sharesOriginFn
 	t.Cleanup(func() { callerOriginFn, sharesOriginFn = origCaller, origShares })
 	callerOriginFn = func(int) procRef { return procRef{PID: 4242, Start: 99} }
-	sharesOriginFn = func(int, procRef) bool { return shares }
+	current := shares
+	sharesOriginFn = func(int, procRef) bool { return current }
+	// The returned setter lets one test be the agent for a while and then a
+	// stranger — which is how "someone else replaced the value" is expressed,
+	// since a single test process is only ever one real origin.
+	return func(v bool) { current = v }
+}
+
+// putVarUnattended stores a value the way an AGENT does: over a connection
+// carrying no session, because sessions are minted by `byn unlock` and bound to
+// a terminal, and an agent has none. byn treats such a write as unattended,
+// which is what earns the caller the right to read and replace it later.
+func putVarUnattended(t *testing.T, c *ipc.Client, scope ipc.Scope, name string, value []byte) {
+	t.Helper()
+	held := c.Session
+	c.Session = nil
+	defer func() { c.Session = held }()
+	putVar(t, c, scope, name, value)
 }
 
 // rewriteByn replaces a .byn's content in place, the way an agent editing the
@@ -38,17 +55,7 @@ func rewriteByn(t *testing.T, path, content string) {
 // rule under test.
 func authoredNames(t *testing.T, d *Daemon) []string {
 	t.Helper()
-	store, err := trust.Load(d.cfg.Dir)
-	if err != nil {
-		t.Fatalf("load trust store: %v", err)
-	}
-	var out []string
-	for _, rec := range store.Records {
-		for _, a := range rec.SelfAuthored {
-			out = append(out, a.Name)
-		}
-	}
-	return out
+	return d.authored.NamesFor(vault.DefaultVaultName, vault.DefaultProjectName, vault.DefaultEnvName)
 }
 
 func hasAuthored(names []string, want string) bool {
@@ -64,7 +71,7 @@ func hasAuthored(names []string, want string) bool {
 // and runs. Nothing here is a disclosure — byn is handing back what the caller
 // supplied — so it must not stop for a human.
 func TestSelfAuthored_AgentAddsTheVariableItJustCreated(t *testing.T) {
-	stubOrigin(t, true)
+	_ = stubOrigin(t, true)
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -74,7 +81,7 @@ func TestSelfAuthored_AgentAddsTheVariableItJustCreated(t *testing.T) {
 	grantBynFile(t, c, byn, pw)
 
 	// The agent's own loop: create the value, then declare it.
-	putVar(t, c, ipc.Scope{}, "API_TOKEN", []byte("tok-agent-made"))
+	putVarUnattended(t, c, ipc.Scope{}, "API_TOKEN", []byte("tok-agent-made"))
 	rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"SEED\", \"API_TOKEN\"]\nactions = [\"mytool run\"]\n")
 
 	resp, err := execFetch(t, c, ipc.ExecFetchReq{
@@ -91,14 +98,14 @@ func TestSelfAuthored_AgentAddsTheVariableItJustCreated(t *testing.T) {
 // The boundary that matters: a secret that already existed is not covered by
 // authorship, so exposing it to the project's commands still needs a human.
 func TestSelfAuthored_PreExistingSecretStillNeedsApproval(t *testing.T) {
-	stubOrigin(t, true)
+	_ = stubOrigin(t, true)
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
 	// Created BEFORE the grant — the case authorship must never cover.
 	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
-	putVar(t, c, ipc.Scope{}, "AWS_SECRET", []byte("pre-existing"))
+	putVarUnattended(t, c, ipc.Scope{}, "AWS_SECRET", []byte("pre-existing"))
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
 	grantBynFile(t, c, byn, pw)
 
@@ -110,17 +117,18 @@ func TestSelfAuthored_PreExistingSecretStillNeedsApproval(t *testing.T) {
 	if code := errCode(t, err); code != ipc.CodeApprovalPending {
 		t.Fatalf("code = %v, want approval_pending — a secret that predates the grant is a real widening", code)
 	}
-	// And for the right reason: byn never recorded authorship, because there
-	// was no trusted .byn to record it against when the value was created.
-	if names := authoredNames(t, d); hasAuthored(names, "AWS_SECRET") {
-		t.Errorf("AWS_SECRET must not be recorded as self-authored; authored=%v", names)
+	// And for the right reason. byn records authorship for every create, even
+	// one made before any .byn was trusted, so the refusal cannot be coming
+	// from a missing record — it comes from the value predating the grant.
+	if names := authoredNames(t, d); !hasAuthored(names, "AWS_SECRET") {
+		t.Fatalf("precondition: creating AWS_SECRET should record authorship; authored=%v", names)
 	}
 }
 
 // An overwrite is authorization-gated because it may install a value the
 // original author never saw. Authorship must not survive one.
 func TestSelfAuthored_OverwrittenValueStillNeedsApproval(t *testing.T) {
-	stubOrigin(t, true)
+	setShares := stubOrigin(t, true)
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -129,17 +137,21 @@ func TestSelfAuthored_OverwrittenValueStillNeedsApproval(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
 	grantBynFile(t, c, byn, pw)
 
-	putVar(t, c, ipc.Scope{}, "SHARED", []byte("agent-placeholder"))
+	putVarUnattended(t, c, ipc.Scope{}, "SHARED", []byte("agent-placeholder"))
 	if names := authoredNames(t, d); !hasAuthored(names, "SHARED") {
 		t.Fatalf("precondition: creating SHARED should record authorship; authored=%v", names)
 	}
-	// Someone with the password replaces it — now the author's claim to know
-	// the stored value no longer holds.
+	// SOMEONE ELSE, holding the password, replaces it — the case that matters.
+	// The author's own overwrite is allowed and keeps authorship; a stranger's
+	// must take it away, or the agent could have a person install the real
+	// credential and then read it back as its own.
+	setShares(false)
 	if err := c.Call(ipc.OpPut, ipc.PutReq{
 		Scope: ipc.Scope{}, Name: "SHARED", Value: []byte("real-production-key"), Password: pw,
 	}, &ipc.PutResp{}); err != nil {
 		t.Fatalf("overwrite: %v", err)
 	}
+	setShares(true)
 	rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"SEED\", \"SHARED\"]\nactions = [\"mytool run\"]\n")
 
 	_, err := execFetch(t, c, ipc.ExecFetchReq{
@@ -156,7 +168,7 @@ func TestSelfAuthored_OverwrittenValueStillNeedsApproval(t *testing.T) {
 // Deleting the value revokes authorship of the name, so a later value that
 // happens to reuse it does not arrive pre-approved.
 func TestSelfAuthored_DeleteRevokesAuthorship(t *testing.T) {
-	stubOrigin(t, true)
+	_ = stubOrigin(t, true)
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -165,7 +177,7 @@ func TestSelfAuthored_DeleteRevokesAuthorship(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
 	grantBynFile(t, c, byn, pw)
 
-	putVar(t, c, ipc.Scope{}, "TEMP", []byte("scratch"))
+	putVarUnattended(t, c, ipc.Scope{}, "TEMP", []byte("scratch"))
 	if names := authoredNames(t, d); !hasAuthored(names, "TEMP") {
 		t.Fatalf("precondition: creating TEMP should record authorship; authored=%v", names)
 	}
@@ -182,7 +194,7 @@ func TestSelfAuthored_DeleteRevokesAuthorship(t *testing.T) {
 // The exemption follows the caller, not the machine: another terminal, editor
 // window, or service does not inherit it.
 func TestSelfAuthored_DifferentOriginStillNeedsApproval(t *testing.T) {
-	stubOrigin(t, false) // records authorship, but this caller is a stranger
+	_ = stubOrigin(t, false) // records authorship, but this caller is a stranger
 	_, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -191,7 +203,7 @@ func TestSelfAuthored_DifferentOriginStillNeedsApproval(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
 	grantBynFile(t, c, byn, pw)
 
-	putVar(t, c, ipc.Scope{}, "OTHERS_VAR", []byte("not-yours"))
+	putVarUnattended(t, c, ipc.Scope{}, "OTHERS_VAR", []byte("not-yours"))
 	rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"SEED\", \"OTHERS_VAR\"]\nactions = [\"mytool run\"]\n")
 
 	_, err := execFetch(t, c, ipc.ExecFetchReq{
@@ -206,7 +218,7 @@ func TestSelfAuthored_DifferentOriginStillNeedsApproval(t *testing.T) {
 // actually runs in. This is what the capability refresh at put time is for:
 // without it the name is allowed but decrypts to nothing.
 func TestSelfAuthored_InjectsWhileLocked(t *testing.T) {
-	stubOrigin(t, true)
+	_ = stubOrigin(t, true)
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
@@ -215,7 +227,7 @@ func TestSelfAuthored_InjectsWhileLocked(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
 	grantBynFile(t, c, byn, pw)
 
-	putVar(t, c, ipc.Scope{}, "API_TOKEN", []byte("tok-agent-made"))
+	putVarUnattended(t, c, ipc.Scope{}, "API_TOKEN", []byte("tok-agent-made"))
 	rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"SEED\", \"API_TOKEN\"]\nactions = [\"mytool run\"]\n")
 
 	lockVaultStore(t, d, "default")
@@ -256,7 +268,7 @@ func TestSelfAuthored_RealOriginLookup(t *testing.T) {
 	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
 	grantBynFile(t, c, byn, pw)
 
-	putVar(t, c, ipc.Scope{}, "REAL_ORIGIN_TOKEN", []byte("tok-real"))
+	putVarUnattended(t, c, ipc.Scope{}, "REAL_ORIGIN_TOKEN", []byte("tok-real"))
 	// If byn cannot see who the caller is, it records no authorship — the exact
 	// shape of the production failure.
 	if names := authoredNames(t, d); !hasAuthored(names, "REAL_ORIGIN_TOKEN") {
@@ -356,5 +368,97 @@ func TestDoctorReportsWhetherTheDaemonSeesItsCaller(t *testing.T) {
 	if found.Severity != "ok" {
 		t.Errorf("severity = %q (%s), want ok — the daemon should resolve a caller it shares a /proc with",
 			found.Severity, found.Detail)
+	}
+}
+
+// The workflow this is all for, end to end, against a LOCKED vault:
+// an agent creates a value, updates it, reads it back, and starts a service
+// with it — without a password at any step, and without the vault being opened.
+func TestLockedVault_AgentCreatesUpdatesReadsAndRuns(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// A human trusts the project once, while present. That grant is what hands
+	// the machine the ability to write on the agent's behalf afterwards.
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\", \"AGENT_TOKEN\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	// Everything from here happens with the vault LOCKED and no credentials —
+	// which means no session either. A real agent has none: sessions are minted
+	// by `byn unlock` and bound to a terminal, and an agent has no terminal to
+	// bind one to. Dropping the token models that; keeping it would have tested
+	// a caller that byn considers attended.
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Value: []byte("tok-v1"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("an agent must be able to store a value it invented, locked vault or not: %v", err)
+	}
+	// Updating its own value — the agent changed its mind about the value it
+	// itself chose, which discloses nothing.
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Value: []byte("tok-v2"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("an agent must be able to update the value it created: %v", err)
+	}
+	var got ipc.GetResp
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Scope: ipc.Scope{}, Name: "AGENT_TOKEN"}, &got); err != nil {
+		t.Fatalf("an agent must be able to read back the value it created: %v", err)
+	}
+	if string(got.Value) != "tok-v2" {
+		t.Fatalf("read back %q, want tok-v2", got.Value)
+	}
+
+	// And the service it is building actually receives it.
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("exec on a locked vault: %v", err)
+	}
+	m := valueMap(resp.Values)
+	if m["AGENT_TOKEN"] != "tok-v2" {
+		t.Fatalf("AGENT_TOKEN = %q, want tok-v2 — a value written while locked must still be injected; values=%v", m["AGENT_TOKEN"], m)
+	}
+	if m["SEED"] != "seed-val" {
+		t.Errorf("the ordinary allowlisted vars must keep working alongside: %v", m)
+	}
+}
+
+// The other half of the bargain: writing while locked must not become a way to
+// READ what was already in the vault.
+func TestLockedVault_GivesNoAccessToPreExistingSecrets(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	putVarUnattended(t, c, ipc.Scope{}, "AWS_SECRET", []byte("pre-existing"))
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"AWS_SECRET\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	// The caller "authored" AWS_SECRET in the sense that this process created
+	// it — but it was written under the vault key, so the locked daemon holds
+	// nothing that opens it, and the read must be gated rather than served.
+	var got ipc.GetResp
+	err := c.Call(ipc.OpGet, ipc.GetReq{Scope: ipc.Scope{}, Name: "AWS_SECRET"}, &got)
+	if err == nil {
+		t.Fatalf("a locked vault handed back a secret written under the vault key: %q", got.Value)
+	}
+	// Either refusal is correct — unauthorized, or authorized but with the vault
+	// still shut. What matters is that the authored key did not open it, so the
+	// assertion is on the outcome rather than on which of the two byn reports.
+	if code := errCode(t, err); code != ipc.CodeAuthRequired && code != ipc.CodeLocked {
+		t.Fatalf("code = %v, want auth_required or locked", code)
+	}
+	if len(got.Value) != 0 {
+		t.Fatalf("a value came back alongside the error: %q", got.Value)
 	}
 }

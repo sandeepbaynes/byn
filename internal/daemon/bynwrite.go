@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/auth"
@@ -170,17 +171,18 @@ func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vau
 	}
 
 	rec := trust.Record{
-		Path:          canon,
-		SHA256:        hash,
-		Vault:         vaultName,
-		MTimeUnixNano: fi.ModTime().UnixNano(),
-		Snapshot:      string(body),
-		Actions:       actions,
-		Auth:          authMap,
-		Aliases:       aliasMap,
-		ScopeVault:    parsed.Scope.Vault,
-		ScopeProject:  parsed.Scope.Project,
-		ScopeEnv:      parsed.Scope.Env,
+		Path:              canon,
+		SHA256:            hash,
+		Vault:             vaultName,
+		MTimeUnixNano:     fi.ModTime().UnixNano(),
+		GrantedAtUnixNano: time.Now().UnixNano(),
+		Snapshot:          string(body),
+		Actions:           actions,
+		Auth:              authMap,
+		Aliases:           aliasMap,
+		ScopeVault:        parsed.Scope.Vault,
+		ScopeProject:      parsed.Scope.Project,
+		ScopeEnv:          parsed.Scope.Env,
 	}
 	// Capture + seal the autonomous-exec capability — the allowlisted vars' row
 	// keys wrapped under the machine-fingerprint K_cap — so trusted exec can
@@ -230,19 +232,26 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 			names = append(names, m.Name)
 		}
 	}
-	if len(names) == 0 && !wildcard {
-		return nil, nil // nothing to inject → no capability
-	}
+
+	// The password is the fallback for a LOCKED grant, not the preferred key.
+	// Choosing it whenever one was supplied meant a grant authorized by
+	// something other than the master password — a passkey, or an enterprise
+	// approve provider — tried to unwrap the vault with a credential that was
+	// never the vault's, and failed. When the vault is open, the key it already
+	// holds is both correct and cheaper.
+	useVaultKey := !st.IsLocked()
 
 	var rowKeys map[string][]byte
 	var err error
-	if len(password) > 0 {
-		rowKeys, err = st.CaptureRowKeysWithPassword(ctx, password, scope, names)
-	} else {
-		rowKeys, err = st.CaptureRowKeys(ctx, scope, names)
-	}
-	if err != nil {
-		return nil, scopeOptional(err)
+	if len(names) > 0 {
+		if !useVaultKey && len(password) > 0 {
+			rowKeys, err = st.CaptureRowKeysWithPassword(ctx, password, scope, names)
+		} else {
+			rowKeys, err = st.CaptureRowKeys(ctx, scope, names)
+		}
+		if err != nil {
+			return nil, scopeOptional(err)
+		}
 	}
 	defer func() {
 		for _, k := range rowKeys {
@@ -260,7 +269,7 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 	if wildcard {
 		var scopeKey []byte
 		var skerr error
-		if len(password) > 0 {
+		if !useVaultKey && len(password) > 0 {
 			scopeKey, skerr = st.CaptureScopeKeyWithPassword(ctx, password, scope)
 		} else {
 			scopeKey, skerr = st.CaptureScopeKey(ctx, scope)
@@ -275,6 +284,30 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 			rowKeys[vault.CapScopeKeyName] = scopeKey
 		}
 	}
+	// The scope's self-authored key rides along in EVERY capability, wildcard or
+	// not. It is what lets an agent store a value and read it back while the
+	// vault is locked — without it the only way to work unattended was to leave
+	// the vault open, which exposes every secret rather than just the ones the
+	// agent writes. It opens nothing that already existed (see vault/authored.go),
+	// so carrying it widens the blast radius of a stolen capability by exactly
+	// the entries that capability's own project wrote.
+	var authKey []byte
+	var akerr error
+	if !useVaultKey && len(password) > 0 {
+		authKey, akerr = st.CaptureAuthoredKeyWithPassword(ctx, password, scope)
+	} else {
+		authKey, akerr = st.CaptureAuthoredKey(ctx, scope)
+	}
+	if akerr != nil {
+		return nil, scopeOptional(akerr)
+	}
+	if authKey != nil {
+		if rowKeys == nil {
+			rowKeys = make(map[string][]byte, 1)
+		}
+		rowKeys[vault.CapAuthoredKeyName] = authKey
+	}
+
 	if len(rowKeys) == 0 {
 		return nil, nil
 	}

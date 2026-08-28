@@ -85,3 +85,47 @@ func DeriveRowKey(vaultKey, context []byte) ([]byte, error) {
 	}
 	return expand(vaultKey, rowKeyInfoPrefix, context)
 }
+
+// authoredKeyInfoPrefix domain-separates the self-authored scope key from the
+// ordinary scope key. Deriving both from the same vault key with different info
+// means holding one can never yield the other.
+const (
+	authoredKeyInfoPrefix     = "byn/authored-key/v1\x00"
+	rowFromAuthoredInfoPrefix = "byn/row-key/authored/v1\x00"
+)
+
+// DeriveAuthoredKey derives the key covering entries a caller creates in one
+// (project, env) scope while the vault is LOCKED.
+//
+// A locked vault holds no vault key, so it cannot encrypt anything — which made
+// `byn put` impossible without a password and left one honest answer for an
+// agent working alone: leave the vault unlocked. That is worse than the problem.
+// An unlocked vault exposes every secret in it; this key exposes only what the
+// agent itself writes.
+//
+// It is sealed into a trusted .byn's exec capability under the machine key, so
+// a locked daemon can both write new entries and read them back. It cannot open
+// anything that already existed: those rows derive from K_env, and no amount of
+// K_auth yields it. So the containment is exactly the useful one — the master
+// password still guards every secret that was in the vault before the agent
+// started, and the machine guards what the agent adds.
+//
+// scopeContext is the caller's stable scope identity — vaultID‖projectID‖envID —
+// and must be built the same way every time.
+//
+// Returns ErrBadKey if vaultKey is not VaultKeySize bytes.
+func DeriveAuthoredKey(vaultKey, scopeContext []byte) ([]byte, error) {
+	if len(vaultKey) != VaultKeySize {
+		return nil, ErrBadKey
+	}
+	return expand(vaultKey, authoredKeyInfoPrefix, scopeContext)
+}
+
+// DeriveRowKeyFromAuthoredKey derives one entry's key from the self-authored
+// scope key, mirroring DeriveRowKeyFromEnvKey one level down.
+func DeriveRowKeyFromAuthoredKey(authoredKey, rowContext []byte) ([]byte, error) {
+	if len(authoredKey) != VaultKeySize {
+		return nil, ErrBadKey
+	}
+	return expand(authoredKey, rowFromAuthoredInfoPrefix, rowContext)
+}

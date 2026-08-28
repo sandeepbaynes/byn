@@ -255,7 +255,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			// discloses nothing it does not already hold, so it is granted here
 			// rather than parked for a human who would only be rubber-stamping
 			// the agent's own value back to it.
-			if !ok && d.forgivesSelfAuthored(ctx, st, rec, delta, vault.Scope{
+			if !ok && d.forgivesSelfAuthored(ctx, st, rec, delta, vaultName, vault.Scope{
 				Project: defaultIfEmpty(rec.ScopeProject, vault.DefaultProjectName),
 				Env:     defaultIfEmpty(rec.ScopeEnv, vault.DefaultEnvName),
 			}) {
@@ -607,8 +607,37 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 		}
 	}
 
+	// Values the agent wrote while the vault was locked are sealed under the
+	// scope's authored key, not the vault key, so no per-row key exists for
+	// them and the scope key cannot derive them either. The authored key rides
+	// in every capability precisely so exec can still hand them to the process
+	// that needs them — otherwise an agent could store a credential and then
+	// watch its own service start without it.
+	if authKey, ok := rowKeys[vault.CapAuthoredKeyName]; ok {
+		infos, lerr := st.ListEnvVars(ctx, scope)
+		if lerr != nil {
+			return nil, internalErr(id, fmt.Errorf("list scope for authored entries: %w", lerr))
+		}
+		for _, info := range infos {
+			if _, done := seen[info.Name]; done {
+				continue
+			}
+			if allowed != nil {
+				if _, ok := allowed[info.Name]; !ok {
+					continue
+				}
+			}
+			val, verr := st.OpenEnvVarAuthored(ctx, scope, info.Name, authKey)
+			if verr != nil {
+				continue // not an authored entry, or not this scope's — other paths cover it
+			}
+			seen[info.Name] = struct{}{}
+			values = append(values, ipc.ExecFetchValue{Name: info.Name, Value: val})
+		}
+	}
+
 	for name, rk := range rowKeys {
-		if name == vault.CapScopeKeyName {
+		if name == vault.CapScopeKeyName || name == vault.CapAuthoredKeyName {
 			continue
 		}
 		if _, done := seen[name]; done {

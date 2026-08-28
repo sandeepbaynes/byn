@@ -292,12 +292,38 @@ DESCRIPTION
        Existing secrets are upserted by default. Use --create-only to
        refuse overwrites.
 
-       Requires an unlocked vault.
+       Storing a new secret does not require authorization, and does
+       not require the vault to be unlocked. An agent building an app
+       invents credentials as it goes; if storing one needed a person,
+       the agent would stop. Telling it to unlock the vault first is
+       worse, not better — an open vault exposes every secret in it,
+       rather than the ones the agent writes.
 
-       Overwriting an existing secret requires the master password when
-       no session is present. The CLI prompts interactively; scripts
-       should use --password-stdin. New secrets (with --create-only or
-       the first put of a name) do not require authorization.
+       So a locked vault takes the write through a separate key held for
+       the project by a trusted .byn. That key can store what a caller
+       creates and give it back, and it opens nothing that was already
+       there: every secret that predates it stays sealed under the
+       master password alone. Writing this way needs a trusted .byn in
+       the project — without one byn holds no key for the scope and will
+       say so.
+
+       Two consequences worth knowing. A value stored this way is
+       protected by THIS MACHINE rather than by your master password;
+       the password still opens it, but so does the machine. And byn
+       records who stored it, so the same caller may later read it back
+       and replace it without a credential — which is the point, since
+       it supplied the value in the first place. "Same caller" means the
+       same shell or agent: another terminal does not inherit it.
+
+       A caller that IS authenticated — a session, a password, a
+       passkey — gets none of this. Its writes are sealed under the
+       vault key as they always have been, and reading them back needs
+       that credential again. Unlocking in one terminal still grants
+       nothing in another.
+
+       Overwriting someone else's secret requires the master password
+       when no session is present. The CLI prompts interactively;
+       scripts should use --password-stdin.
 
 OPTIONS
        --create-only
@@ -1687,10 +1713,12 @@ DESCRIPTION
        [exec] env is normally a widening, but not when the caller adding
        it is the one that created the value: it already has it, so being
        asked to approve reading it back protects nothing. byn grants
-       those itself, and only when all three hold — the value was
-       created after this .byn was trusted, has not been overwritten
+       those itself, and only when all of these hold — byn took the
+       value in unattended (no session, no password behind it), it was
+       created after this .byn was trusted, it has not been overwritten
        since, and the command is running under the same shell or agent
-       that created it. A secret that was already in the vault, one that
+       that created it. A secret that was already in the vault, one
+       stored by someone who was authenticated at the time, one that
        someone else replaced, or a request from another terminal is a
        real widening and still waits for you.
 

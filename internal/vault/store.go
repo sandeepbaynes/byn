@@ -1334,6 +1334,12 @@ const (
 	aadVersionVaultKey = 1 // legacy: the row is sealed directly with the vault key
 	aadVersionRowKey   = 2 // per-row key: vcrypto.DeriveRowKey(vaultKey, row identity)
 	aadVersionEnvKey   = 3 // scope key: row key derived from the (project, env) K_env
+	// aadVersionAuthoredKey marks an entry written while the vault was LOCKED,
+	// keyed through the scope's self-authored key instead of K_env. See
+	// authored.go: it is what lets an agent store a value without a password,
+	// and it is deliberately a different key so that holding it opens only
+	// entries written this way — never the secrets that were already there.
+	aadVersionAuthoredKey = 4
 
 	// currentAADVersion is the scheme all new writes use. Deriving row keys
 	// through a per-(project, env) scope key means a trusted .byn can be granted
@@ -1434,6 +1440,21 @@ func (s *Store) openEntry(vaultKey []byte, aadVersion int, projectID, envID int6
 		return vcrypto.DecryptWithAAD(krow, ct, rid)
 	case aadVersionEnvKey:
 		krow, err := s.v3RowKey(vaultKey, projectID, envID, kind, name)
+		if err != nil {
+			return nil, err
+		}
+		defer zero(krow)
+		return vcrypto.DecryptWithAAD(krow, ct, s.entryAADV3(projectID, envID, kind, name))
+	case aadVersionAuthoredKey:
+		// An unlocked vault can open these too: the authored key is derived
+		// from the vault key, so the master password remains a complete
+		// answer for everything in the vault.
+		kauth, err := s.AuthoredKey(vaultKey, projectID, envID)
+		if err != nil {
+			return nil, err
+		}
+		defer zero(kauth)
+		krow, err := authoredRowKey(kauth, kind, name)
 		if err != nil {
 			return nil, err
 		}
@@ -1696,6 +1717,15 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // authority it represents, and because "*" can never collide with a real entry
 // name (ValidateName rejects it).
 const CapScopeKeyName = "*"
+
+// CapAuthoredKeyName is the reserved map key under which a sealed capability
+// carries the scope's self-authored key — what lets a locked daemon store a
+// value for an agent and read it back (see authored.go).
+//
+// It contains a NUL byte, which validateEntryName rejects unconditionally, so
+// it can never collide with a real entry name. CapScopeKeyName's "*" avoids
+// collision only by convention at a higher layer.
+const CapAuthoredKeyName = "\x00authored"
 
 // CaptureScopeKey returns the scope key covering the given scope, for sealing
 // into a wildcard exec capability.

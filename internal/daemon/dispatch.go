@@ -754,11 +754,13 @@ func (d *Daemon) handleTrustList(env *ipc.Envelope) *ipc.Envelope {
 	}
 	entries := make([]ipc.TrustEntry, 0, len(store.Records))
 	for _, r := range store.Records {
-		var authored []string
-		for _, a := range r.SelfAuthored {
-			authored = append(authored, a.Name)
-		}
-		entries = append(entries, ipc.TrustEntry{Path: r.Path, SHA256: r.SHA256, SelfAuthored: authored})
+		entries = append(entries, ipc.TrustEntry{
+			Path: r.Path, SHA256: r.SHA256,
+			SelfAuthored: d.authored.NamesFor(
+				defaultIfEmpty(r.Vault, vault.DefaultVaultName),
+				defaultIfEmpty(r.ScopeProject, vault.DefaultProjectName),
+				defaultIfEmpty(r.ScopeEnv, vault.DefaultEnvName)),
+		})
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.TrustListResp{Entries: entries})
 	if err != nil {
@@ -1263,48 +1265,93 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		return errEnv
 	}
 
-	// Insert stays FREE (additive, leaks nothing — the autonomy matrix);
-	// only an OVERWRITE of an existing entry is an "update" needing auth.
-	// Try create-only first: success = a free insert in one call.
-	// CreateOnly=true checks exact scope (project_id + env_id + name), so
-	// a name that exists only in the default env does NOT trigger ErrExists
-	// for a non-default env scope — inserting an override stays free.
+	// Creating a value is FREE, whether or not the vault is locked.
 	//
-	// This unconditional flow means the [auth] update="always" policy is
-	// enforced even when a session is active — authorizeAction consults the
-	// policy first and returns nil when no policy is present and a valid
-	// session exists, preserving default session behaviour exactly.
+	// It has to be. An agent building an app invents credentials as it goes, and
+	// if storing one needs a human, the agent stops — which is the whole problem
+	// byn is meant to remove. The old answer, "unlock the vault first", trades a
+	// locked vault for an open one and exposes every secret in it rather than
+	// the ones the agent writes. So a locked vault takes the write through the
+	// scope's authored key instead (internal/vault/authored.go): it can store
+	// what the agent creates and give it back, and it can open nothing that was
+	// already there.
 	//
-	// NU-3 security: when the vault is locked, the daemon must not reveal vault
-	// lock state to unauthenticated callers. Gate inserts behind auth when locked
-	// so that an attacker with no session or credentials gets auth_required rather
-	// than CodeLocked (which would reveal that the vault is locked).
+	// Overwriting is a different act and stays gated — EXCEPT for a caller
+	// replacing a value it authored itself, which discloses nothing it does not
+	// already hold.
+	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	// Attended or not? A caller with a session, a password, or a presence token
+	// has a human behind it, and its writes get the vault key's full protection
+	// like every write always has. A caller with none of those is working
+	// unattended, and its writes go under the scope's authored key — which is
+	// what makes them storable on a locked vault, and readable back later
+	// without a credential that was never involved.
+	//
+	// Deciding on the caller rather than on lock state keeps one agent's
+	// behaviour the same whether or not someone happens to have the vault open.
+	unattended := len(callerSession(ctx)) == 0 && len(req.Password) == 0 && len(req.PresenceToken) == 0
+	var authKey []byte
+	if unattended {
+		authKey = d.authoredKeyFor(vaultName, scope)
+		defer zeroBytes(authKey)
+	}
+	// Only a locked vault has no alternative. Unlocked, an unattended write
+	// with no grant to key it just takes the ordinary path, exactly as before.
+	useAuthored := authKey != nil
 	if st.IsLocked() {
-		vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
-		if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
+		if authKey == nil {
+			// No trusted .byn covers this scope, so byn holds no key it could
+			// write with. Reported as auth_required rather than "locked",
+			// keeping NU-3's rule that an unauthenticated caller is not told
+			// the vault's lock state. The hint still names the fix, because a
+			// caller that cannot act on an error is the thing being fixed here.
+			le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken)
+			if le == nil {
+				le = ipc.NewError(env.ID, ipc.CodeLocked,
+					"byn holds no key it may write with for "+scopeLabel(scope),
+					"unlock the vault, or run `byn trust` on a .byn in this project "+
+						"so byn can store values here unattended")
+			}
 			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
 			return le
 		}
 	}
+
+	put := func(opt vault.PutOpt) error {
+		if useAuthored {
+			return st.PutEnvVarAuthored(ctx, scope, req.Name, req.Value, authKey, opt)
+		}
+		return st.PutEnvVar(ctx, scope, req.Name, req.Value, opt)
+	}
+
 	var resp *ipc.Envelope
-	err := st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{CreateOnly: true})
-	// A create, not an overwrite: the caller supplied a value that did not
-	// exist, so it is theirs. Note the authorship (see authored.go) — it is
-	// what lets them wire the name into .byn later without stopping for an
-	// approval to read back what they just wrote.
+	// Try create-only first: success means a free insert in one call.
+	// CreateOnly checks the exact scope (project_id + env_id + name), so a name
+	// that exists only in the default env does not block inserting an override.
+	err := put(vault.PutOpt{CreateOnly: true})
 	created := err == nil
 	if errors.Is(err, vault.ErrExists) && !req.CreateOnly {
-		// Row exists in this scope — this is an overwrite, needs auth check.
-		vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
-		if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
-			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
-			return le
-		}
-		err = st.PutEnvVar(ctx, scope, req.Name, req.Value, vault.PutOpt{})
-		if err == nil {
-			// The stored value is no longer the original author's, so their
-			// claim to already know it does not survive (see authored.go).
-			d.forgetSelfAuthored(ctx, st, req.Scope.Vault, scope, req.Name)
+		// The row exists here, so this is an overwrite.
+		if d.ownUnattendedValue(ctx, vaultName, scope, req.Name) && !d.policyDemandsAuth(vaultName, scope, "update") {
+			// The caller created this value; replacing it with another value it
+			// chose tells it nothing it did not already know.
+			//
+			// Unless the .byn says otherwise. An explicit [auth] update =
+			// "always" is the author asking to be consulted every time, and
+			// authorship is not grounds to overrule them — byn's own inference
+			// about what is safe must not quietly outrank a stated instruction.
+			err = put(vault.PutOpt{})
+		} else {
+			if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
+				d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
+				return le
+			}
+			err = put(vault.PutOpt{})
+			if err == nil {
+				// The stored value is no longer the original author's, so their
+				// claim to already know it does not survive.
+				d.forgetAuthored(ctx, st, vaultName, scope, req.Name)
+			}
 		}
 	}
 	if err != nil {
@@ -1312,7 +1359,7 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	} else {
 		d.touchVault(req.Scope.Vault)
 		if created {
-			d.recordSelfAuthored(ctx, st, req.Scope.Vault, scope, req.Name)
+			d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored)
 		}
 		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
 		if oerr != nil {
@@ -1336,12 +1383,34 @@ func (d *Daemon) handleGet(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", errEnv)
 		return errEnv
 	}
-	if le := d.authorizeAction(ctx, env.ID, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), scope, st, "get", req.Password, req.PresenceToken); le != nil {
-		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", le)
-		return le
+	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	// A caller reading back a value it created itself learns nothing. Requiring
+	// a password for that is the step that stops an agent mid-task, and it buys
+	// nothing: the caller supplied the value in the first place.
+	//
+	// An explicit [auth] get = "always" still wins — the .byn's author asked to
+	// be consulted on every read, and byn's own inference does not overrule it.
+	mine := d.ownUnattendedValue(ctx, vaultName, scope, req.Name) &&
+		!d.policyDemandsAuth(vaultName, scope, "get")
+	// A locked vault can only return the caller's own values, and only through
+	// the scope's authored key. When that works, answer; when it does not, fall
+	// through to the ordinary gate rather than reporting "locked" — a caller
+	// with no credentials is not told the vault's lock state (NU-3), and here
+	// there is nothing it could do with that fact anyway.
+	got, mineOK := d.readAuthored(ctx, st, vaultName, scope, req.Name, mine)
+	if !mineOK {
+		if !mine || st.IsLocked() {
+			if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "get", req.Password, req.PresenceToken); le != nil {
+				d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get", le)
+				return le
+			}
+		}
 	}
 	var resp *ipc.Envelope
-	got, err := st.GetEnvVar(ctx, scope, req.Name)
+	var err error
+	if !mineOK {
+		got, err = st.GetEnvVar(ctx, scope, req.Name)
+	}
 	if err != nil {
 		resp = mapVaultErr(env.ID, err)
 	} else {
@@ -1427,7 +1496,7 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 	} else {
 		d.touchVault(req.Scope.Vault)
 		// The author's value is gone; authorship of the name goes with it.
-		d.forgetSelfAuthored(ctx, st, req.Scope.Vault, scope, req.Name)
+		d.forgetAuthored(ctx, st, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), scope, req.Name)
 		out, err := ipc.NewResponse(env.ID, ipc.DeleteResp{})
 		if err != nil {
 			resp = internalErr(env.ID, err)
@@ -1507,7 +1576,7 @@ func (d *Daemon) handleRename(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		d.touchVault(req.Scope.Vault)
 		// The old name no longer names the author's value, and nobody authored
 		// the new one — a rename is not a create.
-		d.forgetSelfAuthored(ctx, st, req.Scope.Vault, scope, req.OldName, req.NewName)
+		d.forgetAuthored(ctx, st, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), scope, req.OldName, req.NewName)
 		out, err := ipc.NewResponse(env.ID, ipc.RenameResp{})
 		if err != nil {
 			resp = internalErr(env.ID, err)

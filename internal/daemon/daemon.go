@@ -187,6 +187,11 @@ type Daemon struct {
 	// locked — the whole point is that an agent blocked on consent does not have
 	// to stall until someone unlocks anything.
 	approvals *approval.Store
+	// authored remembers which variables a caller created, so it can read and
+	// replace its own without a password. It lives in the daemon state dir
+	// because it must be writable while the vault is locked — see
+	// authoredstore.go.
+	authored *authoredStore
 
 	// spawner runs exec children SERVER-side under privilege separation (NU-5):
 	// the helper drops the child to the _byn-exec service user. It is non-nil
@@ -324,6 +329,7 @@ func New(cfg Config) (*Daemon, error) {
 	// Trust-store machine-fingerprint MAC key, derived once. A failure here
 	// degrades only the fp-MAC layer (the vault-key MAC still protects records).
 	d.approvals = approval.Open(d.cfg.Dir)
+	d.authored = newAuthoredStore(d.cfg.Dir)
 	if id, err := machineid.ID(); err == nil {
 		d.fpMACKey = id
 	} else {
