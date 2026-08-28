@@ -88,7 +88,7 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 	if via == "" {
 		via = "terminal"
 	}
-	decided, err := d.approvals.Decide(req.ID, req.Approve, via)
+	decided, err := d.approvals.Decide(req.ID, req.Approve, via, req.Reason)
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
@@ -103,7 +103,8 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 		Op:      string(ipc.OpApprovalDecide),
 		Outcome: outcome,
 		BynPath: pending.Subject,
-		Command: string(decided.Status) + " via " + decided.DecidedVia + " (" + decided.ID + ")",
+		Command: string(decided.Status) + " via " + decided.DecidedVia + " (" + decided.ID + ")" +
+			reasonSuffix(decided.DecidedReason),
 	})
 	resp, rerr := ipc.NewResponse(env.ID, ipc.ApprovalDecideResp{Entry: approvalEntry(decided)})
 	if rerr != nil {
@@ -142,4 +143,15 @@ func (d *Daemon) applyTrustApproval(ctx context.Context, id, vaultName string,
 			"fix the .byn and raise the request again")
 	}
 	return nil
+}
+
+// reasonSuffix renders a decision's reason for the audit line, or nothing.
+func reasonSuffix(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	if len(reason) > 200 { // the log is read by people; keep the line legible
+		reason = reason[:200] + "…"
+	}
+	return ": " + reason
 }

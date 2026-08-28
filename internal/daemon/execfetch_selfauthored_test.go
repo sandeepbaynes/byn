@@ -719,3 +719,163 @@ func TestUnattendedPut_IsVisible(t *testing.T) {
 		t.Error("no put.unattended event for the agent-stored value")
 	}
 }
+
+// The pre-flight: answer "will this run cleanly?" before anything starts.
+func TestExecPreflight(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\n"+
+		"env = [\"SEED\", \"NEVER_SET\", \"OPTIONAL_ONE\"]\n"+
+		"optional = [\"OPTIONAL_ONE\"]\n"+
+		"actions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	preflight := func(argv ...string) ipc.ExecPreflightResp {
+		t.Helper()
+		var r ipc.ExecPreflightResp
+		if err := c.Call(ipc.OpExecPreflight, ipc.ExecPreflightReq{Path: byn, Argv: argv}, &r); err != nil {
+			t.Fatalf("preflight %v: %v", argv, err)
+		}
+		return r
+	}
+
+	t.Run("pinned command names the pattern that matched", func(t *testing.T) {
+		r := preflight("mytool", "run")
+		if !r.Pinned {
+			t.Fatalf("pinned = false, want true (reason %q, actions %v)", r.Reason, r.Actions)
+		}
+		if r.MatchedAction != "mytool run" {
+			t.Errorf("matched_action = %q, want \"mytool run\" — a caller needs to know which line did it",
+				r.MatchedAction)
+		}
+	})
+
+	t.Run("unpinned says why, and what IS pinned", func(t *testing.T) {
+		r := preflight("cleanup", "--all")
+		if r.Pinned {
+			t.Fatal("pinned = true for a command the .byn does not pin")
+		}
+		if r.Reason != "no_match" {
+			t.Errorf("reason = %q, want no_match — the next step differs from no_actions", r.Reason)
+		}
+		if len(r.Actions) == 0 {
+			t.Error("actions should list what IS pinned, so the near miss is visible")
+		}
+	})
+
+	t.Run("reports the env gap, minus optional", func(t *testing.T) {
+		r := preflight("mytool", "run")
+		if len(r.MissingEnv) != 1 || r.MissingEnv[0] != "NEVER_SET" {
+			t.Fatalf("missing_env = %v, want [NEVER_SET] — OPTIONAL_ONE is marked optional and SEED has a value",
+				r.MissingEnv)
+		}
+	})
+
+	t.Run("asking must not queue a decision", func(t *testing.T) {
+		// The whole point of a pre-flight is that it changes nothing. If asking
+		// what would happen raised an approval, checking would become its own
+		// source of noise for whoever answers them.
+		var list ipc.ApprovalListResp
+		if err := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{}, &list); err != nil {
+			t.Fatalf("approval list: %v", err)
+		}
+		if len(list.Entries) != 0 {
+			t.Fatalf("pre-flight queued %d decision(s); it must ask nobody anything", len(list.Entries))
+		}
+	})
+}
+
+// A pre-flight that disagreed with the gate it predicts would be worse than
+// none, because it would be believed. Both must use the same matcher.
+func TestExecPreflightAgreesWithTheRealGate(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\n"+
+		"actions = [\"mytool run\", \"other {{args}}\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	for _, argv := range [][]string{
+		{"mytool", "run"},
+		{"other", "a", "b"},
+		{"cleanup", "--all"},
+		{"mytool"},
+	} {
+		var pre ipc.ExecPreflightResp
+		if err := c.Call(ipc.OpExecPreflight, ipc.ExecPreflightReq{Path: byn, Argv: argv}, &pre); err != nil {
+			t.Fatalf("preflight %v: %v", argv, err)
+		}
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: strings.Join(argv, " "), Argv: argv,
+		})
+		ranFree := err == nil
+		if pre.Pinned != ranFree {
+			t.Errorf("argv %v: preflight said pinned=%v, the gate said %v (err=%v)",
+				argv, pre.Pinned, ranFree, err)
+		}
+	}
+}
+
+// A refusal must be a wall, not a fresh id.
+//
+// Re-asking a person who just said no is how approval fatigue starts, and the
+// caller learns nothing from an id it did not earn. It must be told when it was
+// refused, and why if a reason was given, so it can choose between fixing the
+// cause and stopping.
+func TestDeniedCommand_IsAWallUntilForceAsk(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"pinned run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	fetch := func(force bool) error {
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "cleanup --all", Argv: []string{"cleanup", "--all"}, ForceAsk: force,
+		})
+		return err
+	}
+
+	if code := errCode(t, fetch(false)); code != ipc.CodeApprovalPending {
+		t.Fatalf("first attempt: code = %v, want approval_pending", code)
+	}
+	var list ipc.ApprovalListResp
+	if err := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{}, &list); err != nil {
+		t.Fatalf("approval list: %v", err)
+	}
+	if err := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: list.Entries[0].ID, Approve: false, Reason: "wrong target",
+	}, &ipc.ApprovalDecideResp{}); err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+
+	err := fetch(false)
+	if code := errCode(t, err); code == ipc.CodeApprovalPending {
+		t.Fatal("a refused command raised a fresh request; a refusal must stop it")
+	}
+	var em *ipc.ErrResponse
+	if !errors.As(err, &em) {
+		t.Fatalf("want an error response, got %v", err)
+	}
+	if !strings.Contains(em.Message, "wrong target") {
+		t.Errorf("message %q should carry the reason the decider gave", em.Message)
+	}
+	if em.Details["denied_at"] == "" {
+		t.Error("details should say when it was refused, so the caller can act on it")
+	}
+	if em.Details["reason"] != "wrong target" {
+		t.Errorf("details reason = %q, want the decider's words", em.Details["reason"])
+	}
+
+	// --force-ask is the way back, for the human who denied by mistake.
+	if code := errCode(t, fetch(true)); code != ipc.CodeApprovalPending {
+		t.Fatalf("--force-ask: code = %v, want approval_pending — it must be able to ask again", code)
+	}
+}

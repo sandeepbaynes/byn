@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/approval"
 	"github.com/sandeepbaynes/byn/internal/audit"
@@ -130,6 +131,27 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 	req ipc.ExecFetchReq, resolvedArgv []string) *ipc.Envelope {
 
 	cmd, summary, fingerprint := actionApprovalKey(canon, req.Command, resolvedArgv)
+
+	// Already refused? Say so and stop, rather than quietly raising a new id.
+	//
+	// Re-asking a person who just said no is how approval fatigue starts, and
+	// the caller learns nothing from a fresh id it did not earn. Telling it WHEN
+	// it was refused, and why if a reason was given, is what lets it decide
+	// between fixing the cause and stopping. --force-ask re-raises deliberately.
+	if denial, refused := d.approvals.LastDenial(canon, fingerprint); refused && !req.ForceAsk {
+		msg := fmt.Sprintf("%s was refused at %s", cmd, denial.DecidedAt.Format(time.RFC3339))
+		if denial.DecidedReason != "" {
+			msg += ": " + denial.DecidedReason
+		}
+		return ipc.NewErrorWithDetails(id, ipc.CodeTrustDenied, msg,
+			"pin it in [exec] actions and re-trust, or ask again with: byn exec --force-ask",
+			map[string]string{
+				"denied_at": strconv.FormatInt(denial.DecidedAt.Unix(), 10),
+				"reason":    denial.DecidedReason,
+				"byn":       canon,
+				"command":   cmd,
+			})
+	}
 
 	pending, err := d.approvals.Enqueue(approval.Request{
 		Kind:        approval.KindActionUnpinned,
