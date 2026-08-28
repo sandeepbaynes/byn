@@ -18,14 +18,17 @@ import (
 // process tree in procorigin_test.go.
 func stubOrigin(t *testing.T, shares bool) func(bool) {
 	t.Helper()
-	origCaller, origShares := callerOriginFn, sharesOriginFn
-	t.Cleanup(func() { callerOriginFn, sharesOriginFn = origCaller, origShares })
+	origCaller, origAncestry, origShares := callerOriginFn, callerAncestryFn, sharesAncestryFn
+	t.Cleanup(func() {
+		callerOriginFn, callerAncestryFn, sharesAncestryFn = origCaller, origAncestry, origShares
+	})
 	callerOriginFn = func(int) procRef { return procRef{PID: 4242, Start: 99} }
+	callerAncestryFn = func(int) []procRef { return []procRef{{PID: 4242, Start: 99}} }
 	current := shares
-	sharesOriginFn = func(int, procRef) bool { return current }
+	sharesAncestryFn = func(int, []procRef) bool { return current }
 	// The returned setter lets one test be the agent for a while and then a
 	// stranger — which is how "someone else replaced the value" is expressed,
-	// since a single test process is only ever one real origin.
+	// since a single test process is only ever one real ancestry.
 	return func(v bool) { current = v }
 }
 

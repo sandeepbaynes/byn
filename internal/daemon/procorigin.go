@@ -24,14 +24,10 @@ package daemon
 // them. The functions themselves are exercised against the real process tree in
 // procorigin_test.go, so stubbing here never hides a broken walk.
 var (
-	callerOriginFn = callerOrigin
-	sharesOriginFn = sharesOrigin
+	callerOriginFn   = callerOrigin
+	callerAncestryFn = callerAncestry
+	sharesAncestryFn = sharesAncestry
 )
-
-// maxAncestorHops bounds the walk from a caller up towards pid 1. Real trees are
-// a handful deep; the bound just means a cycle or a pathological tree cannot
-// spin the daemon.
-const maxAncestorHops = 32
 
 // procRef identifies one process unambiguously across PID reuse.
 type procRef struct {
@@ -44,51 +40,86 @@ type procRef struct {
 // will not grant anything on an identity it cannot pin down.
 func (p procRef) ok() bool { return p.PID > 1 && p.Start != 0 }
 
-// callerOrigin returns the origin to record for a caller: its parent process.
+// originDepth is how far above a caller byn looks for an identity, and it is
+// the whole difficulty of this file.
 //
-// The parent, not the caller itself: `byn put` exits immediately, so recording
-// it would produce an identity that can never match again. The parent is the
-// thing that ran byn and is still around to run it a second time.
-func callerOrigin(pid int) procRef {
+// The first version recorded only the immediate parent, on the reasoning that
+// `byn put` exits at once so the parent is the thing still around to run byn
+// again. That is true and useless: an agent harness runs each command in its
+// own short-lived shell, so the parent of one `byn put` has died by the time
+// the matching `byn exec` runs, and the exemption expired at the end of every
+// tool call — precisely the workflow it exists for. A live run caught it; every
+// test had done its put and its exec inside one shell.
+//
+// So byn records a short chain instead, and two callers count as the same agent
+// when their chains overlap. The depth is what draws the line. At 2-3 hops the
+// chain reaches the agent process that spawned both shells and stops there. Go
+// deeper and it reaches the terminal, the editor, the desktop session — and
+// then every process on the machine shares an ancestor and the check means
+// nothing.
+//
+// Three is chosen against the real shape: byn → shell → agent. It is a
+// heuristic, and it fails in the safe direction — an unrecognised caller is
+// asked for a credential, never handed one. The residual is that a process
+// spawned very close to the agent in the tree can match; what it gains by that
+// is limited to values the agent itself created unattended, never a secret that
+// was already in the vault.
+const originDepth = 3
+
+// callerAncestry returns the chain of processes above a caller, nearest first,
+// bounded by originDepth. pid 1 is never included: everything descends from it.
+func callerAncestry(pid int) []procRef {
 	if pid <= 0 {
-		return procRef{}
+		return nil
 	}
-	_, ppid := procInfo(pid)
-	if ppid <= 1 {
-		return procRef{} // orphaned or reparented to init: no usable origin
+	var out []procRef
+	seen := make(map[int]bool, originDepth)
+	cur := pid
+	for len(out) < originDepth {
+		_, ppid := procInfo(cur)
+		if ppid <= 1 || seen[ppid] {
+			break
+		}
+		seen[ppid] = true
+		start, ok := procStartTime(ppid)
+		if !ok {
+			break
+		}
+		out = append(out, procRef{PID: ppid, Start: start})
+		cur = ppid
 	}
-	start, ok := procStartTime(ppid)
-	if !ok {
-		return procRef{}
-	}
-	return procRef{PID: ppid, Start: start}
+	return out
 }
 
-// sharesOrigin reports whether want is the caller itself or one of its
-// ancestors — i.e. whether this command is running under the same agent, shell,
-// or runner that created the value.
+// callerOrigin returns the nearest usable ancestor, kept for records written
+// before byn stored a chain.
+func callerOrigin(pid int) procRef {
+	chain := callerAncestry(pid)
+	if len(chain) == 0 {
+		return procRef{}
+	}
+	return chain[0]
+}
+
+// sharesAncestry reports whether a caller belongs to the same agent as the one
+// that recorded want: their ancestor chains overlap.
 //
-// A process in another terminal, another editor window, or a background service
-// does not have that ancestor and so does not inherit the grant, which is the
-// whole point: the exemption follows the caller who supplied the value, not the
-// machine.
-func sharesOrigin(pid int, want procRef) bool {
-	if !want.ok() || pid <= 0 {
+// An empty want grants nothing, so a record byn could not pin down, or a
+// platform that cannot supply process start times, simply asks for a credential.
+func sharesAncestry(pid int, want []procRef) bool {
+	if len(want) == 0 || pid <= 0 {
 		return false
 	}
-	seen := make(map[int]bool, maxAncestorHops)
-	for cur, hops := pid, 0; cur > 1 && hops < maxAncestorHops; hops++ {
-		if seen[cur] {
-			return false // cycle: a tree we cannot trust, so grant nothing
+	mine := callerAncestry(pid)
+	for _, w := range want {
+		if !w.ok() {
+			continue
 		}
-		seen[cur] = true
-		if cur == want.PID {
-			// Same PID: confirm it is the same PROCESS and not a reuse.
-			start, ok := procStartTime(cur)
-			return ok && start == want.Start
+		for _, m := range mine {
+			if m == w {
+				return true
+			}
 		}
-		_, ppid := procInfo(cur)
-		cur = ppid
 	}
 	return false
 }

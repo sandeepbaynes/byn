@@ -79,6 +79,29 @@ NEEDS A CREDENTIAL — A PASSWORD, A SESSION, OR A PASSKEY
        may reach — and none of those should be possible for a process
        nobody is watching.
 
+HOW LONG YOUR OWN VALUES STAY YOURS
+       Reading and replacing a value you stored is tied to the session
+       that stored it — the shell, agent, or terminal byn saw it come
+       from. Two conditions, and both must still hold:
+
+         1. Nobody else has written it. Someone with the password
+            replacing your value takes it out of your hands at that
+            moment, which is the point: an agent must not be able to
+            store a placeholder, have a person put the real credential
+            in its place, and read that back as its own.
+         2. The session has not changed. A new terminal, a restarted
+            agent, a different shell session — byn no longer recognises
+            the caller, and stops treating the value as theirs.
+
+       After either, nothing is lost, but the shortcuts end: reading it
+       needs the vault unlocked (or a password), and having it injected
+       needs the .byn trusted again — the ordinary rules, which is where
+       every value that was not stored this way lives all along.
+
+       This is deliberately short-lived. The exemption exists so an agent
+       can finish the task it is in the middle of, not to accumulate
+       standing access to a machine.
+
 STORING A VALUE UNATTENDED
        Creating one needs a trusted .byn covering the scope: that grant
        is what lets byn hold a key it may write with while locked. Without
@@ -380,8 +403,14 @@ DESCRIPTION
        the password still opens it, but so does the machine. And byn
        records who stored it, so the same caller may later read it back
        and replace it without a credential — which is the point, since
-       it supplied the value in the first place. "Same caller" means the
-       same shell or agent: another terminal does not inherit it.
+       it supplied the value in the first place.
+
+       "Same caller" means the same session: the agent or shell byn saw
+       it come from, for as long as that is still running and nobody
+       else has written the value. A new terminal, a restarted agent, or
+       someone else overwriting it all end it, and the ordinary rules
+       resume — unlock to read, re-trust to inject. See
+       "byn help unattended".
 
        A caller that IS authenticated — a session, a password, a
        passkey — gets none of this. Its writes are sealed under the
