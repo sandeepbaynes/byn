@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -76,6 +78,9 @@ type authoredEntry struct {
 	// invented value from a provisioned one, so it must at least never hide
 	// which is which.
 	Unattended bool `json:"unattended,omitempty"`
+	// Locked is the name this carried in the first version of this file, kept
+	// so an entry written then keeps its meaning. See normalize.
+	Locked *bool `json:"locked,omitempty"`
 }
 
 // authoredStore is the on-disk registry. All methods are safe for concurrent
@@ -90,17 +95,53 @@ func newAuthoredStore(dir string) *authoredStore { return &authoredStore{dir: di
 
 func (a *authoredStore) path() string { return filepath.Join(a.dir, authoredFilename) }
 
-// load reads the registry. A missing file is an empty registry, not an error.
-func (a *authoredStore) load() []authoredEntry {
+// load reads the registry.
+//
+// A MISSING file is an empty registry. A file that exists and cannot be read is
+// an error, and the difference matters more than it looks: the first version
+// returned nil for both, so an unreadable file became "nobody has authored
+// anything" — and the next write, having loaded nothing, saved only its own
+// entry and destroyed every other one. Silently. That is the shape of the
+// report that found this: after one write the registry held exactly the value
+// that write had created, and every caller that had stored something earlier
+// lost access to it.
+//
+// Losing this file costs people access to their own values, so it is never
+// replaced on the strength of a read that did not work.
+func (a *authoredStore) load() ([]authoredEntry, error) {
 	b, err := os.ReadFile(a.path()) // #nosec G304 -- daemon-owned state directory
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil // no registry yet
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []authoredEntry
 	if err := json.Unmarshal(b, &out); err != nil {
-		return nil
+		return nil, fmt.Errorf("registry is unreadable: %w", err)
 	}
-	return out
+	for i := range out {
+		out[i].normalize()
+	}
+	return out, nil
+}
+
+// normalize upgrades an entry written by an older byn in place.
+//
+// The first version stored a single parent rather than a chain, and recorded
+// "written under the authored key" in a field called `locked`. Read by a later
+// byn those became a chain of none and a flat false, which reads as "this is
+// not yours" — so upgrading silently took people's own values away from them,
+// which is the opposite of what an upgrade should do.
+func (e *authoredEntry) normalize() {
+	if len(e.Chain) == 0 && e.OriginPID > 1 {
+		e.Chain = []procRef{{PID: e.OriginPID, Start: e.OriginStart}}
+	}
+	if e.Locked != nil && *e.Locked {
+		// `locked` meant the value was stored under the scope's authored key,
+		// which only ever happened for a write with nobody behind it.
+		e.Authored, e.Unattended = true, true
+	}
 }
 
 // save writes the registry atomically, so a crash mid-write cannot leave a
@@ -149,7 +190,12 @@ func authoredKeyLess(x, y authoredKey) bool {
 func (a *authoredStore) Record(key authoredKey, chain []procRef, authored, unattended bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	entries := a.load()
+	entries, err := a.load()
+	if err != nil {
+		// Writing now would replace every other caller's authorship with this
+		// one entry. Better to lose this record than all of them.
+		return err
+	}
 	out := entries[:0:0]
 	for _, e := range entries {
 		if e.Key != key {
@@ -176,7 +222,11 @@ func (a *authoredStore) Record(key authoredKey, chain []procRef, authored, unatt
 func (a *authoredStore) Lookup(key authoredKey) (authoredEntry, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, e := range a.load() {
+	entries, err := a.load()
+	if err != nil {
+		return authoredEntry{}, false // unreadable → grants nothing
+	}
+	for _, e := range entries {
 		if e.Key == key {
 			return e, true
 		}
@@ -193,7 +243,10 @@ func (a *authoredStore) Lookup(key authoredKey) (authoredEntry, bool) {
 func (a *authoredStore) Forget(vaultName, project, env string, names ...string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	entries := a.load()
+	entries, err := a.load()
+	if err != nil {
+		return err // never rewrite a registry byn could not read
+	}
 	drop := make(map[string]bool, len(names))
 	for _, n := range names {
 		drop[n] = true
@@ -228,8 +281,12 @@ func (a *authoredStore) UnattendedNamesFor(vaultName, project, env string) []str
 func (a *authoredStore) namesMatching(vaultName, project, env string, keep func(authoredEntry) bool) []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	entries, err := a.load()
+	if err != nil {
+		return nil
+	}
 	var out []string
-	for _, e := range a.load() {
+	for _, e := range entries {
 		if e.Key.Vault == vaultName && e.Key.Project == project && e.Key.Env == env && keep(e) {
 			out = append(out, e.Key.Name)
 		}

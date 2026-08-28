@@ -149,6 +149,16 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 			if e.DecidedReason != "" {
 				detail += " — " + e.DecidedReason
 			}
+			// For a granted command, say whether it still runs free. An
+			// approval that has simply timed out otherwise looks exactly like
+			// one that was never there.
+			if e.GrantedUntil > 0 {
+				if left := time.Until(time.Unix(e.GrantedUntil, 0)).Truncate(time.Minute); left > 0 {
+					detail += fmt.Sprintf(", runs free for another %s", left)
+				} else {
+					detail += ", grant expired"
+				}
+			}
 			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
 			continue
 		}

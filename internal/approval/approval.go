@@ -392,11 +392,17 @@ func (s *Store) LastDenial(subject, fingerprint string) (Request, bool) {
 // duplicate cards is the same thing that recognises the answer, and they cannot
 // drift apart.
 func (s *Store) ActionGranted(subject, fingerprint string) (bool, error) {
+	ok, _, err := s.ActionGrantedUntil(subject, fingerprint)
+	return ok, err
+}
+
+// ActionGrantedUntil is ActionGranted, and also says when the grant lapses.
+func (s *Store) ActionGrantedUntil(subject, fingerprint string) (bool, time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
 	if err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
 	now := s.now()
 	for _, r := range f.Requests {
@@ -407,10 +413,10 @@ func (s *Store) ActionGranted(subject, fingerprint string) (bool, error) {
 			continue
 		}
 		if now.Before(r.GrantedUntil) {
-			return true, nil
+			return true, r.GrantedUntil, nil
 		}
 	}
-	return false, nil
+	return false, time.Time{}, nil
 }
 
 // Get returns one request by id.

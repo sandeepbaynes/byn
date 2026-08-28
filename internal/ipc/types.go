@@ -1106,6 +1106,10 @@ type ExecFetchResp struct {
 	// surface a caller sees on every run without asking for it: an invented
 	// value is not missing, so nothing else about the launch would mention it.
 	UnattendedValues []string `json:"unattended_values,omitempty"`
+	// GrantExpiresAt is set when a standing approval — not the .byn — is what
+	// let this command run, and says when that lapses. A caller otherwise
+	// discovers the end of a grant by being stopped by it.
+	GrantExpiresAt int64 `json:"grant_expires_at,omitempty"`
 }
 
 // ExecSpawnReq runs a byn exec child SERVER-side under privsep (NU-5). It
@@ -1577,6 +1581,10 @@ type ApprovalEntry struct {
 	// thing it needs to know before deciding what to do next.
 	DecidedAt     int64  `json:"decided_at,omitempty"`
 	DecidedReason string `json:"decided_reason,omitempty"`
+	// GrantedUntil is when an approved command stops running free. Without it,
+	// an approval that had simply timed out was indistinguishable from one that
+	// had been dropped — the same evidence for two very different situations.
+	GrantedUntil int64 `json:"granted_until,omitempty"`
 }
 
 // ApprovalListResp returns the queue, newest first.

@@ -111,12 +111,22 @@ func actionApprovalKey(canon, command string, resolvedArgv []string) (cmd string
 // Best-effort: an unreadable queue means "not approved", so the caller is asked
 // again rather than let through on a store byn could not read.
 func (d *Daemon) actionApproved(canon, command string, resolvedArgv []string) bool {
+	_, ok := d.actionApprovedUntil(canon, command, resolvedArgv)
+	return ok
+}
+
+// actionApprovedUntil is actionApproved plus when the grant lapses, so a caller
+// can be told how long it has rather than discovering the end by being stopped.
+func (d *Daemon) actionApprovedUntil(canon, command string, resolvedArgv []string) (int64, bool) {
 	if d.approvals == nil {
-		return false
+		return 0, false
 	}
 	_, _, fingerprint := actionApprovalKey(canon, command, resolvedArgv)
-	ok, err := d.approvals.ActionGranted(canon, fingerprint)
-	return err == nil && ok
+	granted, until, err := d.approvals.ActionGrantedUntil(canon, fingerprint)
+	if err != nil || !granted {
+		return 0, false
+	}
+	return until.Unix(), true
 }
 
 // raiseActionApproval records that a caller wants to run a command the trusted
@@ -203,4 +213,21 @@ func approvalDetails(pending approval.Request, command string) map[string]string
 		d["vault"] = pending.Vault
 	}
 	return d
+}
+
+// grantExpiryFor reports when a standing approval covering this command lapses,
+// or 0 when the .byn itself is what allows it.
+//
+// Asked after the fact rather than threaded through the authorization path: the
+// answer is only for display, and a command allowed by the file has no expiry
+// to report.
+func (d *Daemon) grantExpiryFor(req ipc.ExecFetchReq, resolvedArgv []string) int64 {
+	if req.Path == "" {
+		return 0
+	}
+	until, ok := d.actionApprovedUntil(trust.Canonicalize(req.Path), req.Command, resolvedArgv)
+	if !ok {
+		return 0
+	}
+	return until
 }

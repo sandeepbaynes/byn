@@ -20,6 +20,7 @@ func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 		Repeats: r.Repeats, DecidedVia: r.DecidedVia,
 		DecidedReason: r.DecidedReason,
 		DecidedAt:     decidedUnix(r.DecidedAt),
+		GrantedUntil:  decidedUnix(r.GrantedUntil),
 	}
 }
 

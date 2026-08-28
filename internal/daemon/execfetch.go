@@ -89,6 +89,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 		ResolvedArgv:     resolvedArgv,
 		MissingValues:    missing,
 		UnattendedValues: unattended,
+		GrantExpiresAt:   d.grantExpiryFor(req, resolvedArgv),
 	})
 	if rerr != nil {
 		// authorizeExec already audited success; an encode failure here is
@@ -113,6 +114,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetchReq) (
 	values []ipc.ExecFetchValue, resolvedArgv []string,
 	wildcard, noneDeclared, actionsWildcard bool, missing, unattended []string, le *ipc.Envelope) {
+
 	st, scope, errEnv := d.scopeFor(id, req.Scope)
 	if errEnv != nil {
 		return nil, nil, false, false, false, nil, nil, errEnv
