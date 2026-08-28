@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"testing"
 
@@ -556,5 +557,48 @@ func TestStaleSessionDoesNotCountAsAttended(t *testing.T) {
 	}
 	if string(got.Value) != "tok" {
 		t.Fatalf("read back %q, want tok", got.Value)
+	}
+}
+
+// A paused command must carry its facts as data, not only in the sentence.
+func TestApprovalPendingCarriesMachineReadableDetails(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"pinned run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	_, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "cleanup --all", Argv: []string{"cleanup", "--all"},
+	})
+	var em *ipc.ErrResponse
+	if !errors.As(err, &em) {
+		t.Fatalf("want an error response, got %v", err)
+	}
+	if em.Code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", em.Code)
+	}
+	id := em.Details["approval_id"]
+	if id == "" {
+		t.Fatal("no approval_id in details — a caller would have to parse it out of the message")
+	}
+	// The id must be the real one, not something that merely looks like one.
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{}, &list); lerr != nil {
+		t.Fatalf("approval list: %v", lerr)
+	}
+	if len(list.Entries) != 1 || list.Entries[0].ID != id {
+		t.Fatalf("details id %q does not match the queued request %+v", id, list.Entries)
+	}
+	if em.Details["command"] != "cleanup --all" {
+		t.Errorf("command = %q, want \"cleanup --all\"", em.Details["command"])
+	}
+	if em.Details["byn"] == "" {
+		t.Error("details should name the .byn the decision is about")
+	}
+	if em.Details["expires_at"] == "" {
+		t.Error("details should say when the request expires")
 	}
 }

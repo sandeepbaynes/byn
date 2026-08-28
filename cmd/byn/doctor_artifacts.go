@@ -151,6 +151,11 @@ func checkInjectableNames() (healCheck, bool) {
 	if len(declared) == 0 || f.AllowsAll() {
 		return c, false // nothing named to check against
 	}
+	// Names the author has said the program can run without.
+	optional := make(map[string]struct{}, len(f.Exec.Optional))
+	for _, n := range f.Exec.Optional {
+		optional[n] = struct{}{}
+	}
 
 	dir, derr := defaultDir()
 	if derr != nil {
@@ -168,6 +173,9 @@ func checkInjectableNames() (healCheck, bool) {
 	}
 	var missing []string
 	for _, n := range declared {
+		if _, ok := optional[n]; ok {
+			continue
+		}
 		if _, ok := have[n]; !ok {
 			missing = append(missing, n)
 		}
@@ -177,8 +185,15 @@ func checkInjectableNames() (healCheck, bool) {
 		c.Detail = fmt.Sprintf("all %d declared in %s", len(declared), filepath.Base(bynPath))
 		return c, true
 	}
+	// A warning, not a failure. byn cannot tell a credential someone forgot from
+	// one the program treats as optional, and reporting the second as broken
+	// left doctor permanently red on healthy checkouts — at which point nobody
+	// reads it and the first kind hides in the noise. Say it plainly and let the
+	// author silence the ones they mean with [exec] optional.
+	c.Warn = true
 	c.Detail = fmt.Sprintf("%s declares %s with no value in the vault",
 		filepath.Base(bynPath), strings.Join(missing, ", "))
-	c.Fix = "echo -n VALUE | byn put " + missing[0]
+	c.Fix = "echo -n VALUE | byn put " + missing[0] +
+		"   (or list it in [exec] optional if the program runs without it)"
 	return c, true
 }

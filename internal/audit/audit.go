@@ -88,6 +88,12 @@ const (
 	OutcomeDenied   = "denied"
 	OutcomeNotFound = "not_found"
 	OutcomeError    = "error"
+	// OutcomePending is for an act that succeeded in putting a question to a
+	// person: raising an approval. The command that prompted it is separately
+	// logged as denied, which is accurate — it did not run. Logging the raise
+	// as denied too was not: nothing was refused, and a reader filtering the
+	// log for refusals could not tell "waiting on a human" from "turned down".
+	OutcomePending = "pending"
 )
 
 // chainHeadStore is the subset of vault.Store this package needs.

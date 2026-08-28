@@ -529,8 +529,8 @@ SEE ALSO
        byn-exec - run a command with vault env-vars injected
 
 SYNOPSIS
-       byn exec [--no-privsep] [--inspect[=TARGET]] -- COMMAND [ARGS...]   (direct form)
-       byn exec [--no-privsep] [--inspect[=TARGET]] NAME [ARGS...]         (alias form)
+       byn exec [--json] [--wait-approval[=DUR]] [--no-privsep] [--inspect[=TARGET]] -- COMMAND [ARGS...]
+       byn exec [--json] [--wait-approval[=DUR]] [--no-privsep] [--inspect[=TARGET]] NAME [ARGS...]
 
 DESCRIPTION
        Loads the .byn-allowlisted env-var entries from the active vault
@@ -582,6 +582,29 @@ DESCRIPTION
                             runners; node prints each).
            --inspect-brk breaks on the first line. Point your editor at an
            "attach" target.
+
+       byn exec --json
+           Agent mode. When a command is paused for a human decision,
+           exec writes one JSON object to STDOUT describing it, while the
+           prose stays on stderr:
+
+             {"status":"approval_pending","approval_id":"337a0de00c7e",
+              "byn":"/…/services/api/.byn","command":"echo hello",
+              "kind":"action_unpinned","expires_at":1787923798,"exit":75}
+
+           Read the id from "approval_id". Do not pattern-match the
+           English sentence — it is written for people and will change.
+
+       byn exec --wait-approval[=DURATION]
+           Block until a pending decision is answered instead of exiting
+           immediately with the id. Default 2m; give a duration to change
+           it (--wait-approval=10m, or --wait-approval 30s). On timeout
+           exec still exits 75, so nothing is lost by waiting.
+
+           Use it for a scripted step a person is watching — one approval
+           mid-pipeline no longer means re-driving the whole thing. Leave
+           it off for anything that must not stall, which is why it is
+           not the default.
 
        Choosing: unattended/agent -> default privsep; interactive
        step-debugging with a launch config -> --no-privsep (you enter
@@ -1670,6 +1693,18 @@ DESCRIPTION
 
        Nothing to repair is reported as success — running it on a clean tree
        is harmless.
+
+       AFTERWARDS, DELETE AS YOURSELF. Once a project is trusted (default ACL)
+       and any older tree has been repaired, the owner can remove build output
+       directly: plain "rm -rf .next", make clean, whatever the project already
+       does. Do NOT route the cleanup through "byn exec".
+
+       Routing it through byn is the wrong way round, and it fails: the exec
+       child runs as the service user, which can delete only what IT created.
+       A tree built outside byn — a test run, a build in your editor — belongs
+       to you, and the service user gets "Permission denied" on every file in
+       it. You, by contrast, can delete both kinds. A pinned "rm -rf" action
+       made sense before trust set a default ACL; it does not now.
 
 EXIT STATUS
        0    Repaired, or nothing needed repairing.

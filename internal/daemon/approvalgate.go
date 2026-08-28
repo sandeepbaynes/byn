@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/sandeepbaynes/byn/internal/approval"
@@ -58,15 +59,16 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		// caller's behalf, and logging it as "approval.list" would misname the
 		// event for whoever reads the log back.
 		Op:      "approval.raise",
-		Outcome: audit.OutcomeDenied, // nothing was granted by asking
+		Outcome: audit.OutcomePending, // the question was put; nothing was refused
 		BynPath: canon,
 		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; "),
 	})
 
-	return ipc.NewError(id, ipc.CodeApprovalPending,
+	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
 		fmt.Sprintf("%s asks for more than it was granted (%s) — approval %s is waiting",
 			canon, strings.Join(summary, "; "), pending.ID),
-		"approve it with: byn approve "+pending.ID)
+		"approve it with: byn approve "+pending.ID,
+		approvalDetails(pending, ""))
 }
 
 // fingerprintOf identifies a question by what it asks for, so the same request
@@ -151,12 +153,32 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 	}
 
 	d.auditEmit(ctx, vaultName, audit.Event{
-		Op: "approval.raise", Outcome: audit.OutcomeDenied, BynPath: canon,
+		Op: "approval.raise", Outcome: audit.OutcomePending, BynPath: canon,
 		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; "),
 	})
-	return ipc.NewError(id, ipc.CodeApprovalPending,
+	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
 		fmt.Sprintf("%s is not pinned in %s [exec] actions — approval %s is waiting",
 			cmd, canon, pending.ID),
 		"approve it with: byn approve "+pending.ID+
-			", or pin it in [exec] actions and re-trust")
+			", or pin it in [exec] actions and re-trust",
+		approvalDetails(pending, cmd))
+}
+
+// approvalDetails is the machine-readable half of a paused command: everything
+// a caller needs to hand the request to a person, or to wait for it, without
+// reading the English sentence next to it.
+func approvalDetails(pending approval.Request, command string) map[string]string {
+	d := map[string]string{
+		"approval_id": pending.ID,
+		"kind":        string(pending.Kind),
+		"byn":         pending.Subject,
+		"expires_at":  strconv.FormatInt(pending.ExpiresAt.Unix(), 10),
+	}
+	if command != "" {
+		d["command"] = command
+	}
+	if pending.Vault != "" {
+		d["vault"] = pending.Vault
+	}
+	return d
 }

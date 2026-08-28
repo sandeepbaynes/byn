@@ -28,6 +28,15 @@ type healCheck struct {
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail,omitempty"`
 	Fix    string `json:"fix,omitempty"`
+	// Warn marks something worth saying that is not a failure: it renders as
+	// WARN and does not change doctor's exit code.
+	//
+	// Without it every observation had to be pass-or-fail, and the checks that
+	// cannot be certain — "this variable has no value, but byn cannot know
+	// whether the program needs it" — were reported as failures. Doctor then
+	// stayed red on a healthy machine, which teaches people to skip it, and a
+	// real fault hides among the ones they have learned to ignore.
+	Warn bool `json:"warn,omitempty"`
 }
 
 // healEnv injects the OS/probe seams so the local checks + repair are
