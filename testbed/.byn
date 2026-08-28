@@ -18,3 +18,5 @@ build = "./build.sh"
 serve = "./server.sh"
 
 # touch to force a re-seal
+
+# r5: change the file so the MAC changes

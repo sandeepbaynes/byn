@@ -868,6 +868,7 @@ func renderAuthorizeNotes(resp ipc.ExecAuthorizeResp, sourcePath string) {
 		return
 	}
 	renderMissingValues(resp.MissingValues, resp.UnattendedValues, sourcePath)
+	renderGrantNote(resp.GrantExpiresAt, sourcePath)
 	if resp.Wildcard {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s permits ALL scoped vars via \"*\" — any secret added later is auto-injected.", sourcePath)))
@@ -945,6 +946,27 @@ func handleExecFetchError(err error) int {
 	return handleCallError(err)
 }
 
+// renderGrantNote says that a command is running on a standing approval rather
+// than on anything written in the .byn, and when that lapses.
+//
+// The end of a grant is otherwise something a caller meets rather than plans
+// for: the same command simply stops working one day, and "expired" looks
+// exactly like "never granted". On stderr, because stdout belongs to the child
+// — including under --json.
+func renderGrantNote(expiresAt int64, sourcePath string) {
+	if expiresAt <= 0 || sourcePath == "" {
+		return
+	}
+	left := time.Until(time.Unix(expiresAt, 0)).Truncate(time.Minute)
+	if left <= 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s running on an approval, not on %s — it lapses in %s\n",
+		dim("note:"), dim(filepath.Base(sourcePath)), dim(left.String()))
+	fmt.Fprintf(os.Stderr, "%s\n",
+		dim("      pin it in [exec] actions and re-trust to make it permanent"))
+}
+
 // renderAllowlistNotes prints the wildcard warning / empty-allowlist note
 // the daemon's flags request (messages match the pre-NU client-side text).
 // Also prints the [exec] actions wildcard warning when ActionsWildcard=true.
@@ -952,6 +974,13 @@ func renderAllowlistNotes(resp ipc.ExecFetchResp, sourcePath string) {
 	if sourcePath == "" {
 		return
 	}
+	// This command is running on a standing approval rather than on anything
+	// written in the .byn, and that approval lapses. Said here because the end
+	// of a grant is otherwise something a caller meets rather than plans for:
+	// the same command simply stops working one day, and "expired" looks
+	// exactly like "never granted". On stderr, because stdout belongs to the
+	// child — including under --json.
+	renderGrantNote(resp.GrantExpiresAt, sourcePath)
 	if resp.Wildcard {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s permits ALL %d scoped var(s) via \"*\" — any secret added later is auto-injected.",

@@ -1164,6 +1164,10 @@ type ExecAuthorizeResp struct {
 	// surface a caller sees on every run without asking for it: an invented
 	// value is not missing, so nothing else about the launch would mention it.
 	UnattendedValues []string `json:"unattended_values,omitempty"`
+	// GrantExpiresAt is when a standing approval allowing this command lapses;
+	// see ExecFetchResp.GrantExpiresAt. The privsep path reports it too, or the
+	// note would appear on one exec path and not the other.
+	GrantExpiresAt int64 `json:"grant_expires_at,omitempty"`
 }
 
 // ExecRedeemReq is sent by the privsep helper (peercred MUST be root or

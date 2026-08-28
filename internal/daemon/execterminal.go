@@ -120,6 +120,7 @@ func (d *Daemon) handleExecAuthorize(ctx context.Context, env *ipc.Envelope) *ip
 		ActionsWildcard:  actionsWildcard,
 		MissingValues:    missing,
 		UnattendedValues: unattended,
+		GrantExpiresAt:   d.grantExpiryFor(req.ExecFetchReq, resolvedArgv),
 	})
 	if rerr != nil {
 		return internalErr(env.ID, rerr)
