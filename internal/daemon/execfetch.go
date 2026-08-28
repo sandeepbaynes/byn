@@ -89,7 +89,7 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 		ResolvedArgv:     resolvedArgv,
 		MissingValues:    missing,
 		UnattendedValues: unattended,
-		GrantExpiresAt:   d.grantExpiryFor(req, resolvedArgv),
+		GrantExpiresAt:   d.grantExpiryFor(ctx, req, resolvedArgv),
 	})
 	if rerr != nil {
 		// authorizeExec already audited success; an encode failure here is
@@ -443,7 +443,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 					// caller stopped at the same gate on its very next attempt, told
 					// each time that approval was granted. That is a worse dead end
 					// than the one the queue replaced, because it looks like progress.
-					if !matched && d.actionApproved(canon, req.Command, resolvedArgv) {
+					if !matched && d.actionApproved(ctx, canon, req.Command, resolvedArgv) {
 						matched = true
 						d.auditEmit(ctx, vaultName, audit.Event{
 							Op: "exec.action_approved", Outcome: audit.OutcomeOK, BynPath: canon,

@@ -1637,8 +1637,11 @@ type ApprovalEntry struct {
 	Requestor ApprovalActor `json:"requestor,omitempty"`
 	// NeededBy is when the asker stops waiting; Late says an answer arrived
 	// after that. Zero when the caller never said it was waiting.
-	NeededBy   int64  `json:"needed_by,omitempty"`
-	Late       bool   `json:"late,omitempty"`
+	NeededBy int64 `json:"needed_by,omitempty"`
+	Late     bool  `json:"late,omitempty"`
+	// Anyone says an approved command runs free for anything in the scope
+	// rather than only for whoever asked.
+	Anyone     bool   `json:"anyone,omitempty"`
 	Status     string `json:"status"`
 	CreatedAt  int64  `json:"created_at"`
 	ExpiresAt  int64  `json:"expires_at"`
@@ -1691,8 +1694,12 @@ type ApprovalDecideReq struct {
 	// wants something other than the default window. It applies to a command
 	// grant and is ignored elsewhere: a trust widening is applied by re-granting
 	// the .byn, so its lifetime lives in the trust store, not here.
-	GrantForSeconds int    `json:"grant_for_seconds,omitempty"`
-	Password        []byte `json:"password,omitempty"`
+	GrantForSeconds int `json:"grant_for_seconds,omitempty"`
+	// Anyone widens an approved command past the caller that asked for it, to
+	// anything running in that scope. Off by default: the owner answered a
+	// question about one asker.
+	Anyone   bool   `json:"anyone,omitempty"`
+	Password []byte `json:"password,omitempty"`
 }
 
 // ApprovalDecideResp reports what the request now says. Deciding is idempotent,

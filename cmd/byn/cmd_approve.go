@@ -27,6 +27,8 @@ func runApprove(args []string, _ cliScope) int {
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	all := fs.Bool("all", false, "answer every pending request")
 	history := fs.Bool("history", false, "show decided and expired requests too, not just what is waiting")
+	anyone := fs.Bool("anyone", false,
+		"let anything in that project use the approved command, not only whoever asked")
 	grantFor := fs.Duration("for", 0, "how long an approved command runs free (default 6h, max 24h)")
 	pwStdin := fs.Bool("password-stdin", false, "read the master password from stdin")
 	if err := parseFlags(fs, args); err != nil {
@@ -81,6 +83,7 @@ func runApprove(args []string, _ cliScope) int {
 		cerr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
 			ID: id, Approve: !*deny, Via: "terminal", Reason: *reason, Password: password,
 			GrantForSeconds: int(*grantFor / time.Second),
+			Anyone:          *anyone,
 		}, &resp)
 		if cerr != nil {
 			rc = handleCallError(cerr)
@@ -95,8 +98,13 @@ func runApprove(args []string, _ cliScope) int {
 		// long it lasts, and whether whoever asked is still there to use it.
 		if resp.Entry.Status == "approved" && resp.Entry.GrantedUntil > 0 {
 			left := time.Until(time.Unix(resp.Entry.GrantedUntil, 0)).Truncate(time.Minute)
+			who := "for whoever asked"
+			if resp.Entry.Anyone {
+				who = "for anything in that project"
+			}
 			fmt.Fprintf(os.Stderr, "          %s\n",
-				dim(fmt.Sprintf("runs free for %s — pin it in [exec] actions to make it permanent", left)))
+				dim(fmt.Sprintf("runs free for %s, %s — pin it in [exec] actions to make it permanent",
+					left, who)))
 		}
 		if resp.Entry.Late {
 			fmt.Fprintf(os.Stderr, "          %s\n",
@@ -200,7 +208,11 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 			// one that was never there.
 			if e.GrantedUntil > 0 {
 				if left := time.Until(time.Unix(e.GrantedUntil, 0)).Truncate(time.Minute); left > 0 {
-					detail += fmt.Sprintf(", runs free for another %s", left)
+					who := "for whoever asked"
+					if e.Anyone {
+						who = "for anyone in that project"
+					}
+					detail += fmt.Sprintf(", runs free %s for another %s", who, left)
 				} else {
 					detail += ", grant expired"
 				}

@@ -172,3 +172,86 @@ func onlyPending(t *testing.T, c *ipc.Client) ipc.ApprovalEntry {
 	}
 	return got[0]
 }
+
+// A grant answers a question about one asker. Letting anything in the project
+// use it afterwards is a wider authority than the owner was asked for, so the
+// binding is the default and widening is deliberate.
+func TestGrant_BoundToWhoeverAsked(t *testing.T) {
+	origin := stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = [\"pinned run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	run := func() error {
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "make dev", Argv: []string{"make", "dev"},
+		})
+		return err
+	}
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", code)
+	}
+	pending := onlyPending(t, c)
+	if _, err := decideApproval(t, c, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw,
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	// The asker runs free.
+	if err := run(); err != nil {
+		t.Fatalf("the caller that asked was refused its own grant: %v", err)
+	}
+
+	// Somebody else in the same project, running the same command, is not
+	// covered by it — that is the whole point of binding.
+	origin(false) // a different caller from here on
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatalf("another caller inherited a grant answered for someone else: code = %v", code)
+	}
+}
+
+// The owner can widen a grant deliberately: a shared build command, or one that
+// has to outlive the session that asked.
+func TestGrant_AnyoneWidensItOnPurpose(t *testing.T) {
+	origin := stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = [\"pinned run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	run := func() error {
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "make dev", Argv: []string{"make", "dev"},
+		})
+		return err
+	}
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %v, want approval_pending", code)
+	}
+	pending := onlyPending(t, c)
+	resp, err := decideApproval(t, c, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw, Anyone: true,
+	})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if !resp.Entry.Anyone {
+		t.Error("the widening was not recorded, so no surface can show it")
+	}
+
+	origin(false) // a different caller from here on
+	if err := run(); err != nil {
+		t.Fatalf("--anyone did not widen the grant: %v", err)
+	}
+}
+
+func decideApproval(t *testing.T, c *ipc.Client, req ipc.ApprovalDecideReq) (ipc.ApprovalDecideResp, error) {
+	t.Helper()
+	var resp ipc.ApprovalDecideResp
+	err := c.Call(ipc.OpApprovalDecide, req, &resp)
+	return resp, err
+}

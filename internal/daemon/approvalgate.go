@@ -111,6 +111,7 @@ func (d *Daemon) requestorOf(ctx context.Context, vaultName string, req ipc.Exec
 	// disagree about who "they" are.
 	if id := callerIdentityFn(ci.PID); id.ok() {
 		r.AgentPID = id.PID
+		r.AgentKey = agentKey(id)
 		if comm, _ := procInfo(id.PID); comm != "" {
 			r.Agent = comm
 		}
@@ -175,19 +176,19 @@ func actionApprovalKey(canon, command string, resolvedArgv []string) (cmd string
 //
 // Best-effort: an unreadable queue means "not approved", so the caller is asked
 // again rather than let through on a store byn could not read.
-func (d *Daemon) actionApproved(canon, command string, resolvedArgv []string) bool {
-	_, ok := d.actionApprovedUntil(canon, command, resolvedArgv)
+func (d *Daemon) actionApproved(ctx context.Context, canon, command string, resolvedArgv []string) bool {
+	_, ok := d.actionApprovedUntil(ctx, canon, command, resolvedArgv)
 	return ok
 }
 
 // actionApprovedUntil is actionApproved plus when the grant lapses, so a caller
 // can be told how long it has rather than discovering the end by being stopped.
-func (d *Daemon) actionApprovedUntil(canon, command string, resolvedArgv []string) (int64, bool) {
+func (d *Daemon) actionApprovedUntil(ctx context.Context, canon, command string, resolvedArgv []string) (int64, bool) {
 	if d.approvals == nil {
 		return 0, false
 	}
 	_, _, fingerprint := actionApprovalKey(canon, command, resolvedArgv)
-	granted, until, err := d.approvals.ActionGrantedUntil(canon, fingerprint)
+	granted, until, err := d.approvals.ActionGrantFor(canon, fingerprint, d.grantUsableBy(ctx))
 	if err != nil || !granted {
 		return 0, false
 	}
@@ -288,11 +289,11 @@ func approvalDetails(pending approval.Request, command string) map[string]string
 // Asked after the fact rather than threaded through the authorization path: the
 // answer is only for display, and a command allowed by the file has no expiry
 // to report.
-func (d *Daemon) grantExpiryFor(req ipc.ExecFetchReq, resolvedArgv []string) int64 {
+func (d *Daemon) grantExpiryFor(ctx context.Context, req ipc.ExecFetchReq, resolvedArgv []string) int64 {
 	if req.Path == "" {
 		return 0
 	}
-	until, ok := d.actionApprovedUntil(trust.Canonicalize(req.Path), req.Command, resolvedArgv)
+	until, ok := d.actionApprovedUntil(ctx, trust.Canonicalize(req.Path), req.Command, resolvedArgv)
 	if !ok {
 		return 0
 	}
@@ -338,4 +339,57 @@ func auditReason(pending approval.Request) string {
 		return ""
 	}
 	return " (asker's reason: " + pending.Reason + ")"
+}
+
+// agentKey renders an identity so it can be stored and compared later without
+// a reused pid quietly standing in for the process that asked.
+func agentKey(id procRef) string {
+	return strconv.Itoa(id.PID) + ":" + strconv.FormatUint(id.Start, 10)
+}
+
+// parseAgentKey reverses agentKey. An unparseable key yields an identity that
+// matches nothing, which is the safe direction: a grant byn cannot attribute is
+// a grant nobody inherits.
+func parseAgentKey(k string) (procRef, bool) {
+	pidStr, startStr, ok := strings.Cut(k, ":")
+	if !ok {
+		return procRef{}, false
+	}
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return procRef{}, false
+	}
+	start, err := strconv.ParseUint(startStr, 10, 64)
+	if err != nil {
+		return procRef{}, false
+	}
+	ref := procRef{PID: pid, Start: start}
+	return ref, ref.ok()
+}
+
+// grantUsableBy decides which existing command grants the caller in ctx may use.
+//
+// The default is the caller that asked, not the project. A grant keyed only on
+// the file and the command lets anything running there use it — the owner
+// answered "yes, that agent may run this" and byn was reading it as "yes,
+// anyone here may". Binding it to the recorded identity keeps the answer the
+// size of the question.
+//
+// Two grants stay usable by anyone: one the owner deliberately widened with
+// --anyone, and one raised before byn recorded an identity at all. The second is
+// the version-skew case, and refusing those would re-ask for every grant that
+// existed before an upgrade — the surest way to teach people to approve without
+// reading.
+func (d *Daemon) grantUsableBy(ctx context.Context) func(approval.Request) bool {
+	pid := callerFrom(ctx).PID
+	return func(r approval.Request) bool {
+		if r.Anyone || r.Requestor.AgentKey == "" {
+			return true
+		}
+		want, ok := parseAgentKey(r.Requestor.AgentKey)
+		if !ok {
+			return false
+		}
+		return sharesAncestryFn(pid, []procRef{want})
+	}
 }

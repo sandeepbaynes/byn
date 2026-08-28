@@ -96,6 +96,22 @@ Both surfaces also now say what approving does: it authorizes, it runs nothing,
 and it does not edit the `.byn`. That was the first question people asked of
 these cards.
 
+### A command grant belongs to whoever asked for it
+
+Approving an unpinned command used to grant it to the project: anything running
+in that directory could run the same string for the next six hours. The owner
+was asked whether one agent could run one command, and byn was reading the
+answer as "anyone here may".
+
+Grants are now bound to the caller that asked, using the same identity that
+governs values an agent created. `byn approve <id> --anyone` widens one
+deliberately — a shared build command, or one that has to outlive the session
+that asked — and both the list and the approval line say which a grant is.
+
+Grants made before byn recorded who was asking stay usable by anyone. Re-asking
+for every existing grant after an upgrade is how people learn to approve without
+reading.
+
 ### Requests say when they are needed, grants say how long they last
 
 A caller waiting on a decision (`byn exec --wait-approval`) now records how long

@@ -1539,6 +1539,9 @@ async function renderApprovalsView() {
       meta.push(left > 0 ? "needed within " + left + "s" : "no longer waiting");
     }
     if (a.late) meta.push("answered after the asker gave up");
+    if (a.granted_until) {
+      meta.push(a.anyone ? "runs free for anyone here" : "runs free for whoever asked");
+    }
     card.appendChild(el("div", "approval-meta", meta.join(" \u00b7 ")));
 
     const acts = el("div", "trust-row-acts");

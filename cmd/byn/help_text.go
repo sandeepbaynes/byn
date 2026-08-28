@@ -1970,7 +1970,7 @@ SYNOPSIS
        byn approve [--password-stdin] ID...
        byn approve --deny ID...
        byn approve --all [--password-stdin]
-       byn approve [--for DURATION] ID...
+       byn approve [--for DURATION] [--anyone] ID...
 
 DESCRIPTION
        When a .byn asks for more authority than it was granted, byn does
@@ -2040,6 +2040,16 @@ DESCRIPTION
        not a prefix or a pattern. The same command runs free afterwards
        for a working session; a different argument is a different
        question. Pin it in [exec] actions for the durable answer.
+
+       It runs free for whoever asked, not for the project. You were
+       asked whether one agent could run one command; letting anything
+       else in that directory use the answer afterwards would be a
+       wider grant than the question. --anyone widens it deliberately —
+       for a shared build command, or one that has to outlive the
+       session that asked. Grants made before byn recorded who was
+       asking stay usable by anyone, because re-asking for every
+       existing grant after an upgrade is how people learn to approve
+       without reading.
 
        Refusing takes --reason: "byn approve --deny <id> --reason
        'wrong target'". The asker is told, and it goes in the audit log.

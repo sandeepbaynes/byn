@@ -114,6 +114,11 @@ type Requestor struct {
 	// pid of a shell that exited seconds ago cannot answer that.
 	Agent    string `json:"agent,omitempty"`
 	AgentPID int    `json:"agent_pid,omitempty"`
+	// AgentKey is that identity in a form that survives a pid being reused:
+	// the pid together with the process's start time. It is opaque here on
+	// purpose — the queue stores it and hands it back, and only the daemon
+	// knows how to decide whether a caller matches it.
+	AgentKey string `json:"agent_key,omitempty"`
 	// Attended records whether a person was at a terminal for this request.
 	// An unattended request is the normal case for an agent, and saying so
 	// stops the absence of a TTY from looking like something being hidden.
@@ -172,6 +177,16 @@ type Request struct {
 	// it right now. An approval after this time still grants — it just grants
 	// to nobody who is still listening, and says so.
 	NeededBy time.Time `json:"needed_by,omitempty"`
+	// Anyone widens a command grant to the whole scope rather than the caller
+	// that asked for it.
+	//
+	// A grant keyed only on the file and the command lets anything running in
+	// that project use it, which is a wider authority than the question asked
+	// for: the owner answered "yes, that agent may run this", and byn read it
+	// as "yes, anyone here may". Binding is the default and this is the
+	// deliberate exception — a shared build command, a grant meant to outlive
+	// the session that asked.
+	Anyone bool `json:"anyone,omitempty"`
 	// Late records that the answer arrived after the asker had stopped waiting.
 	// The grant is real; the process that asked for it is gone.
 	Late bool `json:"late,omitempty"`
@@ -359,6 +374,17 @@ func (s *Store) Decide(id string, approve bool, via, reason string) (Request, er
 // all afternoon are different grants, and giving both of them six hours makes
 // the shorter one an unnecessary standing authority.
 func (s *Store) DecideFor(id string, approve bool, via, reason string, grantFor time.Duration) (Request, error) {
+	return s.decide(id, approve, via, reason, grantFor, false)
+}
+
+// DecideForAnyone is DecideFor with the grant widened past the caller that
+// asked, which is a deliberate act and is recorded as one.
+func (s *Store) DecideForAnyone(id string, approve bool, via, reason string, grantFor time.Duration) (Request, error) {
+	return s.decide(id, approve, via, reason, grantFor, true)
+}
+
+func (s *Store) decide(id string, approve bool, via, reason string,
+	grantFor time.Duration, anyone bool) (Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -395,6 +421,9 @@ func (s *Store) DecideFor(id string, approve bool, via, reason string, grantFor 
 			// so rather than leaving a grant nobody can account for.
 			if !r.NeededBy.IsZero() && now.After(r.NeededBy) {
 				r.Late = true
+			}
+			if anyone {
+				r.Anyone = true
 			}
 			r.Denials = 0
 			delete(f.Denials, r.Fingerprint)
@@ -481,6 +510,16 @@ func (s *Store) ActionGranted(subject, fingerprint string) (bool, error) {
 
 // ActionGrantedUntil is ActionGranted, and also says when the grant lapses.
 func (s *Store) ActionGrantedUntil(subject, fingerprint string) (bool, time.Time, error) {
+	return s.ActionGrantFor(subject, fingerprint, nil)
+}
+
+// ActionGrantFor is ActionGrantedUntil restricted to grants the caller may use.
+//
+// usable decides whether a particular grant belongs to whoever is asking now;
+// nil accepts any. The queue does not know what identity means — it holds the
+// recorded one and asks the daemon, which is the only part that can compare a
+// live process against it.
+func (s *Store) ActionGrantFor(subject, fingerprint string, usable func(Request) bool) (bool, time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -495,9 +534,16 @@ func (s *Store) ActionGrantedUntil(subject, fingerprint string) (bool, time.Time
 		if r.Subject != subject || r.Fingerprint != fingerprint {
 			continue
 		}
-		if now.Before(r.GrantedUntil) {
-			return true, r.GrantedUntil, nil
+		if !now.Before(r.GrantedUntil) {
+			continue
 		}
+		// Keep looking rather than stopping at the first unusable grant: the
+		// same command may have been approved twice, once bound to a session
+		// that has since gone and once for anyone.
+		if usable != nil && !usable(r) {
+			continue
+		}
+		return true, r.GrantedUntil, nil
 	}
 	return false, time.Time{}, nil
 }
