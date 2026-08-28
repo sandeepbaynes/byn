@@ -240,6 +240,35 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		{Name: "daemon", Severity: "ok", Detail: fmt.Sprintf("running (version %s)", d.cfg.Version)},
 	}
 
+	// Can the daemon see the process talking to it?
+	//
+	// It reads /proc/<caller> to record who ran an operation in the audit trail,
+	// and to tell whether the process asking to inject a variable is the one
+	// that created it. Sandboxing on the daemon's own service unit can hide
+	// every process owned by the human, and when it does BOTH stop working with
+	// no error anywhere — audit caller names go blank and an agent is asked to
+	// approve variables it wrote itself.
+	//
+	// Measured, not inferred. The obvious check — reading /proc mount options —
+	// asks the wrong process: the daemon's restrictions live in its own mount
+	// namespace, so a client looking at its own /proc sees nothing wrong and
+	// reports a confident, wrong OK. The one caller byn can always resolve is
+	// the one on the other end of this connection.
+	if ci := callerFrom(ctx); ci.Surface == "socket" && ci.PID > 0 {
+		if ci.Comm == "" {
+			checks = append(checks, ipc.DoctorCheck{
+				Name: "daemon.sees_caller", Severity: "warn",
+				Detail: "the daemon cannot read the calling process — audit records no caller name, " +
+					"and a variable you create yourself will still need an approval to inject",
+			})
+		} else {
+			checks = append(checks, ipc.DoctorCheck{
+				Name: "daemon.sees_caller", Severity: "ok",
+				Detail: "resolves the calling process (" + ci.Comm + ")",
+			})
+		}
+	}
+
 	// List vaults on disk.
 	names, lErr := d.allVaultsOnDisk()
 	switch {
