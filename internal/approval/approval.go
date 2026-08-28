@@ -358,22 +358,30 @@ func (s *Store) LastDenial(subject, fingerprint string) (Request, bool) {
 	if err != nil {
 		return Request{}, false
 	}
+	// The LAST word wins, so find the most recent decision of any kind first and
+	// only then ask what it was.
+	//
+	// Deciding inside the loop does not work: the requests are in no particular
+	// order, so an older approval seen before a newer refusal ended the search
+	// and reported "not refused". That is the wrong way round — it turned the
+	// wall off for exactly the command a person had most recently said no to.
 	var latest Request
 	var found bool
 	for _, r := range f.Requests {
 		if r.Subject != subject || r.Fingerprint != fingerprint {
 			continue
 		}
-		// An approval settles the question, whenever it happened relative to a
-		// refusal: the last word wins.
-		if r.Status == StatusApproved && r.DecidedAt.After(latest.DecidedAt) {
-			return Request{}, false
+		if !r.Answered() {
+			continue // still pending: not a word either way yet
 		}
-		if r.Status == StatusDenied && r.DecidedAt.After(latest.DecidedAt) {
+		if !found || r.DecidedAt.After(latest.DecidedAt) {
 			latest, found = r, true
 		}
 	}
-	return latest, found
+	if !found || latest.Status != StatusDenied {
+		return Request{}, false
+	}
+	return latest, true
 }
 
 // ActionGranted reports whether an approved, still-valid decision authorizes
