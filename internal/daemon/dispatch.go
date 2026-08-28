@@ -1289,7 +1289,7 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	//
 	// Deciding on the caller rather than on lock state keeps one agent's
 	// behaviour the same whether or not someone happens to have the vault open.
-	unattended := len(callerSession(ctx)) == 0 && len(req.Password) == 0 && len(req.PresenceToken) == 0
+	unattended := !d.callerIsAttended(ctx, vaultName, req.Password, req.PresenceToken)
 	var authKey []byte
 	if unattended {
 		authKey = d.authoredKeyFor(vaultName, scope)

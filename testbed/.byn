@@ -16,3 +16,5 @@ actions = [
 [aliases]
 build = "./build.sh"
 serve = "./server.sh"
+
+# touch to force a re-seal

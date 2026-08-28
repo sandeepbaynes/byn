@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/bynfile"
@@ -306,4 +307,28 @@ func (d *Daemon) readAuthored(ctx context.Context, st *vault.Store, vaultName st
 		return vault.Entry{}, false
 	}
 	return vault.Entry{Name: name, Value: value}, true
+}
+
+// callerIsAttended reports whether a human stands behind this request — a VALID
+// session for this vault and caller, or credentials supplied with the call.
+//
+// Validity is the point, and it is where the first version of this was wrong.
+// Testing merely that a session token was PRESENT looked equivalent and was
+// not: the CLI keeps a token on disk and sends it on every call, so one left
+// behind by an earlier unlock — after a daemon restart, after the session
+// expired, after `byn lock` — made every subsequent agent look attended. The
+// effect was that nothing an agent stored got the unattended treatment, and
+// `byn put` went back to demanding a password on a locked vault. That is
+// exactly the symptom this was built to remove, and only a live run found it:
+// tests construct their clients fresh and never carry a stale token.
+func (d *Daemon) callerIsAttended(ctx context.Context, vaultName string, password, presenceToken []byte) bool {
+	if len(password) > 0 || len(presenceToken) > 0 {
+		return true
+	}
+	tok := string(callerSession(ctx))
+	if tok == "" {
+		return false
+	}
+	ci := callerFrom(ctx)
+	return d.sessions.validate(tok, vaultName, ci.UID, ci.TTYDev, time.Now())
 }
