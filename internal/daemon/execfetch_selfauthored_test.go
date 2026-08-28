@@ -975,3 +975,72 @@ func TestExecReportsUnattendedValuesAtLaunch(t *testing.T) {
 		t.Errorf("SEED = %q, want set-by-a-person", m["SEED"])
 	}
 }
+
+// Create, then UPDATE, then wire it into .byn — the workflow byn exists to
+// serve, and the one a live run caught it failing.
+//
+// A "has this been written since it was created?" check used to sit behind the
+// authorship record as belt and braces. An author changing its own value moved
+// the entry's updated_at and tripped it, so the caller lost the variable it had
+// just created and was sent to ask a person for permission to read its own
+// token. Revocation is the precise answer and already covers the case the check
+// was guarding: someone else's write takes authorship away at the moment it
+// happens.
+func TestSelfAuthored_SurvivesTheAuthorsOwnUpdate(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	put := func(v string) {
+		t.Helper()
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Value: []byte(v),
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("put %q: %v", v, err)
+		}
+	}
+	put("v1")
+	put("v2") // the author changes its mind — must not cost it the variable
+
+	rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"SEED\", \"AGENT_TOKEN\"]\nactions = [\"mytool run\"]\n")
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("a value the caller created AND updated must still be its own: %v", err)
+	}
+	if m := valueMap(resp.Values); m["AGENT_TOKEN"] != "v2" {
+		t.Fatalf("AGENT_TOKEN = %q, want v2; values=%v", m["AGENT_TOKEN"], m)
+	}
+
+	// The guarantee it must not have cost: someone else's overwrite still takes
+	// authorship away. A person doing that is present, so the vault is open —
+	// writing with the vault key is what being authenticated buys.
+	var ur ipc.VaultUnlockResp
+	tok, uerr := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ur, nil)
+	if uerr != nil {
+		t.Fatalf("unlock: %v", uerr)
+	}
+	c.Session = tok
+	setShares := stubOrigin(t, true)
+	setShares(false)
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Value: []byte("theirs"), Password: pw,
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("stranger overwrite: %v", err)
+	}
+	setShares(true)
+	c.Session = nil
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	}); err == nil {
+		t.Fatal("after someone else replaced the value, the caller must no longer treat it as its own")
+	}
+}

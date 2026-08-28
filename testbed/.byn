@@ -4,7 +4,7 @@ project = "testbed"
 env     = "default"
 
 [exec]
-env = ["TESTBED_DB_URL", "TESTBED_API_KEY", "TESTBED_REGION", "TESTBED_NEW_VAR"]
+env = ["TESTBED_DB_URL", "TESTBED_API_KEY", "TESTBED_REGION", "TESTBED_NEW_VAR", "TESTBED_LIVE_TOKEN"]
 actions = [
     "./app.sh {{args}}",
     "./build.sh",

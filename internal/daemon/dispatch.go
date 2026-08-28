@@ -1319,10 +1319,14 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 			// caller that cannot act on an error is the thing being fixed here.
 			le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken)
 			if le == nil {
+				// The caller IS authenticated; what is missing is the vault key
+				// itself. Say that, rather than repeating the advice meant for
+				// an unattended caller — a person holding the right password
+				// told to "run byn trust" would reasonably conclude byn was
+				// broken.
 				le = ipc.NewError(env.ID, ipc.CodeLocked,
-					"byn holds no key it may write with for "+scopeLabel(scope),
-					"unlock the vault, or run `byn trust` on a .byn in this project "+
-						"so byn can store values here unattended")
+					"the vault is locked, so byn cannot write "+req.Name+" in "+scopeLabel(scope),
+					"byn unlock, then retry")
 			}
 			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
 			return le
@@ -1353,6 +1357,13 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 			// authorship is not grounds to overrule them — byn's own inference
 			// about what is safe must not quietly outrank a stated instruction.
 			err = put(vault.PutOpt{})
+			if err == nil {
+				// Re-stamp the authorship. The stored value is still this
+				// caller's, and the record has to keep saying so — it is what
+				// everything downstream reads to decide whether the value is
+				// still the author's, rather than any timestamp on the entry.
+				d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored, unattended)
+			}
 		} else {
 			if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
 				d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", le)
