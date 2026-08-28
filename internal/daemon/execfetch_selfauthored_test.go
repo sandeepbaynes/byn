@@ -274,3 +274,57 @@ func TestSelfAuthored_RealOriginLookup(t *testing.T) {
 		t.Fatalf("REAL_ORIGIN_TOKEN = %q, want tok-real; values=%v", m["REAL_ORIGIN_TOKEN"], m)
 	}
 }
+
+// Approving an unpinned command must let it RUN.
+//
+// The queue's whole promise is "the work resumes once someone answers". A
+// decision that is recorded and applied to nothing breaks that promise in the
+// worst way: the caller is told approval was granted and is stopped at the same
+// gate on its next attempt, forever, with a fresh id each time. The existing
+// tests checked that approving returned success — not that anything changed.
+func TestApprovedUnpinnedCommand_ActuallyRuns(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"pinned run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	fetch := func() (ipc.ExecFetchResp, error) {
+		return execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "cleanup --all", Argv: []string{"cleanup", "--all"},
+		})
+	}
+
+	_, err := fetch()
+	if code := errCode(t, err); code != ipc.CodeApprovalPending {
+		t.Fatalf("first attempt: code = %v, want approval_pending", code)
+	}
+	var list ipc.ApprovalListResp
+	if lerr := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{}, &list); lerr != nil {
+		t.Fatalf("approval list: %v", lerr)
+	}
+	if len(list.Entries) != 1 {
+		t.Fatalf("want exactly one pending decision, got %d", len(list.Entries))
+	}
+	if derr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: list.Entries[0].ID, Approve: true, Password: pw,
+	}, &ipc.ApprovalDecideResp{}); derr != nil {
+		t.Fatalf("approve: %v", derr)
+	}
+
+	resp, err := fetch()
+	if err != nil {
+		t.Fatalf("after approval the command must run, got: %v", err)
+	}
+	if m := valueMap(resp.Values); m["SEED"] != "seed-val" {
+		t.Errorf("SEED = %q, want seed-val", m["SEED"])
+	}
+
+	// And it keeps running: an agent retrying, or a build loop, must not have to
+	// re-ask for the same command it was just granted.
+	if _, err := fetch(); err != nil {
+		t.Fatalf("a granted command must keep running, got: %v", err)
+	}
+}

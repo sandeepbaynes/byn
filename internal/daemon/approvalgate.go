@@ -82,6 +82,40 @@ func requestorOf(req ipc.ExecFetchReq) approval.Requestor {
 	return approval.Requestor{Exe: req.Command}
 }
 
+// actionApprovalKey derives everything that identifies one "may I run this
+// command here" question: the display form, the summary a person reads, and the
+// fingerprint that decides whether two askings are the same question.
+//
+// One function so that recognising an existing answer and raising a new request
+// cannot drift apart. If they computed the fingerprint differently, approving
+// would appear to work and change nothing — the caller would be told it was
+// granted and be asked again on the very next attempt, forever.
+func actionApprovalKey(canon, command string, resolvedArgv []string) (cmd string, summary []string, fingerprint string) {
+	cmd = strings.Join(resolvedArgv, " ")
+	if cmd == "" {
+		cmd = command
+	}
+	if len(cmd) > 200 { // the card is read by a person; keep it legible
+		cmd = cmd[:200] + "…"
+	}
+	summary = []string{"runs " + cmd}
+	return cmd, summary, fingerprintOf(canon, summary)
+}
+
+// actionApproved reports whether someone has already approved this exact
+// command on this exact .byn, and the grant has not lapsed.
+//
+// Best-effort: an unreadable queue means "not approved", so the caller is asked
+// again rather than let through on a store byn could not read.
+func (d *Daemon) actionApproved(canon, command string, resolvedArgv []string) bool {
+	if d.approvals == nil {
+		return false
+	}
+	_, _, fingerprint := actionApprovalKey(canon, command, resolvedArgv)
+	ok, err := d.approvals.ActionGranted(canon, fingerprint)
+	return err == nil && ok
+}
+
 // raiseActionApproval records that a caller wants to run a command the trusted
 // .byn does not pin, and returns the error it sees.
 //
@@ -93,20 +127,13 @@ func requestorOf(req ipc.ExecFetchReq) approval.Requestor {
 func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName string,
 	req ipc.ExecFetchReq, resolvedArgv []string) *ipc.Envelope {
 
-	cmd := strings.Join(resolvedArgv, " ")
-	if cmd == "" {
-		cmd = req.Command
-	}
-	if len(cmd) > 200 { // the card is read by a person; keep it legible
-		cmd = cmd[:200] + "…"
-	}
-	summary := []string{"runs " + cmd}
+	cmd, summary, fingerprint := actionApprovalKey(canon, req.Command, resolvedArgv)
 
 	pending, err := d.approvals.Enqueue(approval.Request{
 		Kind:        approval.KindActionUnpinned,
 		Vault:       vaultName,
 		Subject:     canon,
-		Fingerprint: fingerprintOf(canon, summary),
+		Fingerprint: fingerprint,
 		Summary:     summary,
 		Requestor:   requestorOf(req),
 	})
