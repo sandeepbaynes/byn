@@ -1347,6 +1347,12 @@ Creating one needs a trusted \fB.byn\fR covering the scope \(em that grant
 is what lets byn hold a key it may write with while locked. Without one
 byn holds no such key and says so.
 .PP
+A grant made by a byn older than this carries no such key, so the locked
+path is refused there until it has one. It gets one when you re\-trust, or
+by itself the first time byn records a value with the vault open, since
+that path re\-seals the grant. Creating a value on an unlocked vault was
+never gated and still is not.
+.PP
 Such a value is protected by \fIthis machine\fR as well as by the master
 password. That is the price of a vault that can accept and return values
 while shut, and it is smaller than the alternative it replaces: leaving

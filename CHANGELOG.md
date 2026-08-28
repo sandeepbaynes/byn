@@ -1,0 +1,101 @@
+# Changelog
+
+Notable changes per release. The GitHub release page carries the full commit
+list; this file carries what you need to know before upgrading.
+
+## v0.5.0 — unreleased
+
+byn stops needing a person in the middle of an agent's work.
+
+The theme is one sentence: an agent should be able to create a secret, use it,
+and keep working, without a human at a terminal — and without the vault being
+left open, which is what "just unlock it first" really means.
+
+### Upgrading
+
+Two steps beyond replacing the binary. Both fail closed, so nothing breaks if
+you skip them; features stay dormant instead.
+
+1. **`sudo byn setup`** (privsep installs). The systemd unit changed. It had
+   `ProtectProc=invisible`, which hid every process owned by you from the
+   daemon — so the audit log recorded no caller name for anything done over the
+   socket, and the daemon could not tell which agent stored a value. Both failed
+   silently. `byn doctor` now reports `daemon.sees_caller`.
+2. **Re-trust each project** (`byn trust`, or whatever your repo wraps it in) if
+   you want `byn put` to work on a *locked* vault there straight away. Grants
+   made by an older byn carry no key it may write with, and only the locked path
+   needs one — creating a value on an unlocked vault was never gated and still
+   is not. You can also do nothing: the grant re-seals itself the first time byn
+   records a value with the vault open, and the locked path works from then on.
+
+If you read the audit log with a program, two events changed shape: a write with
+no credential behind it is logged as `put.unattended` rather than `put`, and
+raising an approval is `pending` rather than `denied` — nothing was refused by
+asking, and the two were indistinguishable before.
+
+The vault schema moves to v5. It migrates on open, adds columns, and rewrites no
+secrets: existing entries keep the scheme they were written under and stay
+readable indefinitely.
+
+### An agent can now work alone
+
+- **`byn put` no longer needs an unlocked vault.** A scope has a second key,
+  derived from the vault key and sealed into a trusted `.byn`'s capability under
+  the machine key, so a locked daemon can store what a caller creates and give
+  it back. It opens nothing that was already there. The honest cost: a value
+  stored this way is protected by that machine as well as by your master
+  password — which is strictly less exposure than leaving the whole vault open.
+- **A caller may read and replace the values it created**, without a credential,
+  for as long as its session lives and nobody else has written them. A new
+  terminal, a restarted agent, or someone else overwriting it all end that, and
+  the ordinary rules resume. See `byn help unattended`.
+- **Adding such a variable to `[exec] env` needs no approval.** Being asked
+  permission to read back a value you supplied protects nothing.
+- **A command the `.byn` does not pin raises a decision** — an id and exit 75 —
+  instead of dead-ending at a password prompt no agent can answer. Approving it
+  actually grants it; a refusal is a wall carrying the reason, and `--force-ask`
+  is how you ask again.
+
+### Knowing what will happen, and what did
+
+- `byn exec --dry-run` answers "would this run, and do its variables have
+  values?" in one call that runs nothing and queues nothing.
+- `byn exec --json` reports a paused or refused command as data, so an id no
+  longer has to be scraped out of an English sentence.
+- `byn exec --wait-approval[=DUR]` blocks for a decision instead of exiting.
+- A variable a `.byn` declares with no value is named at launch, instead of the
+  program starting fine and dying at first use.
+- `[exec] optional` marks variables the program can run without, so the check
+  stops firing on a healthy machine.
+- `byn ps` shows which project each child belongs to; `byn approve --history`
+  shows what was decided.
+
+### Values an agent invented are never hidden
+
+byn cannot tell a value someone provisioned from one an agent made up, and an
+agent can silence a missing-variable warning by inventing one. So it says so:
+`put.unattended` in the audit log, a mark in `byn list --long`, a line in
+`byn doctor` (including for values no `.byn` declares), and a warning on the
+launch line every time one is injected. A project that provisions its secrets by
+hand can refuse them outright with `[exec] agent_put = false`, or by name with
+`[exec] agent_put_deny` (globs, e.g. `"*_SECRET"`).
+
+### Build artifacts stay yours
+
+Trusting a `.byn` sets a default ACL so anything the exec child creates stays
+deletable by you. `byn repair [DIR]` fixes trees built before that. Do not route
+`rm` through `byn exec` afterwards: the exec child can only delete what it
+created, so a tree you built yourself refuses it.
+
+### Fixed
+
+- Approving an unpinned command recorded the decision and applied nothing, so
+  the caller was refused again on every retry, forever.
+- A refusal consulted whichever decision was found first rather than the most
+  recent, so a command denied after being approved raised a fresh request.
+- A stale session token — the CLI keeps one on disk and sends it after the
+  daemon has restarted — counted as a human being present.
+- `byn trust diff` with no argument was an error, contradicting its own help.
+- Orphaned `byn exec` children outlived their wrapper.
+- `make dist` died on a macOS-only checksum command, and hashed its own
+  checksum file.

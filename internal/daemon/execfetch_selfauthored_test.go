@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
+	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
 
 // A variable the caller created itself is not a secret being disclosed to it.
@@ -1122,4 +1124,98 @@ func TestExecPreflightAgreesAboutDecidedCommands(t *testing.T) {
 			t.Error("denied_at should say when")
 		}
 	})
+}
+
+// stripAuthoredKey rewrites a trust record's capability without the authored
+// key, reproducing one granted before this release.
+func stripAuthoredKey(t *testing.T, d *Daemon, pw []byte) {
+	t.Helper()
+	store, err := trust.Load(d.cfg.Dir)
+	if err != nil {
+		t.Fatalf("load trust: %v", err)
+	}
+	capKey, ckerr := vcrypto.DeriveCapKey(d.fpMACKey)
+	if ckerr != nil {
+		t.Fatalf("cap key: %v", ckerr)
+	}
+	e := d.lookupVault(vault.DefaultVaultName)
+	if e == nil {
+		t.Fatal("no default vault")
+	}
+	vkKey, derr := e.store.DeriveSubkey(trust.VKMACKeyInfo)
+	if derr != nil {
+		t.Fatalf("vk key: %v", derr)
+	}
+	for _, rec := range store.Records {
+		if len(rec.ExecCapability) == 0 {
+			continue
+		}
+		keys, oerr := vcrypto.OpenCapability(capKey, rec.ExecCapability)
+		if oerr != nil {
+			t.Fatalf("open capability: %v", oerr)
+		}
+		delete(keys, vault.CapAuthoredKeyName)
+		blob, serr := vcrypto.SealCapability(capKey, keys)
+		if serr != nil {
+			t.Fatalf("re-seal: %v", serr)
+		}
+		rec.ExecCapability = blob
+		rec.SetMACs(d.fpMACKey, vkKey)
+		if _, perr := trust.Put(d.cfg.Dir, rec); perr != nil {
+			t.Fatalf("write record: %v", perr)
+		}
+	}
+}
+
+// What actually happens when you upgrade without re-trusting.
+//
+// I told the agent using byn that a locked `byn put` "fails closed until you
+// re-trust". It reported the opposite with an audit trace, and it was right —
+// but not because the gate is missing. A capability acquires the authored key
+// the first time byn records authorship while the vault is open, because that
+// path re-seals it. So the pre-release record heals itself the moment anyone
+// stores a value with the vault unlocked, and only a project where that has
+// never happened still needs the re-trust.
+//
+// Both halves are asserted here, because the claim in the documentation is only
+// as good as the behaviour underneath it.
+func TestUpgrade_CapabilityHealsOnTheFirstUnlockedWrite(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	stripAuthoredKey(t, d, pw) // now it looks like a record from before this release
+
+	// Half one: locked, nothing has healed it yet → refused.
+	lockVaultStore(t, d, "default")
+	held := c.Session
+	c.Session = nil
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "BEFORE_HEAL", Value: []byte("v"),
+	}, &ipc.PutResp{}); err == nil {
+		t.Fatal("a locked unattended write must be refused while the record carries no key byn may write with")
+	}
+
+	// Half two: one unattended write with the vault OPEN re-seals the
+	// capability, and the locked path works from then on — no re-trust.
+	c.Session = held
+	var ur ipc.VaultUnlockResp
+	tok, uerr := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ur, nil)
+	if uerr != nil {
+		t.Fatalf("unlock: %v", uerr)
+	}
+	c.Session = tok
+	putVarUnattended(t, c, ipc.Scope{}, "HEALS_IT", []byte("v"))
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AFTER_HEAL", Value: []byte("v"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("after an unattended write with the vault open, the locked path should work without a re-trust: %v", err)
+	}
 }
