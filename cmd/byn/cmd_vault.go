@@ -232,6 +232,7 @@ func runPut(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("put", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	createOnly := fs.Bool("create-only", false, "fail if name already exists")
+	jsonOut := fs.Bool("json", false, "emit {stored,created,unattended} JSON instead of prose")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
@@ -314,10 +315,12 @@ func runPut(args []string, scope cliScope) int {
 	setFirstRunTarget(newClient(dir, scope.Vault), scope.Vault)
 
 	// putCall issues the IPC put with the given password (nil = no auth yet).
+	var putResp ipc.PutResp
 	putCall := func(pw []byte) error {
+		putResp = ipc.PutResp{}
 		return newClient(dir, scope.Vault).Call(ipc.OpPut,
 			ipc.PutReq{Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly, Password: pw},
-			&ipc.PutResp{})
+			&putResp)
 	}
 
 	var rc int
@@ -340,7 +343,25 @@ func runPut(args []string, scope cliScope) int {
 	}
 
 	if rc == exitOK {
-		hintf("Stored %q in %s.", name, scope)
+		switch {
+		case *jsonOut:
+			out, merr := json.Marshal(map[string]any{
+				"stored": name, "scope": scope.String(),
+				"created": putResp.Created, "unattended": putResp.Unattended,
+			})
+			if merr == nil {
+				_, _ = fmt.Fprintln(os.Stdout, string(out))
+			}
+		case putResp.Unattended:
+			// Not a hint: hints are suppressed when nothing is watching, which
+			// is exactly when this matters. A caller that stored a value it can
+			// only read back for as long as its own session lives needs to be
+			// told so, at the moment it happens.
+			fmt.Fprintf(os.Stderr, "%s stored %s (unattended — readable by this agent while its session lives)\n",
+				yellow("note:"), name)
+		default:
+			hintf("Stored %q in %s.", name, scope)
+		}
 	}
 	return rc
 }

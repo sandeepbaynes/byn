@@ -158,7 +158,14 @@ func runExec(args []string, scope cliScope) int {
 	// change nothing, or asking it becomes its own kind of event.
 	if dryRun {
 		if scope.SourcePath == "" {
-			fmt.Fprintln(os.Stderr, boldRed("Error:")+" no .byn in scope — nothing to check against")
+			// --json means machine output, including for "there is nothing here
+			// to check". Prose on stdout would make a caller parse an error
+			// message to discover that.
+			if execJSONMode {
+				_, _ = fmt.Fprintln(os.Stdout, `{"pinned":false,"reason":"no_byn"}`)
+			} else {
+				fmt.Fprintln(os.Stderr, boldRed("Error:")+" no .byn in scope — nothing to check against")
+			}
 			return exitErr
 		}
 		// The same argv the real call would send, so the answer is about the
@@ -353,7 +360,11 @@ func runExec(args []string, scope cliScope) int {
 		}
 		return handleExecFetchError(callErr)
 	default:
-		return handleExecFetchError(callErr)
+		rc := handleExecFetchError(callErr)
+		if execJSONMode && isRefusedErr(callErr) {
+			execWallJSON(os.Stdout, callErr, rc)
+		}
+		return rc
 	}
 	renderAllowlistNotes(fetched, scope.SourcePath)
 	renderMissingValues(fetched.MissingValues, fetched.UnattendedValues, scope.SourcePath)
@@ -702,7 +713,11 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 		}
 		return exitApprovalPending, true
 	default:
-		return handleExecFetchError(callErr), true
+		rc := handleExecFetchError(callErr)
+		if execJSONMode && isRefusedErr(callErr) {
+			execWallJSON(os.Stdout, callErr, rc)
+		}
+		return rc, true
 	}
 }
 
@@ -1011,6 +1026,18 @@ const exitApprovalPending = 75 // EX_TEMPFAIL: try again later
 func isApprovalPendingErr(err error) bool {
 	var er *ipc.ErrResponse
 	return errors.As(err, &er) && er.Code == ipc.CodeApprovalPending
+}
+
+// isRefusedErr reports a command that was refused outright rather than paused:
+// a standing denial the caller cannot clear by waiting. Detected by the details
+// the daemon attaches, not by the message, which is prose.
+func isRefusedErr(err error) bool {
+	var er *ipc.ErrResponse
+	if !errors.As(err, &er) || er.Code != ipc.CodeTrustDenied {
+		return false
+	}
+	_, refused := er.Details["denied_at"]
+	return refused
 }
 
 // ok2err returns the original error unchanged; it exists so the wait path reads

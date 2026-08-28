@@ -547,8 +547,18 @@ type PutReq struct {
 	PresenceToken []byte `json:"presence_token,omitempty"`
 }
 
-// PutResp is empty.
-type PutResp struct{}
+// PutResp reports how the value was stored.
+type PutResp struct {
+	// Unattended is true when byn took the value in with no credential behind
+	// the call, which is what makes it readable back by this caller and marks
+	// it everywhere else. The caller is told because it is a materially
+	// different outcome from an ordinary put, and an agent that cannot see
+	// which one happened cannot know whether it will be able to read the value
+	// again.
+	Unattended bool `json:"unattended,omitempty"`
+	// Created distinguishes a new value from one that replaced an existing one.
+	Created bool `json:"created,omitempty"`
+}
 
 // GetReq retrieves an env-var entry from Scope. Applies inheritance
 // (falls back to env=default when not found in Scope.Env).
@@ -652,6 +662,15 @@ type ExecPreflightResp struct {
 	// ResolvedArgv is what an alias expanded to, when one was given. It lets a
 	// caller see the command the answer is actually about.
 	ResolvedArgv []string `json:"resolved_argv,omitempty"`
+	// Approved is true when the command is not pinned but a person has already
+	// granted it, so it would run. Reported separately from Pinned because the
+	// two are different facts about the .byn — one is written down in it, the
+	// other is a standing decision beside it.
+	Approved     bool   `json:"approved,omitempty"`
+	ApprovalID   string `json:"approval_id,omitempty"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
+	DeniedAt     int64  `json:"denied_at,omitempty"`
+	DeniedReason string `json:"denied_reason,omitempty"`
 	// Byn is the canonical path of the file that answered.
 	Byn string `json:"byn,omitempty"`
 }

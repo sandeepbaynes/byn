@@ -1047,3 +1047,79 @@ func TestSelfAuthored_SurvivesTheAuthorsOwnUpdate(t *testing.T) {
 		t.Fatal("after someone else replaced the value, the caller must no longer treat it as its own")
 	}
 }
+
+// The pre-flight must agree with the gate about DECIDED commands, not only
+// about what the .byn pins.
+//
+// Both halves were wrong and both misled in the worse direction: an approved
+// command was reported "not pinned", sending the caller to ask for something
+// already granted — the approval fatigue the queue exists to prevent — and a
+// refused one was reported as a pause, inviting a retry that cannot succeed.
+func TestExecPreflightAgreesAboutDecidedCommands(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"pinned run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	preflight := func(argv ...string) ipc.ExecPreflightResp {
+		t.Helper()
+		var r ipc.ExecPreflightResp
+		if err := c.Call(ipc.OpExecPreflight, ipc.ExecPreflightReq{Path: byn, Argv: argv}, &r); err != nil {
+			t.Fatalf("preflight: %v", err)
+		}
+		return r
+	}
+	raise := func(argv ...string) string {
+		t.Helper()
+		_, _ = execFetch(t, c, ipc.ExecFetchReq{Path: byn, Command: strings.Join(argv, " "), Argv: argv})
+		var list ipc.ApprovalListResp
+		if err := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: "pending"}, &list); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(list.Entries) == 0 {
+			t.Fatal("expected a pending request")
+		}
+		return list.Entries[len(list.Entries)-1].ID
+	}
+
+	t.Run("approved command reads as would-run", func(t *testing.T) {
+		id := raise("cleanup", "--all")
+		if err := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+			ID: id, Approve: true, Password: pw,
+		}, &ipc.ApprovalDecideResp{}); err != nil {
+			t.Fatalf("approve: %v", err)
+		}
+		r := preflight("cleanup", "--all")
+		if !r.Approved {
+			t.Errorf("approved = false; the pre-flight would send the caller to ask for what it already has (reason %q)", r.Reason)
+		}
+		// And the gate agrees: it runs.
+		if _, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "cleanup --all", Argv: []string{"cleanup", "--all"},
+		}); err != nil {
+			t.Fatalf("the gate refused a command the pre-flight called approved: %v", err)
+		}
+	})
+
+	t.Run("denied command reads as a wall, not a pause", func(t *testing.T) {
+		id := raise("purge", "--now")
+		if err := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+			ID: id, Approve: false, Reason: "wrong target",
+		}, &ipc.ApprovalDecideResp{}); err != nil {
+			t.Fatalf("deny: %v", err)
+		}
+		r := preflight("purge", "--now")
+		if r.Reason != "denied" {
+			t.Fatalf("reason = %q, want denied — a refusal reported as a pause invites a retry that cannot succeed", r.Reason)
+		}
+		if r.DeniedReason != "wrong target" {
+			t.Errorf("denied_reason = %q, want the decider's words", r.DeniedReason)
+		}
+		if r.DeniedAt == 0 {
+			t.Error("denied_at should say when")
+		}
+	})
+}

@@ -82,6 +82,52 @@ func TestProcStartTimeIsStableAndDistinguishes(t *testing.T) {
 	}
 }
 
+// The shape the agent using byn measured, and the one that defeated counting
+// hops: one command plain, the next wrapped in `timeout bash -c`.
+//
+//	plain:   byn ← bash ← agent
+//	wrapped: byn ← bash ← timeout ← bash ← agent
+//
+// A fixed depth reaches the agent in the first and misses it in the second, so
+// the two never recognise each other — and the agent could store a value it
+// could never read back. Identity has to be what a process IS, not how far up
+// it sits.
+func TestIdentitySeesThroughWrappers(t *testing.T) {
+	// This process stands in for the agent. A plain child, and a child behind
+	// two layers of wrapper, must resolve to the same identity: us.
+	plain := exec.Command("sleep", "30")
+	if err := plain.Start(); err != nil {
+		t.Skipf("cannot spawn: %v", err)
+	}
+	t.Cleanup(func() { _ = plain.Process.Kill(); _, _ = plain.Process.Wait() })
+
+	wrapped := exec.Command("timeout", "30", "sh", "-c", "exec sleep 30")
+	if err := wrapped.Start(); err != nil {
+		t.Skipf("cannot spawn wrapped: %v", err)
+	}
+	t.Cleanup(func() { _ = wrapped.Process.Kill(); _, _ = wrapped.Process.Wait() })
+
+	me := os.Getpid()
+	plainID := callerIdentity(plain.Process.Pid)
+	if !plainID.ok() {
+		t.Skip("no usable identity in this environment")
+	}
+	if plainID.PID != me {
+		t.Errorf("plain child resolved to pid %d, want this process (%d) — the shell above it should be walked past",
+			plainID.PID, me)
+	}
+	// The wrapped child is `timeout` itself here; its identity must still be us,
+	// reached past timeout and the shell it runs.
+	recorded := callerAncestryFn(wrapped.Process.Pid)
+	if len(recorded) == 0 {
+		t.Fatal("no identity recorded for a wrapped caller")
+	}
+	if !sharesAncestryFn(plain.Process.Pid, recorded) {
+		t.Fatalf("a wrapped caller and a plain one under the same agent were not recognised as the same; wrapped=%v plainID=%v",
+			recorded, plainID)
+	}
+}
+
 // Two commands run in DIFFERENT short-lived shells under one agent must count
 // as the same caller.
 //
@@ -114,10 +160,15 @@ func TestAncestryMatchesAcrossSiblingShells(t *testing.T) {
 	if !sharesAncestryFn(second.Process.Pid, recorded) {
 		t.Fatalf("two shells under one agent were not recognised as the same caller; recorded=%v", recorded)
 	}
-	// The recorded chain must reach past the immediate parent, or it could only
-	// ever match that one process.
-	if len(recorded) < 2 {
-		t.Errorf("recorded ancestry has %d entries; it must reach beyond the immediate parent", len(recorded))
+	// The recorded identity must be the agent, not the shell that happened to
+	// launch this one command — a shell dies with the tool call, and matching on
+	// it is what made the exemption expire at the end of every call.
+	if recorded[0].PID == first.Process.Pid {
+		t.Error("identity resolved to the calling process itself")
+	}
+	if recorded[0].PID != os.Getpid() {
+		t.Errorf("identity resolved to pid %d, want the agent above the shells (%d)",
+			recorded[0].PID, os.Getpid())
 	}
 }
 
@@ -125,8 +176,8 @@ func TestAncestryMatchesAcrossSiblingShells(t *testing.T) {
 // process on the machine share an ancestor, and the check would mean nothing.
 func TestAncestryIsBounded(t *testing.T) {
 	chain := callerAncestryFn(os.Getpid())
-	if len(chain) > originDepth {
-		t.Errorf("ancestry has %d entries, want at most %d", len(chain), originDepth)
+	if len(chain) > 1 {
+		t.Errorf("identity has %d entries, want exactly one", len(chain))
 	}
 	for _, p := range chain {
 		if p.PID <= 1 {

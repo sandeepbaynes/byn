@@ -40,66 +40,86 @@ type procRef struct {
 // will not grant anything on an identity it cannot pin down.
 func (p procRef) ok() bool { return p.PID > 1 && p.Start != 0 }
 
-// originDepth is how far above a caller byn looks for an identity, and it is
-// the whole difficulty of this file.
+// Identifying the agent behind a caller.
 //
-// The first version recorded only the immediate parent, on the reasoning that
-// `byn put` exits at once so the parent is the thing still around to run byn
-// again. That is true and useless: an agent harness runs each command in its
-// own short-lived shell, so the parent of one `byn put` has died by the time
-// the matching `byn exec` runs, and the exemption expired at the end of every
-// tool call — precisely the workflow it exists for. A live run caught it; every
-// test had done its put and its exec inside one shell.
+// byn needs to recognise that two commands came from the same agent. It cannot
+// use the caller: `byn put` exits at once. It cannot use the caller's parent
+// either — an agent harness runs every command in its own short-lived shell, so
+// that parent is dead by the next command. And it cannot simply walk a fixed
+// number of hops: the first attempt took three, which reached the agent for a
+// plain `bash -c` call and missed it entirely for one wrapped in `timeout`.
+// The agent using byn measured it:
 //
-// So byn records a short chain instead, and two callers count as the same agent
-// when their chains overlap. The depth is what draws the line. At 2-3 hops the
-// chain reaches the agent process that spawned both shells and stops there. Go
-// deeper and it reaches the terminal, the editor, the desktop session — and
-// then every process on the machine shares an ancestor and the check means
-// nothing.
+//	plain:   byn ← bash ← claude ← bash ← code
+//	wrapped: byn ← bash ← timeout ← bash ← claude ← bash ← code
 //
-// Three is chosen against the real shape: byn → shell → agent. It is a
-// heuristic, and it fails in the safe direction — an unrecognised caller is
-// asked for a credential, never handed one. The residual is that a process
-// spawned very close to the agent in the tree can match; what it gains by that
-// is limited to values the agent itself created unattended, never a secret that
-// was already in the vault.
-const originDepth = 3
+// The two chains overlap at the agent and nowhere shallower, and how deep that
+// is depends on how the command happened to be invoked. Counting hops cannot
+// work. What distinguishes those layers is what they ARE: shells and wrappers
+// that exist only to launch the next thing. So byn walks past those and takes
+// the first process that is doing something of its own. Both chains above
+// resolve to the same claude, which is the answer.
+//
+// The hop cap is a safety bound on a pathological tree, not the rule.
 
-// callerAncestry returns the chain of processes above a caller, nearest first,
-// bounded by originDepth. pid 1 is never included: everything descends from it.
-func callerAncestry(pid int) []procRef {
-	if pid <= 0 {
-		return nil
-	}
-	var out []procRef
-	seen := make(map[int]bool, originDepth)
-	cur := pid
-	for len(out) < originDepth {
-		_, ppid := procInfo(cur)
-		if ppid <= 1 || seen[ppid] {
-			break
-		}
-		seen[ppid] = true
-		start, ok := procStartTime(ppid)
-		if !ok {
-			break
-		}
-		out = append(out, procRef{PID: ppid, Start: start})
-		cur = ppid
-	}
-	return out
+// transientWrappers are process names that only ever exist to launch something
+// else. Skipping them is what lets `byn put` under `timeout bash -c …` and a
+// later plain `byn get` recognise each other.
+//
+// sudo is deliberately absent: it changes who you are, which is the opposite of
+// transparent, and a boundary byn should stop at rather than see through.
+var transientWrappers = map[string]bool{
+	"bash": true, "sh": true, "zsh": true, "dash": true, "fish": true, "ksh": true,
+	"timeout": true, "env": true, "nice": true, "nohup": true, "xargs": true,
+	"stdbuf": true, "setsid": true, "script": true,
 }
 
-// callerOrigin returns the nearest usable ancestor, kept for records written
-// before byn stored a chain.
-func callerOrigin(pid int) procRef {
-	chain := callerAncestry(pid)
-	if len(chain) == 0 {
+// maxIdentityHops bounds the walk. Real trees are a handful deep; this only
+// stops a cycle or a pathological tree from spinning the daemon.
+const maxIdentityHops = 8
+
+// callerIdentity returns the process byn treats as the agent behind a caller:
+// the nearest ancestor that is not a transient wrapper.
+func callerIdentity(pid int) procRef {
+	if pid <= 0 {
 		return procRef{}
 	}
-	return chain[0]
+	seen := make(map[int]bool, maxIdentityHops)
+	cur := pid
+	for hops := 0; hops < maxIdentityHops; hops++ {
+		comm, ppid := procInfo(cur)
+		if ppid <= 1 || seen[ppid] {
+			return procRef{}
+		}
+		seen[ppid] = true
+		pcomm, _ := procInfo(ppid)
+		cur = ppid
+		if transientWrappers[pcomm] {
+			continue // a shell or wrapper: keep walking
+		}
+		_ = comm
+		start, ok := procStartTime(ppid)
+		if !ok {
+			return procRef{}
+		}
+		return procRef{PID: ppid, Start: start}
+	}
+	return procRef{}
 }
+
+// callerAncestry returns the identity to record for a caller, as a one-element
+// chain. The slice shape is kept because records on disk carry one.
+func callerAncestry(pid int) []procRef {
+	id := callerIdentity(pid)
+	if !id.ok() {
+		return nil
+	}
+	return []procRef{id}
+}
+
+// callerOrigin returns the identity, kept for records written before byn stored
+// a chain.
+func callerOrigin(pid int) procRef { return callerIdentity(pid) }
 
 // sharesAncestry reports whether a caller belongs to the same agent as the one
 // that recorded want: their ancestor chains overlap.
@@ -110,16 +130,39 @@ func sharesAncestry(pid int, want []procRef) bool {
 	if len(want) == 0 || pid <= 0 {
 		return false
 	}
-	mine := callerAncestry(pid)
+	mine := callerIdentity(pid)
 	for _, w := range want {
 		if !w.ok() {
 			continue
 		}
-		for _, m := range mine {
-			if m == w {
-				return true
-			}
+		if mine == w {
+			return true
 		}
+		// Also accept a caller running BENEATH the recorded identity: an agent
+		// that spawns a helper which spawns byn is still that agent, and its
+		// own nearest non-wrapper ancestor would be the helper.
+		if isAncestor(w, pid) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAncestor reports whether want is among pid's ancestors, within the hop cap.
+func isAncestor(want procRef, pid int) bool {
+	seen := make(map[int]bool, maxIdentityHops)
+	cur := pid
+	for hops := 0; hops < maxIdentityHops; hops++ {
+		_, ppid := procInfo(cur)
+		if ppid <= 1 || seen[ppid] {
+			return false
+		}
+		seen[ppid] = true
+		if ppid == want.PID {
+			start, ok := procStartTime(ppid)
+			return ok && start == want.Start
+		}
+		cur = ppid
 	}
 	return false
 }

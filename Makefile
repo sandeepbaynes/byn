@@ -168,7 +168,13 @@ dist: clean-dist
 		echo "  building $$helper"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='-s -w' -o $$helper ./cmd/byn-exec-helper || exit 1; \
 	done
-	@cd $(DIST_DIR) && shasum -a 256 byn-* > byn-$(VERSION).sha256
+	@# sha256sum on Linux, shasum on macOS — `make dist` built every artifact and
+	@# then died on the checksum line for want of a command that only ships with
+	@# one of them.
+	@# Binaries only. The shell creates the redirect target before the glob
+	@# expands, so `byn-*` swept the checksum file into its own list and the
+	@# first line was the digest of an empty file.
+	@cd $(DIST_DIR) && files=$$(ls byn-* | grep -v '\.sha256$$') && 		{ command -v sha256sum >/dev/null && sha256sum $$files || shasum -a 256 $$files; } > byn-$(VERSION).sha256
 	@echo "dist artifacts (v$(VERSION)) in $(DIST_DIR)/:"
 	@ls -1 $(DIST_DIR)
 

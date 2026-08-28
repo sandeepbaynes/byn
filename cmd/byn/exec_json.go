@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
@@ -58,8 +59,22 @@ func stripExecJSON(args []string) ([]string, bool) {
 // Falls back to the error's own text for any field the daemon did not supply,
 // so an older daemon still produces valid JSON rather than nothing.
 func execApprovalJSON(w *os.File, callErr error, exitCode int) {
+	execErrorJSON(w, string(ipc.CodeApprovalPending), callErr, exitCode)
+}
+
+// execWallJSON reports a command that was refused outright.
+//
+// A refusal used to leave --json consumers with "exit 3 and empty stdout",
+// which tells a program nothing — and this is the case where it most needs the
+// facts, because the next step (stop, or ask again with --force-ask) depends on
+// why and when it was refused.
+func execWallJSON(w *os.File, callErr error, exitCode int) {
+	execErrorJSON(w, "denied", callErr, exitCode)
+}
+
+func execErrorJSON(w *os.File, status string, callErr error, exitCode int) {
 	obj := map[string]any{
-		"status": string(ipc.CodeApprovalPending),
+		"status": status,
 		"exit":   exitCode,
 	}
 	var em *ipc.ErrResponse
@@ -142,9 +157,14 @@ func runExecDryRun(bynPath string, argv []string, alias string, jsonOut bool) in
 	} else {
 		printDryRun(resp)
 	}
+	// The exit code must mean what the real gate means, or a caller branching on
+	// it is misled in the one direction that matters. A refusal is exit 3 there,
+	// not 75: a wall is not a pause, and 75 invites a retry that cannot succeed.
 	switch {
-	case !resp.Pinned:
-		return exitApprovalPending // it would pause, which is what 75 means
+	case resp.Reason == "denied":
+		return exitDaemonErr
+	case !resp.Pinned && !resp.Approved:
+		return exitApprovalPending
 	case len(resp.MissingEnv) > 0:
 		return exitErr // it would run, but short of what it declares
 	default:
@@ -157,6 +177,18 @@ func printDryRun(r ipc.ExecPreflightResp) {
 	switch {
 	case r.Pinned:
 		fmt.Fprintf(os.Stderr, "%s pinned by %s\n", cyan("would run:"), cyan(r.MatchedAction))
+	case r.Approved:
+		fmt.Fprintf(os.Stderr, "%s not pinned, but already approved\n", cyan("would run:"))
+	case r.Reason == "denied":
+		msg := "was refused"
+		if r.DeniedAt > 0 {
+			msg += " at " + time.Unix(r.DeniedAt, 0).Format(time.RFC3339)
+		}
+		if r.DeniedReason != "" {
+			msg += ": " + r.DeniedReason
+		}
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("would NOT run:"), msg)
+		fmt.Fprintf(os.Stderr, "      %s\n", dim("ask again with: byn exec --force-ask"))
 	case r.Reason == "no_actions":
 		fmt.Fprintf(os.Stderr, "%s %s pins no actions, so every command needs a decision\n",
 			boldYellow("would pause:"), r.Byn)

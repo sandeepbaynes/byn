@@ -149,6 +149,13 @@ func checkInjectableNames() (healCheck, bool) {
 		return c, false // malformed: the trust path reports that far better
 	}
 	declared := []string(f.Exec.Env)
+	// An unattended value that matches NO allowlist is the more suspicious one,
+	// not the less: nothing legitimate creates a value the project never asks
+	// for. The declared-vs-vault comparison below cannot see those at all, so
+	// they are reported first and regardless of what the .byn declares.
+	if c, ok := checkStrayUnattended(f, bynPath); ok {
+		return c, true
+	}
 	if len(declared) == 0 || f.AllowsAll() {
 		return c, false // nothing named to check against
 	}
@@ -248,4 +255,43 @@ func matchesDeny(patterns []string, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// checkStrayUnattended reports values stored with no credential behind the call
+// that the .byn does not declare — an agent invented them and nothing will ever
+// inject them, so nobody would otherwise look.
+func checkStrayUnattended(f bynfile.File, bynPath string) (healCheck, bool) {
+	c := healCheck{Name: "declared variables have values"}
+	dir, derr := defaultDir()
+	if derr != nil {
+		return c, false
+	}
+	var resp ipc.ListResp
+	if cerr := newClient(dir, f.Scope.Vault).Call(ipc.OpList, ipc.ListReq{
+		Scope: ipc.Scope{Vault: f.Scope.Vault, Project: f.Scope.Project, Env: f.Scope.Env},
+	}, &resp); cerr != nil {
+		return c, false
+	}
+	declared := make(map[string]struct{}, len(f.Exec.Env))
+	for _, n := range []string(f.Exec.Env) {
+		declared[n] = struct{}{}
+	}
+	var stray []string
+	for _, e := range resp.Secrets {
+		if !e.Unattended {
+			continue
+		}
+		if _, ok := declared[e.Name]; ok {
+			continue // covered by the declared-vs-vault report
+		}
+		stray = append(stray, e.Name)
+	}
+	if len(stray) == 0 {
+		return c, false
+	}
+	c.Warn = true
+	c.Detail = fmt.Sprintf("%d value(s) stored with no password behind the call that %s does not declare: %s",
+		len(stray), filepath.Base(bynPath), strings.Join(stray, ", "))
+	c.Fix = "nothing injects them; remove one with: byn delete " + stray[0]
+	return c, true
 }

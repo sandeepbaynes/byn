@@ -128,6 +128,22 @@ func (d *Daemon) handleExecPreflight(ctx context.Context, env *ipc.Envelope) *ip
 		}
 	}
 
+	// A command the .byn does not pin may still have a standing decision beside
+	// it, and the gate consults both. A pre-flight that read only the file told
+	// callers to go and ask for something already granted, and reported a
+	// refusal as a pause — the two answers that mislead rather than merely
+	// disappoint. This has to agree with the gate or it is worse than nothing.
+	if !out.Pinned && d.approvals != nil {
+		_, _, fingerprint := actionApprovalKey(canon, "", argv)
+		if denial, refused := d.approvals.LastDenial(canon, fingerprint); refused {
+			out.Reason = "denied"
+			out.DeniedAt = denial.DecidedAt.Unix()
+			out.DeniedReason = denial.DecidedReason
+		} else if granted, gerr := d.approvals.ActionGranted(canon, fingerprint); gerr == nil && granted {
+			out.Approved, out.Reason = true, "approved"
+		}
+	}
+
 	// The other half of "will this launch cleanly": are the declared variables
 	// actually there? One call answers both, because an agent that has to make
 	// two will make neither.

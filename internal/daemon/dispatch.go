@@ -1384,7 +1384,10 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		if created {
 			d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored, unattended)
 		}
-		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
+		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{
+			Unattended: unattended && useAuthored,
+			Created:    created,
+		})
 		if oerr != nil {
 			resp = internalErr(env.ID, oerr)
 		} else {
