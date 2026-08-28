@@ -1552,6 +1552,12 @@ type ApprovalEntry struct {
 	ExpiresAt  int64    `json:"expires_at"`
 	Repeats    int      `json:"repeats,omitempty"`
 	DecidedVia string   `json:"decided_via,omitempty"`
+	// DecidedAt and DecidedReason describe an answered request. Without them a
+	// decided entry can only say "gone", and the caller that asked cannot tell
+	// whether it was granted, refused, or simply timed out — which is the one
+	// thing it needs to know before deciding what to do next.
+	DecidedAt     int64  `json:"decided_at,omitempty"`
+	DecidedReason string `json:"decided_reason,omitempty"`
 }
 
 // ApprovalListResp returns the queue, newest first.

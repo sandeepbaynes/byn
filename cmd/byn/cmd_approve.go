@@ -26,6 +26,7 @@ func runApprove(args []string, _ cliScope) int {
 	reason := fs.String("reason", "", "why, in your own words — shown to whoever asked (most useful with --deny)")
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	all := fs.Bool("all", false, "answer every pending request")
+	history := fs.Bool("history", false, "show decided and expired requests too, not just what is waiting")
 	pwStdin := fs.Bool("password-stdin", false, "read the master password from stdin")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
@@ -40,7 +41,7 @@ func runApprove(args []string, _ cliScope) int {
 
 	ids := fs.Args()
 	if len(ids) == 0 && !*all {
-		return listApprovals(c, *jsonOut)
+		return listApprovals(c, *jsonOut, *history)
 	}
 
 	if *all {
@@ -92,10 +93,20 @@ func runApprove(args []string, _ cliScope) int {
 	return rc
 }
 
-func listApprovals(c *ipc.Client, jsonOut bool) int {
+// listApprovals shows what is waiting, or — with history — what was decided too.
+//
+// The default stays pending-only because that is the list a person acts on. But
+// once answered, a request simply vanished, and the caller that raised it had no
+// way to find out what happened short of running the command again to see. That
+// is the wrong way to learn you were refused.
+func listApprovals(c *ipc.Client, jsonOut, history bool) int {
+	status := "pending"
+	if history {
+		status = "" // everything the queue still holds
+	}
 	var resp ipc.ApprovalListResp
 	if cerr := c.Call(ipc.OpApprovalList,
-		ipc.ApprovalListReq{Status: "pending"}, &resp); cerr != nil {
+		ipc.ApprovalListReq{Status: status}, &resp); cerr != nil {
 		return handleCallError(cerr)
 	}
 	if jsonOut {
@@ -108,7 +119,11 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 		return exitOK
 	}
 	if len(resp.Entries) == 0 {
-		fmt.Fprintln(os.Stderr, dim("Nothing waiting."))
+		if history {
+			fmt.Fprintln(os.Stderr, dim("No requests on file."))
+		} else {
+			fmt.Fprintln(os.Stderr, dim("Nothing waiting.")+dim("  (byn approve --history for decided ones)"))
+		}
 		return exitOK
 	}
 	for _, e := range resp.Entries {
@@ -122,6 +137,21 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 		}
 		age := time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second)
 		detail := fmt.Sprintf("asked %s ago", age)
+		if e.Status != "pending" {
+			// An answered request: what happened is the useful part, not its age.
+			detail = e.Status
+			if e.DecidedAt > 0 {
+				detail += " " + time.Since(time.Unix(e.DecidedAt, 0)).Truncate(time.Second).String() + " ago"
+			}
+			if e.DecidedVia != "" {
+				detail += " via " + e.DecidedVia
+			}
+			if e.DecidedReason != "" {
+				detail += " — " + e.DecidedReason
+			}
+			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
+			continue
+		}
 		// How long is left, not just how long it has been waiting. A request
 		// raised at the end of a day can expire before anyone looks at it, and
 		// "asked 5h ago" does not tell you that you have an hour to answer.
