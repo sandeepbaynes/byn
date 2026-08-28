@@ -12,6 +12,11 @@ import (
 	"github.com/sandeepbaynes/byn/internal/vault"
 )
 
+// maxGrantWindow bounds how long an owner can let one command run free without
+// being asked again. A day is already generous for something the durable answer
+// to is pinning it in [exec] actions.
+const maxGrantWindow = 24 * time.Hour
+
 func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 	return ipc.ApprovalEntry{
 		ID: r.ID, Kind: string(r.Kind), Vault: r.Vault, Subject: r.Subject,
@@ -22,6 +27,8 @@ func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 		DecidedAt:     decidedUnix(r.DecidedAt),
 		GrantedUntil:  decidedUnix(r.GrantedUntil),
 		Reason:        r.Reason,
+		NeededBy:      decidedUnix(r.NeededBy),
+		Late:          r.Late,
 		Requestor: ipc.ApprovalActor{
 			PID: r.Requestor.PID, Exe: r.Requestor.Exe, Cwd: r.Requestor.Cwd,
 			User: r.Requestor.User, Agent: r.Requestor.Agent,
@@ -109,7 +116,16 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 	if via == "" {
 		via = "terminal"
 	}
-	decided, err := d.approvals.Decide(req.ID, req.Approve, via, req.Reason)
+	// The window the owner chose, when they chose one. Bounded on the way in:
+	// a grant length arriving over IPC decides how long something runs without
+	// asking again, so an absurd one is refused rather than honoured.
+	grantFor := time.Duration(req.GrantForSeconds) * time.Second
+	if grantFor < 0 || grantFor > maxGrantWindow {
+		return ipc.NewError(env.ID, ipc.CodeBadRequest,
+			fmt.Sprintf("a grant window must be between 0 and %s", maxGrantWindow),
+			"byn approve "+req.ID+" --for 30m")
+	}
+	decided, err := d.approvals.DecideFor(req.ID, req.Approve, via, req.Reason, grantFor)
 	if err != nil {
 		return internalErr(env.ID, err)
 	}

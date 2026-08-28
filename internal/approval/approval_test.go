@@ -346,3 +346,105 @@ func TestRequestor_StringNamesTheAgentNotTheProcess(t *testing.T) {
 		t.Errorf("with nothing known: String() = %q, want empty", got)
 	}
 }
+
+// An answer that lands after the asker gave up still grants — it just grants to
+// nobody who is listening. Saying so is the difference between a grant someone
+// can account for and one that appears from nowhere.
+func TestDecide_LateAnswerGrantsAndSaysSo(t *testing.T) {
+	s, clock := newStore(t)
+
+	r := req("/p/.byn", "fp-late")
+	r.Kind = KindActionUnpinned
+	r.NeededBy = clock.Add(2 * time.Minute)
+	pending, err := s.Enqueue(r)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	*clock = clock.Add(10 * time.Minute) // the asker has long since exited 75
+	decided, err := s.Decide(pending.ID, true, "terminal", "")
+	if err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if decided.Status != StatusApproved {
+		t.Fatalf("status = %s, want approved — a late answer is still an answer", decided.Status)
+	}
+	if !decided.Late {
+		t.Error("a decision after NeededBy is not marked late")
+	}
+	if decided.GrantedUntil.IsZero() {
+		t.Error("late or not, the command should have been granted")
+	}
+
+	// In time, and it is not late.
+	s2, clock2 := newStore(t)
+	r2 := req("/p/.byn", "fp-ontime")
+	r2.Kind = KindActionUnpinned
+	r2.NeededBy = clock2.Add(2 * time.Minute)
+	p2, err := s2.Enqueue(r2)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	*clock2 = clock2.Add(30 * time.Second)
+	d2, err := s2.Decide(p2.ID, true, "terminal", "")
+	if err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if d2.Late {
+		t.Error("an answer inside the window was marked late")
+	}
+}
+
+// A request with no stated deadline is never late: a caller that never said it
+// was waiting cannot have stopped.
+func TestDecide_NoDeadlineIsNeverLate(t *testing.T) {
+	s, clock := newStore(t)
+	pending, err := s.Enqueue(req("/p/.byn", "fp-none"))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	*clock = clock.Add(5 * time.Hour)
+	decided, err := s.Decide(pending.ID, true, "terminal", "")
+	if err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if decided.Late {
+		t.Error("a request that stated no deadline was marked late")
+	}
+}
+
+// The owner can shorten the window a command runs free. Six hours for something
+// wanted once is a standing authority nobody asked for.
+func TestDecideFor_OwnerSetsTheGrantWindow(t *testing.T) {
+	s, clock := newStore(t)
+	r := req("/p/.byn", "fp-window")
+	r.Kind = KindActionUnpinned
+	pending, err := s.Enqueue(r)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	decided, err := s.DecideFor(pending.ID, true, "terminal", "", 20*time.Minute)
+	if err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if got := decided.GrantedUntil.Sub(*clock); got != 20*time.Minute {
+		t.Errorf("granted for %s, want 20m", got)
+	}
+
+	// Zero still means the default, so nothing changes for callers that do not
+	// choose a window.
+	s2, clock2 := newStore(t)
+	r2 := req("/p/.byn", "fp-default")
+	r2.Kind = KindActionUnpinned
+	p2, err := s2.Enqueue(r2)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	d2, err := s2.DecideFor(p2.ID, true, "terminal", "", 0)
+	if err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if got := d2.GrantedUntil.Sub(*clock2); got != ActionGrantFor {
+		t.Errorf("granted for %s, want the default %s", got, ActionGrantFor)
+	}
+}

@@ -96,6 +96,21 @@ Both surfaces also now say what approving does: it authorizes, it runs nothing,
 and it does not edit the `.byn`. That was the first question people asked of
 these cards.
 
+### Requests say when they are needed, grants say how long they last
+
+A caller waiting on a decision (`byn exec --wait-approval`) now records how long
+it will wait, so the list can separate "needed within 1m20s" from "no longer
+waiting" — two rows that looked identical before, one with a process sitting on
+it and one abandoned. Answering after that still grants; the entry is marked as
+having arrived late, and nothing runs by itself.
+
+`byn approve --for 30m` sets how long an approved command runs free, instead of
+the default six hours for everything (24h ceiling). A command wanted once for the
+next ten minutes should not become a standing authority.
+
+`--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
+environment does the same for harnesses that build byn's argv themselves.
+
 ### A record of what each run was given
 
 `byn runs` shows every command byn authorised: when, which `.byn` allowed it,

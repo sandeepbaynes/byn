@@ -1532,6 +1532,13 @@ async function renderApprovalsView() {
     const meta = [];
     if (a.created_at) meta.push("asked " + relTime(a.created_at));
     if (a.repeats) meta.push("retried " + a.repeats + "\u00d7");
+    // Whether anyone is still waiting on this. Two cards an hour apart look the
+    // same, and one of them may have a process sitting on it right now.
+    if (a.needed_by) {
+      const left = a.needed_by - Math.floor(Date.now() / 1000);
+      meta.push(left > 0 ? "needed within " + left + "s" : "no longer waiting");
+    }
+    if (a.late) meta.push("answered after the asker gave up");
     card.appendChild(el("div", "approval-meta", meta.join(" \u00b7 ")));
 
     const acts = el("div", "trust-row-acts");

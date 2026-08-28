@@ -1089,10 +1089,16 @@ type ExecFetchReq struct {
 	// request byn has to queue can say what it was for. byn never checks it and
 	// never lets it affect a decision — it is shown to whoever decides, as the
 	// asker's own claim.
-	Reason  string `json:"reason,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Scope   Scope  `json:"scope,omitempty"`
-	Command string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
+	Reason string `json:"reason,omitempty"`
+	// WaitSeconds is how long the caller will wait for a decision, if it is
+	// waiting at all. Carried so a queued request can say when the asker stops
+	// listening: an approval granted after that is a real grant with nobody
+	// left to use it, and a list that cannot tell the two apart shows an urgent
+	// request and an abandoned one as the same row.
+	WaitSeconds int    `json:"wait_seconds,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Scope       Scope  `json:"scope,omitempty"`
+	Command     string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
 	// Argv is the exact untruncated child argv for the direct form (Alias==""),
 	// or the extra passthrough args for the alias form (Alias!="").
 	// An old CLI that does not send Argv gets empty-Argv behavior: treated as
@@ -1627,13 +1633,17 @@ type ApprovalEntry struct {
 	// labelled as such wherever it is shown. Requestor is the opposite: every
 	// field of it is read from the kernel, so a person can weigh the claim
 	// against who actually asked.
-	Reason     string        `json:"reason,omitempty"`
-	Requestor  ApprovalActor `json:"requestor,omitempty"`
-	Status     string        `json:"status"`
-	CreatedAt  int64         `json:"created_at"`
-	ExpiresAt  int64         `json:"expires_at"`
-	Repeats    int           `json:"repeats,omitempty"`
-	DecidedVia string        `json:"decided_via,omitempty"`
+	Reason    string        `json:"reason,omitempty"`
+	Requestor ApprovalActor `json:"requestor,omitempty"`
+	// NeededBy is when the asker stops waiting; Late says an answer arrived
+	// after that. Zero when the caller never said it was waiting.
+	NeededBy   int64  `json:"needed_by,omitempty"`
+	Late       bool   `json:"late,omitempty"`
+	Status     string `json:"status"`
+	CreatedAt  int64  `json:"created_at"`
+	ExpiresAt  int64  `json:"expires_at"`
+	Repeats    int    `json:"repeats,omitempty"`
+	DecidedVia string `json:"decided_via,omitempty"`
 	// DecidedAt and DecidedReason describe an answered request. Without them a
 	// decided entry can only say "gone", and the caller that asked cannot tell
 	// whether it was granted, refused, or simply timed out — which is the one
@@ -1676,8 +1686,13 @@ type ApprovalDecideReq struct {
 	// again" from "never do this", so it either gives up or re-asks blindly.
 	// Optional, and never required — a decision without one is still a
 	// decision.
-	Reason   string `json:"reason,omitempty"`
-	Password []byte `json:"password,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// GrantForSeconds is how long an approved command runs free, when the owner
+	// wants something other than the default window. It applies to a command
+	// grant and is ignored elsewhere: a trust widening is applied by re-granting
+	// the .byn, so its lifetime lives in the trust store, not here.
+	GrantForSeconds int    `json:"grant_for_seconds,omitempty"`
+	Password        []byte `json:"password,omitempty"`
 }
 
 // ApprovalDecideResp reports what the request now says. Deciding is idempotent,

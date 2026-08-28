@@ -795,9 +795,12 @@ DESCRIPTION
            means ask the owner to pin something, "no_match" usually means
            the command is wrong.
 
-       byn exec --reason "TEXT"
+       byn exec --reason "TEXT"   (also --why, or BYN_WHY in the environment)
            Say what the command is for. It travels with a request that
-           has to be queued and is shown to whoever decides it.
+           has to be queued and is shown to whoever decides it. BYN_WHY
+           is there for harnesses that build byn's argv themselves and
+           cannot add a flag: export it once and every request raised in
+           that session explains itself.
 
            It changes nothing about whether the command is allowed. byn
            cannot check a stated purpose and never treats one as
@@ -825,6 +828,13 @@ DESCRIPTION
            immediately with the id. Default 2m; give a duration to change
            it (--wait-approval=10m, or --wait-approval 30s). On timeout
            exec still exits 75, so nothing is lost by waiting.
+
+           The window is also recorded on the request, so the list can
+           say "needed within 1m20s" for a caller that is still sitting
+           there and "no longer waiting" for one that has gone. An
+           approval that lands after it still grants — it is marked as
+           having arrived late, and nothing runs by itself: whoever asked
+           has to run it again.
 
            Use it for a scripted step a person is watching — one approval
            mid-pipeline no longer means re-driving the whole thing. Leave
@@ -1960,6 +1970,7 @@ SYNOPSIS
        byn approve [--password-stdin] ID...
        byn approve --deny ID...
        byn approve --all [--password-stdin]
+       byn approve [--for DURATION] ID...
 
 DESCRIPTION
        When a .byn asks for more authority than it was granted, byn does
@@ -1989,8 +2000,21 @@ DESCRIPTION
        and both the grant and its revocation are in the audit log.
 
        With no arguments, lists what is waiting: the file, what would be
-       granted in plain words, how long it has been waiting, when it
-       expires, and which vault it belongs to. Add --history to see
+       granted in plain words, who asked for it, why they say they need
+       it, how long it has been waiting, when it expires, and which
+       vault it belongs to.
+
+       Who is byn's own account, read from the kernel: the agent behind
+       the call, where it was working, whether anyone was at a terminal.
+       Why is the asker's — passed with "byn exec --reason" — and is
+       shown as the claim it is. byn cannot check a stated purpose and
+       never lets one affect a decision. A request without one is
+       allowed and says so.
+
+       A caller that is waiting (see "byn exec --wait-approval") also
+       says how long, and the list shows "needed within 1m20s" or "no
+       longer waiting". Answering after that still grants — the entry is
+       marked as having arrived late, and nothing runs by itself. Add --history to see
        decided and expired requests too — an answered request otherwise
        simply vanishes, leaving whoever asked no way to find out what
        happened short of running the command again to see. Entries
@@ -2001,6 +2025,16 @@ DESCRIPTION
        Approving grants authority, so it asks for the master password,
        exactly as "byn trust" does. Approving re-grants the .byn, so the
        caller's next attempt succeeds.
+
+       Approving does not run anything and does not edit the .byn. It
+       grants; whoever asked runs it again. Both of those were read the
+       other way round the first time someone saw one of these lists.
+
+       --for DURATION shortens or extends how long an approved command
+       runs free (default 6h, at most 24h). A command wanted once for
+       the next ten minutes and one wanted all afternoon are different
+       grants, and giving both the default makes the first a standing
+       authority nobody asked for.
 
        An approved COMMAND is matched exactly — the literal joined argv,
        not a prefix or a pattern. The same command runs free afterwards

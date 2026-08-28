@@ -41,6 +41,7 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		HighRisk:    delta.HighRisk(),
 		Requestor:   d.requestorOf(ctx, vaultName, req),
 		Reason:      requestReason(req.Reason),
+		NeededBy:    neededBy(req.WaitSeconds),
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):
@@ -65,7 +66,7 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		Op:      "approval.raise",
 		Outcome: audit.OutcomePending, // the question was put; nothing was refused
 		BynPath: canon,
-		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; "),
+		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; ") + auditReason(pending),
 	})
 
 	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
@@ -235,6 +236,7 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 		Summary:     summary,
 		Requestor:   d.requestorOf(ctx, vaultName, req),
 		Reason:      requestReason(req.Reason),
+		NeededBy:    neededBy(req.WaitSeconds),
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):
@@ -251,7 +253,7 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 
 	d.auditEmit(ctx, vaultName, audit.Event{
 		Op: "approval.raise", Outcome: audit.OutcomePending, BynPath: canon,
-		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; "),
+		Command: "approval raised " + pending.ID + ": " + strings.Join(summary, "; ") + auditReason(pending),
 	})
 	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
 		fmt.Sprintf("%s is not pinned in %s [exec] actions — approval %s is waiting",
@@ -309,4 +311,31 @@ func reasonHint(pending approval.Request) string {
 		return ""
 	}
 	return `; if you retry, pass --reason "why you need this" — it reaches the same request`
+}
+
+// neededBy turns the caller's own waiting window into a deadline on the record.
+//
+// Only the caller knows this: an agent that will sit on a request for two
+// minutes and one that has gone away are the same row on a list otherwise, and
+// they deserve opposite amounts of hurry. A caller that is not waiting says
+// nothing, and the request simply has no deadline.
+func neededBy(waitSeconds int) time.Time {
+	if waitSeconds <= 0 {
+		return time.Time{}
+	}
+	if waitSeconds > int(maxGrantWindow/time.Second) {
+		waitSeconds = int(maxGrantWindow / time.Second)
+	}
+	return time.Now().Add(time.Duration(waitSeconds) * time.Second)
+}
+
+// auditReason appends the asker's stated purpose to the logged event, marked as
+// theirs. The log is what someone reads months later to reconstruct why
+// authority moved, and "why they said they wanted it" is most of that story —
+// as long as the log never presents the claim as byn's own finding.
+func auditReason(pending approval.Request) string {
+	if pending.Reason == "" {
+		return ""
+	}
+	return " (asker's reason: " + pending.Reason + ")"
 }

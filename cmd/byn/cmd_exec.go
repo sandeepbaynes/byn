@@ -81,7 +81,6 @@ func runExec(args []string, scope cliScope) int {
 	// some callers prefer to sit on it. The default stays non-blocking, because
 	// a caller that cannot be interrupted must not be made to wait by default.
 	args, waitApproval, hasWait := stripWaitApproval(args)
-	_ = hasWait
 
 	// --json makes exec report a paused command as data rather than prose, so an
 	// agent reads the approval id from a field instead of pattern-matching an
@@ -101,6 +100,12 @@ func runExec(args []string, scope cliScope) int {
 	// claim, not evidence — but a card that says what a command is for is the
 	// difference between answering it and going to ask.
 	args, reason := stripExecReason(args)
+	if reason == "" {
+		// BYN_WHY exists for harnesses that build byn's argv themselves and
+		// cannot add a flag to it. A wrapper script can export it once and
+		// every request the agent raises inside that session explains itself.
+		reason = os.Getenv("BYN_WHY")
+	}
 
 	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
 	if hasInspect {
@@ -223,6 +228,10 @@ func runExec(args []string, scope cliScope) int {
 			Argv:     extraArgs,
 			ForceAsk: forceAsk,
 			Reason:   reason,
+			// Only when actually waiting: a caller that exits immediately has
+			// no deadline to state, and claiming one would put a hurry on the
+			// list that nothing is behind.
+			WaitSeconds: waitSeconds(waitApproval, hasWait),
 		}
 	} else {
 		cmd := execCommandLabel(childArgv)
@@ -233,6 +242,10 @@ func runExec(args []string, scope cliScope) int {
 			Argv:     childArgv,
 			ForceAsk: forceAsk,
 			Reason:   reason,
+			// Only when actually waiting: a caller that exits immediately has
+			// no deadline to state, and claiming one would put a hurry on the
+			// list that nothing is behind.
+			WaitSeconds: waitSeconds(waitApproval, hasWait),
 		}
 	}
 
@@ -1136,4 +1149,16 @@ func renderMissingValues(missing, unattended []string, sourcePath string) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("(unattended value)"),
 			dim("byn cannot tell one an agent invented from one you set. byn audit tail | grep put.unattended"))
 	}
+}
+
+// waitSeconds renders the caller's waiting window for the request record.
+//
+// Zero means "not waiting", which is the honest answer for the default
+// non-blocking form: the request is still worth raising, it just has nobody
+// sitting on it, and the list should be able to say so.
+func waitSeconds(d time.Duration, waiting bool) int {
+	if !waiting || d <= 0 {
+		return 0
+	}
+	return int(d / time.Second)
 }

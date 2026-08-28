@@ -261,6 +261,9 @@ func stripExecForceAsk(args []string) ([]string, bool) {
 // queue was built to remove. byn cannot know the purpose of a command; the
 // caller can, so the caller says it.
 //
+// --why is the same flag under the name the request was made in; both are
+// accepted so neither reads as the wrong one at a glance.
+//
 // Same boundary rule as the other exec flags: everything after the first
 // non-flag argument belongs to the child, so a child of byn can have a --reason
 // of its own without byn stealing it.
@@ -283,7 +286,11 @@ func stripExecReason(args []string) ([]string, string) {
 			reason = v
 			continue
 		}
-		if a == "--reason" && i+1 < len(args) {
+		if v, ok := strings.CutPrefix(a, "--why="); ok {
+			reason = v
+			continue
+		}
+		if (a == "--reason" || a == "--why") && i+1 < len(args) {
 			reason = args[i+1]
 			i++
 			continue

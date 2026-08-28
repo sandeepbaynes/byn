@@ -922,6 +922,16 @@ exits 75. For a scripted step someone is watching \(em one approval
 mid\-pipeline no longer means re\-driving the whole thing. Off by
 default, because a caller that must not stall must not be made to wait.
 .TP
+.B \-\-for \fIDURATION\fR
+Used by \fBapprove\fR. How long an approved command runs free: default
+6h, at most 24h. A command wanted once for the next ten minutes and one
+wanted all afternoon are different grants.
+.TP
+.B \-\-why \fITEXT\fR
+Used by \fBexec\fR; a spelling of \fB\-\-reason\fR. \fBBYN_WHY\fR in
+the environment does the same for harnesses that cannot add a flag to
+byn's argv.
+.TP
 .B \-\-force\-ask
 Used by \fBexec\fR. Raise a fresh decision for a command that was
 already refused. Without it a refusal is a wall, deliberately: re\-asking

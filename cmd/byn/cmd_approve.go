@@ -27,6 +27,7 @@ func runApprove(args []string, _ cliScope) int {
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	all := fs.Bool("all", false, "answer every pending request")
 	history := fs.Bool("history", false, "show decided and expired requests too, not just what is waiting")
+	grantFor := fs.Duration("for", 0, "how long an approved command runs free (default 6h, max 24h)")
 	pwStdin := fs.Bool("password-stdin", false, "read the master password from stdin")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
@@ -79,6 +80,7 @@ func runApprove(args []string, _ cliScope) int {
 		var resp ipc.ApprovalDecideResp
 		cerr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
 			ID: id, Approve: !*deny, Via: "terminal", Reason: *reason, Password: password,
+			GrantForSeconds: int(*grantFor / time.Second),
 		}, &resp)
 		if cerr != nil {
 			rc = handleCallError(cerr)
@@ -89,6 +91,17 @@ func runApprove(args []string, _ cliScope) int {
 			verb = yellow(resp.Entry.Status)
 		}
 		fmt.Fprintf(os.Stderr, "%s  %s  %s\n", verb, cyan(resp.Entry.ID), resp.Entry.Subject)
+		// What the grant now IS, said once at the moment of granting it: how
+		// long it lasts, and whether whoever asked is still there to use it.
+		if resp.Entry.Status == "approved" && resp.Entry.GrantedUntil > 0 {
+			left := time.Until(time.Unix(resp.Entry.GrantedUntil, 0)).Truncate(time.Minute)
+			fmt.Fprintf(os.Stderr, "          %s\n",
+				dim(fmt.Sprintf("runs free for %s — pin it in [exec] actions to make it permanent", left)))
+		}
+		if resp.Entry.Late {
+			fmt.Fprintf(os.Stderr, "          %s\n",
+				yellow("late: whoever asked had stopped waiting — they must run it again"))
+		}
 	}
 	return rc
 }
@@ -176,6 +189,12 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 			if e.DecidedReason != "" {
 				detail += " — " + e.DecidedReason
 			}
+			if e.Late {
+				// The grant is real; the process that wanted it is not. Worth
+				// saying, because otherwise a granted-and-unused command looks
+				// exactly like one that ran.
+				detail += ", answered after the asker gave up"
+			}
 			// For a granted command, say whether it still runs free. An
 			// approval that has simply timed out otherwise looks exactly like
 			// one that was never there.
@@ -202,6 +221,16 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		if e.Repeats > 0 {
 			detail += fmt.Sprintf(", retried %d×", e.Repeats)
 		}
+		// Whether anything is still listening. Two requests an hour apart look
+		// identical on a list, and one of them may have a process sitting on it
+		// right now while the other was abandoned before you sat down.
+		if e.NeededBy > 0 {
+			if left := time.Until(time.Unix(e.NeededBy, 0)).Truncate(time.Second); left > 0 {
+				detail += fmt.Sprintf(", %s", boldYellow("needed within "+left.String()))
+			} else {
+				detail += ", " + dim("no longer waiting")
+			}
+		}
 		// The vault, when it is not the default one: two projects on one
 		// machine are told apart by it at a glance, and the JSON form has
 		// carried it all along.
@@ -215,6 +244,8 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 	}
 	fmt.Fprintf(os.Stderr, "\n%s\n", dim("Approving authorizes; it runs nothing and edits no file. Whoever asked runs it again."))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
+	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "),
+		dim("add --for 30m to shorten the window a command runs free (default 6h)"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Refuse:"), cyan("byn approve --deny <id>"))
 	// A refusal stops the asker until someone changes something, so the single
 	// most useful thing to hand back is why.

@@ -163,6 +163,18 @@ type Request struct {
 	// sentence from the asker is worth more than silence, as long as it is
 	// never dressed up as something byn established.
 	Reason string `json:"reason,omitempty"`
+	// NeededBy is when the asker stops waiting for this. It comes from the
+	// caller's own --wait-approval window, so it is a fact about the asker
+	// rather than a deadline imposed on the approver.
+	//
+	// It exists because "asked 4h ago" and "asked 40s ago" look the same on a
+	// list and are not the same question: one of them has a process sitting on
+	// it right now. An approval after this time still grants — it just grants
+	// to nobody who is still listening, and says so.
+	NeededBy time.Time `json:"needed_by,omitempty"`
+	// Late records that the answer arrived after the asker had stopped waiting.
+	// The grant is real; the process that asked for it is gone.
+	Late bool `json:"late,omitempty"`
 
 	Status     Status    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -336,6 +348,17 @@ func (s *Store) Enqueue(req Request) (Request, error) {
 // two surfaces racing, or a late notification — and neither should turn into an
 // error the caller has to interpret.
 func (s *Store) Decide(id string, approve bool, via, reason string) (Request, error) {
+	return s.DecideFor(id, approve, via, reason, 0)
+}
+
+// DecideFor answers a request and, for a command grant, sets how long it runs
+// free. A zero window means the default.
+//
+// The owner setting the window is the other half of the asker stating a
+// deadline: a command wanted once for the next ten minutes and a command wanted
+// all afternoon are different grants, and giving both of them six hours makes
+// the shorter one an unnecessary standing authority.
+func (s *Store) DecideFor(id string, approve bool, via, reason string, grantFor time.Duration) (Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -360,7 +383,18 @@ func (s *Store) Decide(id string, approve bool, via, reason string) (Request, er
 		if approve {
 			r.Status = StatusApproved
 			if r.Kind == KindActionUnpinned {
-				r.GrantedUntil = now.Add(ActionGrantFor)
+				window := grantFor
+				if window <= 0 {
+					window = ActionGrantFor
+				}
+				r.GrantedUntil = now.Add(window)
+			}
+			// An answer that arrives after the asker gave up is still an
+			// answer, and it still grants. What it does not do is reach the
+			// process that asked — so it is recorded, and every surface can say
+			// so rather than leaving a grant nobody can account for.
+			if !r.NeededBy.IsZero() && now.After(r.NeededBy) {
+				r.Late = true
 			}
 			r.Denials = 0
 			delete(f.Denials, r.Fingerprint)
