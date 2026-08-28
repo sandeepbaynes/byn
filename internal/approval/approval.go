@@ -34,6 +34,17 @@ const Filename = "approvals.json"
 // hurry.
 const DefaultTTL = 6 * time.Hour
 
+// ActionGrantFor is how long an approved unpinned command stays runnable.
+//
+// Approving one is not a one-off: an agent that was stopped mid-task will run
+// the same command again, and a build loop may run it repeatedly, so a
+// single-use grant would put the person straight back in the approval loop the
+// queue exists to end. It is not permanent either — the durable answer is to
+// pin the command in [exec] actions, which the refusal message says. A working
+// session is the honest middle, and matches the window the queue already uses
+// for how long a question stays askable.
+const ActionGrantFor = 6 * time.Hour
+
 // Rate limiting bounds how fast one project can raise requests. Any process at
 // the caller's UID can invoke byn in a loop, and an approver worn down by a
 // flood is the documented way these systems get beaten — an attacker does not
@@ -122,6 +133,15 @@ type Request struct {
 	// Denials counts consecutive denials of this fingerprint, which is what
 	// puts it on hold rather than letting it be re-asked indefinitely.
 	Denials int `json:"denials,omitempty"`
+	// GrantedUntil is when an approved request stops authorizing anything.
+	//
+	// It exists for decisions that are not applied by rewriting a record. A
+	// trust widening is applied by re-granting the .byn, so the grant lives in
+	// the trust store and this stays zero. An unpinned command has nowhere to
+	// be written down — the .byn does not list it and inventing an entry the
+	// file disagrees with would be undone by the next reconcile — so the
+	// approved request IS the authority, and it has to stop being one.
+	GrantedUntil time.Time `json:"granted_until,omitempty"`
 }
 
 // Answered reports whether a decision has been recorded.
@@ -286,6 +306,9 @@ func (s *Store) Decide(id string, approve bool, via string) (Request, error) {
 		}
 		if approve {
 			r.Status = StatusApproved
+			if r.Kind == KindActionUnpinned {
+				r.GrantedUntil = now.Add(ActionGrantFor)
+			}
 			r.Denials = 0
 			delete(f.Denials, r.Fingerprint)
 			delete(f.Holds, r.Fingerprint)
@@ -315,6 +338,35 @@ func (s *Store) Decide(id string, approve bool, via string) (Request, error) {
 		return out, nil
 	}
 	return Request{}, ErrNotFound
+}
+
+// ActionGranted reports whether an approved, still-valid decision authorizes
+// this exact command on this exact .byn.
+//
+// Matching is on the fingerprint, which is what made the two questions "the
+// same question" when the request was raised — so the thing that collapses
+// duplicate cards is the same thing that recognises the answer, and they cannot
+// drift apart.
+func (s *Store) ActionGranted(subject, fingerprint string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return false, err
+	}
+	now := s.now()
+	for _, r := range f.Requests {
+		if r.Kind != KindActionUnpinned || r.Status != StatusApproved {
+			continue
+		}
+		if r.Subject != subject || r.Fingerprint != fingerprint {
+			continue
+		}
+		if now.Before(r.GrantedUntil) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Get returns one request by id.

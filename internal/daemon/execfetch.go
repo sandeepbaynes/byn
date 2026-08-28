@@ -430,6 +430,20 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 						}
 					}
 
+					// A command someone already approved for this .byn runs, without
+					// asking again. Approving has to actually grant something: a
+					// decision that is recorded and then changes nothing leaves the
+					// caller stopped at the same gate on its very next attempt, told
+					// each time that approval was granted. That is a worse dead end
+					// than the one the queue replaced, because it looks like progress.
+					if !matched && d.actionApproved(canon, req.Command, resolvedArgv) {
+						matched = true
+						d.auditEmit(ctx, vaultName, audit.Event{
+							Op: "exec.action_approved", Outcome: audit.OutcomeOK, BynPath: canon,
+							Command: strings.Join(resolvedArgv, " "),
+						})
+					}
+
 					if !matched {
 						// Unmatched (includes empty actions AND empty resolvedArgv): gate.
 						// authorizeActionAlways is used here — the .byn contract
