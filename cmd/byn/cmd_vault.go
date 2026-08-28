@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 
 	"golang.org/x/term"
 
@@ -478,6 +479,22 @@ func runList(args []string, scope cliScope) int {
 	}
 	for _, s := range secrets {
 		fmt.Println(s.Name)
+	}
+	// Which of these appeared with nobody behind the call.
+	//
+	// On stderr, and never in the pattern form: stdout here is a names-only
+	// list that callers pipe and use as an existence probe, and decorating it
+	// would break them. --json carries the same fact as a field.
+	var unattended []string
+	for _, s := range secrets {
+		if s.Unattended {
+			unattended = append(unattended, s.Name)
+		}
+	}
+	if len(unattended) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %d value(s) here were stored with no password behind the call: %s\n",
+			yellow("note:"), len(unattended), strings.Join(unattended, ", "))
+		fmt.Fprintf(os.Stderr, "      byn cannot tell one an agent invented from one you provisioned.\n")
 	}
 	return exitOK
 }

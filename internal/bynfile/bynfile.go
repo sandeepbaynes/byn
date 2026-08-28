@@ -68,6 +68,26 @@ type File struct {
 		// injected exactly as before when it does have a value, and a name here
 		// but not in Env is simply ignored.
 		Optional []string `toml:"optional,omitempty"`
+		// AgentPut, when set to false, stops byn accepting a value for this
+		// scope with no credential behind the call.
+		//
+		// Unattended writes exist so an agent can store the config it invents
+		// without stopping for a person, and that is right for a temporary
+		// table name or a test client id. It is wrong for a real secret: an
+		// agent can silence "no value for X" by inventing one, and if X is a
+		// production encryption key the service then starts cleanly and does
+		// silent damage — encrypting data with a key nobody can reproduce.
+		// A repo that provisions its secrets by hand can say so here.
+		//
+		// Absent means true: an agent that cannot store what it creates is the
+		// problem byn set out to remove, so the default stays permissive and
+		// loud (see put.unattended in the audit log, and `byn list`) rather
+		// than restrictive and quiet.
+		AgentPut *bool `toml:"agent_put,omitempty"`
+		// AgentPutDeny names variables an unattended caller may not create,
+		// for the common case where most of a project's config is fine for an
+		// agent to invent and a few names are emphatically not.
+		AgentPutDeny []string `toml:"agent_put_deny,omitempty"`
 	} `toml:"exec"`
 	// Aliases is the top-level [aliases] table: named entry points for
 	// `byn exec`. Each key is an alias name (^[A-Za-z0-9_][A-Za-z0-9_-]*$);
