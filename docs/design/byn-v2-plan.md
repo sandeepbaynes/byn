@@ -210,6 +210,30 @@ Two deferred decisions worth revisiting:
   requester's ancestors. Session ids do not work: agent harnesses start each
   tool call in a fresh session, so two calls from one agent do not share one.
 
+- **Writing to a LOCKED vault** (`internal/vault/authored.go`). Requiring an
+  unlocked vault for `byn put` was the deeper version of the same mistake: it
+  left an unattended agent one option, leaving the vault open, which exposes
+  every secret instead of the ones the agent writes. A scope now has a second
+  key, `K_auth = HKDF(vaultKey, scope‖"authored")`, sealed into every exec
+  capability under the machine key. A locked daemon can write with it and read
+  back what it wrote; it opens nothing that already existed, because those rows
+  derive from `K_env` and no amount of `K_auth` yields it. Entries written this
+  way carry `aad_version = 4`, and the master password still opens them.
+
+  The line for all three exemptions (read, replace, inject-without-approval) is
+  **unattended**: no session, no password, no presence token behind the write.
+  A value stored by an authenticated caller was protected by that credential
+  from the start and keeps needing it, so unlocking in one terminal still grants
+  nothing in another. Deciding on the caller rather than on lock state also
+  keeps one agent's behaviour identical whether or not someone has the vault
+  open. Every pre-existing authorization test passes unmodified, which is the
+  evidence that the line is drawn in the right place.
+
+  The honest cost: a value written unattended is protected by the machine as
+  well as the master password. That is inherent — a vault that can accept and
+  return values while locked must hold a key that survives locking — and it is
+  strictly smaller than the exposure it replaces.
+
 0. **Done (v1):** env-inheritance fix committed as `ba26df6`.
 1. **Sandbox spike** — riskiest piece first: prove userns + idmapped-mount ownership end-to-end against the A1 compatibility matrix (Fedora SELinux enforcing, Ubuntu 24.04 package+tarball, WSL2 ±systemd, devcontainer, NFS-homed project), with the live-probe + degradation-ladder logic as the spike's skeleton. Each cell: works, or degrades cleanly with a named doctor remediation.
 2. Vault v5 + K_env layer (+ lamport/origin columns).

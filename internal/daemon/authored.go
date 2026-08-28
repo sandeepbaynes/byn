@@ -2,182 +2,145 @@ package daemon
 
 import (
 	"context"
-	"time"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/bynfile"
 	"github.com/sandeepbaynes/byn/internal/trust"
 	"github.com/sandeepbaynes/byn/internal/vault"
+	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
 )
 
-// Self-authored variables — the daemon half. See internal/trust/authored.go for
-// why this exists; this file is the part that decides.
+// Self-authored variables — the decisions. The registry that remembers who
+// created what is in authoredstore.go; the key that lets a locked vault store a
+// value at all is in internal/vault/authored.go.
+//
+// The rule byn enforces, in one sentence: a caller may freely create, update
+// and read the values it authored, and nothing else. Everything below is that
+// sentence applied to one code path or another.
 
-// recordSelfAuthored notes that the caller just created name in scope, on every
-// trusted .byn that governs that scope.
+// authoredScopeKey builds the registry key for a variable.
+func authoredScopeKey(vaultName string, scope vault.Scope, name string) authoredKey {
+	return authoredKey{
+		Vault:   defaultIfEmpty(vaultName, vault.DefaultVaultName),
+		Project: defaultIfEmpty(scope.Project, vault.DefaultProjectName),
+		Env:     defaultIfEmpty(scope.Env, vault.DefaultEnvName),
+		Name:    name,
+	}
+}
+
+// recordAuthored notes that the caller created name in scope.
 //
-// Called only on a genuine CREATE. An overwrite is a different act: it is
-// authorization-gated precisely because the person doing it may not be the
-// person who owns the value, so it earns no authorship.
+// Called only on a genuine CREATE. An overwrite is a different act — it is
+// authorization-gated precisely because the person doing it may not be the one
+// who owns the value — so it earns no authorship.
 //
-// Entirely best-effort. Every failure path leaves the record untouched, which
-// costs the caller one approval later rather than granting anything by
-// accident — the safe direction for a bookkeeping step that runs on a hot path.
-func (d *Daemon) recordSelfAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, name string) {
+// Best-effort: a failure records nothing, which costs the caller an approval
+// later rather than granting one by accident.
+func (d *Daemon) recordAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, name string, authored bool) {
+	if d.authored == nil {
+		return
+	}
 	origin := callerOriginFn(callerFrom(ctx).PID)
 	if !origin.ok() {
 		return // no pinned-down caller identity → nothing worth recording
 	}
+	if err := d.authored.Record(authoredScopeKey(vaultName, scope, name), origin, authored); err != nil {
+		return
+	}
+	// An entry on the authored scheme is keyed through the scope's authored key,
+	// which every capability already carries — so exec can open it without any
+	// per-name key. An ordinary row needs its key added to the capability, or a
+	// locked daemon will allow the name and then decrypt nothing.
+	if !authored {
+		d.refreshCapabilitiesFor(ctx, st, vaultName, scope)
+	}
+	d.auditEmit(ctx, vaultName, audit.Event{
+		Project: scope.Project, Env: scope.Env, Kind: "env_var", EntryName: name,
+		Op: "trust_self_authored", Outcome: audit.OutcomeOK,
+	})
+}
+
+// forgetAuthored revokes authorship of names in scope, and is what stops an
+// agent from creating a placeholder, having a person replace it with the real
+// credential, and reading that credential back as its own.
+func (d *Daemon) forgetAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, names ...string) {
+	if d.authored == nil {
+		return
+	}
+	key := authoredScopeKey(vaultName, scope, "")
+	if err := d.authored.Forget(key.Vault, key.Project, key.Env, names...); err != nil {
+		return
+	}
+	d.refreshCapabilitiesFor(ctx, st, vaultName, scope)
+}
+
+// ownUnattendedValue reports whether this caller may treat name as its own: byn
+// recorded it as the author, this command is running under that same origin,
+// and the value is one byn took in unattended.
+//
+// The origin keeps the exemption from spreading — another terminal, another
+// editor window, or a background service did not create the value and does not
+// inherit the right to read or replace it. The unattended condition keeps it
+// from reaching backwards: something stored by an authenticated caller was
+// protected by that credential from the start and still needs it.
+func (d *Daemon) ownUnattendedValue(ctx context.Context, vaultName string, scope vault.Scope, name string) bool {
+	e, ok := d.authoredEntryFor(ctx, vaultName, scope, name)
+	return ok && e.Authored
+}
+
+// authoredEntryFor returns the authorship of name when this caller shares the
+// origin that created it.
+func (d *Daemon) authoredEntryFor(ctx context.Context, vaultName string, scope vault.Scope, name string) (authoredEntry, bool) {
+	if d.authored == nil {
+		return authoredEntry{}, false
+	}
+	e, ok := d.authored.Lookup(authoredScopeKey(vaultName, scope, name))
+	if !ok {
+		return authoredEntry{}, false
+	}
+	if !sharesOriginFn(callerFrom(ctx).PID, procRef{PID: e.OriginPID, Start: e.OriginStart}) {
+		return authoredEntry{}, false
+	}
+	return e, true
+}
+
+// refreshCapabilitiesFor re-seals the exec capability of every trusted .byn
+// governing a scope, so it carries a key for each name the project may inject.
+func (d *Daemon) refreshCapabilitiesFor(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope) {
+	if st == nil || st.IsLocked() {
+		return // re-sealing captures row keys, which needs the vault key
+	}
 	store, err := trust.Load(d.cfg.Dir)
 	if err != nil || store == nil {
 		return
 	}
-	// Re-MAC needs both keys. The vault is unlocked here (the value was just
-	// encrypted), so the vault-key layer is available; without it the record
-	// would be left with a stale VKMAC and fail at use time, so a failure to
-	// derive means write nothing at all.
 	vkKey, derr := st.DeriveSubkey(trust.VKMACKeyInfo)
 	if derr != nil {
 		return
 	}
 	defer zeroBytes(vkKey)
 
-	for _, rec := range store.Records {
-		if !recordGoverns(rec, vaultName, scope) {
-			continue
-		}
-		// Always replace any existing entry. This runs only on a CREATE, so the
-		// name did not exist a moment ago; whatever authorship was recorded for
-		// an earlier incarnation of it belongs to a value that is gone, and
-		// letting it stand would hand its author a grant over someone else's.
-		rec.SelfAuthored = trust.WithAuthored(rec.SelfAuthored, trust.AuthoredGrant{
-			Name:        name,
-			OriginPID:   origin.PID,
-			OriginStart: origin.Start,
-			AtUnixNano:  time.Now().UnixNano(),
-		})
-		// The sealed capability is what a LOCKED daemon injects from, and it
-		// holds one key per name captured at grant. A name created afterwards
-		// has no key in it, so recording the authorship without refreshing the
-		// capability would produce a grant that silently injects nothing.
-		// Wildcard grants already carry the scope key and derive their own.
-		if !d.refreshCapabilityFor(ctx, st, &rec, scope) {
-			continue
-		}
-		rec.SetMACs(d.fpMACKey, vkKey)
-		if _, perr := trust.Put(d.cfg.Dir, rec); perr != nil {
-			continue
-		}
-		d.auditEmit(ctx, vaultName, audit.Event{
-			Project:   scope.Project,
-			Env:       scope.Env,
-			Kind:      "env_var",
-			EntryName: name,
-			BynPath:   rec.Path,
-			Op:        "trust_self_authored",
-			Outcome:   audit.OutcomeOK,
-		})
-	}
-}
-
-// forgetSelfAuthored revokes any authorship of name in scope.
-//
-// Called when the stored value stops being the author's: an overwrite (which is
-// authorization-gated precisely because someone else may be doing it), a
-// delete, or a rename away from the name. Without this, an agent could create a
-// placeholder, have a person replace it with the real credential, and then read
-// that credential back as if it were still its own.
-//
-// Best-effort in the same way as recording, but it fails the other way: if the
-// record cannot be rewritten the authorship stays, so this must not be the only
-// thing standing between a caller and a value it did not author — the checks in
-// forgivesSelfAuthored are.
-func (d *Daemon) forgetSelfAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, names ...string) {
-	store, err := trust.Load(d.cfg.Dir)
-	if err != nil || store == nil {
-		return
-	}
-	vkKey, derr := st.DeriveSubkey(trust.VKMACKeyInfo)
-	if derr != nil {
-		return
-	}
-	defer zeroBytes(vkKey)
+	key := authoredScopeKey(vaultName, scope, "")
+	authoredNames := d.authored.NamesFor(key.Vault, key.Project, key.Env)
 
 	for _, rec := range store.Records {
-		if !recordGoverns(rec, vaultName, scope) {
+		if !recordGoverns(rec, vaultName, scope) || len(rec.ExecCapability) == 0 {
 			continue
 		}
-		kept := rec.SelfAuthored[:0:0]
-		for _, a := range rec.SelfAuthored {
-			drop := false
-			for _, n := range names {
-				if a.Name == n {
-					drop = true
-					break
-				}
-			}
-			if !drop {
-				kept = append(kept, a)
-			}
+		parsed, perr := bynfile.Parse([]byte(rec.Snapshot))
+		if perr != nil || parsed.AllowsAll() {
+			continue // a wildcard grant already derives its own row keys
 		}
-		if len(kept) == len(rec.SelfAuthored) {
+		names := append([]string(nil), []string(parsed.Exec.Env)...)
+		names = append(names, authoredNames...)
+		blob, cerr := d.sealExecCapability(ctx, st, scope, names, false, nil)
+		if cerr != nil || len(blob) == 0 {
 			continue
 		}
-		revoked := rec.SelfAuthored
-		rec.SelfAuthored = kept
+		rec.ExecCapability = blob
 		rec.SetMACs(d.fpMACKey, vkKey)
-		if _, perr := trust.Put(d.cfg.Dir, rec); perr != nil {
-			continue
-		}
-		// Worth a line in the log: it is the moment a caller stopped being able
-		// to add a variable to this project without asking.
-		for _, a := range revoked {
-			if _, still := rec.AuthoredBy(a.Name); still {
-				continue
-			}
-			d.auditEmit(ctx, vaultName, audit.Event{
-				Project:   scope.Project,
-				Env:       scope.Env,
-				Kind:      "env_var",
-				EntryName: a.Name,
-				BynPath:   rec.Path,
-				Op:        "trust_self_authored_revoked",
-				Outcome:   audit.OutcomeOK,
-			})
-		}
+		_, _ = trust.Put(d.cfg.Dir, rec)
 	}
-}
-
-// refreshCapabilityFor re-seals rec's exec capability so it carries a row key
-// for every name the record may inject, including the ones just authored.
-// Reports whether the record is fit to write.
-//
-// A record with no capability keeps none: it is a .byn with no [exec] env
-// allowlist, or a machine with no fingerprint, and exec falls back to a
-// password there anyway.
-func (d *Daemon) refreshCapabilityFor(ctx context.Context, st *vault.Store, rec *trust.Record, scope vault.Scope) bool {
-	if len(rec.ExecCapability) == 0 {
-		return true
-	}
-	parsed, perr := bynfile.Parse([]byte(rec.Snapshot))
-	if perr != nil {
-		return false
-	}
-	if parsed.AllowsAll() {
-		return true // wildcard: the sealed scope key already derives new rows
-	}
-	// Everything the record may inject: the granted allowlist plus the names
-	// authored since (including the one being added right now).
-	names := append([]string(nil), []string(parsed.Exec.Env)...)
-	for _, a := range rec.SelfAuthored {
-		names = append(names, a.Name)
-	}
-	blob, cerr := d.sealExecCapability(ctx, st, scope, names, false, nil)
-	if cerr != nil || len(blob) == 0 {
-		return false
-	}
-	rec.ExecCapability = blob
-	return true
 }
 
 // recordGoverns reports whether rec's grant covers the given vault and scope.
@@ -194,22 +157,18 @@ func recordGoverns(rec trust.Record, vaultName string, scope vault.Scope) bool {
 // forgivesSelfAuthored reports whether every widening in delta is a variable
 // this caller authored, and so needs no human.
 //
-// All three conditions must hold for each added name:
+// All of these must hold for each added name:
 //
-//  1. byn recorded the caller's origin as its author, and this command is
-//     running under that same origin — a different terminal, editor window, or
-//     service does not inherit the exemption.
+//  1. byn recorded this caller's origin as its author (authoredByCaller).
 //  2. The vault says it was created AFTER this project was trusted. A secret
-//     that predates the grant is a pre-existing one; exposing it to the
+//     that predates the grant is a pre-existing one, and exposing it to the
 //     project's commands for the first time is a real widening.
-//  3. It has never been written again since. An overwrite is authorization-
-//     gated, so the value now stored may have come from someone other than the
-//     author — the author's claim to already know it does not survive.
+//  3. It has not been written again since. An overwrite is authorization-gated,
+//     so the stored value may have come from someone other than the author.
 //
-// Anything else in the delta (a new command, a scope move, an auth relaxation)
-// disqualifies the whole change: those are not covered by authorship, and a
-// mixed request is decided as one thing.
-func (d *Daemon) forgivesSelfAuthored(ctx context.Context, st *vault.Store, rec trust.Record, delta trust.Delta, scope vault.Scope) bool {
+// Anything else in the delta — a new command, a scope move, an auth relaxation
+// — disqualifies the whole change: a mixed request is decided as one thing.
+func (d *Daemon) forgivesSelfAuthored(ctx context.Context, st *vault.Store, rec trust.Record, delta trust.Delta, vaultName string, scope vault.Scope) bool {
 	if delta.ScopeChanged || len(delta.Widenings) == 0 {
 		return false
 	}
@@ -222,34 +181,129 @@ func (d *Daemon) forgivesSelfAuthored(ctx context.Context, st *vault.Store, rec 
 	if err != nil {
 		return false
 	}
-	created := make(map[string]vault.EntryInfo, len(infos))
+	present := make(map[string]vault.EntryInfo, len(infos))
 	for _, m := range infos {
-		created[m.Name] = m
+		present[m.Name] = m
 	}
 	for _, w := range delta.Widenings {
-		g, ok := rec.AuthoredBy(w.Name)
-		if !ok || !sharesOriginFn(callerFrom(ctx).PID, procRef{PID: g.OriginPID, Start: g.OriginStart}) {
+		e, ok := d.authoredEntryFor(ctx, vaultName, scope, w.Name)
+		if !ok || !e.Authored {
+			// Same line as the read and replace exemptions: only values byn
+			// took in unattended. A secret stored by someone who was
+			// authenticated at the time was protected by that credential from
+			// the start, and adding it to a project's allowlist is a decision a
+			// person should still see.
 			return false
 		}
-		info, ok := created[w.Name]
+		info, ok := present[w.Name]
 		if !ok || info.Source != vault.SourceScope {
 			return false // absent, or inherited from the default env
 		}
-		// entries.created_at is stored in whole seconds, so this compares
-		// seconds; a nanosecond comparison against the grant silently never
-		// matched. Same-second equality is allowed because an authorship entry
-		// cannot predate the record that holds it — byn only writes one onto a
-		// .byn it has already granted — so this is a sanity check against the
-		// vault itself rather than the load-bearing test.
-		if info.CreatedAt.Unix() < rec.MTimeUnixNano/int64(time.Second) {
-			return false // predates the grant
+		// Both readings come from the daemon's clock. Comparing authorship
+		// against the .byn's mtime instead looks equivalent and is not: a
+		// filesystem records mtime about a millisecond coarse, so a file written
+		// after a secret was created can carry a timestamp before it, and a
+		// pre-existing secret is then forgiven. That was reproducible.
+		//
+		// Authorship is recorded for every create, including ones made before
+		// this .byn was ever trusted, so this comparison is load-bearing: it is
+		// the only thing keeping a pre-existing secret out.
+		grantedAt := rec.GrantedAtUnixNano
+		if grantedAt == 0 {
+			grantedAt = rec.MTimeUnixNano // granted before byn recorded the moment
 		}
-		// Belt and braces behind forgetSelfAuthored, which revokes authorship at
-		// the moment of an overwrite. This catches one that landed in a later
-		// second without going through that path.
+		if e.AtUnixNano <= grantedAt {
+			return false
+		}
+		// Belt and braces behind forgetAuthored, which revokes authorship at the
+		// moment of an overwrite. This catches one that landed in a later second
+		// without going through that path.
 		if info.UpdatedAt.After(info.CreatedAt) {
-			return false // overwritten since it was authored
+			return false
 		}
 	}
 	return true
+}
+
+// authoredKeyFor unseals the scope's self-authored key from any trusted .byn
+// that governs it, so the daemon can write and read the caller's own values
+// while the vault is locked.
+//
+// Returns nil when no trusted .byn covers this scope, which is the honest
+// answer rather than a failure: byn holds no key for a scope nobody has granted
+// it authority over, so there is nothing it could encrypt with. The caller is
+// told exactly that instead of being asked for a password that would not help.
+func (d *Daemon) authoredKeyFor(vaultName string, scope vault.Scope) []byte {
+	if d.fpMACKey == nil {
+		return nil
+	}
+	store, err := trust.Load(d.cfg.Dir)
+	if err != nil || store == nil {
+		return nil
+	}
+	capKey, err := vcrypto.DeriveCapKey(d.fpMACKey)
+	if err != nil {
+		return nil
+	}
+	defer zeroBytes(capKey)
+	for _, rec := range store.Records {
+		if !recordGoverns(rec, vaultName, scope) || len(rec.ExecCapability) == 0 {
+			continue
+		}
+		keys, oerr := vcrypto.OpenCapability(capKey, rec.ExecCapability)
+		if oerr != nil {
+			continue
+		}
+		authKey := keys[vault.CapAuthoredKeyName]
+		for name, k := range keys {
+			if name != vault.CapAuthoredKeyName {
+				zeroBytes(k)
+			}
+		}
+		if len(authKey) > 0 {
+			return authKey
+		}
+	}
+	return nil
+}
+
+// scopeLabel renders a scope the way a person writes it, for error messages.
+func scopeLabel(scope vault.Scope) string {
+	return defaultIfEmpty(scope.Project, vault.DefaultProjectName) + "/" +
+		defaultIfEmpty(scope.Env, vault.DefaultEnvName)
+}
+
+// policyDemandsAuth reports whether the governing .byn insists on a credential
+// for this action, whatever else byn might conclude.
+//
+// A locked vault cannot read the policy (its MAC key needs the vault key), and
+// that answers false — the same fall-through the rest of the policy layer takes,
+// and the same reason: a policy byn cannot verify is not one it can enforce.
+func (d *Daemon) policyDemandsAuth(vaultName string, scope vault.Scope, action string) bool {
+	policy, ok := d.policyFor(vaultName, scope)
+	if !ok {
+		return false
+	}
+	return policy[action] == "always"
+}
+
+// readAuthored decrypts one entry through the scope's authored key, which is
+// the only key a LOCKED vault has. Reports whether it could.
+//
+// It succeeds only for a value the caller authored and that was written while
+// locked; anything else was sealed under the vault key and stays that way.
+func (d *Daemon) readAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, name string, mine bool) (vault.Entry, bool) {
+	if !mine || !st.IsLocked() {
+		return vault.Entry{}, false
+	}
+	authKey := d.authoredKeyFor(vaultName, scope)
+	if authKey == nil {
+		return vault.Entry{}, false
+	}
+	defer zeroBytes(authKey)
+	value, err := st.OpenEnvVarAuthored(ctx, scope, name, authKey)
+	if err != nil {
+		return vault.Entry{}, false
+	}
+	return vault.Entry{Name: name, Value: value}, true
 }

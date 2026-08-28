@@ -119,3 +119,57 @@ func TestDeriveRowKey_ValueUpdateNoRederive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "v2-rotated", string(pt))
 }
+
+// The containment claim, stated as a test: holding the self-authored key must
+// not yield the ordinary scope key or any row key derived from it. If these
+// ever collide, a capability meant to cover only what an agent wrote would open
+// everything in the scope.
+func TestAuthoredKeyIsSeparateFromEnvKey(t *testing.T) {
+	vk := make([]byte, VaultKeySize)
+	for i := range vk {
+		vk[i] = byte(i)
+	}
+	scope := []byte("vault\x00project\x00env")
+	row := []byte("env_var\x00DB_URL")
+
+	envKey, err := DeriveEnvKey(vk, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authKey, err := DeriveAuthoredKey(vk, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(envKey, authKey) {
+		t.Fatal("the authored key equals the scope key — it would open everything in the scope")
+	}
+
+	envRow, err := DeriveRowKeyFromEnvKey(envKey, row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authRow, err := DeriveRowKeyFromAuthoredKey(authKey, row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(envRow, authRow) {
+		t.Fatal("the same row derives the same key under both schemes — a locked write would be readable as an ordinary row and vice versa")
+	}
+	// Deriving a row from the WRONG parent must not land on the other either.
+	crossed, err := DeriveRowKeyFromEnvKey(authKey, row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(crossed, envRow) {
+		t.Fatal("authored key run through the scope-key derivation reproduces a scope row key")
+	}
+}
+
+func TestAuthoredKeyRejectsAShortVaultKey(t *testing.T) {
+	if _, err := DeriveAuthoredKey([]byte("short"), []byte("scope")); !errors.Is(err, ErrBadKey) {
+		t.Errorf("err = %v, want ErrBadKey", err)
+	}
+	if _, err := DeriveRowKeyFromAuthoredKey([]byte("short"), []byte("row")); !errors.Is(err, ErrBadKey) {
+		t.Errorf("err = %v, want ErrBadKey", err)
+	}
+}
