@@ -50,7 +50,7 @@ func TestSystemdUnitContents(t *testing.T) {
 	// Hardening directives (spec §5).
 	for _, want := range []string{
 		"ProtectSystem=strict",
-		"ProtectProc=invisible",
+		"ProtectProc=default",
 		"ProcSubset=pid",
 		"RestrictAddressFamilies=AF_UNIX",
 		"SystemCallFilter=@system-service",
@@ -225,4 +225,38 @@ func stripBenignAnalyzeWarnings(s string) string {
 		kept = append(kept, l)
 	}
 	return strings.Join(kept, "\n")
+}
+
+// TestSystemdUnitLetsTheDaemonSeeItsCallers guards a hardening flag that was
+// silently disabling two features.
+//
+// The daemon reads /proc/<caller>/stat to record who ran an operation in the
+// audit trail, and to match the process that created a variable against the one
+// now asking to inject it. ProtectProc=invisible hides every process owned by
+// the human from the unit, so both stopped working with no error anywhere:
+// audit caller names recorded nothing at all, and an agent was asked to approve
+// variables it had created itself.
+//
+// Nothing else catches it. The privsep integration suite launches the daemon
+// directly rather than through systemd, so the unit's sandboxing never applies
+// there — this assertion on the unit's own text is the guard.
+func TestSystemdUnitLetsTheDaemonSeeItsCallers(t *testing.T) {
+	unit := systemdUnit("/usr/local/bin/byn")
+
+	// noaccess/invisible/ptraceable all hide processes owned by the owner from
+	// a non-root service, which is exactly what the daemon must read.
+	for _, hiding := range []string{"noaccess", "invisible", "ptraceable"} {
+		if strings.Contains(unit, "ProtectProc="+hiding) {
+			t.Errorf("unit sets ProtectProc=%s, which hides the calling process from the daemon; "+
+				"audit caller attribution and self-authored grants both go silently dead", hiding)
+		}
+	}
+	if !strings.Contains(unit, "ProtectProc=default") {
+		t.Error("unit should set ProtectProc=default explicitly, so the choice is visible rather than inherited")
+	}
+	// The part of the hardening actually worth keeping: /proc/sys, /proc/kcore
+	// and the rest of the non-pid surface stay hidden.
+	if !strings.Contains(unit, "ProcSubset=pid") {
+		t.Error("unit dropped ProcSubset=pid — the non-pid /proc surface should stay hidden")
+	}
 }

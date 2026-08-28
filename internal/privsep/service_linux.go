@@ -64,9 +64,20 @@ func systemdUnit(execPath string) string {
 		"# Read-only the whole filesystem except the two paths the daemon writes.\n" +
 		"ProtectSystem=strict\n" +
 		"ReadWritePaths=" + paths.SystemDataDir() + " /run/byn\n" +
-		"# Hide other processes — the daemon never needs to see them, and an\n" +
-		"# invisible /proc denies an attacker reconnaissance from inside the unit.\n" +
-		"ProtectProc=invisible\n" +
+		"# ProtectProc: the daemon DOES need to see the calling process. It reads\n" +
+		"# /proc/<caller>/stat to record who ran an operation in the audit trail,\n" +
+		"# and to match the process that created a variable against the one now\n" +
+		"# asking to inject it (self-authored grants). Under invisible, every\n" +
+		"# caller owned by the human is hidden from the daemon: audit caller\n" +
+		"# names recorded nothing at all, and origin matching could never succeed,\n" +
+		"# so an agent was asked to approve variables it had created itself.\n" +
+		"# Both failed silently, which is the worst property a hardening flag can\n" +
+		"# have. The reconnaissance it denied was worth little next to that: this\n" +
+		"# unit already holds the vault keys, so an attacker who is inside it has\n" +
+		"# the secrets, and enumerating processes adds close to nothing.\n" +
+		"# ProcSubset=pid stays: it hides /proc/sys, /proc/kcore and the rest of\n" +
+		"# the non-pid surface, which is the part actually worth denying.\n" +
+		"ProtectProc=default\n" +
 		"ProcSubset=pid\n" +
 		"# The daemon uses AF_UNIX for its IPC socket and AF_INET/AF_INET6 for the\n" +
 		"# local-only web portal (bound to 127.0.0.1). Deny all other families so a\n" +
