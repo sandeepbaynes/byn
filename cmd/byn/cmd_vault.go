@@ -316,11 +316,13 @@ func runPut(args []string, scope cliScope) int {
 
 	// putCall issues the IPC put with the given password (nil = no auth yet).
 	var putResp ipc.PutResp
+	var putErr error
 	putCall := func(pw []byte) error {
 		putResp = ipc.PutResp{}
-		return newClient(dir, scope.Vault).Call(ipc.OpPut,
+		putErr = newClient(dir, scope.Vault).Call(ipc.OpPut,
 			ipc.PutReq{Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly, Password: pw},
 			&putResp)
+		return putErr
 	}
 
 	var rc int
@@ -342,6 +344,10 @@ func runPut(args []string, scope cliScope) int {
 		rc = mutateWithAuthRetry(false, false, false, nil, putCall)
 	}
 
+	if rc != exitOK && *jsonOut {
+		emitCallErrorJSON(os.Stdout, map[string]any{"name": name}, putErr, rc)
+		return rc
+	}
 	if rc == exitOK {
 		switch {
 		case *jsonOut:
@@ -553,6 +559,7 @@ func runDelete(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	pwStdin := fs.Bool("password-stdin", false, "if the vault is locked, read the authorizing password from stdin")
+	jsonOut := fs.Bool("json", false, "emit {deleted,scope} JSON instead of prose")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
@@ -566,10 +573,23 @@ func runDelete(args []string, scope cliScope) int {
 		return exitErr
 	}
 	name := fs.Arg(0)
-	rc := mutateWithAuthRetry(*pwStdin, false, true, nil, func(pw []byte) error {
-		return newClient(dir, scope.Vault).Call(ipc.OpDelete,
+	var lastErr error
+	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, true, nil, func(pw []byte) error {
+		lastErr = newClient(dir, scope.Vault).Call(ipc.OpDelete,
 			ipc.DeleteReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &ipc.DeleteResp{})
+		return lastErr
 	})
+	if *jsonOut {
+		// Both outcomes as data, for the same reason every other --json path
+		// gives: a caller should not have to read an English sentence to learn
+		// whether the thing it asked for happened.
+		if rc == exitOK {
+			emitJSONLine(os.Stdout, map[string]any{"deleted": name, "scope": scope.String()})
+		} else {
+			emitCallErrorJSON(os.Stdout, map[string]any{"name": name}, lastErr, rc)
+		}
+		return rc
+	}
 	if rc == exitOK {
 		hintf("Deleted %q from %s.", name, scope)
 	}
@@ -629,7 +649,20 @@ func readSecretValue() ([]byte, error) {
 
 // emitGetErrorJSON reports a refused read as data.
 func emitGetErrorJSON(w *os.File, name string, callErr error, exitCode int) {
-	obj := map[string]any{"name": name, "status": "denied", "exit": exitCode}
+	emitCallErrorJSON(w, map[string]any{"name": name}, callErr, exitCode)
+}
+
+// emitCallErrorJSON reports any refused mutation as data, in one shape.
+//
+// One renderer rather than one per command: this defect has been found three
+// times in three places — the approval id readable only from prose, then get,
+// then delete — because each command grew its own error path. Fields common to
+// every refusal live here so the next command cannot quietly omit them.
+func emitCallErrorJSON(w *os.File, base map[string]any, callErr error, exitCode int) {
+	obj := map[string]any{"status": "denied", "exit": exitCode}
+	for k, v := range base {
+		obj[k] = v
+	}
 	var em *ipc.ErrResponse
 	if errors.As(callErr, &em) {
 		obj["status"] = string(em.Code)
@@ -641,6 +674,11 @@ func emitGetErrorJSON(w *os.File, name string, callErr error, exitCode int) {
 			obj[k] = v
 		}
 	}
+	emitJSONLine(w, obj)
+}
+
+// emitJSONLine writes one object and a newline, or nothing if it cannot.
+func emitJSONLine(w *os.File, obj map[string]any) {
 	if b, err := json.Marshal(obj); err == nil {
 		_, _ = fmt.Fprintln(w, string(b))
 	}

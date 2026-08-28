@@ -933,6 +933,12 @@ decider's words. It is returned to whoever asked and recorded in the
 audit log. A refused caller is stopped until something changes, and the
 reason is what tells it which thing.
 .TP
+.B \-\-json
+Also accepted by \fBput\fR and \fBdelete\fR, which report both the
+outcome and any refusal as one JSON object on stdout \(em
+\fB{"stored":…,"created":…,"unattended":…,"lifetime":…}\fR,
+\fB{"deleted":…}\fR, or \fB{"status":…,"message":…,"recover":…}\fR.
+.TP
 .B \-\-long
 Used by \fBlist\fR. Annotate each name, marking values byn took in with
 no credential behind the call. The plain listing stays a bare name list,

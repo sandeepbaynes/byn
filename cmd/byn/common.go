@@ -243,6 +243,18 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 		return handleCallError(err)
 	}
 
+	// Nobody to prompt: say why the command was refused and stop.
+	//
+	// This used to invite a password first and discover there was no terminal
+	// second, so an unattended caller got three lines — "Enter the master
+	// password", "auth: not a terminal", and only then the daemon's actual
+	// reason. Two of them addressed to a person who was not there, and the one
+	// that explains the refusal last. handleCallError prints the reason and the
+	// recovery hint, which is what a caller can act on.
+	if !pwStdin && !stdinIsTTY() {
+		return handleCallError(err)
+	}
+
 	var leadIn string
 	if locked {
 		leadIn = yellow("Vault is locked.") + dim(" Enter the master password to authorize this.")
@@ -251,16 +263,7 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 	}
 	pw, wipe, perr := authorizingPasswordWithLeadIn(pwStdin, leadIn)
 	if perr != nil {
-		// If we can't prompt (non-TTY, no --password-stdin), propagate the
-		// daemon's typed error rather than a generic exit-1.  The caller
-		// already printed the daemon error above; print the prompt failure so
-		// the user knows WHY we couldn't re-auth, then surface the exit code.
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
-		if !pwStdin && !stdinIsTTY() {
-			// Non-interactive: return the daemon error code (3) so scripts
-			// and tests can distinguish "needs auth" from generic failure.
-			return handleCallError(err)
-		}
 		return exitErr
 	}
 	defer wipe()
