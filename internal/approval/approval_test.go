@@ -33,7 +33,7 @@ func TestEnqueueAndDecide(t *testing.T) {
 	if got.ID == "" || got.Status != StatusPending {
 		t.Fatalf("bad request: %+v", got)
 	}
-	decided, err := s.Decide(got.ID, true, "terminal")
+	decided, err := s.Decide(got.ID, true, "terminal", "")
 	if err != nil {
 		t.Fatalf("decide: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDecide_RepeatedDenialPutsQuestionOnHold(t *testing.T) {
 		if err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
 		}
-		if _, err := s.Decide(r.ID, false, "terminal"); err != nil {
+		if _, err := s.Decide(r.ID, false, "terminal", ""); err != nil {
 			t.Fatalf("deny %d: %v", i, err)
 		}
 	}
@@ -116,7 +116,7 @@ func TestDecide_HoldLiftsAfterCooldown(t *testing.T) {
 	s, clock := newStore(t)
 	for i := 0; i < MaxDenialsBeforeHold; i++ {
 		r, _ := s.Enqueue(req("/p/.byn", "fp-nope"))
-		if _, err := s.Decide(r.ID, false, "terminal"); err != nil {
+		if _, err := s.Decide(r.ID, false, "terminal", ""); err != nil {
 			t.Fatalf("deny: %v", err)
 		}
 	}
@@ -131,11 +131,11 @@ func TestDecide_HoldLiftsAfterCooldown(t *testing.T) {
 func TestDecide_IsIdempotent(t *testing.T) {
 	s, _ := newStore(t)
 	r, _ := s.Enqueue(req("/p/.byn", "fp1"))
-	first, err := s.Decide(r.ID, true, "phone")
+	first, err := s.Decide(r.ID, true, "phone", "")
 	if err != nil {
 		t.Fatalf("first decide: %v", err)
 	}
-	second, err := s.Decide(r.ID, false, "terminal")
+	second, err := s.Decide(r.ID, false, "terminal", "")
 	if err != nil {
 		t.Fatalf("repeat decide errored: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestPrune_KeepsPendingForever(t *testing.T) {
 	longLived.ExpiresAt = clock.Add(365 * 24 * time.Hour)
 	pending, _ := s.Enqueue(longLived)
 	answered, _ := s.Enqueue(req("/p/.byn", "fp-answered"))
-	if _, err := s.Decide(answered.ID, true, "terminal"); err != nil {
+	if _, err := s.Decide(answered.ID, true, "terminal", ""); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 

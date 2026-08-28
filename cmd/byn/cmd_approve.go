@@ -23,6 +23,7 @@ func runApprove(args []string, _ cliScope) int {
 	fs := flag.NewFlagSet("approve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	deny := fs.Bool("deny", false, "refuse the request instead of granting it")
+	reason := fs.String("reason", "", "why, in your own words — shown to whoever asked (most useful with --deny)")
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	all := fs.Bool("all", false, "answer every pending request")
 	pwStdin := fs.Bool("password-stdin", false, "read the master password from stdin")
@@ -76,7 +77,7 @@ func runApprove(args []string, _ cliScope) int {
 	for _, id := range ids {
 		var resp ipc.ApprovalDecideResp
 		cerr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
-			ID: id, Approve: !*deny, Via: "terminal", Password: password,
+			ID: id, Approve: !*deny, Via: "terminal", Reason: *reason, Password: password,
 		}, &resp)
 		if cerr != nil {
 			rc = handleCallError(cerr)
@@ -147,5 +148,8 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 	}
 	fmt.Fprintf(os.Stderr, "\n%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Refuse:"), cyan("byn approve --deny <id>"))
+	// A refusal stops the asker until someone changes something, so the single
+	// most useful thing to hand back is why.
+	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "), dim("add --reason \"wrong target\" — the asker is told, and it is in the audit log"))
 	return exitOK
 }

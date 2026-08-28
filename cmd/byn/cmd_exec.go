@@ -89,6 +89,13 @@ func runExec(args []string, scope cliScope) int {
 	args, jsonOut := stripExecJSON(args)
 	execJSONMode = jsonOut
 
+	// --dry-run answers what WOULD happen and runs nothing. Stripped here, with
+	// the target resolved below, so it behaves identically in both forms.
+	args, dryRun := stripExecDryRun(args)
+
+	// --force-ask deliberately re-raises a question that was already refused.
+	args, forceAsk := stripExecForceAsk(args)
+
 	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
 	if hasInspect {
 		if err := applyInspect(inspectBrk, inspectVal); err != nil {
@@ -145,6 +152,20 @@ func runExec(args []string, scope cliScope) int {
 		extraArgs = childArgv
 	}
 
+	// --dry-run answers and stops. Placed after argv resolution so it sees the
+	// same command the real path would, and before anything that could launch,
+	// unlock, or queue a decision — a question about what would happen must
+	// change nothing, or asking it becomes its own kind of event.
+	if dryRun {
+		if scope.SourcePath == "" {
+			fmt.Fprintln(os.Stderr, boldRed("Error:")+" no .byn in scope — nothing to check against")
+			return exitErr
+		}
+		// The same argv the real call would send, so the answer is about the
+		// same command. An alias resolves server-side, so it is passed by name.
+		return runExecDryRun(scope.SourcePath, childArgv, aliasName, execJSONMode)
+	}
+
 	dir, err := defaultDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
@@ -182,19 +203,21 @@ func runExec(args []string, scope cliScope) int {
 	var req ipc.ExecFetchReq
 	if isAliasExec {
 		req = ipc.ExecFetchReq{
-			Path:    scope.SourcePath,
-			Scope:   scope.ToIPC(),
-			Command: "alias " + aliasName, // label overridden by daemon to resolved form
-			Alias:   aliasName,
-			Argv:    extraArgs,
+			Path:     scope.SourcePath,
+			Scope:    scope.ToIPC(),
+			Command:  "alias " + aliasName, // label overridden by daemon to resolved form
+			Alias:    aliasName,
+			Argv:     extraArgs,
+			ForceAsk: forceAsk,
 		}
 	} else {
 		cmd := execCommandLabel(childArgv)
 		req = ipc.ExecFetchReq{
-			Path:    scope.SourcePath,
-			Scope:   scope.ToIPC(),
-			Command: cmd,
-			Argv:    childArgv,
+			Path:     scope.SourcePath,
+			Scope:    scope.ToIPC(),
+			Command:  cmd,
+			Argv:     childArgv,
+			ForceAsk: forceAsk,
 		}
 	}
 

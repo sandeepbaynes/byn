@@ -142,6 +142,10 @@ type Request struct {
 	// file disagrees with would be undone by the next reconcile — so the
 	// approved request IS the authority, and it has to stop being one.
 	GrantedUntil time.Time `json:"granted_until,omitempty"`
+	// DecidedReason is why the decider decided, when they said. Carried back to
+	// whoever asked, because "denied" without a reason leaves them guessing
+	// between "fix it and re-ask" and "stop".
+	DecidedReason string `json:"decided_reason,omitempty"`
 }
 
 // Answered reports whether a decision has been recorded.
@@ -282,7 +286,7 @@ func (s *Store) Enqueue(req Request) (Request, error) {
 // decision already on file instead of failing. A decision can arrive twice —
 // two surfaces racing, or a late notification — and neither should turn into an
 // error the caller has to interpret.
-func (s *Store) Decide(id string, approve bool, via string) (Request, error) {
+func (s *Store) Decide(id string, approve bool, via, reason string) (Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -331,6 +335,7 @@ func (s *Store) Decide(id string, approve bool, via string) (Request, error) {
 		}
 		r.DecidedAt = now
 		r.DecidedVia = via
+		r.DecidedReason = reason
 		out := *r
 		if err := s.save(f); err != nil {
 			return Request{}, err
@@ -338,6 +343,37 @@ func (s *Store) Decide(id string, approve bool, via string) (Request, error) {
 		return out, nil
 	}
 	return Request{}, ErrNotFound
+}
+
+// LastDenial returns the most recent refusal of this exact question, if there
+// is one that has not been superseded by an approval.
+//
+// It exists so a refused command hits a wall rather than silently raising a
+// fresh request. Re-asking a person who just said no is how approval fatigue
+// starts, and the asker learns nothing from doing it.
+func (s *Store) LastDenial(subject, fingerprint string) (Request, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return Request{}, false
+	}
+	var latest Request
+	var found bool
+	for _, r := range f.Requests {
+		if r.Subject != subject || r.Fingerprint != fingerprint {
+			continue
+		}
+		// An approval settles the question, whenever it happened relative to a
+		// refusal: the last word wins.
+		if r.Status == StatusApproved && r.DecidedAt.After(latest.DecidedAt) {
+			return Request{}, false
+		}
+		if r.Status == StatusDenied && r.DecidedAt.After(latest.DecidedAt) {
+			latest, found = r, true
+		}
+	}
+	return latest, found
 }
 
 // ActionGranted reports whether an approved, still-valid decision authorizes

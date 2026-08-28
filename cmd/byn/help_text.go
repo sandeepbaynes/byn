@@ -529,8 +529,10 @@ SEE ALSO
        byn-exec - run a command with vault env-vars injected
 
 SYNOPSIS
-       byn exec [--json] [--wait-approval[=DUR]] [--no-privsep] [--inspect[=TARGET]] -- COMMAND [ARGS...]
-       byn exec [--json] [--wait-approval[=DUR]] [--no-privsep] [--inspect[=TARGET]] NAME [ARGS...]
+       byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
+                [--no-privsep] [--inspect[=TARGET]] -- COMMAND [ARGS...]
+       byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
+                [--no-privsep] [--inspect[=TARGET]] NAME [ARGS...]
 
 DESCRIPTION
        Loads the .byn-allowlisted env-var entries from the active vault
@@ -594,6 +596,30 @@ DESCRIPTION
 
            Read the id from "approval_id". Do not pattern-match the
            English sentence — it is written for people and will change.
+
+       byn exec --dry-run
+           Answer whether this command would run, and whether the
+           variables the .byn declares have values — without running
+           anything, and without asking anybody for a decision.
+
+           Meant to be run BEFORE a long pipeline, so an unpinned step
+           or a missing credential is found up front rather than three
+           minutes in. With --json:
+
+             {"pinned":false,"reason":"no_match","actions":["pnpm dev"],
+              "missing_env":["DB_URL"],"byn":"/…/.byn"}
+
+           Exit 0 it would run cleanly; 75 it would pause for a
+           decision; 1 it would run but a required variable has no value.
+           "reason" separates the cases whose fixes differ: "no_actions"
+           means ask the owner to pin something, "no_match" usually means
+           the command is wrong.
+
+       byn exec --force-ask
+           Raise a fresh decision for a command that was already refused.
+           Without it a refusal is a wall — deliberately, because
+           re-asking someone who just said no is how approval fatigue
+           starts. Use it when the refusal was a mistake.
 
        byn exec --wait-approval[=DURATION]
            Block until a pending decision is answered instead of exiting
@@ -1769,6 +1795,19 @@ DESCRIPTION
        Approving grants authority, so it asks for the master password,
        exactly as "byn trust" does. Approving re-grants the .byn, so the
        caller's next attempt succeeds.
+
+       An approved COMMAND is matched exactly — the literal joined argv,
+       not a prefix or a pattern. The same command runs free afterwards
+       for a working session; a different argument is a different
+       question. Pin it in [exec] actions for the durable answer.
+
+       Refusing takes --reason: "byn approve --deny <id> --reason
+       'wrong target'". The asker is told, and it goes in the audit log.
+       It is worth the few words — a refused caller is stopped until
+       somebody changes something, and the reason is what tells it which
+       thing. A refused command does not raise a fresh request on its
+       next attempt; it is refused again, with the time and the reason.
+       "byn exec --force-ask" asks again deliberately.
 
        Denying grants nothing and needs no password. Refusing is meant to
        be the cheaper action: if saying no costs more than saying yes,

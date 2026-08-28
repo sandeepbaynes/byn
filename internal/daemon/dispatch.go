@@ -248,6 +248,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 
 	case ipc.OpExecFetch:
 		return d.handleExecFetch(ctx, env)
+	case ipc.OpExecPreflight:
+		return d.handleExecPreflight(ctx, env)
 	case ipc.OpExecSpawn:
 		return d.handleExecSpawn(ctx, env)
 	case ipc.OpExecAuthorize:

@@ -90,7 +90,12 @@ const (
 	OpFSListDir      Op = "fs.listdir"       // list subdirectories for the portal directory picker
 
 	OpExecFetch Op = "exec.fetch"
-	OpExecSpawn Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5; superseded by authorize+redeem)
+	// OpExecPreflight answers whether a command would run and whether the
+	// variables it needs have values, WITHOUT running anything and without
+	// queueing a decision. Asking what would happen must not itself become an
+	// event a person has to answer.
+	OpExecPreflight Op = "exec.preflight"
+	OpExecSpawn     Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5; superseded by authorize+redeem)
 
 	// Terminal-anchored exec (Option A, 2026-06-17). The daemon authorizes the
 	// exec and mints a one-time token; the privsep helper — spawned by the CLI in
@@ -152,7 +157,7 @@ var AllOps = []Op{
 	OpApprovalList, OpApprovalDecide,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
-	OpExecFetch, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
+	OpExecFetch, OpExecPreflight, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
 	OpDaemonReload, OpDaemonRestart,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
@@ -603,6 +608,43 @@ type SecretMeta struct {
 	Unattended bool `json:"unattended,omitempty"`
 }
 
+// ExecPreflightReq asks whether a command would run under a trusted .byn, and
+// whether the variables that .byn declares have values — without running
+// anything, and without queueing a decision for anyone.
+type ExecPreflightReq struct {
+	Path string   `json:"path"`
+	Argv []string `json:"argv,omitempty"`
+	// Alias names an entry point from the .byn's [aliases] table, expanded by
+	// the daemon exactly as exec expands it — so the answer is about the
+	// command that would actually run, not the name that was typed.
+	Alias string `json:"alias,omitempty"`
+}
+
+// ExecPreflightResp answers it.
+type ExecPreflightResp struct {
+	// Pinned is true when the command would run credential-free.
+	Pinned bool `json:"pinned"`
+	// MatchedAction is the pattern that matched, when one did. It tells a
+	// caller which line of the .byn is doing the work.
+	MatchedAction string `json:"matched_action,omitempty"`
+	// Reason names why not, when Pinned is false: "no_actions" (the .byn pins
+	// nothing), "no_match" (it pins other things), "untrusted", "changed", or
+	// "no_byn". The distinction matters because the next step differs: an empty
+	// list means asking the owner to pin a pattern; a non-empty one usually
+	// means the command is wrong.
+	Reason string `json:"reason,omitempty"`
+	// Actions is what the .byn does pin, so a caller can see the near misses.
+	Actions []string `json:"actions,omitempty"`
+	// MissingEnv names declared variables with no value, excluding any the .byn
+	// marks optional. Empty means every required name has one.
+	MissingEnv []string `json:"missing_env,omitempty"`
+	// ResolvedArgv is what an alias expanded to, when one was given. It lets a
+	// caller see the command the answer is actually about.
+	ResolvedArgv []string `json:"resolved_argv,omitempty"`
+	// Byn is the canonical path of the file that answered.
+	Byn string `json:"byn,omitempty"`
+}
+
 // DeleteReq removes an env-var entry. No inheritance — the row must
 // exist in Scope.Env. Password authorizes the delete when the vault is
 // locked (one-shot verify, no unlock); empty when unlocked.
@@ -965,9 +1007,13 @@ type TrustVerifyResp struct {
 //	                            pattern matrix. Path must be non-empty for
 //	                            alias exec — aliases are defined in a .byn.
 type ExecFetchReq struct {
-	Path    string `json:"path,omitempty"`
-	Scope   Scope  `json:"scope,omitempty"`
-	Command string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
+	// ForceAsk raises a fresh decision for a command that was already refused.
+	// Without it a refusal is a wall, which is the point: the default must not
+	// be to re-ask someone who just said no.
+	ForceAsk bool   `json:"force_ask,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Scope    Scope  `json:"scope,omitempty"`
+	Command  string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
 	// Argv is the exact untruncated child argv for the direct form (Alias==""),
 	// or the extra passthrough args for the alias form (Alias!="").
 	// An old CLI that does not send Argv gets empty-Argv behavior: treated as
@@ -1495,9 +1541,15 @@ type ApprovalListResp struct {
 // ApprovalDecideReq answers one queued decision. Approving a trust widening
 // re-grants the .byn, so it carries the same proof of presence a grant does.
 type ApprovalDecideReq struct {
-	ID       string `json:"id"`
-	Approve  bool   `json:"approve"`
-	Via      string `json:"via,omitempty"`
+	ID      string `json:"id"`
+	Approve bool   `json:"approve"`
+	Via     string `json:"via,omitempty"`
+	// Reason is why, in the decider's own words. It matters most on a refusal:
+	// an agent told only "denied" cannot tell "wrong target, fix it and ask
+	// again" from "never do this", so it either gives up or re-asks blindly.
+	// Optional, and never required — a decision without one is still a
+	// decision.
+	Reason   string `json:"reason,omitempty"`
 	Password []byte `json:"password,omitempty"`
 }
 
