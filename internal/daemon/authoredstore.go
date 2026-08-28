@@ -59,6 +59,19 @@ type authoredEntry struct {
 	// start, and keeps needing it — otherwise unlocking in one terminal would
 	// quietly grant reads in another, which is the thing sessions exist to stop.
 	Authored bool `json:"authored,omitempty"`
+	// Unattended records that no credential stood behind the write at all — no
+	// session, no password, no presence token.
+	//
+	// Separate from Authored because the two can differ: an unattended write to
+	// an OPEN vault with no trusted .byn to key it takes the ordinary path and
+	// is not stored under the authored key, but it is still a value that
+	// appeared without a person. This is the flag visibility hangs on. An agent
+	// can silence "no value for X" by inventing one, and if that name is a real
+	// secret the program starts cleanly and does the wrong thing quietly —
+	// encrypting with a key nobody can reproduce, say. byn cannot tell an
+	// invented value from a provisioned one, so it must at least never hide
+	// which is which.
+	Unattended bool `json:"unattended,omitempty"`
 }
 
 // authoredStore is the on-disk registry. All methods are safe for concurrent
@@ -129,7 +142,7 @@ func authoredKeyLess(x, y authoredKey) bool {
 // called for a CREATE, so the name did not exist a moment ago, and whatever was
 // recorded for an earlier incarnation of it describes a value that is gone.
 // Letting that stand would hand its author a claim over someone else's secret.
-func (a *authoredStore) Record(key authoredKey, origin procRef, authored bool) error {
+func (a *authoredStore) Record(key authoredKey, origin procRef, authored, unattended bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	entries := a.load()
@@ -145,6 +158,7 @@ func (a *authoredStore) Record(key authoredKey, origin procRef, authored bool) e
 		OriginStart: origin.Start,
 		AtUnixNano:  time.Now().UnixNano(),
 		Authored:    authored,
+		Unattended:  unattended,
 	})
 	return a.save(out)
 }
@@ -192,11 +206,22 @@ func (a *authoredStore) Forget(vaultName, project, env string, names ...string) 
 
 // NamesFor lists the variables recorded as authored in one scope, for display.
 func (a *authoredStore) NamesFor(vaultName, project, env string) []string {
+	return a.namesMatching(vaultName, project, env, func(authoredEntry) bool { return true })
+}
+
+// UnattendedNamesFor lists the variables in one scope that were stored with no
+// credential behind them — the ones a person should be able to see at a glance,
+// because byn cannot tell an invented value from a provisioned one.
+func (a *authoredStore) UnattendedNamesFor(vaultName, project, env string) []string {
+	return a.namesMatching(vaultName, project, env, func(e authoredEntry) bool { return e.Unattended })
+}
+
+func (a *authoredStore) namesMatching(vaultName, project, env string, keep func(authoredEntry) bool) []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var out []string
 	for _, e := range a.load() {
-		if e.Key.Vault == vaultName && e.Key.Project == project && e.Key.Env == env {
+		if e.Key.Vault == vaultName && e.Key.Project == project && e.Key.Env == env && keep(e) {
 			out = append(out, e.Key.Name)
 		}
 	}

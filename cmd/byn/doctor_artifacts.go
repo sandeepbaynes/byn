@@ -180,9 +180,26 @@ func checkInjectableNames() (healCheck, bool) {
 			missing = append(missing, n)
 		}
 	}
+	// Values that appeared with nobody behind the call. Worth saying even when
+	// nothing is missing: byn cannot tell one an agent invented from one a
+	// person provisioned, and for a name where a wrong-but-present value does
+	// silent damage, "it has a value" is not the reassurance it looks like.
+	var unattended []string
+	for _, e := range resp.Secrets {
+		if e.Unattended {
+			unattended = append(unattended, e.Name)
+		}
+	}
 	if len(missing) == 0 {
 		c.OK = true
 		c.Detail = fmt.Sprintf("all %d declared in %s", len(declared), filepath.Base(bynPath))
+		if len(unattended) > 0 {
+			c.OK = false
+			c.Warn = true
+			c.Detail += fmt.Sprintf("; %d stored with no password behind the call: %s",
+				len(unattended), strings.Join(unattended, ", "))
+			c.Fix = "check these are the values you meant: byn audit tail --json | grep put.unattended"
+		}
 		return c, true
 	}
 	// A warning, not a failure. byn cannot tell a credential someone forgot from

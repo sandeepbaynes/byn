@@ -1290,6 +1290,16 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	// Deciding on the caller rather than on lock state keeps one agent's
 	// behaviour the same whether or not someone happens to have the vault open.
 	unattended := !d.callerIsAttended(ctx, vaultName, req.Password, req.PresenceToken)
+	if unattended {
+		// A project may reserve some or all of its names for a person.
+		if ok, why := d.unattendedPutAllowed(vaultName, scope, req.Name); !ok {
+			le := ipc.NewError(env.ID, ipc.CodeAuthRequired,
+				"storing "+req.Name+" here needs a person: "+why,
+				"ask the owner to set this value, or supply the master password")
+			d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put.unattended", le)
+			return le
+		}
+	}
 	var authKey []byte
 	if unattended {
 		authKey = d.authoredKeyFor(vaultName, scope)
@@ -1359,7 +1369,7 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	} else {
 		d.touchVault(req.Scope.Vault)
 		if created {
-			d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored)
+			d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored, unattended)
 		}
 		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{})
 		if oerr != nil {
@@ -1368,7 +1378,14 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 			resp = out
 		}
 	}
-	d.auditPlane(ctx, req.Scope, "env_var", req.Name, "put", resp)
+	// A distinct op when nobody was there. Reading the log back, "a value
+	// appeared and no human was involved" is a materially different event from
+	// "someone stored a value", and only one of them is worth a second look.
+	putOp := "put"
+	if unattended {
+		putOp = "put.unattended"
+	}
+	d.auditPlane(ctx, req.Scope, "env_var", req.Name, putOp, resp)
 	return resp
 }
 
@@ -1449,6 +1466,16 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 	// from ciphertext length (no decryption, no audit "get" events fire).
 	// When locked the field is omitted (nil) — the UI treats nil as "unknown".
 	unlocked := !st.IsLocked()
+	// Which of these appeared with nobody behind the call. byn cannot tell an
+	// invented value from a provisioned one, so the least it can do is never
+	// hide which is which.
+	unattended := make(map[string]struct{})
+	if d.authored != nil {
+		k := authoredScopeKey(req.Scope.Vault, scope, "")
+		for _, n := range d.authored.UnattendedNamesFor(k.Vault, k.Project, k.Env) {
+			unattended[n] = struct{}{}
+		}
+	}
 	out := make([]ipc.SecretMeta, 0, len(infos))
 	for _, m := range infos {
 		meta := ipc.SecretMeta{
@@ -1456,6 +1483,9 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 			Source:    m.Source.String(),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
+		}
+		if _, ok := unattended[m.Name]; ok {
+			meta.Unattended = true
 		}
 		if unlocked {
 			empty := m.IsEmpty

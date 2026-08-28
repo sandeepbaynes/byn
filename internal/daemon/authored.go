@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
@@ -37,7 +38,7 @@ func authoredScopeKey(vaultName string, scope vault.Scope, name string) authored
 //
 // Best-effort: a failure records nothing, which costs the caller an approval
 // later rather than granting one by accident.
-func (d *Daemon) recordAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, name string, authored bool) {
+func (d *Daemon) recordAuthored(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope, name string, authored, unattended bool) {
 	if d.authored == nil {
 		return
 	}
@@ -45,7 +46,7 @@ func (d *Daemon) recordAuthored(ctx context.Context, st *vault.Store, vaultName 
 	if !origin.ok() {
 		return // no pinned-down caller identity → nothing worth recording
 	}
-	if err := d.authored.Record(authoredScopeKey(vaultName, scope, name), origin, authored); err != nil {
+	if err := d.authored.Record(authoredScopeKey(vaultName, scope, name), origin, authored, unattended); err != nil {
 		return
 	}
 	// An entry on the authored scheme is keyed through the scope's authored key,
@@ -331,4 +332,41 @@ func (d *Daemon) callerIsAttended(ctx context.Context, vaultName string, passwor
 	}
 	ci := callerFrom(ctx)
 	return d.sessions.validate(tok, vaultName, ci.UID, ci.TTYDev, time.Now())
+}
+
+// unattendedPutAllowed reports whether a caller with no credential may create
+// name in this scope.
+//
+// The .byn that governs the scope decides. Absent means yes: an agent that
+// cannot store what it invents is the problem byn exists to remove, so the
+// default is permissive and loud rather than restrictive and quiet. A project
+// that provisions its secrets by hand can set [exec] agent_put = false, or name
+// individual variables in [exec] agent_put_deny.
+//
+// Read from the record's MAC-bound snapshot rather than the file on disk, for
+// the same reason every other policy is: editing the .byn after trust must not
+// change what byn enforces.
+func (d *Daemon) unattendedPutAllowed(vaultName string, scope vault.Scope, name string) (bool, string) {
+	store, err := trust.Load(d.cfg.Dir)
+	if err != nil || store == nil {
+		return true, ""
+	}
+	for _, rec := range store.Records {
+		if !recordGoverns(rec, vaultName, scope) || rec.Snapshot == "" {
+			continue
+		}
+		parsed, perr := bynfile.Parse([]byte(rec.Snapshot))
+		if perr != nil {
+			continue
+		}
+		if parsed.Exec.AgentPut != nil && !*parsed.Exec.AgentPut {
+			return false, filepath.Base(rec.Path) + " sets [exec] agent_put = false"
+		}
+		for _, denied := range parsed.Exec.AgentPutDeny {
+			if denied == name {
+				return false, filepath.Base(rec.Path) + " lists " + name + " in [exec] agent_put_deny"
+			}
+		}
+	}
+	return true, ""
 }

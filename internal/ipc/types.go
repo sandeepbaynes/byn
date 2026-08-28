@@ -595,6 +595,12 @@ type SecretMeta struct {
 	// or fresh credentials, but the listing of names + empty-indicator is not
 	// separately auth-gated.
 	Empty *bool `json:"empty,omitempty"`
+	// Unattended is true when byn stored this value with no credential behind
+	// the call — no session, no password. It is how a person can tell a value
+	// an agent invented from one they provisioned themselves, which byn cannot
+	// otherwise distinguish, and which matters most for exactly the names where
+	// a wrong-but-present value does silent damage.
+	Unattended bool `json:"unattended,omitempty"`
 }
 
 // DeleteReq removes an env-var entry. No inheritance — the row must

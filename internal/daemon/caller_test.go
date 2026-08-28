@@ -3,15 +3,21 @@ package daemon
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
+// findOp returns the first event whose op is op, or a sub-op of it.
+//
+// The prefix match matters: a put with no credential behind it is logged as
+// "put.unattended" so the log can distinguish it, and these tests are about
+// which CALLER was recorded, not which flavour of put it was.
 func findOp(events []ipc.AuditEvent, op string) *ipc.AuditEvent {
 	for i := range events {
-		if events[i].Op == op {
+		if events[i].Op == op || strings.HasPrefix(events[i].Op, op+".") {
 			return &events[i]
 		}
 	}

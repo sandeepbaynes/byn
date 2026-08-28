@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -600,5 +601,121 @@ func TestApprovalPendingCarriesMachineReadableDetails(t *testing.T) {
 	}
 	if em.Details["expires_at"] == "" {
 		t.Error("details should say when the request expires")
+	}
+}
+
+// A project can reserve names for a person.
+//
+// Raised by an agent using byn in anger, from a real incident shape: an agent
+// silences "no value for INTEGRATION_CONFIG_ENCRYPTION_KEY" by inventing one,
+// the service starts cleanly, and it encrypts data with a key nobody can
+// reproduce. byn cannot tell an invented value from a provisioned one, so a
+// repo that provisions its secrets by hand needs a way to say so.
+func TestUnattendedPut_RespectsAgentPutFalse(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nagent_put = false\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "ENCRYPTION_KEY", Value: []byte("invented"),
+	}, &ipc.PutResp{})
+	if err == nil {
+		t.Fatal("agent_put = false must stop an unattended write")
+	}
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+		t.Fatalf("code = %v, want auth_required", code)
+	}
+	// And it must say WHY, or the agent cannot tell this from a missing grant.
+	var em *ipc.ErrResponse
+	if errors.As(err, &em) && !strings.Contains(em.Message, "agent_put") {
+		t.Errorf("message %q should name the setting that refused it", em.Message)
+	}
+}
+
+// The narrower form: most names are fine for an agent to invent, a few are not.
+func TestUnattendedPut_RespectsAgentPutDenyList(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\n"+
+		"agent_put_deny = [\"ENCRYPTION_KEY\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "ENCRYPTION_KEY", Value: []byte("invented"),
+	}, &ipc.PutResp{}); err == nil {
+		t.Fatal("a denied name must not be creatable unattended")
+	}
+	// Everything else still flows, or the gate would cost more than it saves.
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "TEMP_TABLE", Value: []byte("t_123"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("a name not on the deny list must still be storable: %v", err)
+	}
+}
+
+// Visibility is the other half, and the more important one: the default stays
+// permissive, so byn must never hide which values arrived unattended.
+func TestUnattendedPut_IsVisible(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("provisioned-by-a-person"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_MADE", Value: []byte("invented"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	var list ipc.ListResp
+	if err := c.Call(ipc.OpList, ipc.ListReq{}, &list); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, s := range list.Secrets {
+		seen[s.Name] = s.Unattended
+	}
+	if !seen["AGENT_MADE"] {
+		t.Error("a value stored with no credential must be marked unattended in the listing")
+	}
+	if seen["SEED"] {
+		t.Error("a value stored WITH a session must not be marked unattended")
+	}
+
+	// And the audit log must name it as its own kind of event.
+	var tail ipc.AuditTailResp
+	if err := c.Call(ipc.OpAuditTail, ipc.AuditTailReq{Lines: 50}, &tail); err != nil {
+		t.Fatalf("audit tail: %v", err)
+	}
+	var found bool
+	for _, e := range tail.Events {
+		if e.Op == "put.unattended" && e.EntryName == "AGENT_MADE" {
+			found = true
+		}
+		if e.Op == "put.unattended" && e.EntryName == "SEED" {
+			t.Error("an attended put was logged as unattended")
+		}
+	}
+	if !found {
+		t.Error("no put.unattended event for the agent-stored value")
 	}
 }
