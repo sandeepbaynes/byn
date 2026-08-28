@@ -195,6 +195,17 @@ type ErrMsg struct {
 	Code    ErrCode `json:"code"`
 	Message string  `json:"message"`
 	Recover string  `json:"recover,omitempty"`
+	// Details carries the facts of the error as data rather than as prose.
+	//
+	// Message and Recover are written for a person and are free to be reworded;
+	// anything a program needs to ACT on belongs here. The case that forced it:
+	// a paused command returns an approval id, and the only place that id
+	// appeared was inside an English sentence, so every agent was reduced to
+	// pattern-matching one — which breaks the first time the wording improves.
+	//
+	// Optional and additive. Keys are documented per error code alongside the
+	// code that sets them.
+	Details map[string]string `json:"details,omitempty"`
 }
 
 // ErrCode is a stable string identifier for an error class. The CLI

@@ -10,14 +10,20 @@ import (
 
 // ---- byn trust diff CLI tests -----------------------------------------------
 
-// TestRunTrustDiff_NoPath_UsageError verifies that `byn trust diff` with no
-// path argument prints a usage error and exits with exitErr.
-func TestRunTrustDiff_NoPath_UsageError(t *testing.T) {
-	if got := runTrustDiff(nil); got != exitErr {
-		t.Fatalf("no-path got %d, want exitErr", got)
-	}
-	if got := runTrustDiff([]string{}); got != exitErr {
-		t.Fatalf("empty-args got %d, want exitErr", got)
+// TestRunTrustDiff_NoPath_DefaultsToLocalByn verifies that `byn trust diff`
+// with no argument means ./.byn, as `byn trust` does and as the help has always
+// said ("trust diff [PATH]").
+//
+// It used to be a usage error, which contradicted the documentation and turned
+// the obvious invocation — run it in the project you are standing in — into a
+// failure. With no daemon it should get as far as trying to talk to one.
+func TestRunTrustDiff_NoPath_DefaultsToLocalByn(t *testing.T) {
+	noDaemon(t)
+	for _, args := range [][]string{nil, {}} {
+		if got := runTrustDiff(args); got != exitDaemonDown {
+			t.Fatalf("args=%v got %d, want exitDaemonDown(%d) — no path should mean ./.byn",
+				args, got, exitDaemonDown)
+		}
 	}
 }
 

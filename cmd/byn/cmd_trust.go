@@ -470,14 +470,16 @@ func runTrustList(args []string) int {
 //	2 — daemon is not running (standard daemon-down code)
 //	3 — daemon returned an error (not trusted, oversize, etc.)
 func runTrustDiff(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "%s usage: byn trust diff <path>\n", boldRed("Error:"))
-		fmt.Fprintf(os.Stderr, "%s byn trust diff ./.byn\n", yellow("Example:"))
-		return exitErr
+	// Default to ./.byn, as `byn trust` and the help text both do. Requiring
+	// the path here contradicted the documented "trust diff [PATH]" and made the
+	// obvious invocation — run it in the project you are standing in — an error.
+	target := "./.byn"
+	if len(args) > 0 {
+		target = args[0]
 	}
 	// Absolutize against the caller's cwd: the daemon resolves a relative path
 	// against ITS OWN cwd, not the user's shell (see absForDaemon).
-	path := absForDaemon(args[0])
+	path := absForDaemon(target)
 	// Accept a directory the same way `byn trust` does. The error text that
 	// sends users here prints a directory, so rejecting one made the suggested
 	// remedy fail.

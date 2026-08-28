@@ -55,6 +55,19 @@ type File struct {
 		// leading "~" is expanded); entries outside home are refused. Optional;
 		// absent ⇒ only the curated defaults are granted.
 		Writable []string `toml:"writable,omitempty"`
+		// Optional names variables from Env that the program can run without.
+		//
+		// byn cannot tell a missing credential from one that is absent on
+		// purpose, so it warned about both — and a project with three names
+		// that are deliberately unset on every dev machine (an SSO fallback,
+		// say) got a permanent warning at every launch and a permanent FAIL in
+		// doctor. A check that is always red is one nobody reads, which is
+		// worse than not having it: a genuinely missing value hides in the
+		// noise. Listing a name here says "absent is fine", and byn stops
+		// reporting it as a problem. It grants nothing — an optional name is
+		// injected exactly as before when it does have a value, and a name here
+		// but not in Env is simply ignored.
+		Optional []string `toml:"optional,omitempty"`
 	} `toml:"exec"`
 	// Aliases is the top-level [aliases] table: named entry points for
 	// `byn exec`. Each key is an alias name (^[A-Za-z0-9_][A-Za-z0-9_-]*$);

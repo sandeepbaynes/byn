@@ -83,6 +83,12 @@ func runExec(args []string, scope cliScope) int {
 	args, waitApproval, hasWait := stripWaitApproval(args)
 	_ = hasWait
 
+	// --json makes exec report a paused command as data rather than prose, so an
+	// agent reads the approval id from a field instead of pattern-matching an
+	// English sentence. Prose still goes to stderr.
+	args, jsonOut := stripExecJSON(args)
+	execJSONMode = jsonOut
+
 	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
 	if hasInspect {
 		if err := applyInspect(inspectBrk, inspectVal); err != nil {
@@ -259,6 +265,9 @@ func runExec(args []string, scope cliScope) int {
 			if em.Recover != "" {
 				fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Try:"), cyan(em.Recover))
 			}
+		}
+		if execJSONMode {
+			execApprovalJSON(os.Stdout, callErr, exitApprovalPending)
 		}
 		return exitApprovalPending
 	case isAuthRequiredErr(callErr):
@@ -664,6 +673,9 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 			if em.Recover != "" {
 				fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Try:"), cyan(em.Recover))
 			}
+		}
+		if execJSONMode {
+			execApprovalJSON(os.Stdout, callErr, exitApprovalPending)
 		}
 		return exitApprovalPending, true
 	default:

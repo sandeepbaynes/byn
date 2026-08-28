@@ -196,6 +196,9 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	}
 
 	var allow []string
+	// Names the .byn marks as fine to be absent; they are injected when present
+	// and never reported missing.
+	var optionalEnv []string
 	// finalArgv is the argv the daemon authorizes and returns to the CLI.
 	// For direct exec it is req.Argv; for alias exec it is the expanded form.
 	// It is set inside the req.Path != "" block and passed back in ResolvedArgv.
@@ -302,6 +305,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			return nil, nil, false, false, false, nil, be
 		}
 		allow = []string(f.Exec.Env)
+		optionalEnv = f.Exec.Optional
 		wildcard = f.AllowsAll()
 		noneDeclared = !wildcard && len(allow) == 0
 
@@ -536,7 +540,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	auditExec(nil)
 	resolvedArgv = finalArgv
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard,
-		missingAllowlisted(allow, wildcard, values), nil
+		missingAllowlisted(allow, optionalEnv, wildcard, values), nil
 }
 
 // execValuesFromCapability decrypts a trusted .byn's allowlisted vars via its
@@ -717,7 +721,7 @@ func trustDenyMessage(path string, status trust.VerifyStatus) string {
 //
 // A wildcard allowlist has nothing to compare against — it asks for whatever
 // exists — so it can never be short.
-func missingAllowlisted(allow []string, wildcard bool, values []ipc.ExecFetchValue) []string {
+func missingAllowlisted(allow, optional []string, wildcard bool, values []ipc.ExecFetchValue) []string {
 	if wildcard || len(allow) == 0 {
 		return nil
 	}
@@ -725,9 +729,19 @@ func missingAllowlisted(allow []string, wildcard bool, values []ipc.ExecFetchVal
 	for _, v := range values {
 		got[v.Name] = struct{}{}
 	}
+	// Names the author has said the program can run without. Warning about
+	// those made the check fire on every healthy launch, which is how a warning
+	// stops being read.
+	skip := make(map[string]struct{}, len(optional))
+	for _, n := range optional {
+		skip[n] = struct{}{}
+	}
 	var missing []string
 	for _, name := range allow {
 		if name == "*" {
+			continue
+		}
+		if _, ok := skip[name]; ok {
 			continue
 		}
 		if _, ok := got[name]; !ok {

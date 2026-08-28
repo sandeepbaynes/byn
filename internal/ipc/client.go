@@ -92,7 +92,7 @@ func (c *Client) CallWithSession(op Op, reqBody, respBody any, session []byte) e
 		return fmt.Errorf("ipc: response id mismatch: got %q, want %q", resp.ID, id)
 	}
 	if resp.Err != nil {
-		return &ErrResponse{Code: resp.Err.Code, Message: resp.Err.Message, Recover: resp.Err.Recover}
+		return &ErrResponse{Code: resp.Err.Code, Message: resp.Err.Message, Recover: resp.Err.Recover, Details: resp.Err.Details}
 	}
 	if respBody != nil {
 		return DecodeBody(BodyResp, resp, respBody)
@@ -159,7 +159,7 @@ func (c *Client) CallWithFDs(op Op, reqBody, respBody any, session []byte, fds [
 		return fmt.Errorf("ipc: response id mismatch: got %q, want %q", resp.ID, id)
 	}
 	if resp.Err != nil {
-		return &ErrResponse{Code: resp.Err.Code, Message: resp.Err.Message, Recover: resp.Err.Recover}
+		return &ErrResponse{Code: resp.Err.Code, Message: resp.Err.Message, Recover: resp.Err.Recover, Details: resp.Err.Details}
 	}
 	if respBody != nil {
 		return DecodeBody(BodyResp, resp, respBody)
@@ -223,6 +223,8 @@ type ErrResponse struct {
 	Code    ErrCode
 	Message string
 	Recover string
+	// Details are the error's machine-readable facts; see ErrMsg.Details.
+	Details map[string]string
 }
 
 func (e *ErrResponse) Error() string {

@@ -86,6 +86,14 @@ func NewResponse(id string, body any) (*Envelope, error) {
 
 // NewError builds an error envelope.
 func NewError(id string, code ErrCode, message, recoverHint string) *Envelope {
+	return NewErrorWithDetails(id, code, message, recoverHint, nil)
+}
+
+// NewErrorWithDetails is NewError plus machine-readable facts (see
+// ErrMsg.Details) — the id of a request a caller must wait on, the command it
+// was about, and so on. A caller that needs to act on an error should read
+// these rather than parse the message.
+func NewErrorWithDetails(id string, code ErrCode, message, recoverHint string, details map[string]string) *Envelope {
 	return &Envelope{
 		V:  ProtocolVersion,
 		ID: id,
@@ -93,6 +101,7 @@ func NewError(id string, code ErrCode, message, recoverHint string) *Envelope {
 			Code:    code,
 			Message: message,
 			Recover: recoverHint,
+			Details: details,
 		},
 	}
 }

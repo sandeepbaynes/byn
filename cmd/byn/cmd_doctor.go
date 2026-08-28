@@ -122,8 +122,11 @@ func runDoctor(args []string, _ cliScope) int {
 // printHealCheck renders a local provisioning/health check with its fix hint.
 func printHealCheck(c healCheck) {
 	marker := " FAIL "
-	if c.OK {
+	switch {
+	case c.OK:
 		marker = "  OK  "
+	case c.Warn:
+		marker = " WARN "
 	}
 	line := fmt.Sprintf("[%s] %s", marker, c.Name)
 	if c.Detail != "" {
@@ -157,7 +160,7 @@ func printDaemonCheck(c ipc.DoctorCheck) {
 // reachable) any daemon-side check failed.
 func healExitCode(local []healCheck, daemonChecked bool, d ipc.DoctorResp) int {
 	for _, c := range local {
-		if !c.OK {
+		if !c.OK && !c.Warn {
 			return exitErr
 		}
 	}

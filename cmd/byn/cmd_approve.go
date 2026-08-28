@@ -121,8 +121,24 @@ func listApprovals(c *ipc.Client, jsonOut bool) int {
 		}
 		age := time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second)
 		detail := fmt.Sprintf("asked %s ago", age)
+		// How long is left, not just how long it has been waiting. A request
+		// raised at the end of a day can expire before anyone looks at it, and
+		// "asked 5h ago" does not tell you that you have an hour to answer.
+		if e.ExpiresAt > 0 {
+			if left := time.Until(time.Unix(e.ExpiresAt, 0)).Truncate(time.Minute); left > 0 {
+				detail += fmt.Sprintf(", expires in %s", left)
+			} else {
+				detail += ", expired"
+			}
+		}
 		if e.Repeats > 0 {
 			detail += fmt.Sprintf(", retried %d×", e.Repeats)
+		}
+		// The vault, when it is not the default one: two projects on one
+		// machine are told apart by it at a glance, and the JSON form has
+		// carried it all along.
+		if e.Vault != "" && e.Vault != "default" {
+			detail += ", vault " + e.Vault
 		}
 		if e.HighRisk {
 			detail += " — high risk"
