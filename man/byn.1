@@ -1338,7 +1338,13 @@ caller.
 .PP
 After either, nothing is lost and the shortcuts simply end: reading needs
 the vault unlocked or a password, and injection needs the \fB.byn\fR
-trusted again. Those are the ordinary rules, which is where every value
+trusted again.
+.PP
+A value you stored may also be DELETED without a credential, under one
+further condition: no trusted \fB.byn\fR in the scope declares the name.
+Nothing can inject it, so removing it cannot take a value away from a
+running program. A declared name stays the owner's to remove. Logged as
+\fBdelete.unattended\fR. Those are the ordinary rules, which is where every value
 not stored this way lives all along. The exemption is deliberately
 short\-lived \(em it exists so an agent can finish the task it is in the
 middle of, not to accumulate standing access to a machine.

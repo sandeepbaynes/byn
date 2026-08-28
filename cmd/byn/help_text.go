@@ -98,6 +98,14 @@ HOW LONG YOUR OWN VALUES STAY YOURS
        needs the .byn trusted again — the ordinary rules, which is where
        every value that was not stored this way lives all along.
 
+       You may also DELETE a value you stored, under one more condition:
+       no trusted .byn in the scope declares the name. Nothing can inject
+       it, so removing it cannot take a value away from a running
+       program. A declared name stays the owner's to remove, because
+       something may be relying on it. This exists so a scratch value
+       does not outlive the task that created it and become litter only
+       its owner can sweep. It is logged as delete.unattended.
+
        This is deliberately short-lived. The exemption exists so an agent
        can finish the task it is in the middle of, not to accumulate
        standing access to a machine.

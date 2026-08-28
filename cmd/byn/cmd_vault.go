@@ -345,10 +345,18 @@ func runPut(args []string, scope cliScope) int {
 	if rc == exitOK {
 		switch {
 		case *jsonOut:
-			out, merr := json.Marshal(map[string]any{
+			obj := map[string]any{
 				"stored": name, "scope": scope.String(),
 				"created": putResp.Created, "unattended": putResp.Unattended,
-			})
+			}
+			if putResp.Unattended {
+				// The prose says how long this stays readable; the JSON has to
+				// carry the same fact, or a caller reading only the JSON does
+				// not know it holds something with a lifetime.
+				obj["lifetime"] = "session"
+				obj["readable_while"] = "this agent's session lives and nobody else writes it"
+			}
+			out, merr := json.Marshal(obj)
 			if merr == nil {
 				_, _ = fmt.Fprintln(os.Stdout, string(out))
 			}
@@ -385,10 +393,18 @@ func runGet(args []string, scope cliScope) int {
 	}
 	name := fs.Arg(0)
 	var resp ipc.GetResp
+	var lastErr error
 	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, nil, func(pw []byte) error {
-		return newClient(dir, scope.Vault).Call(ipc.OpGet, ipc.GetReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &resp)
+		lastErr = newClient(dir, scope.Vault).Call(ipc.OpGet, ipc.GetReq{Scope: scope.ToIPC(), Name: name, Password: pw}, &resp)
+		return lastErr
 	})
 	if rc != exitOK {
+		// --json means machine output for the refusal as well as the value. A
+		// caller that has to parse an English refusal to learn it was refused is
+		// back where the id-in-prose problem started.
+		if *jsonOut {
+			emitGetErrorJSON(os.Stdout, name, lastErr, rc)
+		}
 		return rc
 	}
 	if *jsonOut {
@@ -609,4 +625,23 @@ func readSecretValue() ([]byte, error) {
 		data = data[:n-1]
 	}
 	return data, nil
+}
+
+// emitGetErrorJSON reports a refused read as data.
+func emitGetErrorJSON(w *os.File, name string, callErr error, exitCode int) {
+	obj := map[string]any{"name": name, "status": "denied", "exit": exitCode}
+	var em *ipc.ErrResponse
+	if errors.As(callErr, &em) {
+		obj["status"] = string(em.Code)
+		obj["message"] = em.Message
+		if em.Recover != "" {
+			obj["recover"] = em.Recover
+		}
+		for k, v := range em.Details {
+			obj[k] = v
+		}
+	}
+	if b, err := json.Marshal(obj); err == nil {
+		_, _ = fmt.Fprintln(w, string(b))
+	}
 }

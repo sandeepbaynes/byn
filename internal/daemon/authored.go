@@ -451,3 +451,59 @@ func matchesDenyPattern(patterns []string, name string) (string, bool) {
 	}
 	return "", false
 }
+
+// declaredByAnyTrusted reports whether any trusted .byn governing this scope
+// asks for name in its [exec] env — i.e. whether anything would inject it.
+//
+// A wildcard declares everything, so a scope granted "*" answers true for any
+// name. That is the conservative reading and the right one: under a wildcard,
+// every value in the scope is something a program may receive.
+func (d *Daemon) declaredByAnyTrusted(vaultName string, scope vault.Scope, name string) bool {
+	store, err := trust.Load(d.cfg.Dir)
+	if err != nil || store == nil {
+		return true // cannot tell → treat it as declared, and keep the gate
+	}
+	for _, rec := range store.Records {
+		if !recordGoverns(rec, vaultName, scope) || rec.Snapshot == "" {
+			continue
+		}
+		parsed, perr := bynfile.Parse([]byte(rec.Snapshot))
+		if perr != nil {
+			return true // unreadable grant → assume it declares it
+		}
+		if parsed.AllowsAll() {
+			return true
+		}
+		for _, n := range []string(parsed.Exec.Env) {
+			if n == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mayDeleteUnattended reports whether a caller may remove a value it stored,
+// without a credential.
+//
+// Deleting is destroying, so this is drawn as narrowly as it can be and still
+// be useful. Three conditions, and the third is what makes it safe rather than
+// merely convenient:
+//
+//  1. The caller stored the value itself, unattended. Never a secret that was
+//     already there, and never someone else's.
+//  2. Its session is still the one that stored it — the same rule that governs
+//     reading it back.
+//  3. NO trusted .byn in the scope declares the name. Nothing can inject it, so
+//     removing it cannot take a value away from a running program. It is
+//     exactly the set doctor already reports as "nothing injects them".
+//
+// The case this exists for: an agent stores a scratch value for a task, the
+// task ends, and the value outlives it. Before this, only a human could clear
+// it — so every unattended run left litter that only its owner could sweep, and
+// byn's own delete path could not undo byn's own mistake. A declared name stays
+// human-only, because that one someone is relying on.
+func (d *Daemon) mayDeleteUnattended(ctx context.Context, vaultName string, scope vault.Scope, name string) bool {
+	return d.ownUnattendedValue(ctx, vaultName, scope, name) &&
+		!d.declaredByAnyTrusted(vaultName, scope, name)
+}

@@ -54,6 +54,10 @@ readable indefinitely.
   the ordinary rules resume. See `byn help unattended`.
 - **Adding such a variable to `[exec] env` needs no approval.** Being asked
   permission to read back a value you supplied protects nothing.
+- **A caller may delete a value it stored**, if no trusted `.byn` declares the
+  name — nothing can inject it, so removing it cannot take a value away from a
+  running program. A declared name stays the owner's. Without this, every
+  unattended run left a scratch value only its owner could sweep.
 - **A command the `.byn` does not pin raises a decision** — an id and exit 75 —
   instead of dead-ending at a password prompt no agent can answer. Approving it
   actually grants it; a refusal is a wall carrying the reason, and `--force-ask`

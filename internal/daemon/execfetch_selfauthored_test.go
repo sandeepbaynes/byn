@@ -1282,3 +1282,75 @@ func TestAttendedWriteAlsoReSealsTheGrant(t *testing.T) {
 		t.Fatalf("an owner's ordinary put should have re-sealed the grant: %v", err)
 	}
 }
+
+// A caller may clear up after itself, and only that.
+//
+// The cost of not allowing it, measured by the agent using byn: every unattended
+// run left an orphan only its owner could delete, and byn's own delete path
+// could not undo byn's own mistake. The rule is theirs and it is drawn where the
+// danger stops — a name no .byn declares cannot be injected, so removing it
+// cannot take a value away from a running program.
+func TestUnattendedDelete(t *testing.T) {
+	setShares := stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DECLARED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "DECLARED", []byte("someone relies on this"))
+	putVar(t, c, ipc.Scope{}, "OWNERS", []byte("not the agent's"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	del := func(name string) error {
+		return c.Call(ipc.OpDelete, ipc.DeleteReq{Scope: ipc.Scope{}, Name: name}, &ipc.DeleteResp{})
+	}
+
+	t.Run("its own scratch value, declared by nothing", func(t *testing.T) {
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: "SCRATCH", Value: []byte("v"),
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		if err := del("SCRATCH"); err != nil {
+			t.Fatalf("a caller must be able to remove the scratch value it created: %v", err)
+		}
+	})
+
+	t.Run("a value it created that a .byn DOES declare stays human-only", func(t *testing.T) {
+		// Same shape as above, but the name is in [exec] env — something could
+		// be running on it, so removing it is a person's decision.
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: "DECLARED2", Value: []byte("v"),
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"DECLARED\", \"DECLARED2\"]\nactions = [\"mytool run\"]\n")
+		cat := []byte(authzPW)
+		grantBynFile(t, c, byn, cat) // the .byn now declares it
+		c.Session = nil
+		if err := del("DECLARED2"); err == nil {
+			t.Fatal("a declared name must not be removable without a credential — something may be running on it")
+		}
+	})
+
+	t.Run("a value it did not create", func(t *testing.T) {
+		if err := del("OWNERS"); err == nil {
+			t.Fatal("a caller must not remove a value it did not store")
+		}
+	})
+
+	t.Run("another session's value", func(t *testing.T) {
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: "OTHERS_SCRATCH", Value: []byte("v"),
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		setShares(false) // a different agent now
+		if err := del("OTHERS_SCRATCH"); err == nil {
+			t.Fatal("one agent must not remove another's value")
+		}
+		setShares(true)
+	})
+}

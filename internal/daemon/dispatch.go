@@ -1528,11 +1528,20 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		return errEnv
 	}
 	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	// A caller may clear up after itself: a value it stored unattended, in the
+	// session that stored it, that no trusted .byn declares. See
+	// mayDeleteUnattended — the third condition is what keeps this from being a
+	// way to take a value away from a running program.
+	//
+	// Without it every unattended run left litter only its owner could sweep,
+	// and byn's own delete path could not undo byn's own mistake.
+	mine := d.mayDeleteUnattended(ctx, vaultName, scope, req.Name) &&
+		!d.policyDemandsAuth(vaultName, scope, "delete")
 	// authorizeAction: valid session OR fresh credentials (NU-3 matrix).
 	// When the vault is locked, authorizeAction authorizes the caller and then
 	// st.DeleteEnvVar handles the locked-vault path (returns ErrLocked → CodeLocked
 	// when no password is supplied, or decrypts in-place when a password is given).
-	if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "delete", req.Password, req.PresenceToken); le != nil {
+	if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "delete", req.Password, req.PresenceToken); le != nil && !mine {
 		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le)
 		return le
 	}
@@ -1542,7 +1551,7 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 	} else {
 		d.touchVault(req.Scope.Vault)
 		// The author's value is gone; authorship of the name goes with it.
-		d.forgetAuthored(ctx, st, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), scope, req.Name)
+		d.forgetAuthored(ctx, st, vaultName, scope, req.Name)
 		out, err := ipc.NewResponse(env.ID, ipc.DeleteResp{})
 		if err != nil {
 			resp = internalErr(env.ID, err)
@@ -1550,7 +1559,11 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 			resp = out
 		}
 	}
-	d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", resp)
+	deleteOp := "delete"
+	if mine {
+		deleteOp = "delete.unattended"
+	}
+	d.auditPlane(ctx, req.Scope, "env_var", req.Name, deleteOp, resp)
 	return resp
 }
 

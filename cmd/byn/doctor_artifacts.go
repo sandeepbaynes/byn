@@ -292,6 +292,9 @@ func checkStrayUnattended(f bynfile.File, bynPath string) (healCheck, bool) {
 	c.Warn = true
 	c.Detail = fmt.Sprintf("%d value(s) stored with no password behind the call that %s does not declare: %s",
 		len(stray), filepath.Base(bynPath), strings.Join(stray, ", "))
+	// Actionable by whoever is reading, including an agent: nothing declares
+	// these, which is the condition under which byn lets the caller that stored
+	// a value remove it. A declared name would need the owner.
 	c.Fix = "nothing injects them; remove one with: byn delete " + stray[0]
 	return c, true
 }
