@@ -328,3 +328,33 @@ func TestApprovedUnpinnedCommand_ActuallyRuns(t *testing.T) {
 		t.Fatalf("a granted command must keep running, got: %v", err)
 	}
 }
+
+// Doctor must report whether the daemon can resolve its caller, because when it
+// cannot, two features fail silently and nothing else says so.
+//
+// The check is deliberately a measurement rather than an inspection of /proc
+// mount options: the daemon's own sandboxing lives in its mount namespace, so a
+// client examining its own /proc sees nothing wrong and reports a confident,
+// wrong OK. That is precisely how the real failure went unnoticed.
+func TestDoctorReportsWhetherTheDaemonSeesItsCaller(t *testing.T) {
+	_, c := startTestDaemon(t)
+	var resp ipc.DoctorResp
+	if err := c.Call(ipc.OpDoctor, ipc.DoctorReq{}, &resp); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	var found *ipc.DoctorCheck
+	for i := range resp.Checks {
+		if resp.Checks[i].Name == "daemon.sees_caller" {
+			found = &resp.Checks[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("doctor does not report daemon.sees_caller")
+	}
+	// In-process over a real socket, the daemon can read the caller, so this is
+	// the healthy branch. The warn branch is what a sandboxed unit produces.
+	if found.Severity != "ok" {
+		t.Errorf("severity = %q (%s), want ok — the daemon should resolve a caller it shares a /proc with",
+			found.Severity, found.Detail)
+	}
+}
