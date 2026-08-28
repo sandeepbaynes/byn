@@ -234,3 +234,43 @@ func TestSelfAuthored_InjectsWhileLocked(t *testing.T) {
 		t.Errorf("refreshing the capability must not drop the originally granted vars: %v", m)
 	}
 }
+
+// The same flow with NOTHING stubbed, so the real origin lookup runs against
+// the real process tree.
+//
+// The stubbed tests above prove the rule; they cannot prove that byn can
+// actually identify a caller, because they replace the code that does it. That
+// gap is not theoretical: on a real install the daemon could not read the
+// caller's /proc at all, so this path returned "no usable origin" every time
+// and every self-authored variable still asked for approval — with the stubbed
+// tests passing throughout.
+func TestSelfAuthored_RealOriginLookup(t *testing.T) {
+	if !callerOrigin(os.Getpid()).ok() {
+		t.Skip("no usable parent origin in this environment (reparented to init?)")
+	}
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	putVar(t, c, ipc.Scope{}, "REAL_ORIGIN_TOKEN", []byte("tok-real"))
+	// If byn cannot see who the caller is, it records no authorship — the exact
+	// shape of the production failure.
+	if names := authoredNames(t, d); !hasAuthored(names, "REAL_ORIGIN_TOKEN") {
+		t.Fatalf("byn did not identify the caller that created the variable; authored=%v", names)
+	}
+
+	rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"SEED\", \"REAL_ORIGIN_TOKEN\"]\nactions = [\"mytool run\"]\n")
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("real origin match failed: %v", err)
+	}
+	if m := valueMap(resp.Values); m["REAL_ORIGIN_TOKEN"] != "tok-real" {
+		t.Fatalf("REAL_ORIGIN_TOKEN = %q, want tok-real; values=%v", m["REAL_ORIGIN_TOKEN"], m)
+	}
+}
