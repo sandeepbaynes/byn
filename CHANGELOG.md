@@ -94,6 +94,13 @@ deletable by you. `byn repair [DIR]` fixes trees built before that. Do not route
 `rm` through `byn exec` afterwards: the exec child can only delete what it
 created, so a tree you built yourself refuses it.
 
+### Least privilege, kept
+
+An `[exec] env` list is what a project receives — nothing else. A value stored
+unattended is subject to that list exactly like any other, so a value one
+service's agent invents does not reach another service, and storing a value is
+not a way to put a name of your choosing into every process byn runs.
+
 ### Fixed
 
 - Approving an unpinned command recorded the decision and applied nothing, so
@@ -106,3 +113,12 @@ created, so a tree you built yourself refuses it.
 - Orphaned `byn exec` children outlived their wrapper.
 - `make dist` died on a macOS-only checksum command, and hashed its own
   checksum file.
+- byn treated any character device on stdin as a terminal, so a process with
+  stdin at `/dev/null` — an agent, a CI job, a cron entry — was offered
+  interactive password prompts throughout, and met the refusal one command at a
+  time.
+- A refusal invited a password before checking whether anyone was there to type
+  one, so an unattended caller got two lines addressed to a person ahead of the
+  reason it was actually refused.
+- `byn get`, `byn put` and `byn delete` report refusals as JSON under `--json`,
+  in one shape; `delete` accepts `--json` at all.
