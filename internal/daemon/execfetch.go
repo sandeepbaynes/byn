@@ -76,18 +76,19 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 	if err := ipc.DecodeBody(ipc.BodyReq, env, &req); err != nil {
 		return badRequest(env.ID, err)
 	}
-	values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, missing, le := d.authorizeExec(ctx, env.ID, req)
+	values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, missing, unattended, le := d.authorizeExec(ctx, env.ID, req)
 	if le != nil {
 		// authorizeExec already audited the denial.
 		return le
 	}
 	resp, rerr := ipc.NewResponse(env.ID, ipc.ExecFetchResp{
-		Values:          values,
-		Wildcard:        wildcard,
-		NoneDeclared:    noneDeclared,
-		ActionsWildcard: actionsWildcard,
-		ResolvedArgv:    resolvedArgv,
-		MissingValues:   missing,
+		Values:           values,
+		Wildcard:         wildcard,
+		NoneDeclared:     noneDeclared,
+		ActionsWildcard:  actionsWildcard,
+		ResolvedArgv:     resolvedArgv,
+		MissingValues:    missing,
+		UnattendedValues: unattended,
 	})
 	if rerr != nil {
 		// authorizeExec already audited success; an encode failure here is
@@ -111,10 +112,10 @@ func (d *Daemon) handleExecFetch(ctx context.Context, env *ipc.Envelope) *ipc.En
 // additional event if the spawn itself FAILS after a clean authorization.
 func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetchReq) (
 	values []ipc.ExecFetchValue, resolvedArgv []string,
-	wildcard, noneDeclared, actionsWildcard bool, missing []string, le *ipc.Envelope) {
+	wildcard, noneDeclared, actionsWildcard bool, missing, unattended []string, le *ipc.Envelope) {
 	st, scope, errEnv := d.scopeFor(id, req.Scope)
 	if errEnv != nil {
-		return nil, nil, false, false, false, nil, errEnv
+		return nil, nil, false, false, false, nil, nil, errEnv
 	}
 
 	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
@@ -144,7 +145,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	if req.Path == "" && st.IsLocked() {
 		le := ipc.NewError(id, ipc.CodeLocked, "vault is locked", "byn unlock")
 		auditExec(le)
-		return nil, nil, false, false, false, nil, le
+		return nil, nil, false, false, false, nil, nil, le
 	}
 
 	// Alias exec requires a .byn — aliases are defined in the trust record.
@@ -153,7 +154,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			"aliases require a trusted .byn; no path was provided",
 			"run from a directory with a trusted .byn that defines [aliases]")
 		auditExec(le)
-		return nil, nil, false, false, false, nil, le
+		return nil, nil, false, false, false, nil, nil, le
 	}
 
 	// Auth gate for ad-hoc exec (Path=""). Sessions NEVER bless exec: the
@@ -172,7 +173,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 				"ad-hoc exec requires authorization (sessions do not authorize exec; use a trusted .byn or supply credentials)",
 				"run from a directory with a trusted .byn, or supply the master password")
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 		// Credentials present: verify UNCONDITIONALLY via authorizeActionAlways
 		// — NOT via authorizeAction (which would permit session bypass).
@@ -191,7 +192,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			"run from a directory with a trusted .byn, or supply the master password",
 			req.Password, req.PresenceToken); le != nil {
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 	}
 
@@ -217,7 +218,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			}
 			le := ipc.NewError(id, ipc.CodeTrustDenied, msg, hint)
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 		// Use the mtime from the Stat performed inside readBynFile. A nil fi
 		// is safe: zero mtime falls back to v1 records ignoring it.
@@ -235,7 +236,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			if derr != nil {
 				resp := mapVaultErr(id, derr)
 				auditExec(resp)
-				return nil, nil, false, false, false, nil, resp
+				return nil, nil, false, false, false, nil, nil, resp
 			}
 			vkKey = k
 			defer zeroBytes(vkKey)
@@ -245,7 +246,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		if verr != nil {
 			ie := internalErr(id, verr)
 			auditExec(ie)
-			return nil, nil, false, false, false, nil, ie
+			return nil, nil, false, false, false, nil, nil, ie
 		}
 		// A changed file is only a problem if it asks for more than was
 		// granted. Reformatting, a reordered list, an added comment, or a branch
@@ -281,14 +282,14 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 				// a password prompt no agent can answer.
 				le := d.raiseTrustApproval(ctx, id, canon, vaultName, req, delta)
 				auditExec(le)
-				return nil, nil, false, false, false, nil, le
+				return nil, nil, false, false, false, nil, nil, le
 			}
 		}
 		if status != trust.VerifyTrusted {
 			le := ipc.NewError(id, ipc.CodeTrustDenied,
 				trustDenyMessage(canon, status), "byn trust "+canon)
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 		if rec.Path == "" {
 			// Verify said Trusted but returned no record — should be
@@ -296,13 +297,13 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			le := ipc.NewError(id, ipc.CodeTrustDenied,
 				canon+" is untrusted (record missing after verify)", "byn trust "+canon)
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 		f, perr := bynfile.Parse(body)
 		if perr != nil {
 			be := badRequest(id, perr)
 			auditExec(be)
-			return nil, nil, false, false, false, nil, be
+			return nil, nil, false, false, false, nil, nil, be
 		}
 		allow = []string(f.Exec.Env)
 		optionalEnv = f.Exec.Optional
@@ -342,7 +343,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 				}
 				le := ipc.NewError(id, ipc.CodeNotFound, hint, "")
 				auditExec(le)
-				return nil, nil, false, false, false, nil, le
+				return nil, nil, false, false, false, nil, nil, le
 			}
 			// Expand: alias base tokens + extra passthrough args.
 			resolvedArgv = append(strings.Fields(value), req.Argv...)
@@ -367,7 +368,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 				"supply the master password; or run with privsep (default) for credential-free trusted exec",
 				req.Password, req.PresenceToken); le != nil {
 				auditExec(le)
-				return nil, nil, false, false, false, nil, le
+				return nil, nil, false, false, false, nil, nil, le
 			}
 		} else {
 
@@ -465,12 +466,12 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 						if len(req.Password) == 0 && len(req.PresenceToken) == 0 {
 							le := d.raiseActionApproval(ctx, id, canon, vaultName, req, resolvedArgv)
 							auditExec(le)
-							return nil, nil, false, false, false, nil, le
+							return nil, nil, false, false, false, nil, nil, le
 						}
 						if le := d.authorizeActionAlways(ctx, id, vaultName, st, msg, recoverHint,
 							req.Password, req.PresenceToken); le != nil {
 							auditExec(le)
-							return nil, nil, false, false, false, nil, le
+							return nil, nil, false, false, false, nil, nil, le
 						}
 					}
 					// matched → fall through (free)
@@ -485,7 +486,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 				if le := d.authorizeActionAlways(ctx, id, vaultName, st, msg, recoverHint,
 					req.Password, req.PresenceToken); le != nil {
 					auditExec(le)
-					return nil, nil, false, false, false, nil, le
+					return nil, nil, false, false, false, nil, nil, le
 				}
 			}
 			// execPolicy == "none": no auth for any command — wildcard-equivalent.
@@ -518,7 +519,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		}
 		if le != nil {
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 	}
 
@@ -529,7 +530,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		values, le = d.execValuesFromVaultKey(ctx, id, st, scope, nil, true)
 		if le != nil {
 			auditExec(le)
-			return nil, nil, false, false, false, nil, le
+			return nil, nil, false, false, false, nil, nil, le
 		}
 	}
 	d.touchVault(req.Scope.Vault)
@@ -539,8 +540,26 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	// audit does not depend on the eventual wire response, only on the verdict.
 	auditExec(nil)
 	resolvedArgv = finalArgv
+	// Which of the injected values arrived with nobody behind them. Computed
+	// here, beside the missing-value check, because the two answer the same
+	// question from opposite sides: one names what the program will not get,
+	// the other what it will get from a source no person vouched for.
+	var invented []string
+	if d.authored != nil {
+		k := authoredScopeKey(req.Scope.Vault, scope, "")
+		flagged := make(map[string]struct{})
+		for _, n := range d.authored.UnattendedNamesFor(k.Vault, k.Project, k.Env) {
+			flagged[n] = struct{}{}
+		}
+		for _, v := range values {
+			if _, ok := flagged[v.Name]; ok {
+				invented = append(invented, v.Name)
+			}
+		}
+		sort.Strings(invented)
+	}
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard,
-		missingAllowlisted(allow, optionalEnv, wildcard, values), nil
+		missingAllowlisted(allow, optionalEnv, wildcard, values), invented, nil
 }
 
 // execValuesFromCapability decrypts a trusted .byn's allowlisted vars via its

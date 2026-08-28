@@ -879,3 +879,99 @@ func TestDeniedCommand_IsAWallUntilForceAsk(t *testing.T) {
 		t.Fatalf("--force-ask: code = %v, want approval_pending — it must be able to ask again", code)
 	}
 }
+
+// Deny entries are globs. A real project has dozens of secret-shaped names and
+// gains more; a literal list drifts out of date in a week, and a deny list that
+// is out of date is worse than none because it reads as protection.
+func TestAgentPutDeny_AcceptsGlobs(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\n"+
+		"agent_put_deny = [\"*_SECRET\", \"AWS_*\", \"PMS_CONFIG_ENCRYPTION_KEY\"]\n"+
+		"actions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	denied := []string{"STRIPE_SECRET", "AWS_ACCESS_KEY_ID", "PMS_CONFIG_ENCRYPTION_KEY"}
+	for _, name := range denied {
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: name, Value: []byte("invented"),
+		}, &ipc.PutResp{}); err == nil {
+			t.Errorf("%s should be denied to an unattended caller", name)
+		}
+	}
+	// Names the globs do not cover must still flow, or the gate costs more than
+	// it saves and gets turned off.
+	for _, name := range []string{"TEMP_TABLE", "SECRET_SAUCE_MODE", "MY_AWS"} {
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: name, Value: []byte("fine"),
+		}, &ipc.PutResp{}); err != nil {
+			t.Errorf("%s is not covered by the deny list and should be storable: %v", name, err)
+		}
+	}
+}
+
+// A malformed pattern must match nothing, not everything: a typo in a deny list
+// that refused every write would look like byn being broken.
+func TestMatchesDenyPattern(t *testing.T) {
+	cases := []struct {
+		patterns []string
+		name     string
+		want     bool
+	}{
+		{[]string{"*_SECRET"}, "STRIPE_SECRET", true},
+		{[]string{"*_SECRET"}, "SECRET_MODE", false},
+		{[]string{"AWS_*"}, "AWS_REGION", true},
+		{[]string{"AWS_*"}, "MY_AWS_REGION", false},
+		{[]string{"EXACT_NAME"}, "EXACT_NAME", true},
+		{[]string{"EXACT_NAME"}, "EXACT_NAME_2", false},
+		{[]string{"[unclosed"}, "anything", false},
+		{[]string{"[unclosed", "AWS_*"}, "AWS_KEY", true}, // a bad entry must not disable the good ones
+		{nil, "ANY", false},
+	}
+	for _, tc := range cases {
+		if _, got := matchesDenyPattern(tc.patterns, tc.name); got != tc.want {
+			t.Errorf("matchesDenyPattern(%v, %q) = %v, want %v", tc.patterns, tc.name, got, tc.want)
+		}
+	}
+}
+
+// The launch line is the one surface a caller sees on every run without asking,
+// so it is where an invented value has to be named.
+func TestExecReportsUnattendedValuesAtLaunch(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\", \"AGENT_MADE\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("set-by-a-person"))
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_MADE", Value: []byte("invented"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if len(resp.UnattendedValues) != 1 || resp.UnattendedValues[0] != "AGENT_MADE" {
+		t.Fatalf("unattended_values = %v, want [AGENT_MADE] — the launch must name it", resp.UnattendedValues)
+	}
+	// And the value a person set must not be flagged, or the warning becomes
+	// noise and stops being read.
+	if m := valueMap(resp.Values); m["SEED"] != "set-by-a-person" {
+		t.Errorf("SEED = %q, want set-by-a-person", m["SEED"])
+	}
+}

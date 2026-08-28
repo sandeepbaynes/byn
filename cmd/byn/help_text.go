@@ -609,6 +609,13 @@ DESCRIPTION
              {"pinned":false,"reason":"no_match","actions":["pnpm dev"],
               "missing_env":["DB_URL"],"byn":"/…/.byn"}
 
+           "missing_env" is required-and-absent; "optional_missing" is
+           absent but declared optional, reported separately so it can be
+           shown as information rather than swallowed — a name marked
+           optional by mistake is invisible otherwise. "unattended_env"
+           names values that byn took in with no password behind the
+           call, which are not missing but are not vouched for either.
+
            Exit 0 it would run cleanly; 75 it would pause for a
            decision; 1 it would run but a required variable has no value.
            "reason" separates the cases whose fixes differ: "no_actions"

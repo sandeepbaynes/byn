@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -190,6 +191,23 @@ func checkInjectableNames() (healCheck, bool) {
 			unattended = append(unattended, e.Name)
 		}
 	}
+	// A name the .byn now denies to unattended callers, whose value was stored
+	// by one before that deny list existed. It cannot happen going forward, and
+	// nothing else would ever mention it — but it is exactly the cleanup an
+	// owner has to do after adopting a deny list, and only byn knows about it.
+	var deniedButInvented []string
+	for _, n := range unattended {
+		if pattern, denied := matchesDeny(f.Exec.AgentPutDeny, n); denied {
+			deniedButInvented = append(deniedButInvented, n+" (denied by "+pattern+")")
+		}
+	}
+	if len(deniedButInvented) > 0 {
+		c.Warn = true
+		c.Detail = fmt.Sprintf("%s denies these to unattended callers but already has a value one stored: %s",
+			filepath.Base(bynPath), strings.Join(deniedButInvented, ", "))
+		c.Fix = "re-set them yourself: echo -n VALUE | byn put NAME"
+		return c, true
+	}
 	if len(missing) == 0 {
 		c.OK = true
 		c.Detail = fmt.Sprintf("all %d declared in %s", len(declared), filepath.Base(bynPath))
@@ -213,4 +231,21 @@ func checkInjectableNames() (healCheck, bool) {
 	c.Fix = "echo -n VALUE | byn put " + missing[0] +
 		"   (or list it in [exec] optional if the program runs without it)"
 	return c, true
+}
+
+// matchesDeny reports whether name is covered by any [exec] agent_put_deny
+// entry, and by which one. Entries are shell-style globs; a literal name is a
+// glob with no metacharacters, so one path serves both. Mirrors the daemon's
+// rule — a doctor that disagreed with the gate would send people chasing
+// nothing, or worse, reassure them about a name byn does not actually protect.
+func matchesDeny(patterns []string, name string) (string, bool) {
+	for _, p := range patterns {
+		if p == name {
+			return p, true
+		}
+		if ok, err := path.Match(p, name); err == nil && ok {
+			return p, true
+		}
+	}
+	return "", false
 }

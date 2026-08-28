@@ -78,7 +78,7 @@ func (d *Daemon) handleExecAuthorize(ctx context.Context, env *ipc.Envelope) *ip
 	// Shared authorization gate — identical to exec.fetch/exec.spawn. It audits the
 	// authorization decision exactly once (denials already audited); we must not
 	// re-audit on success here.
-	values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, missing, le := d.authorizeExec(ctx, env.ID, req.ExecFetchReq)
+	values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, missing, unattended, le := d.authorizeExec(ctx, env.ID, req.ExecFetchReq)
 	if le != nil {
 		return le
 	}
@@ -114,11 +114,12 @@ func (d *Daemon) handleExecAuthorize(ctx context.Context, env *ipc.Envelope) *ip
 		return internalErr(env.ID, mErr)
 	}
 	resp, rerr := ipc.NewResponse(env.ID, ipc.ExecAuthorizeResp{
-		Token:           tok,
-		Wildcard:        wildcard,
-		NoneDeclared:    noneDeclared,
-		ActionsWildcard: actionsWildcard,
-		MissingValues:   missing,
+		Token:            tok,
+		Wildcard:         wildcard,
+		NoneDeclared:     noneDeclared,
+		ActionsWildcard:  actionsWildcard,
+		MissingValues:    missing,
+		UnattendedValues: unattended,
 	})
 	if rerr != nil {
 		return internalErr(env.ID, rerr)

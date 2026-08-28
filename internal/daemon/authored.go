@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -362,11 +363,28 @@ func (d *Daemon) unattendedPutAllowed(vaultName string, scope vault.Scope, name 
 		if parsed.Exec.AgentPut != nil && !*parsed.Exec.AgentPut {
 			return false, filepath.Base(rec.Path) + " sets [exec] agent_put = false"
 		}
-		for _, denied := range parsed.Exec.AgentPutDeny {
-			if denied == name {
-				return false, filepath.Base(rec.Path) + " lists " + name + " in [exec] agent_put_deny"
-			}
+		if pattern, denied := matchesDenyPattern(parsed.Exec.AgentPutDeny, name); denied {
+			return false, filepath.Base(rec.Path) + " denies " + pattern + " in [exec] agent_put_deny"
 		}
 	}
 	return true, ""
+}
+
+// matchesDenyPattern reports whether name is covered by any deny entry, and by
+// which one. Entries are shell-style globs; a literal name is simply a glob
+// with no metacharacters, so both forms work through one path.
+//
+// A malformed pattern matches nothing rather than everything: a typo in a deny
+// list must not silently refuse every write, which would look like byn being
+// broken rather than like a bad pattern.
+func matchesDenyPattern(patterns []string, name string) (string, bool) {
+	for _, p := range patterns {
+		if p == name {
+			return p, true
+		}
+		if ok, err := path.Match(p, name); err == nil && ok {
+			return p, true
+		}
+	}
+	return "", false
 }

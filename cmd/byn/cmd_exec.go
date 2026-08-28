@@ -356,7 +356,7 @@ func runExec(args []string, scope cliScope) int {
 		return handleExecFetchError(callErr)
 	}
 	renderAllowlistNotes(fetched, scope.SourcePath)
-	renderMissingValues(fetched.MissingValues, scope.SourcePath)
+	renderMissingValues(fetched.MissingValues, fetched.UnattendedValues, scope.SourcePath)
 
 	// Use the daemon's ResolvedArgv as the authoritative argv. For direct exec
 	// this matches childArgv. For alias exec this is the expanded form. The CLI
@@ -852,7 +852,7 @@ func renderAuthorizeNotes(resp ipc.ExecAuthorizeResp, sourcePath string) {
 	if sourcePath == "" {
 		return
 	}
-	renderMissingValues(resp.MissingValues, sourcePath)
+	renderMissingValues(resp.MissingValues, resp.UnattendedValues, sourcePath)
 	if resp.Wildcard {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s permits ALL scoped vars via \"*\" — any secret added later is auto-injected.", sourcePath)))
@@ -1051,13 +1051,25 @@ func waitForApproval(client *ipc.Client, req ipc.ExecFetchReq, budget time.Durat
 // missing secret. Naming them here, at the moment the program is launched,
 // turns that into an immediate answer. It is a warning rather than a refusal
 // because byn cannot know whether the program treats the variable as optional.
-func renderMissingValues(missing []string, sourcePath string) {
-	if len(missing) == 0 {
-		return
+func renderMissingValues(missing, unattended []string, sourcePath string) {
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%s allowlists %d variable(s) the vault has no value for: %s",
+				sourcePath, len(missing), strings.Join(missing, ", "))))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("The child will start without them."),
+			dim("Set one with: echo -n VALUE | byn put "+missing[0]))
 	}
-	fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
-		yellow(fmt.Sprintf("%s allowlists %d variable(s) the vault has no value for: %s",
-			sourcePath, len(missing), strings.Join(missing, ", "))))
-	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("The child will start without them."),
-		dim("Set one with: echo -n VALUE | byn put "+missing[0]))
+	// A value that arrived with nobody behind it is not missing, so nothing
+	// else about this launch would mention it — and this line is the one
+	// surface a caller sees on every run without having to ask. An agent can
+	// silence a missing-variable warning by inventing a value; if it did, the
+	// least byn can do is say so at the moment that value is handed to the
+	// program that will act on it.
+	if len(unattended) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%d injected value(s) were stored with no password behind the call: %s",
+				len(unattended), strings.Join(unattended, ", "))))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("(unattended value)"),
+			dim("byn cannot tell one an agent invented from one you set. byn audit tail | grep put.unattended"))
+	}
 }

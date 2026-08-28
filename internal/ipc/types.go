@@ -638,6 +638,17 @@ type ExecPreflightResp struct {
 	// MissingEnv names declared variables with no value, excluding any the .byn
 	// marks optional. Empty means every required name has one.
 	MissingEnv []string `json:"missing_env,omitempty"`
+	// OptionalMissing names declared variables that are absent but marked
+	// optional. Kept separate from MissingEnv rather than dropped: a caller
+	// can report them as information without them counting as a problem, and
+	// silently swallowing them would hide a name someone marked optional by
+	// mistake.
+	OptionalMissing []string `json:"optional_missing,omitempty"`
+	// UnattendedEnv names declared variables whose value byn took in with no
+	// credential behind the call — an agent invented them. They have values, so
+	// they are not missing, but "it has a value" is not the same as "it has the
+	// right value", and for a credential that distinction is the whole game.
+	UnattendedEnv []string `json:"unattended_env,omitempty"`
 	// ResolvedArgv is what an alias expanded to, when one was given. It lets a
 	// caller see the command the answer is actually about.
 	ResolvedArgv []string `json:"resolved_argv,omitempty"`
@@ -1071,6 +1082,11 @@ type ExecFetchResp struct {
 	// variable is optional to the program, but it does know the program will
 	// not receive it, and saying so at exec time beats a crash at first use.
 	MissingValues []string `json:"missing_values,omitempty"`
+	// UnattendedValues are injected names whose value byn took in with no
+	// credential behind the call. Reported at launch because that is the
+	// surface a caller sees on every run without asking for it: an invented
+	// value is not missing, so nothing else about the launch would mention it.
+	UnattendedValues []string `json:"unattended_values,omitempty"`
 }
 
 // ExecSpawnReq runs a byn exec child SERVER-side under privsep (NU-5). It
@@ -1120,6 +1136,11 @@ type ExecAuthorizeResp struct {
 	// MissingValues are names the .byn allowlists that the vault has no value
 	// for; see ExecFetchResp.MissingValues.
 	MissingValues []string `json:"missing_values,omitempty"`
+	// UnattendedValues are injected names whose value byn took in with no
+	// credential behind the call. Reported at launch because that is the
+	// surface a caller sees on every run without asking for it: an invented
+	// value is not missing, so nothing else about the launch would mention it.
+	UnattendedValues []string `json:"unattended_values,omitempty"`
 }
 
 // ExecRedeemReq is sent by the privsep helper (peercred MUST be root or

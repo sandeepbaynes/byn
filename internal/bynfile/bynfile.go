@@ -87,6 +87,12 @@ type File struct {
 		// AgentPutDeny names variables an unattended caller may not create,
 		// for the common case where most of a project's config is fine for an
 		// agent to invent and a few names are emphatically not.
+		//
+		// Entries are shell-style globs ("*_SECRET", "AWS_*"), not just literal
+		// names. A real project has dozens of such names and gains more; a
+		// literal list drifts out of date the first week, and a deny list that
+		// is out of date is worse than none because it reads as protection.
+		// A glob is what an owner will actually maintain.
 		AgentPutDeny []string `toml:"agent_put_deny,omitempty"`
 	} `toml:"exec"`
 	// Aliases is the top-level [aliases] table: named entry points for
