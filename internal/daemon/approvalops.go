@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/approval"
 	"github.com/sandeepbaynes/byn/internal/audit"
@@ -17,7 +18,19 @@ func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 		Summary: r.Summary, HighRisk: r.HighRisk, Status: string(r.Status),
 		CreatedAt: r.CreatedAt.Unix(), ExpiresAt: r.ExpiresAt.Unix(),
 		Repeats: r.Repeats, DecidedVia: r.DecidedVia,
+		DecidedReason: r.DecidedReason,
+		DecidedAt:     decidedUnix(r.DecidedAt),
 	}
+}
+
+// decidedUnix renders a decision time, or 0 when there has not been one.
+// time.Time's zero value is a large negative Unix second, which would read as a
+// real timestamp in 1754 to anything consuming the JSON.
+func decidedUnix(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // handleApprovalList returns the queue. Listing needs no credentials: the

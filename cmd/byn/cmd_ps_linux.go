@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -52,6 +53,7 @@ func findBynExecProcs() []bynExecProc {
 			out = append(out, bynExecProc{
 				pid:     pid,
 				command: execCmdSummary(argv[2:]),
+				project: projectOfPID(dir),
 			})
 			continue
 		}
@@ -72,6 +74,7 @@ func findBynExecProcs() []bynExecProc {
 				out = append(out, bynExecProc{
 					pid:     pid,
 					command: strings.Join(argv, " "),
+					project: projectOfPID(dir),
 				})
 				break
 			}
@@ -134,4 +137,28 @@ func execCmdSummary(rest []string) string {
 		}
 	}
 	return strings.Join(rest, " ")
+}
+
+// projectOfPID returns the directory of the .byn governing a running child, by
+// reading its working directory and walking up — the same discovery byn does
+// when it resolves scope, so the answer matches the file that actually applies.
+//
+// Best-effort: an unreadable cwd (the child belongs to the exec service user
+// under privilege separation, and /proc/<pid>/cwd is owner-only) yields "", and
+// the column reads "-" rather than a guess.
+func projectOfPID(procDir string) string {
+	cwd, err := os.Readlink(procDir + "/cwd")
+	if err != nil || cwd == "" {
+		return ""
+	}
+	for dir := cwd; ; {
+		if _, statErr := os.Stat(filepath.Join(dir, ".byn")); statErr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir { // reached the root without finding one
+			return ""
+		}
+		dir = parent
+	}
 }

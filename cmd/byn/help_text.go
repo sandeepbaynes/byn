@@ -143,7 +143,7 @@ SEE ALSO
        byn-ps(1), byn-exec(1)
 `,
 	"ps": `NAME
-       byn-ps - list running byn exec processes
+       byn-ps - list running byn exec processes and their projects
 
 SYNOPSIS
        byn ps
@@ -1870,7 +1870,11 @@ DESCRIPTION
        and both the grant and its revocation are in the audit log.
 
        With no arguments, lists what is waiting: the file, what would be
-       granted in plain words, and how long it has been waiting. Entries
+       granted in plain words, how long it has been waiting, when it
+       expires, and which vault it belongs to. Add --history to see
+       decided and expired requests too — an answered request otherwise
+       simply vanishes, leaving whoever asked no way to find out what
+       happened short of running the command again to see. Entries
        marked "!" are the consequential ones — a wildcard, a scope move,
        write access to a credential directory, or an [auth] gate being
        relaxed.
