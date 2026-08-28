@@ -35,6 +35,49 @@ func helpFor(name string) string {
 }
 
 var commandHelp = map[string]string{
+	"runs": `NAME
+       byn-runs - what past executions were given
+
+SYNOPSIS
+       byn runs [-n N] [--json]
+       byn runs show ID [--json]
+       byn runs show ID --reveal [--password-stdin]
+
+DESCRIPTION
+       Every command byn authorises is recorded: when, which .byn
+       allowed it, the command, the process and the agent behind it, and
+       which values it received. The question this answers only ever
+       gets asked afterwards — what did that process actually hold?
+
+       Runs store REFERENCES, never copies. A second copy of every
+       secret would grow without bound and, worse, would quietly turn
+       this into an archive of every value the project has ever had —
+       so a credential rotated after a leak would stay recoverable. byn
+       does not do that. Snapshots are stored as differences from the
+       previous one, so a dev server restarted fifty times costs fifty
+       run records and one snapshot.
+
+       Listing asks for no credential. It shows names, and byn already
+       lists variable names without one, so it reveals nothing new.
+
+       --reveal is a different act: it hands over the VALUES, so it is
+       gated exactly as reading a secret is, recorded as a read, and
+       says what it is about to do first. If someone has asked you to
+       audit their vault, that warning is for them as much as you — the
+       values will be on your terminal and in whatever captures it.
+
+       A value that has been replaced since the run cannot be shown, and
+       byn names it rather than showing today's value in its place. It
+       keeps no copy of a superseded secret.
+
+EXIT STATUS
+       0    Ran.
+       1    No such run, or the values could not be shown.
+       3    A credential was needed for --reveal and none was supplied.
+
+SEE ALSO
+       byn-audit(1), byn-exec(1), byn-unattended(1)
+`,
 	"unattended": `NAME
        byn-unattended - what works with the vault locked, and what does not
 

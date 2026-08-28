@@ -223,6 +223,8 @@ func run(args []string) int {
 		return runAudit(rest, scope)
 	case "ps":
 		return runPS(rest)
+	case "runs":
+		return runRuns(rest, scope)
 	case "kill":
 		return runKill(rest)
 	case "doctor":

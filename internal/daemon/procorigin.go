@@ -25,6 +25,7 @@ package daemon
 // procorigin_test.go, so stubbing here never hides a broken walk.
 var (
 	callerOriginFn   = callerOrigin
+	callerIdentityFn = callerIdentity
 	callerAncestryFn = callerAncestry
 	sharesAncestryFn = sharesAncestry
 )

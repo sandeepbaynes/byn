@@ -95,7 +95,9 @@ const (
 	// queueing a decision. Asking what would happen must not itself become an
 	// event a person has to answer.
 	OpExecPreflight Op = "exec.preflight"
-	OpExecSpawn     Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5; superseded by authorize+redeem)
+	// OpRunList reads the record of what past exec runs were given.
+	OpRunList   Op = "run.list"
+	OpExecSpawn Op = "exec.spawn" // run a byn exec child SERVER-side under privsep (NU-5; superseded by authorize+redeem)
 
 	// Terminal-anchored exec (Option A, 2026-06-17). The daemon authorizes the
 	// exec and mints a one-time token; the privsep helper — spawned by the CLI in
@@ -157,7 +159,7 @@ var AllOps = []Op{
 	OpApprovalList, OpApprovalDecide,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
-	OpExecFetch, OpExecPreflight, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
+	OpExecFetch, OpExecPreflight, OpRunList, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
 	OpDaemonReload, OpDaemonRestart,
 	OpPasskeyRegisterBegin, OpPasskeyRegisterFinish,
 	OpPasskeyAuthBegin, OpPasskeyAuthFinish,
@@ -673,6 +675,48 @@ type ExecPreflightResp struct {
 	DeniedReason string `json:"denied_reason,omitempty"`
 	// Byn is the canonical path of the file that answered.
 	Byn string `json:"byn,omitempty"`
+}
+
+// RunListReq asks for recorded exec runs, newest first.
+type RunListReq struct {
+	Scope Scope `json:"scope"`
+	Limit int   `json:"limit,omitempty"`
+	// ID selects one run and returns the names it received. Zero lists.
+	ID int64 `json:"id,omitempty"`
+	// Reveal asks for the VALUES a run received, not only their names. It is
+	// credential-gated exactly like reading a secret, because that is what it
+	// is: the run record is not a second way to read values.
+	Reveal   bool   `json:"reveal,omitempty"`
+	Password []byte `json:"password,omitempty"`
+}
+
+// RunEntry is one recorded run.
+type RunEntry struct {
+	ID         int64  `json:"id"`
+	At         int64  `json:"at"`
+	Byn        string `json:"byn,omitempty"`
+	Command    string `json:"command,omitempty"`
+	CallerPID  int    `json:"caller_pid,omitempty"`
+	CallerComm string `json:"caller_comm,omitempty"`
+	// CallerAgent is the agent or shell byn resolved above the calling process
+	// — what stays the same across the short-lived processes a harness spawns.
+	CallerAgent int    `json:"caller_agent,omitempty"`
+	Cwd         string `json:"cwd,omitempty"`
+	VarCount    int    `json:"var_count"`
+	SnapshotID  int64  `json:"snapshot_id,omitempty"`
+	// Names is populated when one run was asked for.
+	Names []string `json:"names,omitempty"`
+	// Values is populated only when Reveal was granted.
+	Values map[string]string `json:"values,omitempty"`
+	// Superseded names values the run used that have since been replaced. byn
+	// does not retain a superseded secret, so it names them rather than
+	// pretending it can still show them.
+	Superseded []string `json:"superseded,omitempty"`
+}
+
+// RunListResp returns them.
+type RunListResp struct {
+	Entries []RunEntry `json:"entries"`
 }
 
 // DeleteReq removes an env-var entry. No inheritance — the row must

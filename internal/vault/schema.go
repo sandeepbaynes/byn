@@ -121,8 +121,68 @@ var schemaStatements = []string{
 	) STRICT`,
 	`CREATE INDEX idx_entry_versions_entry ON entry_versions(entry_id, version_no DESC)`,
 
+	execRunTablesDDL[0],
+	execRunTablesDDL[1],
+	execRunTablesDDL[2],
+	execRunTablesDDL[3],
+	execRunTablesDDL[4],
+
 	passkeyTableDDL,
 	passkeyUnlockTableDDL,
+}
+
+// execRunTablesDDL records which values a run of `byn exec` was given.
+//
+// The point is answering, months later, "what did that process actually have?"
+// — and doing it without a second copy of anyone's secrets. A run stores
+// REFERENCES: which entry, and a digest of the stored blob at the time. The
+// digest is over the ciphertext, whose nonce changes on every write, so it says
+// whether the value has changed since without revealing anything about it.
+//
+// Snapshots are diffs, for the same reason a version control system stores
+// them: a project's variables barely change between runs, and writing the whole
+// set each time would grow the vault without adding anything. A snapshot names
+// its parent and records only what differs; resolving one walks the chain. When
+// a run's set is identical to the previous one, no snapshot row is written at
+// all and the run points at the existing one — so a dev server restarted fifty
+// times costs fifty run rows and one snapshot.
+//
+// Names, times and callers live here. VALUES do not: reading one back means
+// resolving the reference into entry_versions and decrypting it, which needs
+// the vault key. That keeps the audit trail readable for "what and when"
+// without it becoming a second place secrets can be read from.
+var execRunTablesDDL = []string{
+	`CREATE TABLE IF NOT EXISTS env_snapshots (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		parent_id  INTEGER REFERENCES env_snapshots(id) ON DELETE SET NULL,
+		project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		env_id     INTEGER NOT NULL REFERENCES envs(id)     ON DELETE CASCADE,
+		created_at INTEGER NOT NULL
+	) STRICT`,
+
+	`CREATE TABLE IF NOT EXISTS env_snapshot_entries (
+		snapshot_id INTEGER NOT NULL REFERENCES env_snapshots(id) ON DELETE CASCADE,
+		name        TEXT    NOT NULL,
+		entry_id    INTEGER,
+		digest      TEXT,
+		change      TEXT    NOT NULL CHECK (change IN ('set','removed')),
+		PRIMARY KEY (snapshot_id, name)
+	) STRICT`,
+
+	`CREATE TABLE IF NOT EXISTS exec_runs (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		at            INTEGER NOT NULL,
+		snapshot_id   INTEGER REFERENCES env_snapshots(id) ON DELETE SET NULL,
+		byn_path      TEXT,
+		command       TEXT,
+		caller_pid    INTEGER,
+		caller_comm   TEXT,
+		caller_agent  INTEGER,
+		caller_cwd    TEXT
+	) STRICT`,
+
+	`CREATE INDEX IF NOT EXISTS idx_exec_runs_at ON exec_runs(at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_env_snapshots_scope ON env_snapshots(project_id, env_id, id DESC)`,
 }
 
 // passkeyTableDDL is the per-vault WebAuthn credential store. It is additive
@@ -375,6 +435,19 @@ func backupBeforeMigrate(ctx context.Context, db *sql.DB, dbPath string, fromVer
 var schemaMigrations = map[int]func(context.Context, *sql.DB) error{
 	3: migrateV3toV4,
 	4: migrateV4toV5,
+	5: migrateV5toV6,
+}
+
+// migrateV5toV6 adds the exec-run tables. Purely additive: it creates empty
+// tables and rewrites nothing, so a vault that has been running for months
+// simply starts recording from the next exec onwards.
+func migrateV5toV6(ctx context.Context, db *sql.DB) error {
+	for _, stmt := range execRunTablesDDL {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("add exec-run tables: %w", err)
+		}
+	}
+	return nil
 }
 
 // migrateV4toV5 adds the per-entry sync columns. lamport plus origin_device

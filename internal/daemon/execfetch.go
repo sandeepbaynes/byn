@@ -560,6 +560,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		}
 		sort.Strings(invented)
 	}
+	d.recordExecRun(ctx, st, scope, req, resolvedArgv, values)
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard,
 		missingAllowlisted(allow, optionalEnv, wildcard, values), invented, nil
 }
@@ -834,4 +835,54 @@ func snapshotEnvAllowlist(rec trust.Record) (map[string]struct{}, bool) {
 		out[n] = struct{}{}
 	}
 	return out, false
+}
+
+// recordExecRun notes which values this run was given, as references.
+//
+// After authorization, never before: a run that byn refused did not happen, and
+// recording it would put refusals and executions in the same list. Best-effort
+// — a failure here must never fail a command byn has already allowed, so it is
+// logged to the audit trail and dropped.
+func (d *Daemon) recordExecRun(ctx context.Context, st *vault.Store, scope vault.Scope,
+	req ipc.ExecFetchReq, resolvedArgv []string, values []ipc.ExecFetchValue) {
+
+	if st == nil {
+		return
+	}
+	names := make([]string, 0, len(values))
+	for _, v := range values {
+		names = append(names, v.Name)
+	}
+	ci := callerFrom(ctx)
+	meta := vault.ExecRunMeta{
+		BynPath:    trust.Canonicalize(req.Path),
+		Command:    execRunCommand(req, resolvedArgv),
+		CallerPID:  ci.PID,
+		CallerComm: ci.Comm,
+		CallerCwd:  filepath.Dir(trust.Canonicalize(req.Path)),
+	}
+	if id := callerIdentityFn(ci.PID); id.ok() {
+		meta.CallerAgent = id.PID
+	}
+	if _, err := st.RecordExecRun(ctx, scope, meta, names); err != nil {
+		// Worth a line: an audit trail with silent gaps is worse than one with
+		// visible ones, because the gaps look like nothing having happened.
+		d.auditEmit(ctx, defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), audit.Event{
+			Op: "exec.run_record", Outcome: audit.OutcomeError, BynPath: meta.BynPath,
+			ErrorCode: err.Error(),
+		})
+	}
+}
+
+// execRunCommand renders the command for the run record, bounded so one absurd
+// argv cannot dominate the table.
+func execRunCommand(req ipc.ExecFetchReq, resolvedArgv []string) string {
+	cmd := strings.Join(resolvedArgv, " ")
+	if cmd == "" {
+		cmd = req.Command
+	}
+	if len(cmd) > 500 {
+		cmd = cmd[:500] + "…"
+	}
+	return cmd
 }

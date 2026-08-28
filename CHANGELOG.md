@@ -78,6 +78,23 @@ readable indefinitely.
 - `byn ps` shows which project each child belongs to; `byn approve --history`
   shows what was decided.
 
+### A record of what each run was given
+
+`byn runs` shows every command byn authorised: when, which `.byn` allowed it,
+the command, the process and agent behind it, and which values it received.
+`byn runs show ID` names them; `--reveal` shows the values, gated exactly as
+reading a secret is and recorded as a read.
+
+Runs store references, not copies. Copying would grow without bound and would
+turn the trail into an archive of every secret the project has ever had, so a
+credential rotated after a leak would stay recoverable — byn does not do that.
+Snapshots are stored as differences from the previous one, so a dev server
+restarted fifty times costs fifty run records and one snapshot. A value replaced
+since a run is named rather than shown: no copy of a superseded secret is kept.
+
+Vault schema v6 adds the three tables this needs. Additive, migrates on open,
+rewrites nothing.
+
 ### Values an agent invented are never hidden
 
 byn cannot tell a value someone provisioned from one an agent made up, and an

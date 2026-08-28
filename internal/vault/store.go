@@ -53,7 +53,7 @@ const (
 	// slot. v4: file_meta.sha256_plain renamed to sha256_hmac (keyed
 	// HMAC-SHA256 under a vault-key-derived subkey; eliminates the
 	// offline guess-confirmation oracle).
-	schemaVersion = 5
+	schemaVersion = 6
 
 	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
 	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of

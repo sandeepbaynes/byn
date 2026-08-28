@@ -1557,3 +1557,70 @@ func TestPreflightUnattendedMatchesWhatIsInjected(t *testing.T) {
 		}
 	}
 }
+
+// The run record must not become a second way to read secrets.
+//
+// Listing what a run received is metadata — byn already lists variable names
+// without a credential, so naming them here reveals nothing new. Handing over
+// the VALUES is reading secrets, and is gated exactly as reading one is.
+func TestRunRecord_NamesAreOpenValuesAreNot(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	}); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	// Metadata, with no credential at all.
+	var list ipc.RunListResp
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{Limit: 10}, &list); err != nil {
+		t.Fatalf("listing runs should need no credential: %v", err)
+	}
+	if len(list.Entries) == 0 {
+		t.Fatal("the exec was not recorded")
+	}
+	run := list.Entries[0]
+	if run.Command != "mytool run" {
+		t.Errorf("command = %q, want \"mytool run\"", run.Command)
+	}
+	if run.VarCount != 1 {
+		t.Errorf("var_count = %d, want 1", run.VarCount)
+	}
+	if run.Byn == "" {
+		t.Error("the record should name the .byn that authorised the run")
+	}
+	if len(run.Values) != 0 {
+		t.Fatalf("a plain listing returned VALUES: %v", run.Values)
+	}
+
+	// Names for one run, still metadata.
+	var one ipc.RunListResp
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: run.ID}, &one); err != nil {
+		t.Fatalf("naming one run's variables: %v", err)
+	}
+	if len(one.Entries) != 1 || len(one.Entries[0].Names) != 1 || one.Entries[0].Names[0] != "SEED" {
+		t.Fatalf("names = %v, want [SEED]", one.Entries)
+	}
+	if len(one.Entries[0].Values) != 0 {
+		t.Fatal("asking for a single run returned values without a credential")
+	}
+
+	// Values: refused without one.
+	err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: run.ID, Reveal: true}, &ipc.RunListResp{})
+	if err == nil {
+		t.Fatal("--reveal handed over values with no credential")
+	}
+	if code := errCode(t, err); code != ipc.CodeAuthRequired {
+		t.Fatalf("code = %v, want auth_required", code)
+	}
+}
