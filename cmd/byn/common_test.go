@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -142,5 +143,40 @@ func TestMutateWithAuthRetry_NilCleanup_NoLocked(t *testing.T) {
 	})
 	if got == exitOK {
 		t.Fatal("expected non-OK")
+	}
+}
+
+// stdinIsTTY must ask whether stdin is a TERMINAL, not whether it is a
+// character device.
+//
+// /dev/null is a character device and is not a terminal, and it is the
+// canonical stdin of an unattended process — so the character-device test
+// classified exactly the callers byn most needs to recognise as people at a
+// keyboard. byn then offered a password prompt, the prompt refused because it
+// asks the right question, and the caller got two lines addressed to a person
+// who was not there ahead of the reason it was actually refused.
+func TestStdinIsTTY_DevNullIsNotATerminal(t *testing.T) {
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Skipf("cannot open %s: %v", os.DevNull, err)
+	}
+	defer func() { _ = devnull.Close() }()
+
+	// Sanity: /dev/null really is a character device, which is what made the
+	// old test wrong rather than merely imprecise.
+	st, serr := devnull.Stat()
+	if serr != nil {
+		t.Fatalf("stat: %v", serr)
+	}
+	if st.Mode()&os.ModeCharDevice == 0 {
+		t.Skip("this platform's /dev/null is not a character device; the confusion cannot arise")
+	}
+
+	saved := os.Stdin
+	os.Stdin = devnull
+	defer func() { os.Stdin = saved }()
+
+	if stdinIsTTY() {
+		t.Error("stdinIsTTY() called /dev/null a terminal; an unattended caller would be offered a password prompt")
 	}
 }

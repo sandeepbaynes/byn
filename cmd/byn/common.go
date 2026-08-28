@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/daemon"
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -153,11 +155,19 @@ func zero(b []byte) {
 // file). Used to decide between an interactive prompt and a non-interactive
 // hard error.
 func stdinIsTTY() bool {
-	stat, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (stat.Mode() & os.ModeCharDevice) != 0
+	// term.IsTerminal, not a character-device test.
+	//
+	// The character-device test called /dev/null a terminal, because it is one
+	// — a character device that is not a terminal. That is the canonical stdin
+	// of an unattended process, so byn classified exactly the callers it most
+	// needed to recognise as people sitting at a keyboard: it offered them a
+	// password prompt, the prompt refused (term.IsTerminal, correctly, said no),
+	// and the caller got two lines of noise ahead of the reason it was actually
+	// refused.
+	//
+	// The prompt and this check must ask the same question, or byn decides to
+	// prompt on one answer and then fails on the other.
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // isLockedErr reports whether err is the daemon's "vault is locked" reply.
