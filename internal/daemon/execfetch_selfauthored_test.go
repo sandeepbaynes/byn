@@ -1319,20 +1319,52 @@ func TestUnattendedDelete(t *testing.T) {
 		}
 	})
 
-	t.Run("a value it created that a .byn DOES declare stays human-only", func(t *testing.T) {
-		// Same shape as above, but the name is in [exec] env — something could
-		// be running on it, so removing it is a person's decision.
+	t.Run("a value it created that a .byn declares — it may still remove it", func(t *testing.T) {
+		// It planted this value into a program's environment; it must be able to
+		// unplant it. "Delete is destroy" does not hold for something the same
+		// session brought into existence a moment ago — removing it restores the
+		// state that was there before.
 		if err := c.Call(ipc.OpPut, ipc.PutReq{
 			Scope: ipc.Scope{}, Name: "DECLARED2", Value: []byte("v"),
 		}, &ipc.PutResp{}); err != nil {
 			t.Fatalf("put: %v", err)
 		}
 		rewriteByn(t, byn, "[scope]\n\n[exec]\nenv = [\"DECLARED\", \"DECLARED2\"]\nactions = [\"mytool run\"]\n")
-		cat := []byte(authzPW)
-		grantBynFile(t, c, byn, cat) // the .byn now declares it
+		grantBynFile(t, c, byn, []byte(authzPW)) // the .byn now declares it
 		c.Session = nil
-		if err := del("DECLARED2"); err == nil {
-			t.Fatal("a declared name must not be removable without a credential — something may be running on it")
+		if err := del("DECLARED2"); err != nil {
+			t.Fatalf("a caller must be able to remove a value it planted: %v", err)
+		}
+	})
+
+	t.Run("once someone else writes it, it is no longer theirs to remove", func(t *testing.T) {
+		// The line that replaces the declared-name rule. Authorship is revoked
+		// at the moment another writer touches the value, so the same caller
+		// that could have removed it a second earlier cannot now.
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: "TOUCHED", Value: []byte("mine"),
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		// Someone with the password replaces it. A person is present, so the
+		// vault is open.
+		var ur ipc.VaultUnlockResp
+		tok, uerr := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &ur, nil)
+		if uerr != nil {
+			t.Fatalf("unlock: %v", uerr)
+		}
+		c.Session = tok
+		setShares(false) // a different caller
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: "TOUCHED", Value: []byte("theirs"), Password: pw,
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("overwrite: %v", err)
+		}
+		setShares(true)
+		c.Session = nil
+		lockVaultStore(t, d, "default")
+		if err := del("TOUCHED"); err == nil {
+			t.Fatal("a value someone else has written is no longer the original caller's to remove")
 		}
 	})
 
@@ -1356,22 +1388,21 @@ func TestUnattendedDelete(t *testing.T) {
 	})
 }
 
-// A wildcard scope declares every name, so nothing in it is deletable without a
-// credential.
+// A wildcard scope changes nothing about who may delete what.
 //
-// Written because I told the agent using byn that this holds before I had
-// tested it. Under `env = "*"` every value in the scope is something a program
-// may receive, so "no .byn declares this name" is never true there — and the
-// delete rule has to read it that way round, or a wildcard project would be the
-// one place an agent could remove anything it had created.
-func TestUnattendedDelete_WildcardScopeRefusesEverything(t *testing.T) {
+// This used to assert that a wildcard made everything undeletable, because the
+// rule then turned on whether a .byn declared the name and a wildcard declares
+// them all. The rule now turns on who created the value, which a wildcard says
+// nothing about — so the property worth pinning is the one that survived: a
+// caller may remove what it created, and nothing else, wildcard or not.
+func TestUnattendedDelete_WildcardScopeChangesNothing(t *testing.T) {
 	_ = stubOrigin(t, true)
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
 	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = \"*\"\nactions = [\"mytool run\"]\n")
-	putVar(t, c, ipc.Scope{}, "SEED", []byte("v"))
+	putVar(t, c, ipc.Scope{}, "OWNERS", []byte("not the agent's"))
 	grantBynFile(t, c, byn, pw)
 	lockVaultStore(t, d, "default")
 	c.Session = nil
@@ -1383,8 +1414,13 @@ func TestUnattendedDelete_WildcardScopeRefusesEverything(t *testing.T) {
 	}
 	if err := c.Call(ipc.OpDelete, ipc.DeleteReq{
 		Scope: ipc.Scope{}, Name: "SCRATCH",
+	}, &ipc.DeleteResp{}); err != nil {
+		t.Fatalf("a caller may remove what it created, wildcard scope or not: %v", err)
+	}
+	if err := c.Call(ipc.OpDelete, ipc.DeleteReq{
+		Scope: ipc.Scope{}, Name: "OWNERS",
 	}, &ipc.DeleteResp{}); err == nil {
-		t.Fatal("a wildcard grant declares every name; nothing under it may be deleted without a credential")
+		t.Fatal("a wildcard grant must not make someone else's value removable")
 	}
 }
 

@@ -1346,11 +1346,14 @@ After either, nothing is lost and the shortcuts simply end: reading needs
 the vault unlocked or a password, and injection needs the \fB.byn\fR
 trusted again.
 .PP
-A value you stored may also be DELETED without a credential, under one
-further condition: no trusted \fB.byn\fR in the scope declares the name.
-Nothing can inject it, so removing it cannot take a value away from a
-running program. A declared name stays the owner's to remove. Logged as
-\fBdelete.unattended\fR. Those are the ordinary rules, which is where every value
+A value you stored may also be DELETED without a credential, on the same
+two terms: you created it, and nobody else has written it since. Another
+writer takes it out of your hands at that moment. There is no exception
+for a name a \fB.byn\fR declares \(em you put that value into the
+program's environment and can take it back out, and removing it restores
+what was there before. Logged as \fBdelete.unattended\fR, alongside the
+create and any change, so a value that appeared and vanished leaves a
+trace with a name, a time and a caller attached. Those are the ordinary rules, which is where every value
 not stored this way lives all along. The exemption is deliberately
 short\-lived \(em it exists so an agent can finish the task it is in the
 middle of, not to accumulate standing access to a machine.

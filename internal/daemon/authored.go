@@ -452,58 +452,32 @@ func matchesDenyPattern(patterns []string, name string) (string, bool) {
 	return "", false
 }
 
-// declaredByAnyTrusted reports whether any trusted .byn governing this scope
-// asks for name in its [exec] env — i.e. whether anything would inject it.
-//
-// A wildcard declares everything, so a scope granted "*" answers true for any
-// name. That is the conservative reading and the right one: under a wildcard,
-// every value in the scope is something a program may receive.
-func (d *Daemon) declaredByAnyTrusted(vaultName string, scope vault.Scope, name string) bool {
-	store, err := trust.Load(d.cfg.Dir)
-	if err != nil || store == nil {
-		return true // cannot tell → treat it as declared, and keep the gate
-	}
-	for _, rec := range store.Records {
-		if !recordGoverns(rec, vaultName, scope) || rec.Snapshot == "" {
-			continue
-		}
-		parsed, perr := bynfile.Parse([]byte(rec.Snapshot))
-		if perr != nil {
-			return true // unreadable grant → assume it declares it
-		}
-		if parsed.AllowsAll() {
-			return true
-		}
-		for _, n := range []string(parsed.Exec.Env) {
-			if n == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // mayDeleteUnattended reports whether a caller may remove a value it stored,
 // without a credential.
 //
-// Deleting is destroying, so this is drawn as narrowly as it can be and still
-// be useful. Three conditions, and the third is what makes it safe rather than
-// merely convenient:
+// A caller may remove what it brought into existence and nobody else has
+// touched. Two conditions, both already recorded:
 //
-//  1. The caller stored the value itself, unattended. Never a secret that was
-//     already there, and never someone else's.
-//  2. Its session is still the one that stored it — the same rule that governs
-//     reading it back.
-//  3. NO trusted .byn in the scope declares the name. Nothing can inject it, so
-//     removing it cannot take a value away from a running program. It is
-//     exactly the set doctor already reports as "nothing injects them".
+//  1. The caller stored the value itself, unattended, and its session is still
+//     the one that stored it. Never a secret that was already there, never
+//     someone else's, never another session's.
+//  2. Nobody else has written it since. That is not checked here because it
+//     cannot be: authorship is REVOKED at the moment another writer touches the
+//     value (see forgetAuthored, called from the overwrite, delete and rename
+//     paths), so a value someone else has touched fails condition 1 already.
 //
-// The case this exists for: an agent stores a scratch value for a task, the
-// task ends, and the value outlives it. Before this, only a human could clear
-// it — so every unattended run left litter that only its owner could sweep, and
-// byn's own delete path could not undo byn's own mistake. A declared name stays
-// human-only, because that one someone is relying on.
+// This used to carry a third condition — that no trusted .byn declared the name
+// — on the reasoning that deleting is destroying and something might be running
+// on it. That was wrong in a way the agent using byn showed concretely: it
+// could CREATE a value for a declared name, which is then injected into a real
+// program, and could not remove it again. It could plant and not unplant. And
+// "delete is destroy" does not hold for a value the same session brought into
+// existence a moment ago: removing it restores the state that was there before,
+// which is the opposite of destroying.
+//
+// Every one of these is recorded — the create, any change, and the removal —
+// so a value that appeared and vanished leaves a trace with a name, a time and
+// a caller attached, whatever the intent behind it.
 func (d *Daemon) mayDeleteUnattended(ctx context.Context, vaultName string, scope vault.Scope, name string) bool {
-	return d.ownUnattendedValue(ctx, vaultName, scope, name) &&
-		!d.declaredByAnyTrusted(vaultName, scope, name)
+	return d.ownUnattendedValue(ctx, vaultName, scope, name)
 }
