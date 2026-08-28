@@ -12,3 +12,7 @@ func procInfo(_ int) (comm string, ppid int) { return "", 0 }
 //
 // peerTTYDev is a no-op on unsupported platforms; callers use uid-only binding.
 func peerTTYDev(_ int) int32 { return 0 }
+
+// procCwd is a no-op where there is no supported lookup: the card omits the
+// directory rather than guessing at one.
+func procCwd(_ int) string { return "" }

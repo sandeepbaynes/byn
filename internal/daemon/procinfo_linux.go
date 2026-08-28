@@ -66,3 +66,20 @@ func procInfo(pid int) (comm string, ppid int) {
 	}
 	return comm, ppid
 }
+
+// procCwd returns a process's working directory, which is where a person
+// deciding on a request looks first: "asked from the api service" is a
+// different question from "asked from my home directory".
+//
+// Best-effort. The link is only readable for our own uid, and a process that
+// exits between asking and being read simply has no directory to report.
+func procCwd(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	dir, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/cwd")
+	if err != nil {
+		return ""
+	}
+	return dir
+}

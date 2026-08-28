@@ -1438,3 +1438,14 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   font-size: 11px;
   text-align: center;
 }
+
+/* An approval card carries three kinds of line now, and they are not equal:
+   what byn will do, what the asker claims, and who byn saw asking. The claim is
+   the one that must not look like a finding. */
+.approval-note { font-size: 12px; opacity: .72; margin: 2px 0 6px; }
+.approval-reason, .approval-actor { font-size: 12px; margin: 2px 0; display: flex; gap: 6px; }
+.approval-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  opacity: .6; flex: 0 0 auto; padding-top: 1px;
+}
+.approval-reason { font-style: italic; }

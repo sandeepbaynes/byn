@@ -78,6 +78,24 @@ readable indefinitely.
 - `byn ps` shows which project each child belongs to; `byn approve --history`
   shows what was decided.
 
+### Approval cards say who asked, and what for
+
+A card used to read "runs make dev" and stop there. The owner could see what
+was asked and had no way to tell which agent asked it, or why — so answering
+meant going and asking, which is the interruption the queue exists to remove.
+
+Cards now carry both, and keep them apart. **Who** is read from the kernel: the
+agent byn holds responsible (the same identity that governs values an agent
+created), its working directory, and whether anyone was at a terminal. **Why**
+is the asker's own sentence, passed as `byn exec --reason "…"`, shown as the
+unverified claim it is. byn does not check it and never lets it affect a
+decision. A retry that carries a reason fills in a blank one on the same pending
+request, and never overwrites one already there.
+
+Both surfaces also now say what approving does: it authorizes, it runs nothing,
+and it does not edit the `.byn`. That was the first question people asked of
+these cards.
+
 ### A record of what each run was given
 
 `byn runs` shows every command byn authorised: when, which `.byn` allowed it,

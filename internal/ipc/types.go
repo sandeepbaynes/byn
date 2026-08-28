@@ -1084,10 +1084,15 @@ type ExecFetchReq struct {
 	// ForceAsk raises a fresh decision for a command that was already refused.
 	// Without it a refusal is a wall, which is the point: the default must not
 	// be to re-ask someone who just said no.
-	ForceAsk bool   `json:"force_ask,omitempty"`
-	Path     string `json:"path,omitempty"`
-	Scope    Scope  `json:"scope,omitempty"`
-	Command  string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
+	ForceAsk bool `json:"force_ask,omitempty"`
+	// Reason is why the caller says it needs this, carried only so that a
+	// request byn has to queue can say what it was for. byn never checks it and
+	// never lets it affect a decision — it is shown to whoever decides, as the
+	// asker's own claim.
+	Reason  string `json:"reason,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Scope   Scope  `json:"scope,omitempty"`
+	Command string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
 	// Argv is the exact untruncated child argv for the direct form (Alias==""),
 	// or the extra passthrough args for the alias form (Alias!="").
 	// An old CLI that does not send Argv gets empty-Argv behavior: treated as
@@ -1612,17 +1617,23 @@ type ApprovalListReq struct {
 
 // ApprovalEntry is one queued decision, flattened for the wire.
 type ApprovalEntry struct {
-	ID         string   `json:"id"`
-	Kind       string   `json:"kind"`
-	Vault      string   `json:"vault,omitempty"`
-	Subject    string   `json:"subject"`
-	Summary    []string `json:"summary,omitempty"`
-	HighRisk   bool     `json:"high_risk,omitempty"`
-	Status     string   `json:"status"`
-	CreatedAt  int64    `json:"created_at"`
-	ExpiresAt  int64    `json:"expires_at"`
-	Repeats    int      `json:"repeats,omitempty"`
-	DecidedVia string   `json:"decided_via,omitempty"`
+	ID       string   `json:"id"`
+	Kind     string   `json:"kind"`
+	Vault    string   `json:"vault,omitempty"`
+	Subject  string   `json:"subject"`
+	Summary  []string `json:"summary,omitempty"`
+	HighRisk bool     `json:"high_risk,omitempty"`
+	// Reason is the asker's stated purpose — unverified by construction, and
+	// labelled as such wherever it is shown. Requestor is the opposite: every
+	// field of it is read from the kernel, so a person can weigh the claim
+	// against who actually asked.
+	Reason     string        `json:"reason,omitempty"`
+	Requestor  ApprovalActor `json:"requestor,omitempty"`
+	Status     string        `json:"status"`
+	CreatedAt  int64         `json:"created_at"`
+	ExpiresAt  int64         `json:"expires_at"`
+	Repeats    int           `json:"repeats,omitempty"`
+	DecidedVia string        `json:"decided_via,omitempty"`
 	// DecidedAt and DecidedReason describe an answered request. Without them a
 	// decided entry can only say "gone", and the caller that asked cannot tell
 	// whether it was granted, refused, or simply timed out — which is the one
@@ -1633,6 +1644,20 @@ type ApprovalEntry struct {
 	// an approval that had simply timed out was indistinguishable from one that
 	// had been dropped — the same evidence for two very different situations.
 	GrantedUntil int64 `json:"granted_until,omitempty"`
+}
+
+// ApprovalActor is who raised a request, as byn observed them.
+type ApprovalActor struct {
+	PID      int    `json:"pid,omitempty"`
+	Exe      string `json:"exe,omitempty"`
+	Cwd      string `json:"cwd,omitempty"`
+	User     string `json:"user,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	AgentPID int    `json:"agent_pid,omitempty"`
+	Attended bool   `json:"attended,omitempty"`
+	// Display is the one-line rendering, so every surface says who asked the
+	// same way instead of each inventing its own phrasing.
+	Display string `json:"display,omitempty"`
 }
 
 // ApprovalListResp returns the queue, newest first.

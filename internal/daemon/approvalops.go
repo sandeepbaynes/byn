@@ -21,6 +21,13 @@ func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 		DecidedReason: r.DecidedReason,
 		DecidedAt:     decidedUnix(r.DecidedAt),
 		GrantedUntil:  decidedUnix(r.GrantedUntil),
+		Reason:        r.Reason,
+		Requestor: ipc.ApprovalActor{
+			PID: r.Requestor.PID, Exe: r.Requestor.Exe, Cwd: r.Requestor.Cwd,
+			User: r.Requestor.User, Agent: r.Requestor.Agent,
+			AgentPID: r.Requestor.AgentPID, Attended: r.Requestor.Attended,
+			Display: r.Requestor.String(),
+		},
 	}
 }
 

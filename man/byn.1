@@ -932,6 +932,15 @@ Used by \fBapprove\fR, most usefully with \fB\-\-deny\fR. Why, in the
 decider's words. It is returned to whoever asked and recorded in the
 audit log. A refused caller is stopped until something changes, and the
 reason is what tells it which thing.
+.IP
+Also used by \fBexec\fR, where it runs the other way: why the caller
+says it needs the command. It travels with a request byn has to queue
+and is shown to whoever decides, labelled as the asker's claim \(em byn
+cannot check a stated purpose and never lets one affect a decision. Pass
+it on a retry and it fills in a blank reason on the same pending
+request; it never overwrites one already given. Only byn's own flags are
+read before the command, so a \fB\-\-reason\fR after \fB\-\-\fR
+belongs to the child.
 .TP
 .B \-\-json
 Also accepted by \fBput\fR and \fBdelete\fR, which report both the

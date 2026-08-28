@@ -283,3 +283,66 @@ func TestLastDenial_TakesTheMostRecentDecision(t *testing.T) {
 		t.Error("a refusal followed by an approval must clear the wall")
 	}
 }
+
+// A retry that explains itself should improve a card that did not, without
+// letting a later retry rewrite a reason someone may already be reading.
+func TestEnqueue_ReasonFilledOnceNeverRewritten(t *testing.T) {
+	s, _ := newStore(t)
+
+	first, err := s.Enqueue(Request{
+		Kind: KindActionUnpinned, Subject: "/p/.byn",
+		Fingerprint: "fp", Summary: []string{"runs make dev"},
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if first.Reason != "" {
+		t.Fatalf("reason = %q, want empty", first.Reason)
+	}
+
+	// Same question, now explained: the blank gets filled.
+	second, err := s.Enqueue(Request{
+		Kind: KindActionUnpinned, Subject: "/p/.byn",
+		Fingerprint: "fp", Summary: []string{"runs make dev"},
+		Reason: "starting the api for the auth work",
+	})
+	if err != nil {
+		t.Fatalf("enqueue retry: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("retry made a second card (%s vs %s)", second.ID, first.ID)
+	}
+	if second.Reason != "starting the api for the auth work" {
+		t.Errorf("reason = %q, want the retry's", second.Reason)
+	}
+
+	// A third asking must not overwrite it: the stated purpose cannot drift
+	// while the person deciding is reading it.
+	third, err := s.Enqueue(Request{
+		Kind: KindActionUnpinned, Subject: "/p/.byn",
+		Fingerprint: "fp", Summary: []string{"runs make dev"},
+		Reason: "something else entirely",
+	})
+	if err != nil {
+		t.Fatalf("enqueue third: %v", err)
+	}
+	if third.Reason != "starting the api for the auth work" {
+		t.Errorf("reason = %q, want the first one given", third.Reason)
+	}
+	if third.Repeats != 2 {
+		t.Errorf("repeats = %d, want 2", third.Repeats)
+	}
+}
+
+func TestRequestor_StringNamesTheAgentNotTheProcess(t *testing.T) {
+	got := Requestor{PID: 91, Exe: "byn", Agent: "claude", AgentPID: 42}.String()
+	if got != "claude (pid 42), no terminal" {
+		t.Errorf("String() = %q", got)
+	}
+	if got := (Requestor{PID: 91}).String(); got != "pid 91" {
+		t.Errorf("with no agent: String() = %q, want \"pid 91\"", got)
+	}
+	if got := (Requestor{}).String(); got != "" {
+		t.Errorf("with nothing known: String() = %q, want empty", got)
+	}
+}

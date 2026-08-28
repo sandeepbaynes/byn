@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -126,5 +127,37 @@ func TestExecErrorJSONTimestampsAreNumbers(t *testing.T) {
 		if got["reason"] != "nope" {
 			t.Errorf("reason = %v, want the string through unchanged", got["reason"])
 		}
+	}
+}
+
+// --reason is byn's flag, but only before the child's argv begins. A child that
+// has a --reason of its own must still receive it.
+func TestStripExecReason_StopsAtTheChild(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		in     []string
+		want   []string
+		reason string
+	}{
+		{"separate value", []string{"--reason", "for the auth work", "--", "make", "dev"},
+			[]string{"--", "make", "dev"}, "for the auth work"},
+		{"equals form", []string{"--reason=deploying", "--", "make"},
+			[]string{"--", "make"}, "deploying"},
+		{"absent", []string{"--", "make"}, []string{"--", "make"}, ""},
+		{"belongs to the child", []string{"--", "mytool", "--reason", "theirs"},
+			[]string{"--", "mytool", "--reason", "theirs"}, ""},
+		{"child of an alias form", []string{"dev", "--reason", "theirs"},
+			[]string{"dev", "--reason", "theirs"}, ""},
+		{"dangling value", []string{"--reason"}, []string{"--reason"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, reason := stripExecReason(tc.in)
+			if reason != tc.reason {
+				t.Errorf("reason = %q, want %q", reason, tc.reason)
+			}
+			if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") {
+				t.Errorf("args = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

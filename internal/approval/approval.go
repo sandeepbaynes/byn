@@ -94,12 +94,45 @@ var (
 
 // Requestor records who asked, so the person deciding is looking at facts byn
 // can vouch for rather than a self-reported label.
+//
+// Every field here is read from the kernel, never from the request. That is the
+// whole distinction against Reason, which the asker writes: these are the parts
+// nobody can claim, so an approver can weigh the claim against them.
 type Requestor struct {
 	PID  int    `json:"pid"`
 	Exe  string `json:"exe,omitempty"`
 	Cwd  string `json:"cwd,omitempty"`
 	TTY  string `json:"tty,omitempty"`
 	User string `json:"user,omitempty"`
+	// Agent names the process byn holds responsible: the nearest ancestor that
+	// is not a shell or a wrapper. It is the same identity that decides whether
+	// a caller may read back a value it created unattended, so a card and an
+	// unattended value agree on who "they" are.
+	//
+	// It matters more than PID for deciding. `byn` itself is always the process
+	// asking; the question an approver has is which agent is behind it, and a
+	// pid of a shell that exited seconds ago cannot answer that.
+	Agent    string `json:"agent,omitempty"`
+	AgentPID int    `json:"agent_pid,omitempty"`
+	// Attended records whether a person was at a terminal for this request.
+	// An unattended request is the normal case for an agent, and saying so
+	// stops the absence of a TTY from looking like something being hidden.
+	Attended bool `json:"attended,omitempty"`
+}
+
+// String renders the requestor as one line for a person to read.
+func (r Requestor) String() string {
+	if r.Agent != "" && r.AgentPID != 0 {
+		who := fmt.Sprintf("%s (pid %d)", r.Agent, r.AgentPID)
+		if r.Attended {
+			return who + ", at a terminal"
+		}
+		return who + ", no terminal"
+	}
+	if r.PID != 0 {
+		return fmt.Sprintf("pid %d", r.PID)
+	}
+	return ""
 }
 
 // Request is one pending decision.
@@ -121,6 +154,15 @@ type Request struct {
 	// differently instead of letting them look like routine additions.
 	HighRisk  bool      `json:"high_risk,omitempty"`
 	Requestor Requestor `json:"requestor"`
+	// Reason is why the asker says it needs this, in its own words.
+	//
+	// byn cannot check it and does not try. It is shown as the claim it is,
+	// because the alternative — a card reading "runs make dev" and nothing
+	// else — sends the approver to ask the agent in a chat window, which is
+	// exactly the interruption the queue exists to remove. An unverified
+	// sentence from the asker is worth more than silence, as long as it is
+	// never dressed up as something byn established.
+	Reason string `json:"reason,omitempty"`
 
 	Status     Status    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -253,6 +295,13 @@ func (s *Store) Enqueue(req Request) (Request, error) {
 		}
 		if r.Fingerprint == req.Fingerprint && r.Subject == req.Subject {
 			r.Repeats++
+			// A retry that explains itself improves a card that did not. The
+			// first reason otherwise stands: it is the one that raised the
+			// question, and letting each retry overwrite it would let a
+			// request's stated purpose drift while the approver is reading it.
+			if r.Reason == "" && req.Reason != "" {
+				r.Reason = req.Reason
+			}
 			out := *r
 			if err := s.save(f); err != nil {
 				return Request{}, err

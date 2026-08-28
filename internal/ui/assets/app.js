@@ -1503,6 +1503,32 @@ async function renderApprovalsView() {
     for (const line of (a.summary || [])) why.appendChild(el("li", "", line));
     card.appendChild(why);
 
+    // What a yes actually does. Both kinds were read as "byn will now do this",
+    // and the widening one as a proposed edit to the .byn. Neither is true.
+    const does = whatApprovingDoes(a.kind);
+    if (does) card.appendChild(el("div", "approval-note", does));
+
+    // The asker's stated purpose, marked as a claim. byn cannot check it; a
+    // card that says nothing about why is the one that sends the owner off to
+    // ask the agent, which is the interruption this queue exists to remove.
+    if (a.reason) {
+      const r = el("div", "approval-reason");
+      r.appendChild(el("span", "approval-label", "why"));
+      r.appendChild(el("span", "", a.reason));
+      r.title = "said by whoever asked \u2014 byn cannot verify it";
+      card.appendChild(r);
+    }
+    // Who asked, read from the kernel rather than from the request: the half
+    // byn can vouch for, and what distinguishes your own agent from anything
+    // else running in the same project.
+    const actor = a.requestor || {};
+    if (actor.display) {
+      const w = el("div", "approval-actor");
+      w.appendChild(el("span", "approval-label", "who"));
+      w.appendChild(el("span", "", actor.display + (actor.cwd ? " in " + actor.cwd : "")));
+      card.appendChild(w);
+    }
+
     const meta = [];
     if (a.created_at) meta.push("asked " + relTime(a.created_at));
     if (a.repeats) meta.push("retried " + a.repeats + "\u00d7");
@@ -1520,6 +1546,20 @@ async function renderApprovalsView() {
     tbl.appendChild(card);
   }
   box.appendChild(tbl);
+}
+
+// whatApprovingDoes says, per kind, what a yes does — the same sentence the
+// terminal shows, so the two surfaces cannot describe the decision differently.
+function whatApprovingDoes(kind) {
+  if (kind === "action_unpinned") {
+    return "approving lets this command run when it is next attempted \u2014 " +
+      "it does not run now, and the .byn is not changed";
+  }
+  if (kind === "trust_widening") {
+    return "approving grants the .byn what it already asks for \u2014 " +
+      "it does not edit the file, and nothing runs until it is attempted again";
+  }
+  return "";
 }
 
 function relTime(unixSecs) {
@@ -1543,7 +1583,10 @@ async function decideApproval(entry, approve) {
       title: "Approve this request",
       okText: "approve",
       message: entry.subject + "\n\nThis would grant:\n" + summary +
-        "\n\nApproving re-trusts the file, so the caller's next attempt succeeds.",
+        (entry.reason ? "\n\nWhy, as stated by whoever asked (byn cannot verify it):\n  " + entry.reason : "") +
+        ((entry.requestor && entry.requestor.display) ? "\n\nAsked by: " + entry.requestor.display : "") +
+        "\n\nApproving re-trusts the file, so the caller's next attempt succeeds. " +
+        "Nothing runs now, and the .byn is not edited.",
       fields: [
         { key: "password", label: "master password", type: "password",
           validate: (v) => (v ? null : "password required") },

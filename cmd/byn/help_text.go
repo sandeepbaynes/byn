@@ -701,9 +701,11 @@ SEE ALSO
 
 SYNOPSIS
        byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
-                [--no-privsep] [--inspect[=TARGET]] -- COMMAND [ARGS...]
+                [--reason TEXT] [--no-privsep] [--inspect[=TARGET]]
+                -- COMMAND [ARGS...]
        byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
-                [--no-privsep] [--inspect[=TARGET]] NAME [ARGS...]
+                [--reason TEXT] [--no-privsep] [--inspect[=TARGET]]
+                NAME [ARGS...]
 
 DESCRIPTION
        Loads the .byn-allowlisted env-var entries from the active vault
@@ -792,6 +794,25 @@ DESCRIPTION
            "reason" separates the cases whose fixes differ: "no_actions"
            means ask the owner to pin something, "no_match" usually means
            the command is wrong.
+
+       byn exec --reason "TEXT"
+           Say what the command is for. It travels with a request that
+           has to be queued and is shown to whoever decides it.
+
+           It changes nothing about whether the command is allowed. byn
+           cannot check a stated purpose and never treats one as
+           evidence — it is shown as the asker's claim, next to the
+           facts byn established itself. The reason it is worth passing
+           is what a card looks like without one: "runs make dev", and
+           nothing about why, which sends the owner off to ask you.
+
+           Passing it on a retry works: the retry lands on the same
+           pending request and fills in a blank reason. It never
+           overwrites one already given.
+
+           Only byn's own flags are read before the command; a
+           --reason after -- (or after an alias name) belongs to the
+           child.
 
        byn exec --force-ask
            Raise a fresh decision for a command that was already refused.

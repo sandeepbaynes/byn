@@ -135,6 +135,33 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		for _, line := range e.Summary {
 			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", line)
 		}
+		// What approving would DO. "runs make dev" reads like a button that
+		// runs make dev, and the first question anyone asked of these cards was
+		// whether approving executed something. It does not: it authorizes, and
+		// whoever asked has to come back and run it themselves.
+		if what := whatApprovingDoes(e.Kind); what != "" {
+			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(what))
+		}
+		// Why, in the asker's words — labelled as the claim it is. byn cannot
+		// check a stated purpose and does not pretend to; an unverified sentence
+		// still beats a card that says nothing about what the command is for.
+		if e.Reason != "" {
+			_, _ = fmt.Fprintf(os.Stdout, "      %s %s\n", yellow("why:"), e.Reason)
+			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim("     (said by whoever asked — byn cannot verify it)"))
+		} else if e.Status == "pending" {
+			_, _ = fmt.Fprintf(os.Stdout, "      %s\n",
+				dim("no reason given — an agent can pass one with byn exec --reason \"…\""))
+		}
+		// Who asked, from the kernel rather than from the request. This is the
+		// half byn can vouch for, and it is what tells you whether your own
+		// agent asked or something else in the same project did.
+		if who := e.Requestor.Display; who != "" {
+			line := who
+			if e.Requestor.Cwd != "" {
+				line += " in " + e.Requestor.Cwd
+			}
+			_, _ = fmt.Fprintf(os.Stdout, "      %s %s\n", cyan("who:"), line)
+		}
 		age := time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second)
 		detail := fmt.Sprintf("asked %s ago", age)
 		if e.Status != "pending" {
@@ -186,10 +213,30 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
 	}
-	fmt.Fprintf(os.Stderr, "\n%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
+	fmt.Fprintf(os.Stderr, "\n%s\n", dim("Approving authorizes; it runs nothing and edits no file. Whoever asked runs it again."))
+	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Refuse:"), cyan("byn approve --deny <id>"))
 	// A refusal stops the asker until someone changes something, so the single
 	// most useful thing to hand back is why.
 	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "), dim("add --reason \"wrong target\" — the asker is told, and it is in the audit log"))
 	return exitOK
+}
+
+// whatApprovingDoes says, per kind, what a yes actually does.
+//
+// Both kinds were being read as "byn will now do this thing", and one of them
+// was being read as a proposed edit to the .byn file. Neither is true: nothing
+// is run and nothing is written to the project. Saying so on the card is
+// cheaper than the conversation that follows when it is left implicit.
+func whatApprovingDoes(kind string) string {
+	switch kind {
+	case "action_unpinned":
+		return "approving lets this command run when it is next attempted — it does not run now, " +
+			"and the .byn is not changed"
+	case "trust_widening":
+		return "approving grants the .byn what it already asks for — it does not edit the file, " +
+			"and nothing runs until it is attempted again"
+	default:
+		return ""
+	}
 }

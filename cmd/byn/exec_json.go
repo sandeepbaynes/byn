@@ -252,3 +252,43 @@ func stripExecForceAsk(args []string) ([]string, bool) {
 	}
 	return out, found
 }
+
+// stripExecReason removes byn's own --reason flag and returns its value.
+//
+// It exists because of what an approval card looked like without it: "runs make
+// dev", and nothing else. The owner could see what was asked and not why, so
+// answering meant going and asking the agent — which is the interruption the
+// queue was built to remove. byn cannot know the purpose of a command; the
+// caller can, so the caller says it.
+//
+// Same boundary rule as the other exec flags: everything after the first
+// non-flag argument belongs to the child, so a child of byn can have a --reason
+// of its own without byn stealing it.
+func stripExecReason(args []string) ([]string, string) {
+	out := make([]string, 0, len(args))
+	reason := ""
+	boundary := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if boundary {
+			out = append(out, a)
+			continue
+		}
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "--reason="); ok {
+			reason = v
+			continue
+		}
+		if a == "--reason" && i+1 < len(args) {
+			reason = args[i+1]
+			i++
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, reason
+}

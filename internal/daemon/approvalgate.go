@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +39,8 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		Fingerprint: fingerprintOf(canon, summary),
 		Summary:     summary,
 		HighRisk:    delta.HighRisk(),
-		Requestor:   requestorOf(req),
+		Requestor:   d.requestorOf(ctx, vaultName, req),
+		Reason:      requestReason(req.Reason),
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):
@@ -68,7 +71,7 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
 		fmt.Sprintf("%s asks for more than it was granted (%s) — approval %s is waiting",
 			canon, strings.Join(summary, "; "), pending.ID),
-		"approve it with: byn approve "+pending.ID,
+		"approve it with: byn approve "+pending.ID+reasonHint(pending),
 		approvalDetails(pending, ""))
 }
 
@@ -81,8 +84,69 @@ func fingerprintOf(subject string, summary []string) string {
 	}.Hash()
 }
 
-func requestorOf(req ipc.ExecFetchReq) approval.Requestor {
-	return approval.Requestor{Exe: req.Command}
+// requestorOf describes who asked, from what the kernel says rather than from
+// what the request claims.
+//
+// It used to record req.Command as the "exe", which was the command being
+// requested — the one thing the card already showed. A person looking at
+// "runs make dev" could not tell whether their own agent had asked or something
+// else in the same project had, and the answer to that changes the decision.
+func (d *Daemon) requestorOf(ctx context.Context, vaultName string, req ipc.ExecFetchReq) approval.Requestor {
+	ci := callerFrom(ctx)
+	r := approval.Requestor{
+		PID:      ci.PID,
+		Exe:      ci.Comm,
+		Cwd:      procCwd(ci.PID),
+		Attended: d.callerIsAttended(ctx, vaultName, req.Password, req.PresenceToken),
+	}
+	if ci.TTYDev != 0 {
+		r.TTY = strconv.FormatInt(int64(ci.TTYDev), 10)
+	}
+	if u, err := user.LookupId(strconv.FormatUint(uint64(ci.UID), 10)); err == nil {
+		r.User = u.Username
+	}
+	// The agent, not the shell: the same identity that decides whether a caller
+	// may read back a value it created, so a card and an unattended value never
+	// disagree about who "they" are.
+	if id := callerIdentityFn(ci.PID); id.ok() {
+		r.AgentPID = id.PID
+		if comm, _ := procInfo(id.PID); comm != "" {
+			r.Agent = comm
+		}
+	}
+	if r.Cwd == "" && req.Path != "" {
+		// Falling back to the .byn's directory is not the same fact, but it is
+		// the same neighbourhood, and it is the one place byn knows the request
+		// came from when /proc has already forgotten the caller.
+		r.Cwd = filepath.Dir(trust.Canonicalize(req.Path))
+	}
+	return r
+}
+
+// requestReason is the asker's own words, made safe to print.
+//
+// The text is written by whatever called byn, so it reaches a person's terminal
+// as untrusted input: escape sequences in it could repaint the screen around
+// the decision they are about to make. Control characters go, the line is
+// bounded, and what survives is shown as a claim rather than as a finding.
+func requestReason(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r', '\v', '\f':
+			// Whitespace becomes whitespace: dropping a newline outright would
+			// weld the words on either side of it into one.
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
 }
 
 // actionApprovalKey derives everything that identifies one "may I run this
@@ -169,7 +233,8 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 		Subject:     canon,
 		Fingerprint: fingerprint,
 		Summary:     summary,
-		Requestor:   requestorOf(req),
+		Requestor:   d.requestorOf(ctx, vaultName, req),
+		Reason:      requestReason(req.Reason),
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):
@@ -192,7 +257,7 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 		fmt.Sprintf("%s is not pinned in %s [exec] actions — approval %s is waiting",
 			cmd, canon, pending.ID),
 		"approve it with: byn approve "+pending.ID+
-			", or pin it in [exec] actions and re-trust",
+			", or pin it in [exec] actions and re-trust"+reasonHint(pending),
 		approvalDetails(pending, cmd))
 }
 
@@ -230,4 +295,18 @@ func (d *Daemon) grantExpiryFor(req ipc.ExecFetchReq, resolvedArgv []string) int
 		return 0
 	}
 	return until
+}
+
+// reasonHint tells a caller that raised an unexplained request how to explain
+// it, and only when it has not.
+//
+// It is worth saying to the caller rather than only to the approver, because
+// the caller is the one that can fix it: re-running with --reason lands on the
+// same pending card and fills in the blank, so the person deciding gets the
+// answer without anyone having to ask for it.
+func reasonHint(pending approval.Request) string {
+	if pending.Reason != "" {
+		return ""
+	}
+	return `; if you retry, pass --reason "why you need this" — it reaches the same request`
 }

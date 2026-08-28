@@ -49,3 +49,8 @@ func peerTTYDev(pid int) int32 {
 	}
 	return kp.Eproc.Tdev
 }
+
+// procCwd is not read on darwin: the working directory needs proc_pidinfo with
+// PROC_PIDVNODEPATHINFO, which is entitlement-gated for other processes. An
+// omitted directory is honest; a wrong one is not.
+func procCwd(_ int) string { return "" }

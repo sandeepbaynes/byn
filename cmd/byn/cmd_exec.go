@@ -96,6 +96,12 @@ func runExec(args []string, scope cliScope) int {
 	// --force-ask deliberately re-raises a question that was already refused.
 	args, forceAsk := stripExecForceAsk(args)
 
+	// --reason travels with the request and is shown to whoever decides it. It
+	// changes nothing about whether the command is allowed — it is the asker's
+	// claim, not evidence — but a card that says what a command is for is the
+	// difference between answering it and going to ask.
+	args, reason := stripExecReason(args)
+
 	args, inspectBrk, inspectVal, hasInspect := stripInspect(args)
 	if hasInspect {
 		if err := applyInspect(inspectBrk, inspectVal); err != nil {
@@ -216,6 +222,7 @@ func runExec(args []string, scope cliScope) int {
 			Alias:    aliasName,
 			Argv:     extraArgs,
 			ForceAsk: forceAsk,
+			Reason:   reason,
 		}
 	} else {
 		cmd := execCommandLabel(childArgv)
@@ -225,6 +232,7 @@ func runExec(args []string, scope cliScope) int {
 			Command:  cmd,
 			Argv:     childArgv,
 			ForceAsk: forceAsk,
+			Reason:   reason,
 		}
 	}
 
