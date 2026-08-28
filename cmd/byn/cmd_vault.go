@@ -410,6 +410,7 @@ func runList(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON array")
+	long := fs.Bool("long", false, "annotate each name (marks values stored with no password behind the call)")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
@@ -478,6 +479,18 @@ func runList(args []string, scope cliScope) int {
 		return exitOK
 	}
 	for _, s := range secrets {
+		if *long {
+			// The per-name marker lives here and nowhere else. The plain list
+			// is a pure existence probe that callers pipe and test with
+			// `byn list NAME && …`; annotating it would break them, which is
+			// why this is a separate flag rather than a nicer default.
+			mark := ""
+			if s.Unattended {
+				mark = "  " + yellow("(unattended value)")
+			}
+			fmt.Println(s.Name + mark)
+			continue
+		}
 		fmt.Println(s.Name)
 	}
 	// Which of these appeared with nobody behind the call.

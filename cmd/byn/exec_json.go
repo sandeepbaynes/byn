@@ -173,6 +173,17 @@ func printDryRun(r ipc.ExecPreflightResp) {
 		fmt.Fprintf(os.Stderr, "      set one with: %s\n",
 			cyan("echo -n VALUE | byn put "+r.MissingEnv[0]))
 	}
+	if len(r.OptionalMissing) > 0 {
+		// Information, not a problem: the .byn says the program runs without
+		// these. Reported anyway, because a name marked optional by mistake is
+		// invisible otherwise.
+		fmt.Fprintf(os.Stderr, "%s %s\n", dim("absent, marked optional:"), dim(strings.Join(r.OptionalMissing, ", ")))
+	}
+	if len(r.UnattendedEnv) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("unattended value:"), strings.Join(r.UnattendedEnv, ", "))
+		fmt.Fprintf(os.Stderr, "      %s\n",
+			dim("stored with no password behind the call — check it is the value you meant"))
+	}
 }
 
 // stripExecForceAsk removes byn's own --force-ask flag, with the same boundary

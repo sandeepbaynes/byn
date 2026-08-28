@@ -146,14 +146,27 @@ func (d *Daemon) handleExecPreflight(ctx context.Context, env *ipc.Envelope) *ip
 				for _, n := range f.Exec.Optional {
 					optional[n] = struct{}{}
 				}
+				unattended := make(map[string]struct{})
+				if d.authored != nil {
+					k := authoredScopeKey(rec.Vault, scope, "")
+					for _, n := range d.authored.UnattendedNamesFor(k.Vault, k.Project, k.Env) {
+						unattended[n] = struct{}{}
+					}
+				}
 				for _, n := range []string(f.Exec.Env) {
 					if n == "*" {
 						continue
 					}
-					if _, skip := optional[n]; skip {
-						continue
-					}
-					if _, ok := have[n]; !ok {
+					_, present := have[n]
+					_, isOptional := optional[n]
+					switch {
+					case present:
+						if _, inv := unattended[n]; inv {
+							out.UnattendedEnv = append(out.UnattendedEnv, n)
+						}
+					case isOptional:
+						out.OptionalMissing = append(out.OptionalMissing, n)
+					default:
 						out.MissingEnv = append(out.MissingEnv, n)
 					}
 				}
