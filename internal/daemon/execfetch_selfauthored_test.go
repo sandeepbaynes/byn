@@ -462,3 +462,58 @@ func TestLockedVault_GivesNoAccessToPreExistingSecrets(t *testing.T) {
 		t.Fatalf("a value came back alongside the error: %q", got.Value)
 	}
 }
+
+// A value stored while locked must keep working once the vault is opened.
+//
+// The two paths decrypt differently — the locked one through the scope's
+// authored key, the unlocked one through the vault key — so "it worked while
+// locked" says nothing about what happens after someone unlocks. A service that
+// started fine at 3am and lost a credential when its owner sat down would be a
+// nasty way to find that out.
+func TestLockedVault_ValueSurvivesA_LaterUnlock(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"AGENT_TOKEN\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	held := c.Session
+	c.Session = nil
+
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Value: []byte("tok-locked"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("locked put: %v", err)
+	}
+
+	// The owner sits down and unlocks.
+	c.Session = held
+	var unlockResp ipc.VaultUnlockResp
+	tok, err := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &unlockResp, nil)
+	if err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	c.Session = tok
+
+	resp, ferr := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if ferr != nil {
+		t.Fatalf("exec after unlock: %v", ferr)
+	}
+	if m := valueMap(resp.Values); m["AGENT_TOKEN"] != "tok-locked" {
+		t.Fatalf("AGENT_TOKEN = %q, want tok-locked — a value written while locked must survive the unlock; values=%v",
+			m["AGENT_TOKEN"], m)
+	}
+	// And the owner can read it directly, so nothing an agent writes is beyond
+	// the reach of the master password.
+	var got ipc.GetResp
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Scope: ipc.Scope{}, Name: "AGENT_TOKEN", Password: pw}, &got); err != nil {
+		t.Fatalf("owner get after unlock: %v", err)
+	}
+	if string(got.Value) != "tok-locked" {
+		t.Fatalf("owner read %q, want tok-locked", got.Value)
+	}
+}
