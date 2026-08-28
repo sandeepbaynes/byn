@@ -26,11 +26,79 @@ func helpFor(name string) string {
 		return commandHelp["edit"]
 	case "start", "stop", "restart", "reload":
 		return commandHelp["daemon"]
+	case "locked", "agent", "agents":
+		// The question gets asked in several words; they all lead to the
+		// one page that answers it.
+		return commandHelp["unattended"]
 	}
 	return ""
 }
 
 var commandHelp = map[string]string{
+	"unattended": `NAME
+       byn-unattended - what works with the vault locked, and what does not
+
+SYNOPSIS
+       byn help unattended
+
+DESCRIPTION
+       An agent has no terminal and cannot type a password. The honest
+       answer to "so unlock the vault first" is that it is worse than the
+       problem: an unlocked vault exposes every secret in it, where the
+       agent only ever needed the ones it works with. So byn is built to
+       be used locked, and this page is the boundary — you should not
+       have to discover it from a hang or a "not a terminal".
+
+WORKS WITH THE VAULT LOCKED, NO SESSION, NO PASSWORD
+       byn exec                 pinned or approved commands run, with
+                                their allowlisted values injected
+       byn exec --dry-run       would it run, and are its values there
+       byn put NAME             storing a value you are creating (needs a
+                                trusted .byn in the project; see below)
+       byn get NAME             ONLY a value you stored unattended
+                                yourself, from the same shell or agent
+       byn list                 names, and which values arrived unattended
+       byn doctor               every check
+       byn approve              list, and --deny
+       byn audit tail/view      the log
+       byn ps, byn kill         your exec children
+       byn repair               unstick a build tree
+       byn trust list/diff      what is trusted, and what changed
+       byn status               daemon and per-vault lock state
+
+NEEDS A CREDENTIAL — A PASSWORD, A SESSION, OR A PASSKEY
+       byn get NAME             any value you did not store yourself
+       byn put NAME             OVERWRITING someone else's value
+       byn delete, byn rename   removing or re-keying an entry
+       byn trust, byn approve   granting authority is a human act
+       byn export, byn import   bulk value movement
+       byn passwd, byn migrate  vault administration
+
+       These are not oversights. Each one either hands out a value the
+       caller did not put there, destroys one, or widens what something
+       may reach — and none of those should be possible for a process
+       nobody is watching.
+
+STORING A VALUE UNATTENDED
+       Creating one needs a trusted .byn covering the scope: that grant
+       is what lets byn hold a key it may write with while locked. Without
+       one byn holds no such key and says so.
+
+       Such a value is protected by THIS MACHINE as well as by your master
+       password, which is the price of a vault that can accept and return
+       values while shut. Everything that was already in the vault keeps
+       the password as its only key.
+
+       byn never hides which values arrived this way: they are logged as
+       put.unattended, marked in "byn list --long", named in "byn doctor",
+       and named again on the launch line every time one is injected. A
+       project that provisions its secrets by hand can refuse them with
+       [exec] agent_put = false, or per name with [exec] agent_put_deny
+       (shell-style globs, e.g. "*_SECRET").
+
+SEE ALSO
+       byn-exec(1), byn-put(1), byn-approve(1), byn-doctor(1)
+`,
 	"kill": `NAME
        byn-kill - stop running byn exec processes
 
@@ -383,6 +451,9 @@ SEE ALSO
 	"get": `NAME
        byn-get - print a secret's value to stdout
 
+       NEEDS A CREDENTIAL, except for a value you stored unattended
+       yourself — see byn help unattended.
+
 SYNOPSIS
        byn get [--json] [--password-stdin] NAME
        byn cat NAME
@@ -480,7 +551,9 @@ SEE ALSO
 `,
 
 	"delete": `NAME
-       byn-delete - remove a secret from the vault
+       byn-delete - remove a secret
+
+       NEEDS A CREDENTIAL. See byn help unattended. from the vault
 
 SYNOPSIS
        byn delete [--password-stdin] NAME
@@ -867,6 +940,9 @@ SEE ALSO
 
 	"rename": `NAME
        byn-rename - rename a secret
+
+       NEEDS A CREDENTIAL AND AN UNLOCKED VAULT: renaming re-encrypts the
+       value under the new name. See byn help unattended.
 
 SYNOPSIS
        byn rename [--password-stdin] OLD NEW
