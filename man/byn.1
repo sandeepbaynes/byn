@@ -897,6 +897,47 @@ $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key \-\-password\-stdin
 Used by \fBput\fR. Refuse to overwrite an existing secret with that
 name.
 .TP
+.B \-\-json
+Used by \fBexec\fR (in addition to the read commands). On the
+approval\-pending path, writes one JSON object to stdout describing the
+paused command \(em \fBapproval_id\fR, \fBkind\fR, \fBbyn\fR,
+\fBcommand\fR, \fBexpires_at\fR, \fBexit\fR \(em and keeps the prose on
+stderr. Read the id from the field; the sentence is written for people
+and will change.
+.TP
+.B \-\-dry\-run
+Used by \fBexec\fR. Answer whether the command would run and whether
+the variables its \fB.byn\fR declares have values, without running
+anything and without queueing a decision for anyone. With \fB\-\-json\fR:
+\fBpinned\fR, \fBmatched_action\fR, \fBreason\fR
+(\fBno_actions\fR/\fBno_match\fR/\fBuntrusted\fR/\fBchanged\fR/\fBno_byn\fR),
+\fBactions\fR, \fBmissing_env\fR, \fBoptional_missing\fR,
+\fBunattended_env\fR. Exits 0 (would run cleanly), 75 (would pause), or
+1 (would run short a required value).
+.TP
+.B \-\-wait\-approval[=\fIDURATION\fR]
+Used by \fBexec\fR. Block until a pending decision is answered instead
+of exiting immediately with the id. Default 2m; on timeout exec still
+exits 75. For a scripted step someone is watching \(em one approval
+mid\-pipeline no longer means re\-driving the whole thing. Off by
+default, because a caller that must not stall must not be made to wait.
+.TP
+.B \-\-force\-ask
+Used by \fBexec\fR. Raise a fresh decision for a command that was
+already refused. Without it a refusal is a wall, deliberately: re\-asking
+someone who just said no is how approval fatigue starts.
+.TP
+.B \-\-reason \fITEXT\fR
+Used by \fBapprove\fR, most usefully with \fB\-\-deny\fR. Why, in the
+decider's words. It is returned to whoever asked and recorded in the
+audit log. A refused caller is stopped until something changes, and the
+reason is what tells it which thing.
+.TP
+.B \-\-long
+Used by \fBlist\fR. Annotate each name, marking values byn took in with
+no credential behind the call. The plain listing stays a bare name list,
+because callers pipe it and use it as an existence probe.
+.TP
 .B \-\-foreground
 Used by \fBdaemon start\fR. Run in the foreground instead of
 detaching. Useful for development and supervised\-service setups.
@@ -1264,6 +1305,47 @@ the Phase 2 local Web UI, Phase 3 shims, Phase 4 ACLs, and Phase 6
 cloud sync remain. See
 .IR PLAN.md
 for the phased plan.
+.SH UNATTENDED USE
+An agent has no terminal and cannot type a password. The reflex answer
+\(em unlock the vault first \(em is worse than the problem: an unlocked
+vault exposes every secret in it, where the agent only ever needed the
+ones it works with. byn is built to be used locked. This is the boundary,
+so it need not be discovered from a hang.
+.PP
+\fBWorks with the vault locked, no session, no password:\fR
+\fBexec\fR (pinned or approved commands, with their allowlisted values),
+\fBexec \-\-dry\-run\fR, \fBput\fR (creating a value; see below),
+\fBget\fR of a value you stored unattended yourself,
+\fBlist\fR, \fBdoctor\fR, \fBapprove\fR (list and \fB\-\-deny\fR),
+\fBaudit\fR, \fBps\fR, \fBkill\fR, \fBrepair\fR,
+\fBtrust list\fR/\fBdiff\fR, \fBstatus\fR.
+.PP
+\fBNeeds a credential \(em a password, a session, or a passkey:\fR
+\fBget\fR of any value you did not store yourself, \fBput\fR overwriting
+someone else's value, \fBdelete\fR, \fBrename\fR (which also needs the
+vault unlocked, since it re\-encrypts), \fBtrust\fR, approving,
+\fBexport\fR, \fBimport\fR, \fBpasswd\fR, \fBmigrate\fR.
+These are not oversights: each hands out a value the caller did not put
+there, destroys one, or widens what something may reach.
+.SS Storing a value unattended
+Creating one needs a trusted \fB.byn\fR covering the scope \(em that grant
+is what lets byn hold a key it may write with while locked. Without one
+byn holds no such key and says so.
+.PP
+Such a value is protected by \fIthis machine\fR as well as by the master
+password. That is the price of a vault that can accept and return values
+while shut, and it is smaller than the alternative it replaces: leaving
+the vault open puts every secret in that position. Everything already in
+the vault keeps the password as its only key.
+.PP
+byn never hides which values arrived this way. They are logged as
+\fBput.unattended\fR, marked by \fBlist \-\-long\fR, named by
+\fBdoctor\fR, and named again on the launch line each time one is
+injected \(em because an agent can silence a missing\-variable warning by
+inventing a value, and byn cannot tell an invented value from a
+provisioned one. A project that provisions its secrets by hand can refuse
+them with \fB[exec] agent_put = false\fR, or per name with
+\fB[exec] agent_put_deny\fR (shell\-style globs, e.g. \fB"*_SECRET"\fR).
 .SH SESSIONS
 A session is a short\-lived credential that binds a vault unlock to the
 terminal that performed it.  When \fBbyn unlock\fR succeeds and the
