@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1384,5 +1385,139 @@ func TestUnattendedDelete_WildcardScopeRefusesEverything(t *testing.T) {
 		Scope: ipc.Scope{}, Name: "SCRATCH",
 	}, &ipc.DeleteResp{}); err == nil {
 		t.Fatal("a wildcard grant declares every name; nothing under it may be deleted without a credential")
+	}
+}
+
+// A value no .byn declares must never reach a child — the property the whole
+// per-project allowlist exists for.
+//
+// R5-1, found by running byn in a ten-.byn monorepo. Values stored unattended
+// were injected into EVERY exec in the scope, past each .byn's own list: one
+// service received a value another service's agent had invented, and anything
+// able to store a value unattended could put a name of its choosing into every
+// byn-run process in the project. The cause was reading a nil allowlist as "no
+// restriction" when it also means "this record has not been reconciled".
+//
+// Two .byn files sharing one scope, as a monorepo has, because with a single
+// .byn the bug is invisible: everything in scope is declared by the only file
+// there is.
+func TestUnattendedValueObeysEachBynAllowlist(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// Same scope, different declarations — the shape of a monorepo.
+	mine := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"MINE\"]\nactions = [\"mytool run\"]\n")
+	theirs := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"THEIRS\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "MINE", []byte("mine-val"))
+	putVar(t, c, ipc.Scope{}, "THEIRS", []byte("theirs-val"))
+	grantBynFile(t, c, mine, pw)
+	grantBynFile(t, c, theirs, pw)
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	// A value declared by NEITHER file.
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "DECLARED_NOWHERE", Value: []byte("leak-probe"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name, byn, wants string
+	}{
+		{"first project", mine, "MINE"},
+		{"second project", theirs, "THEIRS"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := execFetch(t, c, ipc.ExecFetchReq{
+				Path: tc.byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+			})
+			if err != nil {
+				t.Fatalf("exec: %v", err)
+			}
+			m := valueMap(resp.Values)
+			if _, leaked := m["DECLARED_NOWHERE"]; leaked {
+				t.Errorf("a value no .byn declares reached the child; injected: %v", keysOf(m))
+			}
+			if m[tc.wants] == "" {
+				t.Errorf("the value this .byn DOES declare was not injected; injected: %v", keysOf(m))
+			}
+			// And it must not receive the other project's variable either.
+			other := "THEIRS"
+			if tc.wants == "THEIRS" {
+				other = "MINE"
+			}
+			if _, crossed := m[other]; crossed {
+				t.Errorf("%s received %s, which its .byn does not declare", tc.name, other)
+			}
+		})
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The pre-flight's unattended_env must equal what the launch actually injects.
+//
+// Part of R5-1: --dry-run reported no unattended value for the very command that
+// then injected one, and doctor said "nothing injects them" about a value that
+// was reaching every child. Diagnostics that disagree with the thing they
+// describe are worse than none, because they are believed.
+func TestPreflightUnattendedMatchesWhatIsInjected(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DECLARED\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	// One declared, one not. Only the declared one may appear anywhere.
+	for _, n := range []string{"DECLARED", "NOT_DECLARED"} {
+		if err := c.Call(ipc.OpPut, ipc.PutReq{
+			Scope: ipc.Scope{}, Name: n, Value: []byte("v"),
+		}, &ipc.PutResp{}); err != nil {
+			t.Fatalf("put %s: %v", n, err)
+		}
+	}
+
+	var pre ipc.ExecPreflightResp
+	if err := c.Call(ipc.OpExecPreflight, ipc.ExecPreflightReq{
+		Path: byn, Argv: []string{"mytool", "run"},
+	}, &pre); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	injected := valueMap(resp.Values)
+	if _, leaked := injected["NOT_DECLARED"]; leaked {
+		t.Fatalf("undeclared value injected: %v", keysOf(injected))
+	}
+	sort.Strings(pre.UnattendedEnv)
+	if len(pre.UnattendedEnv) != 1 || pre.UnattendedEnv[0] != "DECLARED" {
+		t.Fatalf("unattended_env = %v, want [DECLARED] — the pre-flight must name exactly what the launch injects",
+			pre.UnattendedEnv)
+	}
+	// Every name the pre-flight calls unattended must actually arrive.
+	for _, n := range pre.UnattendedEnv {
+		if _, ok := injected[n]; !ok {
+			t.Errorf("pre-flight promised %s and the launch did not inject it", n)
+		}
 	}
 }

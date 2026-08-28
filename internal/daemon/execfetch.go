@@ -639,6 +639,23 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// that needs them — otherwise an agent could store a credential and then
 	// watch its own service start without it.
 	if authKey, ok := rowKeys[vault.CapAuthoredKeyName]; ok {
+		// The allowlist this loop must obey comes from the record's SNAPSHOT,
+		// not from rec.EnvAllowlist().
+		//
+		// EnvAllowlist returns nil for two different things: "the grant is a
+		// wildcard" and "EnvGrants is empty" — and EnvGrants is not persisted,
+		// so it IS empty for any .byn that has not been reconciled on this
+		// call, which is the ordinary case. Reading that nil as "no allowlist,
+		// inject everything" sent every value stored unattended into every exec
+		// in the scope, past each .byn's own list. A project's second service
+		// received a value the first one's agent had invented, and anything
+		// able to store a value unattended could put a name of its choosing
+		// into every byn-run process in the project. That is the whole
+		// least-privilege property of the per-project allowlist.
+		//
+		// The snapshot is MAC-bound and always present, so it says what the
+		// file declares whether or not anything reconciled it.
+		declared, wildcardEnv := snapshotEnvAllowlist(rec)
 		infos, lerr := st.ListEnvVars(ctx, scope)
 		if lerr != nil {
 			return nil, internalErr(id, fmt.Errorf("list scope for authored entries: %w", lerr))
@@ -647,9 +664,9 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 			if _, done := seen[info.Name]; done {
 				continue
 			}
-			if allowed != nil {
-				if _, ok := allowed[info.Name]; !ok {
-					continue
+			if !wildcardEnv {
+				if _, ok := declared[info.Name]; !ok {
+					continue // this .byn does not ask for it
 				}
 			}
 			val, verr := st.OpenEnvVarAuthored(ctx, scope, info.Name, authKey)
@@ -771,4 +788,50 @@ func missingAllowlisted(allow, optional []string, wildcard bool, values []ipc.Ex
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+// snapshotEnvAllowlist reads what a trusted .byn declares in [exec] env, from
+// the MAC-bound snapshot recorded at grant.
+//
+// Deliberately not rec.EnvAllowlist(): that reads EnvGrants, which is not
+// persisted, so it is empty on an ordinary call and its nil return is
+// indistinguishable from the nil that means "wildcard". Here the two answers
+// are separate values, because confusing them injects everything.
+//
+// A file byn cannot parse declares nothing. Failing closed is right: the
+// alternative is handing out values on the strength of a grant that cannot be
+// read.
+func snapshotEnvAllowlist(rec trust.Record) (map[string]struct{}, bool) {
+	// EnvGrants when it is set: reconcile fills it from the CURRENT file when a
+	// change was accepted, so it is the effective list — and it is the only
+	// place the newly added name appears when byn has just forgiven a caller
+	// adding a variable it authored itself.
+	if len(rec.EnvGrants) > 0 {
+		out := make(map[string]struct{}, len(rec.EnvGrants))
+		for _, n := range rec.EnvGrants {
+			if n == "*" {
+				return nil, true
+			}
+			out[n] = struct{}{}
+		}
+		return out, false
+	}
+	// Otherwise the snapshot, which is MAC-bound and always present. This is
+	// the ordinary case — an unchanged .byn is never reconciled, so EnvGrants
+	// is empty and only the snapshot says what the file declares.
+	if rec.Snapshot == "" {
+		return nil, false
+	}
+	f, err := bynfile.Parse([]byte(rec.Snapshot))
+	if err != nil {
+		return nil, false
+	}
+	if f.AllowsAll() {
+		return nil, true
+	}
+	out := make(map[string]struct{}, len(f.Exec.Env))
+	for _, n := range []string(f.Exec.Env) {
+		out[n] = struct{}{}
+	}
+	return out, false
 }
