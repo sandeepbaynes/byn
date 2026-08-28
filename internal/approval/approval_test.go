@@ -229,3 +229,57 @@ func TestStore_PersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("request did not survive reopen: %+v", got)
 	}
 }
+
+// The wall must reflect the LAST decision, not whichever one the scan met first.
+//
+// The first version decided inside the loop and returned as soon as it saw an
+// approval, so an older approval ordered before a newer refusal reported "not
+// refused" — turning the wall off for precisely the command someone had just
+// said no to. A live run hit it: a command approved in the morning and denied in
+// the afternoon raised a fresh request instead of stopping.
+func TestLastDenial_TakesTheMostRecentDecision(t *testing.T) {
+	dir := t.TempDir()
+	s := Open(dir)
+	now := time.Now()
+	s.SetClockForTesting(func() time.Time { return now })
+
+	raise := func() Request {
+		t.Helper()
+		r, err := s.Enqueue(Request{
+			Kind: KindActionUnpinned, Subject: "/p/.byn",
+			Fingerprint: "fp-1", Summary: []string{"runs cleanup"},
+		})
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		return r
+	}
+
+	// Approved first, then denied later: the refusal is the last word.
+	first := raise()
+	if _, err := s.Decide(first.ID, true, "terminal", ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	now = now.Add(time.Hour)
+	second := raise()
+	if _, err := s.Decide(second.ID, false, "terminal", "wrong target"); err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+	got, refused := s.LastDenial("/p/.byn", "fp-1")
+	if !refused {
+		t.Fatal("an approval followed by a refusal must leave the command refused")
+	}
+	if got.DecidedReason != "wrong target" {
+		t.Errorf("reason = %q, want the most recent decision's", got.DecidedReason)
+	}
+
+	// And the other way round: a later approval clears the wall.
+	now = now.Add(time.Hour)
+	third := raise()
+	if _, err := s.Decide(third.ID, true, "terminal", ""); err != nil {
+		t.Fatalf("approve again: %v", err)
+	}
+	if _, refused := s.LastDenial("/p/.byn", "fp-1"); refused {
+		t.Error("a refusal followed by an approval must clear the wall")
+	}
+}
