@@ -25,8 +25,11 @@ you skip them; features stay dormant instead.
    you want `byn put` to work on a *locked* vault there straight away. Grants
    made by an older byn carry no key it may write with, and only the locked path
    needs one — creating a value on an unlocked vault was never gated and still
-   is not. You can also do nothing: the grant re-seals itself the first time byn
-   records a value with the vault open, and the locked path works from then on.
+   is not. Grants made by this release carry it from the start.
+
+   You can also do nothing. Storing any value in that scope with the vault open
+   re-seals the grant, including an ordinary put of your own — so routine use
+   heals it. Either way it is logged as `trust.authored_key`.
 
 If you read the audit log with a program, two events changed shape: a write with
 no credential behind it is logged as `put.unattended` rather than `put`, and

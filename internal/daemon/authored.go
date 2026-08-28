@@ -54,6 +54,12 @@ func (d *Daemon) recordAuthored(ctx context.Context, st *vault.Store, vaultName 
 	// which every capability already carries — so exec can open it without any
 	// per-name key. An ordinary row needs its key added to the capability, or a
 	// locked daemon will allow the name and then decrypt nothing.
+	//
+	// Note this runs for ATTENDED writes too, and deliberately: an ordinary row
+	// is exactly the one that needs its key added. A side effect worth stating
+	// because it is not obvious — an owner storing a value with the vault open
+	// re-seals the grant, which is what gives a project's agents the locked
+	// path from then on. See refreshCapabilitiesFor.
 	if !authored {
 		d.refreshCapabilitiesFor(ctx, st, vaultName, scope)
 	}
@@ -129,6 +135,14 @@ func (d *Daemon) refreshCapabilitiesFor(ctx context.Context, st *vault.Store, va
 	}
 	defer zeroBytes(vkKey)
 
+	// Used only to tell whether a grant just gained the ability to be written to
+	// while locked, so that change can be logged under its own name.
+	capKey, ckerr := vcrypto.DeriveCapKey(d.fpMACKey)
+	if ckerr != nil {
+		capKey = nil
+	}
+	defer zeroBytes(capKey)
+
 	key := authoredScopeKey(vaultName, scope, "")
 	authoredNames := d.authored.NamesFor(key.Vault, key.Project, key.Env)
 
@@ -146,10 +160,46 @@ func (d *Daemon) refreshCapabilitiesFor(ctx context.Context, st *vault.Store, va
 		if cerr != nil || len(blob) == 0 {
 			continue
 		}
+		// Did this grant just gain the ability to be written to while locked?
+		// That is a real change in what the project can do unattended, and it
+		// happens as a side effect of an ordinary write — so it goes in the log
+		// under its own name. Without it, "when did this project become able to
+		// store values with the vault shut?" is unanswerable after the fact,
+		// which is the question the agent using byn actually had to ask.
+		gained := capKey != nil &&
+			!capabilityHasAuthoredKey(capKey, rec.ExecCapability) &&
+			capabilityHasAuthoredKey(capKey, blob)
 		rec.ExecCapability = blob
 		rec.SetMACs(d.fpMACKey, vkKey)
-		_, _ = trust.Put(d.cfg.Dir, rec)
+		if _, perr := trust.Put(d.cfg.Dir, rec); perr != nil {
+			continue
+		}
+		if gained {
+			d.auditEmit(ctx, vaultName, audit.Event{
+				Project: scope.Project, Env: scope.Env, BynPath: rec.Path,
+				Op: "trust.authored_key", Outcome: audit.OutcomeOK,
+			})
+		}
 	}
+}
+
+// capabilityHasAuthoredKey reports whether a sealed capability carries the key
+// that lets a locked daemon write for this scope. An unopenable blob counts as
+// not carrying it, which is the safe reading.
+func capabilityHasAuthoredKey(capKey, blob []byte) bool {
+	if len(blob) == 0 {
+		return false
+	}
+	keys, err := vcrypto.OpenCapability(capKey, blob)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		for _, k := range keys {
+			zeroBytes(k)
+		}
+	}()
+	return len(keys[vault.CapAuthoredKeyName]) > 0
 }
 
 // recordGoverns reports whether rec's grant covers the given vault and scope.

@@ -107,12 +107,19 @@ STORING A VALUE UNATTENDED
        is what lets byn hold a key it may write with while locked. Without
        one byn holds no such key and says so.
 
-       Upgrading from before this existed: a grant made by an older byn
-       carries no such key, so the LOCKED path is refused there until it
-       has one. It gets one either when you re-trust, or by itself the
-       first time byn records a value with the vault open — that path
-       re-seals the grant. Creating a value on an unlocked vault was
-       never gated and still is not.
+       A grant made by this byn carries that key from the moment it is
+       made, so the locked path works straight away — nothing to do.
+
+       A grant made by an older byn does not, and the locked path is
+       refused there until it does. It gets one when you re-trust, and
+       also by itself the first time any value is STORED in that scope
+       with the vault open, because storing re-seals the grant. That
+       includes an ordinary put by you, with a session: worth knowing,
+       since it means your own routine use is what quietly gives that
+       project's agents the locked path.
+
+       Creating a value on an unlocked vault was never gated and still
+       is not.
 
        Such a value is protected by THIS MACHINE as well as by your master
        password, which is the price of a vault that can accept and return

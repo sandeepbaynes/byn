@@ -1219,3 +1219,66 @@ func TestUpgrade_CapabilityHealsOnTheFirstUnlockedWrite(t *testing.T) {
 		t.Fatalf("after an unattended write with the vault open, the locked path should work without a re-trust: %v", err)
 	}
 }
+
+// A grant made by THIS build always carries the key that lets a locked daemon
+// write for its scope — so the locked path works immediately, with no re-trust
+// and no healing.
+//
+// This is the case I kept failing to state. Told that an unattended put had
+// succeeded on a locked vault whose project I assumed predated the release, I
+// twice invented a mechanism to explain it — first "your vault must have been
+// open", then "an earlier write must have healed the grant" — instead of asking
+// when the grant was made. It had been made that morning, by this build. There
+// was nothing to explain.
+//
+// Three states, and the tests below cover all of them, because the difference
+// decides what someone upgrading has to do:
+//   - granted by this build      → works at once (here)
+//   - granted by an older build  → refused until re-trust or a write with the
+//     vault open re-seals it (the heal test)
+func TestFreshGrant_CarriesTheWritableKey(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+
+	// Straight from the grant to a locked write: nothing in between that could
+	// have re-sealed anything.
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "STRAIGHT_AFTER_GRANT", Value: []byte("v"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("a grant from this build must allow a locked unattended write immediately: %v", err)
+	}
+}
+
+// An ATTENDED write re-seals the grant too, which is not obvious and has a
+// consequence worth stating: an owner storing a value with the vault open is
+// what gives that project's agents the locked path from then on.
+func TestAttendedWriteAlsoReSealsTheGrant(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	stripAuthoredKey(t, d, pw) // as an older byn would have left it
+
+	// A perfectly ordinary put by the owner, with a session, vault open.
+	putVar(t, c, ipc.Scope{}, "OWNER_SET_THIS", []byte("v"))
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Scope: ipc.Scope{}, Name: "AFTER_OWNER_WRITE", Value: []byte("v"),
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("an owner's ordinary put should have re-sealed the grant: %v", err)
+	}
+}
