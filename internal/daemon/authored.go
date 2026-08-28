@@ -218,12 +218,19 @@ func (d *Daemon) forgivesSelfAuthored(ctx context.Context, st *vault.Store, rec 
 		if e.AtUnixNano <= grantedAt {
 			return false
 		}
-		// Belt and braces behind forgetAuthored, which revokes authorship at the
-		// moment of an overwrite. This catches one that landed in a later second
-		// without going through that path.
-		if info.UpdatedAt.After(info.CreatedAt) {
-			return false
-		}
+		// There is deliberately no "has it been written since?" check here.
+		//
+		// One used to compare the entry's updated_at against its created_at, as
+		// belt and braces behind forgetAuthored. It was wrong, and only a live
+		// run found it: an author updating its OWN value — create a token, then
+		// change it, which is the workflow this exists to serve — moves
+		// updated_at and lost the caller its own variable.
+		//
+		// Revocation is the precise answer and it already covers this. A write
+		// by anyone else takes authorship away at the moment it happens; a write
+		// by the author refreshes it. So the record itself says whether the
+		// stored value is still the author's, and a timestamp comparison can
+		// only add false refusals on top.
 	}
 	return true
 }
