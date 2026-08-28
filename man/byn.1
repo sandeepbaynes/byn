@@ -1327,6 +1327,21 @@ vault unlocked, since it re\-encrypts), \fBtrust\fR, approving,
 \fBexport\fR, \fBimport\fR, \fBpasswd\fR, \fBmigrate\fR.
 These are not oversights: each hands out a value the caller did not put
 there, destroys one, or widens what something may reach.
+.SS How long your own values stay yours
+Reading and replacing a value you stored is tied to the session that
+stored it \(em the shell, agent, or terminal byn saw it come from. Both
+conditions must still hold: nobody else has written the value, and the
+session has not changed. A person with the password replacing your value
+takes it out of your hands at that moment, which is the point; so does a
+new terminal or a restarted agent, because byn no longer recognises the
+caller.
+.PP
+After either, nothing is lost and the shortcuts simply end: reading needs
+the vault unlocked or a password, and injection needs the \fB.byn\fR
+trusted again. Those are the ordinary rules, which is where every value
+not stored this way lives all along. The exemption is deliberately
+short\-lived \(em it exists so an agent can finish the task it is in the
+middle of, not to accumulate standing access to a machine.
 .SS Storing a value unattended
 Creating one needs a trusted \fB.byn\fR covering the scope \(em that grant
 is what lets byn hold a key it may write with while locked. Without one

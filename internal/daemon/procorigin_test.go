@@ -26,8 +26,8 @@ func TestSharesOriginMatchesOwnAncestor(t *testing.T) {
 	if !origin.ok() {
 		t.Skip("no usable parent origin in this environment")
 	}
-	if !sharesOriginFn(os.Getpid(), origin) {
-		t.Errorf("sharesOrigin(self, parent) = false, want true")
+	if !sharesAncestryFn(os.Getpid(), []procRef{origin}) {
+		t.Errorf("a caller must match its own parent")
 	}
 
 	// A grandchild still shares it: an agent's tool call runs byn a level or
@@ -40,8 +40,8 @@ func TestSharesOriginMatchesOwnAncestor(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	}()
-	if !sharesOriginFn(cmd.Process.Pid, origin) {
-		t.Errorf("sharesOrigin(child, our parent) = false, want true")
+	if !sharesAncestryFn(cmd.Process.Pid, []procRef{origin}) {
+		t.Errorf("a grandchild must match an ancestor")
 	}
 }
 
@@ -51,19 +51,19 @@ func TestSharesOriginRejectsStrangers(t *testing.T) {
 		t.Skip("no usable parent origin in this environment")
 	}
 	// pid 1 is nobody's descendant but its own; it must not match.
-	if sharesOriginFn(1, origin) {
-		t.Errorf("sharesOrigin(1, our parent) = true, want false")
+	if sharesAncestryFn(1, []procRef{origin}) {
+		t.Errorf("pid 1 is nobody's descendant but its own; it must not match")
 	}
 	// Same PID, wrong start time — a recycled PID must not inherit the grant.
 	recycled := procRef{PID: origin.PID, Start: origin.Start + 1}
-	if sharesOriginFn(os.Getpid(), recycled) {
+	if sharesAncestryFn(os.Getpid(), []procRef{recycled}) {
 		t.Errorf("sharesOrigin with a mismatched start time = true, want false")
 	}
 	// An origin byn could not pin down grants nothing.
-	if sharesOriginFn(os.Getpid(), procRef{PID: origin.PID}) {
+	if sharesAncestryFn(os.Getpid(), []procRef{{PID: origin.PID}}) {
 		t.Errorf("sharesOrigin with a zero start time = true, want false")
 	}
-	if sharesOriginFn(os.Getpid(), procRef{}) {
+	if sharesAncestryFn(os.Getpid(), []procRef{{}}) {
 		t.Errorf("sharesOrigin with an empty origin = true, want false")
 	}
 }
@@ -79,5 +79,70 @@ func TestProcStartTimeIsStableAndDistinguishes(t *testing.T) {
 	}
 	if _, ok := procStartTime(0); ok {
 		t.Errorf("procStartTime(0) reported ok, want not ok")
+	}
+}
+
+// Two commands run in DIFFERENT short-lived shells under one agent must count
+// as the same caller.
+//
+// This is the shape every agent harness has: each tool call gets its own shell,
+// so the process that ran `byn put` is gone by the time `byn exec` runs. Byn
+// used to record only that shell, which meant the exemption expired at the end
+// of every tool call — the workflow it exists for, broken, while every test
+// passed because each did its put and its exec inside one shell.
+func TestAncestryMatchesAcrossSiblingShells(t *testing.T) {
+	// Two children of THIS process stand in for two tool-call shells; this
+	// process stands in for the agent that spawned both.
+	spawn := func() *exec.Cmd {
+		t.Helper()
+		cmd := exec.Command("sleep", "30")
+		if err := cmd.Start(); err != nil {
+			t.Skipf("cannot spawn a child here: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		})
+		return cmd
+	}
+	first, second := spawn(), spawn()
+
+	recorded := callerAncestryFn(first.Process.Pid)
+	if len(recorded) == 0 {
+		t.Skip("no usable ancestry in this environment")
+	}
+	if !sharesAncestryFn(second.Process.Pid, recorded) {
+		t.Fatalf("two shells under one agent were not recognised as the same caller; recorded=%v", recorded)
+	}
+	// The recorded chain must reach past the immediate parent, or it could only
+	// ever match that one process.
+	if len(recorded) < 2 {
+		t.Errorf("recorded ancestry has %d entries; it must reach beyond the immediate parent", len(recorded))
+	}
+}
+
+// The chain must stay short. Reaching the desktop session would make every
+// process on the machine share an ancestor, and the check would mean nothing.
+func TestAncestryIsBounded(t *testing.T) {
+	chain := callerAncestryFn(os.Getpid())
+	if len(chain) > originDepth {
+		t.Errorf("ancestry has %d entries, want at most %d", len(chain), originDepth)
+	}
+	for _, p := range chain {
+		if p.PID <= 1 {
+			t.Errorf("ancestry contains pid %d; everything descends from init", p.PID)
+		}
+	}
+}
+
+func TestSharesAncestryRejectsNothing(t *testing.T) {
+	if sharesAncestryFn(os.Getpid(), nil) {
+		t.Error("an empty recorded ancestry must grant nothing")
+	}
+	if sharesAncestryFn(os.Getpid(), []procRef{{PID: 999999, Start: 1}}) {
+		t.Error("an unrelated ancestry must not match")
+	}
+	if sharesAncestryFn(0, callerAncestryFn(os.Getpid())) {
+		t.Error("a caller byn cannot identify must not match")
 	}
 }

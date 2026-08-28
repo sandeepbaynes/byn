@@ -43,11 +43,11 @@ func (d *Daemon) recordAuthored(ctx context.Context, st *vault.Store, vaultName 
 	if d.authored == nil {
 		return
 	}
-	origin := callerOriginFn(callerFrom(ctx).PID)
-	if !origin.ok() {
+	chain := callerAncestryFn(callerFrom(ctx).PID)
+	if len(chain) == 0 {
 		return // no pinned-down caller identity → nothing worth recording
 	}
-	if err := d.authored.Record(authoredScopeKey(vaultName, scope, name), origin, authored, unattended); err != nil {
+	if err := d.authored.Record(authoredScopeKey(vaultName, scope, name), chain, authored, unattended); err != nil {
 		return
 	}
 	// An entry on the authored scheme is keyed through the scope's authored key,
@@ -101,7 +101,13 @@ func (d *Daemon) authoredEntryFor(ctx context.Context, vaultName string, scope v
 	if !ok {
 		return authoredEntry{}, false
 	}
-	if !sharesOriginFn(callerFrom(ctx).PID, procRef{PID: e.OriginPID, Start: e.OriginStart}) {
+	// Records written before byn stored a chain carry only the parent; treat
+	// that as a one-element chain rather than refusing them outright.
+	chain := e.Chain
+	if len(chain) == 0 {
+		chain = []procRef{{PID: e.OriginPID, Start: e.OriginStart}}
+	}
+	if !sharesAncestryFn(callerFrom(ctx).PID, chain) {
 		return authoredEntry{}, false
 	}
 	return e, true

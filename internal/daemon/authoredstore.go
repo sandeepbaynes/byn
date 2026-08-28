@@ -47,7 +47,11 @@ type authoredEntry struct {
 	// immune to PID reuse.
 	OriginPID   int    `json:"origin_pid"`
 	OriginStart uint64 `json:"origin_start"`
-	AtUnixNano  int64  `json:"at_unix_nano"`
+	// Chain is the recorded ancestry, nearest first. Two callers are the same
+	// agent when their chains overlap — see originDepth in procorigin.go for
+	// why a single parent is not enough.
+	Chain      []procRef `json:"chain,omitempty"`
+	AtUnixNano int64     `json:"at_unix_nano"`
 	// Authored records that the value is stored under the scope's authored key
 	// rather than the vault key — that is, that byn took it in unattended, with
 	// no session and no password behind it.
@@ -142,7 +146,7 @@ func authoredKeyLess(x, y authoredKey) bool {
 // called for a CREATE, so the name did not exist a moment ago, and whatever was
 // recorded for an earlier incarnation of it describes a value that is gone.
 // Letting that stand would hand its author a claim over someone else's secret.
-func (a *authoredStore) Record(key authoredKey, origin procRef, authored, unattended bool) error {
+func (a *authoredStore) Record(key authoredKey, chain []procRef, authored, unattended bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	entries := a.load()
@@ -152,10 +156,15 @@ func (a *authoredStore) Record(key authoredKey, origin procRef, authored, unatte
 			out = append(out, e)
 		}
 	}
+	var origin procRef
+	if len(chain) > 0 {
+		origin = chain[0]
+	}
 	out = append(out, authoredEntry{
 		Key:         key,
 		OriginPID:   origin.PID,
 		OriginStart: origin.Start,
+		Chain:       chain,
 		AtUnixNano:  time.Now().UnixNano(),
 		Authored:    authored,
 		Unattended:  unattended,
