@@ -103,3 +103,28 @@ func TestExecApprovalJSONWithoutDetails(t *testing.T) {
 		t.Errorf("message = %v, want the daemon's text as a fallback", got["message"])
 	}
 }
+
+// A timestamp must be a number whichever command emitted it. The details map is
+// string-keyed on the wire, and passing it through verbatim gave denied_at a
+// different type in the wall's output than in the pre-flight's — enough to break
+// a consumer that compares it to a clock.
+func TestExecErrorJSONTimestampsAreNumbers(t *testing.T) {
+	for _, key := range []string{"denied_at", "expires_at"} {
+		err := &ipc.ErrResponse{
+			Code:    ipc.CodeTrustDenied,
+			Message: "refused",
+			Details: map[string]string{key: "1787916016", "reason": "nope"},
+		}
+		out := captureStdout(t, func() { execWallJSON(os.Stdout, err, 3) })
+		var got map[string]any
+		if uerr := json.Unmarshal([]byte(out), &got); uerr != nil {
+			t.Fatalf("not JSON: %v\n%s", uerr, out)
+		}
+		if _, ok := got[key].(float64); !ok {
+			t.Errorf("%s = %#v, want a number", key, got[key])
+		}
+		if got["reason"] != "nope" {
+			t.Errorf("reason = %v, want the string through unchanged", got["reason"])
+		}
+	}
+}

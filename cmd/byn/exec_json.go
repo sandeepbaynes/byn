@@ -23,6 +23,10 @@ import (
 // Prose still goes to stderr, unchanged, so a person watching a terminal sees
 // what they always saw and stdout stays parseable.
 
+// numericDetailKeys are detail fields that must be emitted as JSON numbers, so
+// the same field has the same type whichever command produced it.
+var numericDetailKeys = map[string]bool{"expires_at": true, "denied_at": true}
+
 // execJSONMode is set by runExec when --json was given. A package var rather
 // than a threaded parameter because the report sites sit several layers down the
 // exec path and every one of them must agree.
@@ -84,16 +88,18 @@ func execErrorJSON(w *os.File, status string, callErr error, exitCode int) {
 			obj["recover"] = em.Recover
 		}
 		for k, v := range em.Details {
-			switch k {
-			case "expires_at":
+			// Timestamps travel as numbers, not strings. The details map is
+			// string-keyed on the wire, and emitting it verbatim gave the same
+			// field two types depending on which command produced it — a
+			// consumer comparing denied_at to a clock would break on one of
+			// them.
+			if numericDetailKeys[k] {
 				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 					obj[k] = n
 					continue
 				}
-				obj[k] = v
-			default:
-				obj[k] = v
 			}
+			obj[k] = v
 		}
 	}
 	b, err := json.Marshal(obj)
