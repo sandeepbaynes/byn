@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -62,6 +63,10 @@ type ExecRunMeta struct {
 	// process is gone and the pid identifies nothing.
 	CallerAgentComm string
 	CallerCwd       string
+	// Unattended names the values this run received that byn had taken in with
+	// no credential behind them. A fact about the run: the same name can be
+	// invented for one run and provisioned by the owner before the next.
+	Unattended []string
 }
 
 // ExecRun is one recorded run.
@@ -114,11 +119,11 @@ func (s *Store) RecordExecRun(ctx context.Context, scope Scope, meta ExecRunMeta
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO exec_runs (at, snapshot_id, byn_path, command,
 		                        caller_pid, caller_comm, caller_agent, caller_agent_comm,
-		                        caller_cwd)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                        caller_cwd, unattended)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nowUnix(), snapshotID, meta.BynPath, meta.Command,
 		int64(meta.CallerPID), meta.CallerComm, int64(meta.CallerAgent),
-		meta.CallerAgentComm, meta.CallerCwd)
+		meta.CallerAgentComm, meta.CallerCwd, encodeNames(meta.Unattended))
 	if err != nil {
 		return 0, err
 	}
@@ -293,7 +298,8 @@ func (s *Store) ListExecRuns(ctx context.Context, limit int) ([]ExecRun, error) 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, at, COALESCE(snapshot_id, 0), COALESCE(byn_path,''), COALESCE(command,''),
 		        COALESCE(caller_pid,0), COALESCE(caller_comm,''), COALESCE(caller_agent,0),
-		        COALESCE(caller_agent_comm,''), COALESCE(caller_cwd,'')
+		        COALESCE(caller_agent_comm,''), COALESCE(caller_cwd,''),
+		        COALESCE(unattended,'')
 		   FROM exec_runs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -304,11 +310,13 @@ func (s *Store) ListExecRuns(ctx context.Context, limit int) ([]ExecRun, error) 
 	for rows.Next() {
 		var r ExecRun
 		var at int64
+		var unattended string
 		if err := rows.Scan(&r.ID, &at, &r.SnapshotID, &r.Meta.BynPath, &r.Meta.Command,
 			&r.Meta.CallerPID, &r.Meta.CallerComm, &r.Meta.CallerAgent,
-			&r.Meta.CallerAgentComm, &r.Meta.CallerCwd); err != nil {
+			&r.Meta.CallerAgentComm, &r.Meta.CallerCwd, &unattended); err != nil {
 			return nil, err
 		}
+		r.Meta.Unattended = decodeNames(unattended)
 		r.At = time.Unix(at, 0).UTC()
 		out = append(out, r)
 	}
@@ -409,4 +417,31 @@ func sameRefs(a, b map[string]EntryRef) bool {
 		}
 	}
 	return true
+}
+
+// encodeNames stores a name list on a run row. JSON rather than a joined
+// string: a name is validated, but a storage format that depends on that
+// staying true breaks quietly the day it does not.
+func encodeNames(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(names)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// decodeNames reverses encodeNames. Unreadable content yields no names — a run
+// record byn cannot parse should say nothing rather than something wrong.
+func decodeNames(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	return out
 }

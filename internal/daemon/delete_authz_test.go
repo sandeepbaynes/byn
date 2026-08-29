@@ -302,3 +302,25 @@ func TestVaultDelete_LockedWrongPassword(t *testing.T) {
 		t.Errorf("acme dir removed despite a wrong password: %v", err)
 	}
 }
+
+// Deleting a name that is not there is not an authorization question.
+//
+// It used to answer "authorization required", which sends an agent off to find
+// a password in order to delete nothing. Nor is absence a fact worth
+// protecting: byn lists the names in a scope without a credential, so the
+// refusal was buying secrecy that was never there.
+func TestDelete_MissingNameSaysSoRatherThanAskingForAPassword(t *testing.T) {
+	_ = stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	c.Session = nil // an agent: no session, no password
+
+	err := c.Call(ipc.OpDelete, ipc.DeleteReq{Name: "NEVER_EXISTED"}, &ipc.DeleteResp{})
+	if err == nil {
+		t.Fatal("deleting a name that does not exist reported success")
+	}
+	if code := errCode(t, err); code != ipc.CodeNotFound {
+		t.Fatalf("code = %v, want not_found", code)
+	}
+}

@@ -179,7 +179,8 @@ var execRunTablesDDL = []string{
 		caller_comm   TEXT,
 		caller_agent  INTEGER,
 		caller_agent_comm TEXT,
-		caller_cwd    TEXT
+		caller_cwd    TEXT,
+		unattended    TEXT
 	) STRICT`,
 
 	`CREATE INDEX IF NOT EXISTS idx_exec_runs_at ON exec_runs(at DESC)`,
@@ -438,6 +439,7 @@ var schemaMigrations = map[int]func(context.Context, *sql.DB) error{
 	4: migrateV4toV5,
 	5: migrateV5toV6,
 	6: migrateV6toV7,
+	7: migrateV7toV8,
 }
 
 // migrateV5toV6 adds the exec-run tables. Purely additive: it creates empty
@@ -515,6 +517,26 @@ func migrateV6toV7(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx,
 		`ALTER TABLE exec_runs ADD COLUMN caller_agent_comm TEXT`); err != nil {
 		return fmt.Errorf("name the agent on run records: %w", err)
+	}
+	return nil
+}
+
+// migrateV7toV8 records which of a run's values were unattended.
+//
+// A run that received a value an agent invented and one provisioned by the
+// owner are different runs, and the record could not tell them apart — which is
+// the distinction an audit is most likely to be looking for.
+func migrateV7toV8(ctx context.Context, db *sql.DB) error {
+	has, err := columnExists(ctx, db, "exec_runs", "unattended")
+	if err != nil {
+		return fmt.Errorf("record unattended values on runs: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE exec_runs ADD COLUMN unattended TEXT`); err != nil {
+		return fmt.Errorf("record unattended values on runs: %w", err)
 	}
 	return nil
 }

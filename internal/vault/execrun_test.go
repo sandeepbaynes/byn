@@ -275,3 +275,50 @@ func TestMigrateV6toV7_NamesTheAgentAndIsRepeatable(t *testing.T) {
 		t.Fatalf("second application: %v", err)
 	}
 }
+
+// A run that received a value an agent invented and one the owner provisioned
+// are different runs. The record has to say which, because the launch warning
+// has scrolled away by the time anyone audits.
+func TestExecRun_RemembersWhichValuesWereUnattended(t *testing.T) {
+	st, scope := execRunFixture(t)
+	ctx := context.Background()
+	for _, n := range []string{"OWNED", "INVENTED"} {
+		if err := st.PutEnvVar(ctx, scope, n, []byte("v-"+n), PutOpt{}); err != nil {
+			t.Fatalf("put %s: %v", n, err)
+		}
+	}
+	meta := ExecRunMeta{
+		BynPath: "/p/.byn", Command: "make dev",
+		Unattended: []string{"INVENTED"},
+	}
+	if _, err := st.RecordExecRun(ctx, scope, meta, []string{"OWNED", "INVENTED"}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	runs, err := st.ListExecRuns(ctx, 5)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+	got := runs[0].Meta.Unattended
+	if len(got) != 1 || got[0] != "INVENTED" {
+		t.Errorf("unattended = %v, want [INVENTED]", got)
+	}
+
+	// A run with none says none, rather than an empty list that reads as
+	// "byn checked and found nothing" versus "byn did not record this".
+	if _, err := st.RecordExecRun(ctx, scope, ExecRunMeta{
+		BynPath: "/p/.byn", Command: "make test",
+	}, []string{"OWNED"}); err != nil {
+		t.Fatalf("record second: %v", err)
+	}
+	runs, err = st.ListExecRuns(ctx, 5)
+	if err != nil {
+		t.Fatalf("list again: %v", err)
+	}
+	if len(runs[0].Meta.Unattended) != 0 {
+		t.Errorf("a run with no unattended values reported %v", runs[0].Meta.Unattended)
+	}
+}

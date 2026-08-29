@@ -560,7 +560,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		}
 		sort.Strings(invented)
 	}
-	d.recordExecRun(ctx, st, scope, req, resolvedArgv, values)
+	d.recordExecRun(ctx, st, scope, req, resolvedArgv, values, invented)
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard,
 		missingAllowlisted(allow, optionalEnv, wildcard, values), invented, nil
 }
@@ -844,7 +844,7 @@ func snapshotEnvAllowlist(rec trust.Record) (map[string]struct{}, bool) {
 // — a failure here must never fail a command byn has already allowed, so it is
 // logged to the audit trail and dropped.
 func (d *Daemon) recordExecRun(ctx context.Context, st *vault.Store, scope vault.Scope,
-	req ipc.ExecFetchReq, resolvedArgv []string, values []ipc.ExecFetchValue) {
+	req ipc.ExecFetchReq, resolvedArgv []string, values []ipc.ExecFetchValue, unattended []string) {
 
 	if st == nil {
 		return
@@ -860,6 +860,11 @@ func (d *Daemon) recordExecRun(ctx context.Context, st *vault.Store, scope vault
 		CallerPID:  ci.PID,
 		CallerComm: ci.Comm,
 		CallerCwd:  filepath.Dir(trust.Canonicalize(req.Path)),
+		// Which of these byn took in with no credential behind them. The launch
+		// warns about it in the moment; without it on the record, a run that was
+		// shaped by a value an agent invented is indistinguishable afterwards
+		// from one the owner provisioned.
+		Unattended: unattended,
 	}
 	if id := callerIdentityFn(ci.PID); id.ok() {
 		meta.CallerAgent = id.PID

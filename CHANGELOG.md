@@ -127,6 +127,20 @@ next ten minutes should not become a standing authority.
 `--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
 environment does the same for harnesses that build byn's argv themselves.
 
+### Smaller things the field found
+
+- Deleting a name that does not exist says so, instead of asking for a password
+  to delete nothing. Absence was never a protected fact here — byn lists the
+  names in a scope without a credential.
+- A run record marks which of its values byn took in unattended. A value the
+  owner provisioned and one an agent invented shape a program identically, and
+  the run record is where you go to tell them apart after the launch warning has
+  scrolled away. Vault schema v8, additive.
+- `byn runs` truncates the command in the list; `runs show` and `--json` keep it
+  whole. One `node -e` program was turning a single entry into five lines.
+- A run and an approval card now render the same identity the same way. Two
+  spellings read as two facts.
+
 ### Three defects the live round found
 
 **An authenticated write was silently stored as the agent's.** `byn put

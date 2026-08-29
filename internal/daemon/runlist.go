@@ -45,8 +45,9 @@ func (d *Daemon) handleRunList(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 			ID: r.ID, At: r.At.Unix(), Byn: r.Meta.BynPath, Command: r.Meta.Command,
 			CallerPID: r.Meta.CallerPID, CallerComm: r.Meta.CallerComm,
 			CallerAgent: r.Meta.CallerAgent, CallerAgentComm: r.Meta.CallerAgentComm,
-			Cwd:      r.Meta.CallerCwd,
-			VarCount: r.VarCount, SnapshotID: r.SnapshotID,
+			Cwd:        r.Meta.CallerCwd,
+			Unattended: r.Meta.Unattended,
+			VarCount:   r.VarCount, SnapshotID: r.SnapshotID,
 		}
 		if req.ID != 0 && r.SnapshotID != 0 {
 			names, nerr := st.SnapshotNames(ctx, r.SnapshotID)

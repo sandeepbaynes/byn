@@ -708,6 +708,9 @@ type RunEntry struct {
 	SnapshotID      int64  `json:"snapshot_id,omitempty"`
 	// Names is populated when one run was asked for.
 	Names []string `json:"names,omitempty"`
+	// Unattended names the values this run received that byn had taken in with
+	// no credential behind them — an agent's own, not the owner's.
+	Unattended []string `json:"unattended,omitempty"`
 	// Values is populated only when Reveal was granted.
 	Values map[string]string `json:"values,omitempty"`
 	// Superseded names values the run used that have since been replaced. byn

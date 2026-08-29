@@ -1537,6 +1537,18 @@ func (d *Daemon) handleDelete(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 	//
 	// Without it every unattended run left litter only its owner could sweep,
 	// and byn's own delete path could not undo byn's own mistake.
+	// Nothing to delete is not an authorization question. Asked before the
+	// gate, because a caller told "authorization required" for a name that does
+	// not exist goes and finds a password in order to delete nothing — and the
+	// answer costs nothing to give: byn lists the names in a scope without a
+	// credential, so absence is not a fact being protected here.
+	if has, herr := st.HasEnvVar(ctx, scope, req.Name); herr == nil && !has {
+		le := ipc.NewError(env.ID, ipc.CodeNotFound,
+			"no value called "+req.Name+" in "+scopeLabel(scope),
+			"byn list — to see what is there")
+		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "delete", le)
+		return le
+	}
 	mine := d.mayDeleteUnattended(ctx, vaultName, scope, req.Name) &&
 		!d.policyDemandsAuth(vaultName, scope, "delete")
 	// authorizeAction: valid session OR fresh credentials (NU-3 matrix).

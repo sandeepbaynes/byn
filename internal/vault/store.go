@@ -54,8 +54,9 @@ const (
 	// HMAC-SHA256 under a vault-key-derived subkey; eliminates the
 	// offline guess-confirmation oracle). v6: exec-run tables. v7: the
 	// agent's name on a run record — the pid alone identifies nothing by
-	// the time anyone audits it.
-	schemaVersion = 7
+	// the time anyone audits it. v8: which of a run's values byn had taken
+	// in with no credential behind them.
+	schemaVersion = 8
 
 	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
 	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of
@@ -1171,6 +1172,35 @@ func (s *Store) ListEnvVars(ctx context.Context, scope Scope) ([]EntryInfo, erro
 	}
 	defer func() { _ = rows.Close() }()
 	return scanEntryInfos(rows)
+}
+
+// HasEnvVar reports whether scope's own env holds this name. Exact, not merged
+// with default: it answers what a delete would act on.
+//
+// No credential and no unlock, matching ListEnvVars — the index of names is
+// browseable, so this reveals nothing a listing does not already give.
+func (s *Store) HasEnvVar(ctx context.Context, scope Scope, name string) (bool, error) {
+	if err := scope.Validate(); err != nil {
+		return false, err
+	}
+	if err := validateEntryName(name); err != nil {
+		return false, err
+	}
+	projectID, envID, err := s.scopeIDs(ctx, scope)
+	if err != nil {
+		return false, err
+	}
+	var one int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var' AND name = ?`,
+		projectID, envID, name).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }
 
 // DeleteEnvVar removes an env_var entry from scope. Refuses to

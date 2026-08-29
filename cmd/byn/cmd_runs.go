@@ -103,22 +103,29 @@ func printRun(e ipc.RunEntry, detailed bool) {
 		who = "?"
 	}
 	if e.CallerAgent > 0 {
-		// Name the agent when the record has one: "claude (pid 188801)" is
-		// something an auditor can act on, "agent 188801" is a number for a
-		// process that stopped existing months ago.
+		// The same rendering an approval card uses. Two spellings of one
+		// identity read as two facts, and someone comparing a card against a
+		// run record should not have to work out that they match.
 		if e.CallerAgentComm != "" {
-			who += fmt.Sprintf(" (agent %s, pid %d)", e.CallerAgentComm, e.CallerAgent)
+			who = fmt.Sprintf("%s (pid %d)", e.CallerAgentComm, e.CallerAgent)
 		} else {
 			who += fmt.Sprintf(" (agent %d)", e.CallerAgent)
 		}
 	}
-	fmt.Printf("%s %s  %s\n", cyan(fmt.Sprintf("#%d", e.ID)), when, e.Command)
+	cmd := e.Command
+	if !detailed {
+		// One line per run in the list. A `node -e '<300 characters>'` turned a
+		// single entry into five lines and pushed the rest off the screen; the
+		// whole command is still in `runs show` and in --json.
+		cmd = ellipsize(cmd, 80)
+	}
+	fmt.Printf("%s %s  %s\n", cyan(fmt.Sprintf("#%d", e.ID)), when, cmd)
 	fmt.Printf("     %s\n", dim(fmt.Sprintf("%s · %s · %d value(s)", who, e.Byn, e.VarCount)))
 	if !detailed {
 		return
 	}
 	if len(e.Names) > 0 && e.Values == nil {
-		fmt.Printf("     %s %s\n", dim("received:"), dim(strings.Join(e.Names, ", ")))
+		fmt.Printf("     %s %s\n", dim("received:"), dim(strings.Join(markUnattended(e), ", ")))
 	}
 	for _, n := range e.Names {
 		if v, ok := e.Values[n]; ok {
@@ -136,4 +143,36 @@ func printRun(e ipc.RunEntry, detailed bool) {
 		fmt.Printf("     %s %s\n", yellow("could not be read:"), strings.Join(e.Unavailable, ", "))
 		fmt.Printf("     %s\n", dim("byn could not open these — deleted since, or unreadable; not necessarily changed"))
 	}
+}
+
+// markUnattended annotates the names a run received, flagging the ones byn took
+// in with no credential behind them.
+//
+// A value the owner provisioned and one an agent invented shape a program
+// identically, and the run record is where someone goes to tell them apart
+// afterwards — the launch warning has long since scrolled away.
+func markUnattended(e ipc.RunEntry) []string {
+	if len(e.Unattended) == 0 {
+		return e.Names
+	}
+	flagged := make(map[string]struct{}, len(e.Unattended))
+	for _, n := range e.Unattended {
+		flagged[n] = struct{}{}
+	}
+	out := make([]string, 0, len(e.Names))
+	for _, n := range e.Names {
+		if _, ok := flagged[n]; ok {
+			n += " (unattended)"
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// ellipsize shortens a line to fit, marking that it was cut.
+func ellipsize(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "\u2026"
 }
