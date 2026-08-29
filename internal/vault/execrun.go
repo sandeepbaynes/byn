@@ -57,7 +57,11 @@ type ExecRunMeta struct {
 	CallerPID   int
 	CallerComm  string
 	CallerAgent int
-	CallerCwd   string
+	// CallerAgentComm names that identity. Captured at run time because it
+	// cannot be recovered later: by the time anyone reads the record back, the
+	// process is gone and the pid identifies nothing.
+	CallerAgentComm string
+	CallerCwd       string
 }
 
 // ExecRun is one recorded run.
@@ -109,10 +113,12 @@ func (s *Store) RecordExecRun(ctx context.Context, scope Scope, meta ExecRunMeta
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO exec_runs (at, snapshot_id, byn_path, command,
-		                        caller_pid, caller_comm, caller_agent, caller_cwd)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		                        caller_pid, caller_comm, caller_agent, caller_agent_comm,
+		                        caller_cwd)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nowUnix(), snapshotID, meta.BynPath, meta.Command,
-		int64(meta.CallerPID), meta.CallerComm, int64(meta.CallerAgent), meta.CallerCwd)
+		int64(meta.CallerPID), meta.CallerComm, int64(meta.CallerAgent),
+		meta.CallerAgentComm, meta.CallerCwd)
 	if err != nil {
 		return 0, err
 	}
@@ -287,7 +293,7 @@ func (s *Store) ListExecRuns(ctx context.Context, limit int) ([]ExecRun, error) 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, at, COALESCE(snapshot_id, 0), COALESCE(byn_path,''), COALESCE(command,''),
 		        COALESCE(caller_pid,0), COALESCE(caller_comm,''), COALESCE(caller_agent,0),
-		        COALESCE(caller_cwd,'')
+		        COALESCE(caller_agent_comm,''), COALESCE(caller_cwd,'')
 		   FROM exec_runs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -299,7 +305,8 @@ func (s *Store) ListExecRuns(ctx context.Context, limit int) ([]ExecRun, error) 
 		var r ExecRun
 		var at int64
 		if err := rows.Scan(&r.ID, &at, &r.SnapshotID, &r.Meta.BynPath, &r.Meta.Command,
-			&r.Meta.CallerPID, &r.Meta.CallerComm, &r.Meta.CallerAgent, &r.Meta.CallerCwd); err != nil {
+			&r.Meta.CallerPID, &r.Meta.CallerComm, &r.Meta.CallerAgent,
+			&r.Meta.CallerAgentComm, &r.Meta.CallerCwd); err != nil {
 			return nil, err
 		}
 		r.At = time.Unix(at, 0).UTC()

@@ -103,7 +103,14 @@ func printRun(e ipc.RunEntry, detailed bool) {
 		who = "?"
 	}
 	if e.CallerAgent > 0 {
-		who += fmt.Sprintf(" (agent %d)", e.CallerAgent)
+		// Name the agent when the record has one: "claude (pid 188801)" is
+		// something an auditor can act on, "agent 188801" is a number for a
+		// process that stopped existing months ago.
+		if e.CallerAgentComm != "" {
+			who += fmt.Sprintf(" (agent %s, pid %d)", e.CallerAgentComm, e.CallerAgent)
+		} else {
+			who += fmt.Sprintf(" (agent %d)", e.CallerAgent)
+		}
 	}
 	fmt.Printf("%s %s  %s\n", cyan(fmt.Sprintf("#%d", e.ID)), when, e.Command)
 	fmt.Printf("     %s\n", dim(fmt.Sprintf("%s · %s · %d value(s)", who, e.Byn, e.VarCount)))
@@ -121,5 +128,12 @@ func printRun(e ipc.RunEntry, detailed bool) {
 	if len(e.Superseded) > 0 {
 		fmt.Printf("     %s %s\n", yellow("changed since:"), strings.Join(e.Superseded, ", "))
 		fmt.Printf("     %s\n", dim("byn keeps no copy of a replaced value, so these cannot be shown"))
+	}
+	// Said separately, because it is a different claim. "Replaced since" is
+	// about the value; this is about byn, and printing it as the first would
+	// report a rotation that never happened.
+	if len(e.Unavailable) > 0 {
+		fmt.Printf("     %s %s\n", yellow("could not be read:"), strings.Join(e.Unavailable, ", "))
+		fmt.Printf("     %s\n", dim("byn could not open these — deleted since, or unreadable; not necessarily changed"))
 	}
 }

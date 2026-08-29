@@ -206,38 +206,60 @@ func TestDeleteAuthRequiredRetries(t *testing.T) {
 // byn put (overwrite)
 // ---------------------------------------------------------------------------
 
-// TestPutOverwriteAuthRequiredRetries verifies the first-line-is-password
-// contract: when --password-stdin is set, the first line of stdin is the
-// master password and the remainder is the secret value. The retry carries
-// the pre-read password, not an empty buffer.
-func TestPutOverwriteAuthRequiredRetries(t *testing.T) {
+// TestPutPasswordStdinAuthenticatesTheWriteItself verifies both halves of the
+// --password-stdin contract: the first line of stdin is the master password and
+// the remainder is the value, and the password goes WITH the write rather than
+// being held back in case the write is refused.
+//
+// The order is the security property. Trying unauthenticated first and
+// authenticating only on refusal did the wrong thing whenever the unattended
+// path happened to be open: the write landed under the scope's authored key,
+// machine-protected and still owned by the agent whose session created the
+// value, while the person at the keyboard had just proved who they were in
+// order to take it back. Nothing said so.
+func TestPutPasswordStdinAuthenticatesTheWriteItself(t *testing.T) {
 	fd := startFakeDaemon(t)
-	fd.on(ipc.OpPut, authRequiredThenOK(ipc.PutResp{}))
-	// First line = password, remainder = secret value (no trailing newline on value).
+	fd.onOK(ipc.OpPut, ipc.PutResp{})
+	// First line = password, remainder = secret value (no trailing newline).
 	withStdin(t, "pw\nthe-value")
 	rc := runPut([]string{"--password-stdin", "MYKEY"}, cliScope{})
 	if rc != exitOK {
-		t.Fatalf("put with auth_required retry got rc=%d, want exitOK", rc)
+		t.Fatalf("put got rc=%d, want exitOK", rc)
 	}
 	calls := fd.callsFor(ipc.OpPut)
-	if len(calls) != 2 {
-		t.Fatalf("got %d put calls, want 2 (auth_required then retry)", len(calls))
+	if len(calls) != 1 {
+		t.Fatalf("got %d put calls, want 1 — the password belongs on the write", len(calls))
 	}
-	// First call must carry no password.
-	var firstReq ipc.PutReq
-	requireUnmarshal(t, calls[0].Body, &firstReq)
-	if len(firstReq.Password) != 0 {
-		t.Errorf("first put call carried a password: %q", firstReq.Password)
+	var req ipc.PutReq
+	requireUnmarshal(t, calls[0].Body, &req)
+	if string(req.Password) != "pw" {
+		t.Errorf("the write carried password %q, want pw", req.Password)
 	}
-	// Retry must carry the pre-read password "pw".
-	var retryReq ipc.PutReq
-	requireUnmarshal(t, calls[1].Body, &retryReq)
-	if string(retryReq.Password) != "pw" {
-		t.Errorf("retry password = %q, want pw", retryReq.Password)
+	if string(req.Value) != "the-value" {
+		t.Errorf("stored value = %q, want the-value", req.Value)
 	}
-	// The stored value must be the remainder after the first line.
-	if string(retryReq.Value) != "the-value" {
-		t.Errorf("stored value = %q, want the-value", retryReq.Value)
+}
+
+// An empty first line is not a password, and must not be sent as one: the
+// unattended path is still the right one for a caller that supplied nothing.
+func TestPutPasswordStdinEmptyPasswordStaysUnattended(t *testing.T) {
+	fd := startFakeDaemon(t)
+	fd.onOK(ipc.OpPut, ipc.PutResp{})
+	withStdin(t, "\nthe-value")
+	if rc := runPut([]string{"--password-stdin", "MYKEY"}, cliScope{}); rc != exitOK {
+		t.Fatalf("put got rc=%d, want exitOK", rc)
+	}
+	calls := fd.callsFor(ipc.OpPut)
+	if len(calls) != 1 {
+		t.Fatalf("got %d put calls, want 1", len(calls))
+	}
+	var req ipc.PutReq
+	requireUnmarshal(t, calls[0].Body, &req)
+	if len(req.Password) != 0 {
+		t.Errorf("an empty first line was sent as a password: %q", req.Password)
+	}
+	if string(req.Value) != "the-value" {
+		t.Errorf("stored value = %q, want the-value", req.Value)
 	}
 }
 

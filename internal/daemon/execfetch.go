@@ -863,6 +863,9 @@ func (d *Daemon) recordExecRun(ctx context.Context, st *vault.Store, scope vault
 	}
 	if id := callerIdentityFn(ci.PID); id.ok() {
 		meta.CallerAgent = id.PID
+		// The name goes in now or never: an audit happens later, by which time
+		// the process is gone and a bare pid identifies nothing.
+		meta.CallerAgentComm, _ = procInfo(id.PID)
 	}
 	if _, err := st.RecordExecRun(ctx, scope, meta, names); err != nil {
 		// Worth a line: an audit trail with silent gaps is worse than one with

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
@@ -220,5 +221,57 @@ func TestExecRun_ValuesNeedTheVaultKey(t *testing.T) {
 	}
 	if _, err := st.OpenSnapshotValue(ctx, snap, "TOKEN"); err == nil {
 		t.Error("a locked vault returned a recorded VALUE; only the key may open one")
+	}
+}
+
+// A v6 vault must walk forward to v7 and keep the runs it already recorded.
+// The column addition also has to survive being applied twice: adding it and
+// recording the new version are two writes, and a machine that stops between
+// them leaves a vault whose schema is ahead of its marker.
+func TestMigrateV6toV7_NamesTheAgentAndIsRepeatable(t *testing.T) {
+	st, dir := newOpenedVault(t)
+	ctx := context.Background()
+	if err := st.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	db, err := openDB(ctx, filepath.Join(Dir(dir, DefaultVaultName), dbFilename))
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	// Rewind to v6: a real v6 vault has no such column, and a run recorded
+	// under it must still be readable afterwards.
+	for _, stmt := range []string{
+		`ALTER TABLE exec_runs DROP COLUMN caller_agent_comm`,
+		`INSERT INTO exec_runs (at, byn_path, command, caller_pid, caller_comm, caller_agent)
+		 VALUES (1, '/p/.byn', 'make dev', 42, 'byn', 7)`,
+		`UPDATE meta SET value = '6' WHERE key = 'schema_version'`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("rewind (%s): %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	st2 := reopenVault(t, dir)
+	runs, err := st2.ListExecRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("list after migration: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want the one recorded under v6", len(runs))
+	}
+	if runs[0].Meta.Command != "make dev" {
+		t.Errorf("command = %q, want make dev", runs[0].Meta.Command)
+	}
+	if runs[0].Meta.CallerAgentComm != "" {
+		t.Errorf("a v6 run gained an agent name from nowhere: %q", runs[0].Meta.CallerAgentComm)
+	}
+
+	// Applying it again is a no-op, not a permanent failure.
+	if err := migrateV6toV7(ctx, st2.db); err != nil {
+		t.Fatalf("second application: %v", err)
 	}
 }

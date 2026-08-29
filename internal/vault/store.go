@@ -52,8 +52,10 @@ const (
 	// seed/head, entries_state_hash, and meta.totp_secret_v1 reserved
 	// slot. v4: file_meta.sha256_plain renamed to sha256_hmac (keyed
 	// HMAC-SHA256 under a vault-key-derived subkey; eliminates the
-	// offline guess-confirmation oracle).
-	schemaVersion = 6
+	// offline guess-confirmation oracle). v6: exec-run tables. v7: the
+	// agent's name on a run record — the pid alone identifies nothing by
+	// the time anyone audits it.
+	schemaVersion = 7
 
 	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
 	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of

@@ -327,18 +327,25 @@ func runPut(args []string, scope cliScope) int {
 
 	var rc int
 	if *pwStdin {
-		// Inline retry that uses prereadPw on the auth-required retry instead
-		// of reading from stdin (which now points at the value remainder).
-		// Only retry on CodeAuthRequired — CodeLocked is a dead end for put
-		// because the vault key must be in memory.
-		firstErr := putCall(nil)
-		switch {
-		case firstErr == nil:
-			rc = exitOK
-		case isAuthRequiredErr(firstErr):
+		// A supplied password is sent with the write itself, not held back as
+		// a fallback for a refusal.
+		//
+		// It used to try unattended first and authenticate only if that was
+		// refused, which quietly did the wrong thing whenever the unattended
+		// path happened to be open: the write went under the scope's authored
+		// key — machine-protected, and still owned by the agent whose session
+		// created the value — while the person at the keyboard had just proved
+		// who they were in order to take it back. They were told nothing, and
+		// the agent could still read, replace and delete what they had written.
+		//
+		// Supplying a password is the caller saying which key this belongs
+		// under. On a locked vault that now ends in "byn unlock, then retry"
+		// where it used to silently succeed, which is the honest answer: byn
+		// cannot seal under a master key it does not hold.
+		if len(prereadPw) == 0 {
+			rc = handleCallError(putCall(nil))
+		} else {
 			rc = handleCallError(putCall(prereadPw))
-		default:
-			rc = handleCallError(firstErr)
 		}
 	} else {
 		rc = mutateWithAuthRetry(false, false, false, nil, putCall)

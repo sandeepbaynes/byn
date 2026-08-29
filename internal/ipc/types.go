@@ -700,10 +700,12 @@ type RunEntry struct {
 	CallerComm string `json:"caller_comm,omitempty"`
 	// CallerAgent is the agent or shell byn resolved above the calling process
 	// — what stays the same across the short-lived processes a harness spawns.
-	CallerAgent int    `json:"caller_agent,omitempty"`
-	Cwd         string `json:"cwd,omitempty"`
-	VarCount    int    `json:"var_count"`
-	SnapshotID  int64  `json:"snapshot_id,omitempty"`
+	CallerAgent int `json:"caller_agent,omitempty"`
+	// CallerAgentComm names that agent, recorded at run time.
+	CallerAgentComm string `json:"caller_agent_comm,omitempty"`
+	Cwd             string `json:"cwd,omitempty"`
+	VarCount        int    `json:"var_count"`
+	SnapshotID      int64  `json:"snapshot_id,omitempty"`
 	// Names is populated when one run was asked for.
 	Names []string `json:"names,omitempty"`
 	// Values is populated only when Reveal was granted.
@@ -712,6 +714,13 @@ type RunEntry struct {
 	// does not retain a superseded secret, so it names them rather than
 	// pretending it can still show them.
 	Superseded []string `json:"superseded,omitempty"`
+	// Unavailable names values byn could not open for some other reason — the
+	// entry deleted since, or an error reading it. Kept apart from Superseded
+	// on purpose: "this was replaced" is a fact about the value's history and
+	// "byn could not read this" is a fact about byn, and an auditor told the
+	// first when the second is true has been misinformed about a rotation that
+	// never happened.
+	Unavailable []string `json:"unavailable,omitempty"`
 }
 
 // RunListResp returns them.

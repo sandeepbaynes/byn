@@ -178,6 +178,7 @@ var execRunTablesDDL = []string{
 		caller_pid    INTEGER,
 		caller_comm   TEXT,
 		caller_agent  INTEGER,
+		caller_agent_comm TEXT,
 		caller_cwd    TEXT
 	) STRICT`,
 
@@ -436,18 +437,105 @@ var schemaMigrations = map[int]func(context.Context, *sql.DB) error{
 	3: migrateV3toV4,
 	4: migrateV4toV5,
 	5: migrateV5toV6,
+	6: migrateV6toV7,
 }
 
 // migrateV5toV6 adds the exec-run tables. Purely additive: it creates empty
 // tables and rewrites nothing, so a vault that has been running for months
 // simply starts recording from the next exec onwards.
 func migrateV5toV6(ctx context.Context, db *sql.DB) error {
-	for _, stmt := range execRunTablesDDL {
+	for _, stmt := range execRunTablesDDLv6 {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("add exec-run tables: %w", err)
 		}
 	}
 	return nil
+}
+
+// execRunTablesDDLv6 is the exec-run schema AS IT WAS AT v6, frozen.
+//
+// A migration reproduces a past version, so it cannot be written in terms of
+// the current DDL: pointing it at the live definition made v4→v5→v6→v7 create
+// the v7 table at step v6 and then fail adding a column that was already there.
+// Fresh vaults use the current DDL and start at the current version; this
+// exists only to walk an older file forward through the same states it would
+// have passed through.
+var execRunTablesDDLv6 = []string{
+	`CREATE TABLE IF NOT EXISTS env_snapshots (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		parent_id  INTEGER REFERENCES env_snapshots(id) ON DELETE SET NULL,
+		project_id INTEGER NOT NULL,
+		env_id     INTEGER NOT NULL,
+		created_at INTEGER NOT NULL
+	) STRICT`,
+
+	`CREATE TABLE IF NOT EXISTS env_snapshot_entries (
+		snapshot_id INTEGER NOT NULL REFERENCES env_snapshots(id) ON DELETE CASCADE,
+		name        TEXT NOT NULL,
+		entry_id    INTEGER,
+		digest      TEXT,
+		change      TEXT NOT NULL,
+		PRIMARY KEY (snapshot_id, name)
+	) STRICT`,
+
+	`CREATE TABLE IF NOT EXISTS exec_runs (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		at            INTEGER NOT NULL,
+		snapshot_id   INTEGER REFERENCES env_snapshots(id) ON DELETE SET NULL,
+		byn_path      TEXT,
+		command       TEXT,
+		caller_pid    INTEGER,
+		caller_comm   TEXT,
+		caller_agent  INTEGER,
+		caller_cwd    TEXT
+	) STRICT`,
+
+	`CREATE INDEX IF NOT EXISTS idx_exec_runs_at ON exec_runs(at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_env_snapshots_scope ON env_snapshots(project_id, env_id, id DESC)`,
+}
+
+// migrateV6toV7 names the agent on a run record.
+//
+// The pid alone was already stored, and it is the wrong thing to read a record
+// back by: an audit happens later, by which time that process is long gone and
+// "agent 188801" identifies nothing anybody can look up. The name has to be
+// captured when the run happens or it cannot be captured at all.
+func migrateV6toV7(ctx context.Context, db *sql.DB) error {
+	// Skip if it is already there. Adding a column and recording the new
+	// version are two writes, and a machine that stops between them leaves a
+	// vault whose schema is ahead of its marker — which must reopen, not fail
+	// for ever on a column it already has.
+	has, err := columnExists(ctx, db, "exec_runs", "caller_agent_comm")
+	if err != nil {
+		return fmt.Errorf("name the agent on run records: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE exec_runs ADD COLUMN caller_agent_comm TEXT`); err != nil {
+		return fmt.Errorf("name the agent on run records: %w", err)
+	}
+	return nil
+}
+
+// columnExists reports whether a table already has a column.
+func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, rows.Err()
+		}
+	}
+	return false, rows.Err()
 }
 
 // migrateV4toV5 adds the per-entry sync columns. lamport plus origin_device

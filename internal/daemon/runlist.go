@@ -44,7 +44,8 @@ func (d *Daemon) handleRunList(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 		e := ipc.RunEntry{
 			ID: r.ID, At: r.At.Unix(), Byn: r.Meta.BynPath, Command: r.Meta.Command,
 			CallerPID: r.Meta.CallerPID, CallerComm: r.Meta.CallerComm,
-			CallerAgent: r.Meta.CallerAgent, Cwd: r.Meta.CallerCwd,
+			CallerAgent: r.Meta.CallerAgent, CallerAgentComm: r.Meta.CallerAgentComm,
+			Cwd:      r.Meta.CallerCwd,
 			VarCount: r.VarCount, SnapshotID: r.SnapshotID,
 		}
 		if req.ID != 0 && r.SnapshotID != 0 {
@@ -67,6 +68,16 @@ func (d *Daemon) handleRunList(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 		// event an audit trail exists to show.
 		if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "get", req.Password, nil); le != nil {
 			return le
+		}
+		// Authorized, but the values still need the vault key. Said once, here,
+		// rather than discovered value by value: without this the reveal walked
+		// every name, failed to open each one, and reported the whole run as
+		// having been replaced since — telling an auditor that four secrets had
+		// been rotated when nothing had changed but the lock.
+		if st.IsLocked() {
+			return ipc.NewError(env.ID, ipc.CodeLocked,
+				"the vault is locked, so byn cannot open the values this run received",
+				"byn unlock, then retry")
 		}
 		for i := range out {
 			d.revealRunValues(ctx, st, &out[i])
@@ -104,12 +115,17 @@ func (d *Daemon) revealRunValues(ctx context.Context, st *vault.Store, e *ipc.Ru
 			// one, so it says which rather than showing today's in its place.
 			e.Superseded = append(e.Superseded, n)
 		case verr != nil:
-			e.Superseded = append(e.Superseded, n)
+			// Anything else is byn failing to read, which is a different
+			// statement from the value having changed. Reporting one as the
+			// other invents a rotation that never happened — and a rotation is
+			// exactly the kind of thing someone reads this trail to confirm.
+			e.Unavailable = append(e.Unavailable, n)
 		default:
 			e.Values[n] = string(val)
 		}
 	}
 	sort.Strings(e.Superseded)
+	sort.Strings(e.Unavailable)
 }
 
 func itoa(n int) string { return itoa64(int64(n)) }

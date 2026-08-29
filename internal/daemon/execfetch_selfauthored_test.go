@@ -1624,3 +1624,72 @@ func TestRunRecord_NamesAreOpenValuesAreNot(t *testing.T) {
 		t.Fatalf("code = %v, want auth_required", code)
 	}
 }
+
+// A locked vault must be reported as a locked vault.
+//
+// The reveal used to walk every name, fail to open each one because the key was
+// not in memory, and report the whole run as having been replaced since — which
+// tells an auditor that four secrets were rotated when nothing changed but the
+// lock. "This value was replaced" is a claim about history; "byn could not read
+// this" is a claim about byn, and the two must never be printed as one.
+func TestRunReveal_LockedVaultIsNotARotation(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("seed-val"))
+	grantBynFile(t, c, byn, pw)
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	}); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	var list ipc.RunListResp
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{Limit: 5}, &list); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list.Entries) == 0 {
+		t.Fatal("the exec was not recorded")
+	}
+	id := list.Entries[0].ID
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	// The password authorizes the ACTION; the values still need the key.
+	err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: id, Reveal: true, Password: pw}, &ipc.RunListResp{})
+	if err == nil {
+		t.Fatal("a locked vault revealed values")
+	}
+	if code := errCode(t, err); code != ipc.CodeLocked {
+		t.Fatalf("code = %v, want locked — a locked vault is not a rotation", code)
+	}
+
+	// Unlocked, the same run reveals its value and claims nothing was replaced.
+	var unlockResp ipc.VaultUnlockResp
+	tok, uerr := c.CallAndCaptureSession(ipc.OpVaultUnlock, ipc.VaultUnlockReq{Password: pw}, &unlockResp, nil)
+	if uerr != nil {
+		t.Fatalf("unlock: %v", uerr)
+	}
+	c.Session = tok
+	var open ipc.RunListResp
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: id, Reveal: true, Password: pw}, &open); err != nil {
+		t.Fatalf("reveal: %v", err)
+	}
+	if len(open.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(open.Entries))
+	}
+	got := open.Entries[0]
+	if got.Values["SEED"] != "seed-val" {
+		t.Errorf("SEED = %q, want seed-val", got.Values["SEED"])
+	}
+	if len(got.Superseded) != 0 {
+		t.Errorf("reported as replaced when nothing changed: %v", got.Superseded)
+	}
+	if len(got.Unavailable) != 0 {
+		t.Errorf("reported as unreadable when it read fine: %v", got.Unavailable)
+	}
+}

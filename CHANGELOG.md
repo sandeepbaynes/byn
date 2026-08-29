@@ -127,6 +127,28 @@ next ten minutes should not become a standing authority.
 `--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
 environment does the same for harnesses that build byn's argv themselves.
 
+### Three defects the live round found
+
+**An authenticated write was silently stored as the agent's.** `byn put
+--password-stdin` sent the password only if the write was refused first, so
+whenever the unattended path happened to be open the owner's authenticated write
+landed under the scope's authored key — machine-protected, and still owned by the
+agent whose session created the value, which could go on reading, replacing and
+deleting it. Nothing said so. The password now goes with the write. On a locked
+vault that ends in "byn unlock, then retry" where it used to appear to succeed,
+which is the honest answer: byn cannot seal under a master key it does not hold.
+
+**A locked vault was reported as a rotation.** `byn runs show <id> --reveal`
+authorized the action, then failed to open each value because the key was not in
+memory, and reported every one as having been replaced since — telling an auditor
+that secrets had been rotated when nothing had changed but the lock. A locked
+vault is now said once, up front, and "byn could not read this" is reported apart
+from "this was replaced".
+
+**A run named its agent by pid alone.** By the time anyone audits, the process is
+gone and the number identifies nothing. The name is now recorded when the run
+happens (vault schema v7, additive).
+
 ### A record of what each run was given
 
 `byn runs` shows every command byn authorised: when, which `.byn` allowed it,
