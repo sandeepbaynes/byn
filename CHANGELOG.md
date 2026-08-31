@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## v0.5.1 — unreleased
+## v0.5.1 — 2026-08-31
 
 ### Installing byn now provisions byn
 

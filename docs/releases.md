@@ -12,6 +12,62 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.5.1
+
+**Headline:** installing byn now installs byn — the packages and the install
+script provision privilege separation while they are already elevated, instead
+of leaving it to a second command nobody ran.
+
+### What's new
+
+- **Installs provision privilege separation.** The deb/rpm/apk packages and
+  `install.sh` run `byn setup` as part of installing, which is why installing or
+  upgrading now asks for your password. Privsep is what keeps an exec child's
+  secrets out of your own `ps`; leaving it to a separate step meant every
+  install was half an install. Upgrades re-run setup deliberately (the service
+  unit and spawn helper change between releases); removal tears it down and
+  never touches the vault; and an upgrade is told apart from a removal so it
+  does not stop the daemon mid-flight. Provisioning failing never fails the
+  install — byn still runs, and `byn doctor` says what is missing.
+- **`byn setup` puts byn on the system PATH.** `go install` places binaries in
+  `~/go/bin`, which is on no default PATH and outside sudo's `secure_path` — so
+  the install produced a working binary that could be run as neither `byn` nor
+  `sudo byn`. Setup, the first moment byn has root, links it into
+  `/usr/local/bin`. A symlink, so a later `go install` is picked up without
+  re-running setup.
+
+### Fixed
+
+- **byn could not be started on a machine it had been uninstalled from.**
+  Provisioning was judged by whether the `_byn` accounts existed, and
+  `byn uninstall` keeps those while removing the service, the helper and the
+  owner record. byn therefore called such a machine provisioned, refused to run
+  a daemon as you, and pointed at `sudo byn restart` for a unit that had been
+  removed — a dead end reachable by following the documented uninstall. The
+  three states are now told apart: nothing installed (`byn start`), service
+  installed (`sudo byn restart`), and a data directory with no service
+  (`sudo byn setup`).
+- **`go install` produced a binary reporting version 0.0.1.** The version is
+  stamped by the linker at release time and `go install` applies no such flags.
+  byn now falls back to the module version Go embeds in the binary; a stamped
+  build still wins, and a build from a working tree reports its commit and
+  whether the tree was edited.
+
+### Upgrade notes (from v0.5.0)
+
+- No schema change. Vaults, trust records and audit logs are untouched.
+- If you installed v0.5.0 with `go install`, install both binaries onto a
+  directory already on your PATH and let setup finish the job:
+  ```sh
+  GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
+  GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+  sudo byn setup
+  ```
+- Package users get provisioning automatically on upgrade; the password prompt
+  during `apt`/`dnf` is expected.
+
+---
+
 ## v0.5.0
 
 **Headline:** byn stops needing a person in the middle of an agent's work — an
