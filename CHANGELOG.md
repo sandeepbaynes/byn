@@ -3,6 +3,19 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.5.4 — unreleased
+
+### Fixed
+
+- **An upgrade could install a byn that never runs, silently.**
+  `go install …@latest` with no `GOBIN` puts the binary in `~/go/bin`, which is
+  on no default PATH — so an older byn elsewhere kept answering, and
+  `byn version` reported the old number immediately after a successful upgrade.
+  Nothing was broken and nothing said anything: the install worked, and the
+  wrong binary replied. `byn doctor` now lists every byn it can find with the
+  version each reports, and fails when they disagree — naming which one PATH
+  actually reaches.
+
 ## v0.5.3 — 2026-08-31
 
 ### Fixed

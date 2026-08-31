@@ -47,8 +47,12 @@ type healEnv struct {
 	fileUID     func(path string) (int, bool) // owner uid of a path
 	bynUID      func() (int, bool)            // uid of the _byn service user
 	daemonUp    func() bool                   // daemon socket reachable
-	dataDir     string
-	helperPath  string // installed setuid spawn helper
+	// installs lists the byn binaries on this machine. Injected like every
+	// other probe so a test describes the machine it means, rather than
+	// reporting on whatever happens to be installed on the one running it.
+	installs   func() []bynInstall
+	dataDir    string
+	helperPath string // installed setuid spawn helper
 }
 
 func (e healEnv) socketPath() string { return filepath.Join(e.dataDir, "daemon.sock") }
@@ -57,14 +61,27 @@ func (e healEnv) socketPath() string { return filepath.Join(e.dataDir, "daemon.s
 // "privsep provisioned" check short-circuits the rest: nothing else is
 // meaningful (or fixable) until setup has run.
 func diagnoseHeal(e healEnv) []healCheck {
+	// Which byn is answering, before anything about what it found. An upgrade
+	// that installed somewhere off PATH leaves an older binary running with no
+	// symptom at all, and every check below describes whatever that one sees.
+	var shadow []healCheck
+	if e.installs != nil {
+		shadow = diagnoseShadowedInstalls(e.installs())
+	}
 	if !e.provisioned() {
 		// privsep is OPT-IN: not being provisioned is a valid (default) state, not
 		// a failure. Report it informationally (OK) and run no privsep-specific
 		// checks. The daemon-side checks still run separately when the daemon (here
 		// an owner daemon) is reachable.
-		return []healCheck{{Name: "privilege separation", OK: true, Detail: "not provisioned (opt-in) — enable with: " + sudoByn("setup")}}
+		cs := make([]healCheck, 0, len(shadow)+1)
+		cs = append(cs, shadow...)
+		return append(cs,
+			healCheck{Name: "privilege separation", OK: true, Detail: "not provisioned (opt-in) — enable with: " + sudoByn("setup")})
 	}
-	cs := []healCheck{{Name: "privilege separation", OK: true, Detail: "provisioned (daemon runs as _byn)"}}
+	cs := make([]healCheck, 0, len(shadow)+6)
+	cs = append(cs, shadow...)
+	cs = append(cs,
+		healCheck{Name: "privilege separation", OK: true, Detail: "provisioned (daemon runs as _byn)"})
 	cs = append(cs, healCheck{Name: "spawn helper installed", OK: e.exists(e.helperPath), Detail: e.helperPath, Fix: "run: " + sudoByn("setup")})
 
 	up := e.daemonUp()
@@ -146,6 +163,7 @@ func productionHealEnv(dir string) healEnv {
 		fileUID:     fileUID,
 		bynUID:      func() (int, bool) { return lookupUID(privsep.DaemonUser) },
 		daemonUp:    func() bool { return daemonReachable(dir) },
+		installs:    func() []bynInstall { return findBynInstalls(bynVersionOf) },
 		dataDir:     dir,
 		helperPath:  privsep.HelperDestPath(),
 	}
