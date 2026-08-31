@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## v0.5.0 — unreleased
+## v0.5.0 — 2026-08-31
 
 byn stops needing a person in the middle of an agent's work.
 
