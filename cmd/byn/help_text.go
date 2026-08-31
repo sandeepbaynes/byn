@@ -2003,6 +2003,7 @@ SYNOPSIS
        byn approve --deny ID...
        byn approve --all [--password-stdin]
        byn approve [--for DURATION] [--anyone] ID...
+       byn approve --revoke ID...
 
 DESCRIPTION
        When a .byn asks for more authority than it was granted, byn does
@@ -2057,6 +2058,21 @@ DESCRIPTION
        Approving grants authority, so it asks for the master password,
        exactly as "byn trust" does. Approving re-grants the .byn, so the
        caller's next attempt succeeds.
+
+       --revoke takes a grant back before it lapses. Approving is the
+       moment authority moves, and there has to be a moment it moves
+       back: a command approved for a one-shot job otherwise stays
+       runnable for the rest of the window, and "it expires in six
+       hours" is not an answer to "this must stop being runnable now".
+       It needs no password, for the same reason refusing does not —
+       it can only ever remove capability, and a revoke you have to go
+       and find a credential for is one that happens later than it
+       should. Recorded as "approval.revoke".
+
+       --deny does NOT do this. Denying something already approved is
+       refused outright and says to revoke instead; it used to return
+       quietly, reprinting the grant line, so an owner who typed it
+       believed the command had stopped being runnable when it had not.
 
        Approving does not run anything and does not edit the .byn. It
        grants; whoever asked runs it again. Both of those were read the

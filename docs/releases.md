@@ -14,12 +14,24 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ## v0.5.3
 
-**Headline:** a `.byn`'s `[exec] env` list is the whole list — closing a second
-site where captured keys got past it, and a failure that stopped an exec over a
-value the file never asked for.
+**Headline:** grants can be taken back, and a `.byn`'s `[exec] env` list is the
+whole list.
 
 ### Fixed
 
+- **A grant could not be taken back.** Once approved, a command stayed runnable
+  until it expired — so a one-shot script approved for a single job sat
+  executable for the rest of the window, and an owner who wanted it stopped had
+  nothing to run. `byn approve --revoke <id>` takes the grant back. It needs no
+  password, for the same reason `--deny` does not: it can only remove
+  capability, and a revoke you have to find a credential for is one that happens
+  later than it should. Audited as `approval.revoke`.
+- **`--deny` on an already-approved request was a silent no-op.** It returned
+  the existing record with exit 0 and reprinted the grant line — "approved …
+  runs free for 5h53m" — so an owner who typed it to take a grant back believed
+  they had, and was wrong about what was still runnable. It is now refused
+  outright and names `--revoke`. Repeating the *same* decision stays idempotent:
+  two surfaces agreeing is not a conflict.
 - **`byn get` asked for the master password and then refused the read.**
   Supplying it authorized the action, but the value still needed the vault key
   in memory, so byn prompted, accepted the right password, and answered "vault

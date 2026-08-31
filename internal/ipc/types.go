@@ -1716,7 +1716,10 @@ type ApprovalDecideReq struct {
 	// Anyone widens an approved command past the caller that asked for it, to
 	// anything running in that scope. Off by default: the owner answered a
 	// question about one asker.
-	Anyone   bool   `json:"anyone,omitempty"`
+	Anyone bool `json:"anyone,omitempty"`
+	// Revoke takes back a grant already given. No credential: taking capability
+	// away is the safe direction, exactly as refusing one is.
+	Revoke   bool   `json:"revoke,omitempty"`
 	Password []byte `json:"password,omitempty"`
 }
 

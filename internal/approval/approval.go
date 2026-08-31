@@ -70,6 +70,10 @@ const (
 	// StatusExpired means it lapsed unanswered — distinct from denied, so a
 	// caller can ask again rather than treat silence as refusal.
 	StatusExpired Status = "expired"
+	// StatusRevoked means an approval was taken back before it lapsed. Distinct
+	// from denied, which is an answer to a question; this undoes an answer
+	// already given, and the record has to show that it was once granted.
+	StatusRevoked Status = "revoked"
 )
 
 // Kind classifies what is being asked for.
@@ -90,6 +94,13 @@ var (
 	ErrRateLimited = errors.New("approval: too many pending requests for this project")
 	// ErrOnHold is returned while a repeatedly-denied request is in cooldown.
 	ErrOnHold = errors.New("approval: repeatedly denied; on hold")
+	// ErrNotApproved is returned when revoking something that was never granted.
+	ErrNotApproved = errors.New("approval: not an approved request")
+	// ErrAlreadyDecided is returned when an answer would change a decision that
+	// has already been made — denying an approval, for instance, which used to
+	// return the existing record and exit 0, so an owner who typed it believed
+	// they had taken the grant back and had not.
+	ErrAlreadyDecided = errors.New("approval: already decided")
 )
 
 // Requestor records who asked, so the person deciding is looking at facts byn
@@ -219,7 +230,7 @@ type Request struct {
 
 // Answered reports whether a decision has been recorded.
 func (r Request) Answered() bool {
-	return r.Status == StatusApproved || r.Status == StatusDenied
+	return r.Status == StatusApproved || r.Status == StatusDenied || r.Status == StatusRevoked
 }
 
 // file is the on-disk shape.
@@ -401,7 +412,15 @@ func (s *Store) decide(id string, approve bool, via, reason string,
 			continue
 		}
 		if r.Answered() {
-			return *r, nil // already decided; report what was decided
+			// Denying something already approved is the case that matters: it
+			// looked like it worked (exit 0, and the printed line even said
+			// "approved … runs free for 5h53m"), so an owner reading it
+			// believed the grant was gone. Saying no is the only honest answer
+			// — and it can name the verb that does what they meant.
+			if !approve && r.Status == StatusApproved {
+				return *r, fmt.Errorf("%w: %s was already approved; revoke it instead", ErrAlreadyDecided, id)
+			}
+			return *r, nil // already decided the same way; report what was decided
 		}
 		if r.Status == StatusExpired {
 			return *r, nil
@@ -448,6 +467,47 @@ func (s *Store) decide(id string, approve bool, via, reason string,
 		r.DecidedAt = now
 		r.DecidedVia = via
 		r.DecidedReason = reason
+		out := *r
+		if err := s.save(f); err != nil {
+			return Request{}, err
+		}
+		return out, nil
+	}
+	return Request{}, ErrNotFound
+}
+
+// Revoke takes back a grant that has already been given.
+//
+// An approval used to be final until it expired: a command approved for a
+// one-shot job stayed runnable for the rest of the window, and an owner who
+// wanted it to stop had nothing to run. Approving is the moment authority moves;
+// there has to be a moment it moves back.
+//
+// No credential, deliberately — the same reasoning that makes --deny free.
+// Taking capability away is the safe direction, and a revoke someone has to
+// find a password for is a revoke that happens later than it should.
+func (s *Store) Revoke(id string) (Request, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := s.load()
+	if err != nil {
+		return Request{}, err
+	}
+	now := s.now()
+	for i := range f.Requests {
+		r := &f.Requests[i]
+		if r.ID != id {
+			continue
+		}
+		if r.Status != StatusApproved {
+			return *r, fmt.Errorf("%w: %s is %s, not approved", ErrNotApproved, id, r.Status)
+		}
+		r.Status = StatusRevoked
+		// The grant is what actually authorises a command, so it has to go, not
+		// merely be relabelled. Zeroing it is what makes the next exec ask again.
+		r.GrantedUntil = time.Time{}
+		r.DecidedAt = now
 		out := *r
 		if err := s.save(f); err != nil {
 			return Request{}, err

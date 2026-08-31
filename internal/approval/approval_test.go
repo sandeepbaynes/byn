@@ -135,12 +135,96 @@ func TestDecide_IsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first decide: %v", err)
 	}
-	second, err := s.Decide(r.ID, false, "terminal", "")
+	// The same answer again changes nothing and says nothing: two surfaces
+	// agreeing is not a conflict.
+	same, err := s.Decide(r.ID, true, "terminal", "")
 	if err != nil {
-		t.Fatalf("repeat decide errored: %v", err)
+		t.Fatalf("repeating the same decision errored: %v", err)
 	}
-	if second.Status != first.Status || second.DecidedVia != "phone" {
-		t.Fatalf("a later decision overwrote the first: %+v", second)
+	if same.Status != first.Status || same.DecidedVia != "phone" {
+		t.Fatalf("a later decision overwrote the first: %+v", same)
+	}
+}
+
+// Denying something already approved must not look like it worked.
+//
+// It returned the existing record with no error, and the line it printed even
+// said "approved … runs free for 5h53m" — so an owner who typed it to take a
+// grant back believed they had, and were wrong about what was still runnable.
+// The first decision still stands; what changes is that byn says so.
+func TestDecide_DenyingAnApprovalIsRefusedNotIgnored(t *testing.T) {
+	s, _ := newStore(t)
+	r, _ := s.Enqueue(req("/p/.byn", "fp-deny-after-approve"))
+	if _, err := s.Decide(r.ID, true, "terminal", ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	got, err := s.Decide(r.ID, false, "terminal", "")
+	if err == nil {
+		t.Fatal("denying an approved request reported success")
+	}
+	if !errors.Is(err, ErrAlreadyDecided) {
+		t.Errorf("err = %v, want ErrAlreadyDecided", err)
+	}
+	if got.Status != StatusApproved {
+		t.Errorf("status = %s, want the first decision to stand", got.Status)
+	}
+}
+
+// A grant has to be removable while it still has time to run: the one-shot
+// script is the shape approvals get used for, and "it expires in six hours" is
+// not an answer to "this must stop being runnable now".
+func TestRevoke_TakesTheGrantBack(t *testing.T) {
+	s, clock := newStore(t)
+	r := req("/p/.byn", "fp-revoke")
+	r.Kind = KindActionUnpinned
+	pending, err := s.Enqueue(r)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := s.Decide(pending.ID, true, "terminal", ""); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	granted, until, err := s.ActionGrantedUntil("/p/.byn", "fp-revoke")
+	if err != nil || !granted {
+		t.Fatalf("expected a live grant: granted=%v err=%v", granted, err)
+	}
+	if !until.After(*clock) {
+		t.Fatal("grant should outlive now")
+	}
+
+	revoked, err := s.Revoke(pending.ID)
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if revoked.Status != StatusRevoked {
+		t.Errorf("status = %s, want revoked", revoked.Status)
+	}
+	// The grant is what authorises a command, so it must actually be gone —
+	// relabelling the record while leaving it runnable would be the worst of
+	// both, an owner told it was revoked and a command that still runs.
+	granted, _, err = s.ActionGrantedUntil("/p/.byn", "fp-revoke")
+	if err != nil {
+		t.Fatalf("lookup after revoke: %v", err)
+	}
+	if granted {
+		t.Error("the command still runs free after its grant was revoked")
+	}
+}
+
+// Revoking something that was never granted is an error, not a quiet success:
+// the owner is asking to remove a capability, and needs to know if there was
+// none to remove.
+func TestRevoke_RefusesWhatWasNeverApproved(t *testing.T) {
+	s, _ := newStore(t)
+	pending, err := s.Enqueue(req("/p/.byn", "fp-open"))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := s.Revoke(pending.ID); !errors.Is(err, ErrNotApproved) {
+		t.Errorf("err = %v, want ErrNotApproved", err)
+	}
+	if _, err := s.Revoke("nosuchid"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 

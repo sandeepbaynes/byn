@@ -23,6 +23,7 @@ func runApprove(args []string, _ cliScope) int {
 	fs := flag.NewFlagSet("approve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	deny := fs.Bool("deny", false, "refuse the request instead of granting it")
+	revoke := fs.Bool("revoke", false, "take back a grant already given (no password — it only removes capability)")
 	reason := fs.String("reason", "", "why, in your own words — shown to whoever asked (most useful with --deny)")
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	all := fs.Bool("all", false, "answer every pending request")
@@ -67,7 +68,7 @@ func runApprove(args []string, _ cliScope) int {
 	// reflex.
 	var password []byte
 	var wipe func()
-	if !*deny {
+	if !*deny && !*revoke {
 		password, wipe, err = authorizingPasswordWithLeadIn(*pwStdin,
 			yellow("Approving grants authority — the master password is proof you are here."))
 		if err != nil {
@@ -81,7 +82,8 @@ func runApprove(args []string, _ cliScope) int {
 	for _, id := range ids {
 		var resp ipc.ApprovalDecideResp
 		cerr := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
-			ID: id, Approve: !*deny, Via: "terminal", Reason: *reason, Password: password,
+			ID: id, Approve: !*deny && !*revoke, Revoke: *revoke,
+			Via: "terminal", Reason: *reason, Password: password,
 			GrantForSeconds: int(*grantFor / time.Second),
 			Anyone:          *anyone,
 		}, &resp)
@@ -92,6 +94,9 @@ func runApprove(args []string, _ cliScope) int {
 		verb := cyan("approved")
 		if resp.Entry.Status != "approved" {
 			verb = yellow(resp.Entry.Status)
+		}
+		if *revoke {
+			verb = yellow("revoked")
 		}
 		fmt.Fprintf(os.Stderr, "%s  %s  %s\n", verb, cyan(resp.Entry.ID), resp.Entry.Subject)
 		// What the grant now IS, said once at the moment of granting it: how
@@ -259,6 +264,12 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "),
 		dim("add --for 30m to shorten the window a command runs free (default 6h)"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Refuse:"), cyan("byn approve --deny <id>"))
+	// Named next to refuse because they are easily confused, and the confusion
+	// is expensive: --deny on something already approved does NOT take the
+	// grant back, and an owner who assumed it did would be wrong about what is
+	// still runnable.
+	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Revoke:"), cyan("byn approve --revoke <id>")+
+		dim("   take back a grant already given"))
 	// A refusal stops the asker until someone changes something, so the single
 	// most useful thing to hand back is why.
 	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "), dim("add --reason \"wrong target\" — the asker is told, and it is in the audit log"))

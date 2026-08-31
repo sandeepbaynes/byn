@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/approval"
@@ -91,6 +92,29 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 	}
 	if err != nil {
 		return internalErr(env.ID, err)
+	}
+
+	// Revoking needs no password, for the same reason denying does not: it can
+	// only ever remove capability. Handled before the approve branch so it is
+	// never mistaken for a decision being made afresh.
+	if req.Revoke {
+		revoked, rerr := d.approvals.Revoke(req.ID)
+		if errors.Is(rerr, approval.ErrNotApproved) {
+			return ipc.NewError(env.ID, ipc.CodeBadRequest, rerr.Error(),
+				"only an approved request has a grant to take back: byn approve")
+		}
+		if rerr != nil {
+			return internalErr(env.ID, rerr)
+		}
+		d.auditEmit(ctx, defaultIfEmpty(revoked.Vault, vault.DefaultVaultName), audit.Event{
+			Op: "approval.revoke", Outcome: audit.OutcomeOK, BynPath: revoked.Subject,
+			Command: "revoked " + revoked.ID + ": " + strings.Join(revoked.Summary, "; "),
+		})
+		out, rerr2 := ipc.NewResponse(env.ID, ipc.ApprovalDecideResp{Entry: approvalEntry(revoked)})
+		if rerr2 != nil {
+			return internalErr(env.ID, rerr2)
+		}
+		return out
 	}
 
 	if req.Approve {

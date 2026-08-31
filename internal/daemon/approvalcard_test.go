@@ -308,3 +308,77 @@ func TestRunDiff_AnswersWithNoCredentialAndNoValues(t *testing.T) {
 		t.Fatalf("verify returned values: %v", e.Values)
 	}
 }
+
+// Revoking is owner-side and needs no credential — the same reasoning that
+// makes refusing free. It can only ever remove capability, and a revoke someone
+// has to go and find a password for is a revoke that happens later than it
+// should.
+func TestRevoke_NoCredentialAndTheCommandStopsRunning(t *testing.T) {
+	origin := stubOrigin(t, true)
+	_ = origin
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = [\"pinned run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	run := func() error {
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "risky sql", Argv: []string{"risky", "sql"},
+		})
+		return err
+	}
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatalf("wanted a queued request")
+	}
+	pending := onlyPending(t, c)
+	if _, err := decideApproval(t, c, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw,
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := run(); err != nil {
+		t.Fatalf("approved command should run: %v", err)
+	}
+
+	// Take it back, with no password at all.
+	resp, err := decideApproval(t, c, ipc.ApprovalDecideReq{ID: pending.ID, Revoke: true})
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if resp.Entry.Status != "revoked" {
+		t.Errorf("status = %q, want revoked", resp.Entry.Status)
+	}
+
+	// The point of the exercise: the command stops running.
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatalf("the command still runs after its grant was revoked: code = %v", code)
+	}
+}
+
+// Denying an already-approved request must fail loudly. It used to return the
+// existing record with exit 0 and reprint the grant line, so an owner who typed
+// it to take a grant back believed they had.
+func TestDeny_OnAnApprovedRequestIsRefused(t *testing.T) {
+	_ = stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = [\"pinned run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "risky sql", Argv: []string{"risky", "sql"},
+	}); errCode(t, err) != ipc.CodeApprovalPending {
+		t.Fatal("wanted a queued request")
+	}
+	pending := onlyPending(t, c)
+	if _, err := decideApproval(t, c, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw,
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := decideApproval(t, c, ipc.ApprovalDecideReq{ID: pending.ID, Approve: false}); err == nil {
+		t.Fatal("denying an approved request reported success")
+	}
+}

@@ -930,6 +930,13 @@ comes from comparing a digest of the stored ciphertext, which needs no
 key. Use it instead of \fB\-\-reveal\fR whenever the question is
 whether something was rotated rather than what its value was.
 .TP
+.B \-\-revoke
+Used by \fBapprove\fR. Take back a grant already given, before it
+lapses. No password: it can only remove capability, exactly as
+\fB\-\-deny\fR can. Recorded as \fBapproval.revoke\fR. Note that
+\fB\-\-deny\fR does not do this \(em denying an already\-approved
+request is refused and points here.
+.TP
 .B \-\-anyone
 Used by \fBapprove\fR. Let anything in that project use the approved
 command, not only the caller that asked. Off by default: the question
