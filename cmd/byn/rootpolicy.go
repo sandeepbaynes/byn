@@ -16,18 +16,70 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 
+	"github.com/sandeepbaynes/byn/internal/paths"
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
 
 // cliProvisioned reports whether byn is privsep-provisioned on this machine.
+//
+// Accounts are not a service. `byn setup --uninstall` removes the unit, the
+// spawn helper and the owner record, and deliberately leaves the _byn accounts
+// behind — they may still own files. Judging provisioning by the accounts alone
+// therefore left a machine claiming to be provisioned with nothing installed,
+// and that claim was a dead end: `byn start` refused to run a user daemon and
+// sent the caller to `sudo byn restart` for a unit that no longer existed, so
+// byn could not be started at all. That is the state a `go install` lands in on
+// any machine byn has ever been set up on.
+//
+// So this asks whether setup actually left anything behind, not whether a user
+// exists.
 func cliProvisioned() bool {
 	if forcedUnprovisioned() {
 		return false
 	}
 	s, err := privsep.LookupState()
-	return err == nil && s.Provisioned
+	if err != nil || !s.Provisioned {
+		return false
+	}
+	return privsepArtifactsPresent()
 }
+
+// privsepInstall describes how far a privsep install actually got, because the
+// three states need three different answers and byn was giving one.
+type privsepInstall int
+
+const (
+	// privsepNone: nothing installed. byn runs its own daemon as you.
+	privsepNone privsepInstall = iota
+	// privsepService: the spawn helper is installed, so the daemon is the
+	// system service and only root manages it.
+	privsepService
+	// privsepDataOnly: a provisioned data tree with no service to serve it.
+	// This is what an uninstall leaves when the vault is kept, and what a
+	// `go install` lands in on a machine byn has ever been set up on. It is
+	// neither startable by you (the data belongs to _byn) nor restartable as a
+	// service (there is no unit) — the fix is to install the service again.
+	privsepDataOnly
+)
+
+// privsepInstallStateFn is the seam tests stub; the real one reads the disk.
+var privsepInstallStateFn = privsepInstallState
+
+// privsepInstallState reports which of those three a machine is in.
+func privsepInstallState() privsepInstall {
+	if fi, err := os.Stat(privsep.HelperDestPath()); err == nil && !fi.IsDir() {
+		return privsepService
+	}
+	if fi, err := os.Stat(paths.SystemDataDir()); err == nil && fi.IsDir() {
+		return privsepDataOnly
+	}
+	return privsepNone
+}
+
+// privsepArtifactsPresent reports whether setup left anything behind at all.
+func privsepArtifactsPresent() bool { return privsepInstallStateFn() != privsepNone }
 
 // rootClass is how a top-level command relates to the root/owner identity split.
 type rootClass int

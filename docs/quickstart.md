@@ -14,9 +14,16 @@ plaintext.
 brew install sandeepbaynes/tap/byn
 # or
 curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
-# or, with the Go toolchain (builds from source):
+# or, with the Go toolchain (builds from source) — install BOTH binaries:
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
+go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
 ```
+
+> **Why two binaries.** `byn setup` installs the privileged spawn helper from
+> **beside the byn binary**, so a `go install` of `cmd/byn` alone cannot
+> provision privilege separation — setup will not find the helper. Homebrew,
+> the install script and the system packages ship both. byn runs fine without
+> it (privsep is off by default), but you would not be able to turn it on.
 
 > **`go install` does not put byn on your PATH.** It installs to
 > `$(go env GOPATH)/bin` (usually `~/go/bin`); if `byn` is not found straight

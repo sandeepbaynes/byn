@@ -60,12 +60,19 @@ const (
 // the daemon's status) so the grant decision is correct regardless of the
 // daemon's version or its [security] privsep config flag: the file-access
 // problem is a property of the daemon's UID (provisioned), not that flag.
+// The account existing is necessary and not sufficient: uninstall leaves the
+// _byn accounts in place while removing everything they were for, and a machine
+// in that state is not running a privsep daemon. It has to be judged by what
+// setup installed, or byn tells a caller to bring up a service that is not
+// there — see privsepArtifactsPresent.
 func cliPrivsepProvisioned() bool {
 	if forcedUnprovisioned() {
 		return false
 	}
-	_, _, err := privsep.LookupDaemonUser()
-	return err == nil
+	if _, _, err := privsep.LookupDaemonUser(); err != nil {
+		return false
+	}
+	return privsepArtifactsPresent()
 }
 
 // grantTrustACLs grants the _byn daemon READ access to a just-trusted .byn,

@@ -333,8 +333,15 @@ func setFirstRunTarget(c *ipc.Client, vault string) {
 // something byn already knew. A recovery hint that does not recover is worse
 // than none: it spends the reader's trust before the real answer arrives.
 func daemonDownRemedy(privsepProvisioned bool) (cmd, note string) {
-	if privsepProvisioned {
-		return "sudo byn restart", "(it runs as the _byn service, so bringing it up needs root)"
+	if !privsepProvisioned {
+		return "byn start", ""
 	}
-	return "byn start", ""
+	// A provisioned data tree with no service to serve it: telling anyone to
+	// restart a unit that was removed is a dead end, and it is the state an
+	// uninstall-keeping-the-vault leaves behind. Say what will actually fix it.
+	if privsepInstallStateFn() == privsepDataOnly {
+		return "sudo byn setup",
+			"(this machine has a byn data directory but no service installed — setup reinstalls it)"
+	}
+	return "sudo byn restart", "(it runs as the _byn service, so bringing it up needs root)"
 }

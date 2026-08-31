@@ -7,6 +7,17 @@ list; this file carries what you need to know before upgrading.
 
 ### Fixed
 
+- **byn could not be started on a machine it had been uninstalled from.**
+  Whether privilege separation was provisioned was judged by whether the `_byn`
+  accounts existed — and `byn uninstall` deliberately keeps those while removing
+  the service, the helper and the owner record. So byn declared such a machine
+  provisioned, refused to start a daemon as you, and sent you to
+  `sudo byn restart` for a systemd unit that had been removed: a dead end with
+  no way out of it from the CLI, reachable by following the documented uninstall.
+  Provisioning is now judged by what setup actually installed, and the three
+  states are told apart — nothing installed (`byn start`), service installed
+  (`sudo byn restart`), and a data directory with no service to serve it
+  (`sudo byn setup`, which is the one that was unreachable).
 - **`go install` produced a binary that reported version 0.0.1.** The version is
   stamped by the linker at release time, and `go install` applies none of those
   flags — so a correctly installed v0.5.0 called itself by the placeholder that

@@ -30,6 +30,13 @@ func startProvisionedDelegate(dir string) int {
 		fmt.Println("byn daemon is already running (the _byn launchd service auto-starts it).")
 		return exitOK
 	}
+	if privsepInstallStateFn() == privsepDataOnly {
+		fmt.Fprintln(os.Stderr, "This machine has a byn data directory owned by the _byn service user,")
+		fmt.Fprintln(os.Stderr, "but no service is installed — so byn cannot start it, and starting one as")
+		fmt.Fprintln(os.Stderr, "you would not be able to read that data. Install the service again:")
+		fmt.Fprintln(os.Stderr, "    sudo $(which byn) setup")
+		return exitDaemonDown
+	}
 	fmt.Fprintln(os.Stderr, "The byn daemon runs as the _byn service (auto-starts on boot/crash); it appears down.")
 	fmt.Fprintln(os.Stderr, "Bring it up with:")
 	fmt.Fprintln(os.Stderr, "    sudo byn restart            (or: sudo byn doctor --repair)")
