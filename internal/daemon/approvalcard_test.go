@@ -263,7 +263,7 @@ func decideApproval(t *testing.T, c *ipc.Client, req ipc.ApprovalDecideReq) (ipc
 // answering an audit question put a live credential into a chat window. Verify
 // needs no credential and works locked, because comparing digests of stored
 // ciphertext needs no key.
-func TestRunVerify_AnswersWithNoCredentialAndNoValues(t *testing.T) {
+func TestRunDiff_AnswersWithNoCredentialAndNoValues(t *testing.T) {
 	_ = stubOrigin(t, true)
 	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
@@ -290,7 +290,7 @@ func TestRunVerify_AnswersWithNoCredentialAndNoValues(t *testing.T) {
 	c.Session = nil
 
 	var got ipc.RunListResp
-	if err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: id, Verify: true}, &got); err != nil {
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: id, Diff: true}, &got); err != nil {
 		t.Fatalf("verify needed a credential: %v", err)
 	}
 	if len(got.Entries) != 1 {

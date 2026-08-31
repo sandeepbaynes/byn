@@ -349,7 +349,8 @@ const (
 )
 
 // SnapshotStatus reports what became of each value a run received, WITHOUT
-// opening any of them.
+// opening any of them — a diff of the digests recorded for the run against what
+// the vault holds now.
 //
 // This exists because of what people were doing to get the answer. The only
 // command that could say whether a value had been replaced was the one that

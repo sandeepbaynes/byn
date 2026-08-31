@@ -127,7 +127,7 @@ next ten minutes should not become a standing authority.
 `--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
 environment does the same for harnesses that build byn's argv themselves.
 
-### `byn runs verify` — the audit question, without the secrets
+### `byn runs diff` — the audit question, without the secrets
 
 Asking "has this value been rotated since that run?" had exactly one answer:
 `--reveal`, which prints every value the run received. So checking meant putting
@@ -135,7 +135,10 @@ live credentials on a terminal, and in one case into a chat window. The warning
 fired and was correct; the person went ahead, because it was the only command
 that answered the question.
 
-`byn runs verify <id>` answers it and prints nothing. Per name: unchanged,
+`byn runs diff <id>` answers it and prints nothing. It is a diff in the literal
+sense — the digests recorded for the run against what the vault holds now — and
+is deliberately not called `verify`, since `byn audit verify` already means the
+cryptographic check. Per name: unchanged,
 changed since, or deleted since. No credential, and it works while the vault is
 locked — the answer comes from comparing a digest of the stored ciphertext,
 which needs no key. `--reveal` now points at it at the moment it is being run.

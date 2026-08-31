@@ -59,7 +59,7 @@ func (d *Daemon) handleRunList(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 	// What became of each value — no values, so no credential. Deliberately
 	// before the Reveal block: this is the answer to the audit question, and it
 	// should be reachable without ever entering the one that prints secrets.
-	if req.Verify {
+	if req.Diff {
 		for i := range out {
 			if out[i].SnapshotID == 0 {
 				continue

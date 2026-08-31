@@ -35,12 +35,15 @@ func runRuns(args []string, scope cliScope) int {
 	}
 
 	var id int64
-	verify := false
+	diff := false
 	rest := fs.Args()
-	if len(rest) > 0 && (rest[0] == "show" || rest[0] == "verify") {
-		// `byn runs verify <id>` is the safe answer to the audit question:
-		// what became of each value, with none of them printed.
-		verify = rest[0] == "verify"
+	if len(rest) > 0 && (rest[0] == "show" || rest[0] == "diff") {
+		// `byn runs diff <id>` is the safe answer to the audit question: what
+		// became of each value, with none of them printed. Named for what it
+		// does — the digests recorded for the run against the vault now — and
+		// deliberately not "verify", which in this CLI already means the
+		// cryptographic check that `byn audit verify` performs.
+		diff = rest[0] == "diff"
 		rest = rest[1:]
 	}
 	if len(rest) > 0 {
@@ -55,8 +58,8 @@ func runRuns(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "%s --reveal needs one run: byn runs show <id> --reveal\n", boldRed("Error:"))
 		return exitErr
 	}
-	if verify && id == 0 {
-		fmt.Fprintf(os.Stderr, "%s verify needs one run: byn runs verify <id>\n", boldRed("Error:"))
+	if diff && id == 0 {
+		fmt.Fprintf(os.Stderr, "%s diff needs one run: byn runs diff <id>\n", boldRed("Error:"))
 		return exitErr
 	}
 
@@ -80,10 +83,10 @@ func runRuns(args []string, scope cliScope) int {
 		// window. The question has its own command; say so at the moment the
 		// wrong one is being run.
 		fmt.Fprintf(os.Stderr, "         %s\n",
-			dim(fmt.Sprintf("only need to know what changed? byn runs verify %d — no values, no password", id)))
+			dim(fmt.Sprintf("only need to know what changed? byn runs diff %d — no values, no password", id)))
 	}
 
-	req := ipc.RunListReq{Scope: scope.ToIPC(), Limit: *limit, ID: id, Reveal: *reveal, Verify: verify}
+	req := ipc.RunListReq{Scope: scope.ToIPC(), Limit: *limit, ID: id, Reveal: *reveal, Diff: diff}
 	var resp ipc.RunListResp
 	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, nil, func(pw []byte) error {
 		req.Password = pw
@@ -108,7 +111,7 @@ func runRuns(args []string, scope cliScope) int {
 	for _, e := range resp.Entries {
 		printRun(e, id != 0)
 	}
-	if verify {
+	if diff {
 		fmt.Fprintf(os.Stderr, "\n%s\n",
 			dim("no values were read. byn runs show <id> --reveal shows them, and asks for the password."))
 	}

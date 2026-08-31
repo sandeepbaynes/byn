@@ -687,13 +687,14 @@ type RunListReq struct {
 	// credential-gated exactly like reading a secret, because that is what it
 	// is: the run record is not a second way to read values.
 	Reveal bool `json:"reveal,omitempty"`
-	// Verify asks what became of each value the run used — rotated, deleted, or
-	// still the same — without any of them being printed. Ungated: the answer
-	// comes from comparing digests of stored ciphertext, so it needs no key,
-	// works while the vault is locked, and discloses nothing a listing does
+	// Diff asks what became of each value the run used — rotated, deleted, or
+	// still the same — without any of them being printed. It is literally a
+	// diff: the digests recorded for the run against what the vault holds now.
+	// Ungated, because comparing digests of stored ciphertext needs no key, so
+	// it works while the vault is locked and discloses nothing a listing does
 	// not. It exists so that the audit question has an answer that is not
 	// "print every secret".
-	Verify   bool   `json:"verify,omitempty"`
+	Diff     bool   `json:"diff,omitempty"`
 	Password []byte `json:"password,omitempty"`
 }
 

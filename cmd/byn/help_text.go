@@ -41,7 +41,7 @@ var commandHelp = map[string]string{
 SYNOPSIS
        byn runs [-n N] [--json]
        byn runs show ID [--json]
-       byn runs verify ID [--json]
+       byn runs diff ID [--json]
        byn runs show ID --reveal [--password-stdin]
 
 DESCRIPTION
@@ -61,7 +61,7 @@ DESCRIPTION
        Listing asks for no credential. It shows names, and byn already
        lists variable names without one, so it reveals nothing new.
 
-       "byn runs verify ID" answers the question people actually bring
+       "byn runs diff ID" answers the question people actually bring
        here — has any of this been rotated since? — and prints no
        values. It says, per name: unchanged, changed since, or deleted
        since. It needs no credential and works while the vault is
@@ -73,6 +73,12 @@ DESCRIPTION
        that prints every value, someone checking put a live credential
        on a terminal to find out — which is a worse outcome than the
        question going unanswered.
+
+       It is called diff because that is what it does: the digests
+       recorded for the run, against what the vault holds now. Not
+       "verify" — in this CLI that already means the cryptographic
+       check "byn audit verify" performs, and two verifies meaning
+       different things is a trap.
 
        The three wordings are three different claims. "changed since"
        means the entry is still there and holds something else.
