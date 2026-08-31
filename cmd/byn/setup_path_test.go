@@ -36,12 +36,11 @@ func TestLinkOrCopy_PrefersASymlinkAndReplacesWhatIsThere(t *testing.T) {
 	if err := linkOrCopy(src, dest); err != nil {
 		t.Fatalf("link: %v", err)
 	}
-	got, err := filepath.EvalSymlinks(dest)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if got != src {
-		t.Errorf("dest resolves to %q, want %q", got, src)
+	// Compare resolved against resolved. On macOS the temp dir lives under
+	// /var, which is itself a symlink to /private/var, so the literal path and
+	// the resolved one differ for reasons that have nothing to do with byn.
+	if got, want := resolved(t, dest), resolved(t, src); got != want {
+		t.Errorf("dest resolves to %q, want %q", got, want)
 	}
 
 	// Replacing an existing entry must work: setup is re-run on every upgrade.
@@ -52,9 +51,8 @@ func TestLinkOrCopy_PrefersASymlinkAndReplacesWhatIsThere(t *testing.T) {
 	if err := linkOrCopy(other, dest); err != nil {
 		t.Fatalf("relink: %v", err)
 	}
-	got, _ = filepath.EvalSymlinks(dest)
-	if got != other {
-		t.Errorf("after relink dest resolves to %q, want %q", got, other)
+	if got, want := resolved(t, dest), resolved(t, other); got != want {
+		t.Errorf("after relink dest resolves to %q, want %q", got, want)
 	}
 }
 
@@ -89,4 +87,15 @@ func TestPathHint_SilentWhenReachable(t *testing.T) {
 	if hint := pathHint(); hint != "" {
 		t.Errorf("hint given for a byn already on PATH: %q", hint)
 	}
+}
+
+// resolved canonicalises a path so comparisons are not defeated by a symlinked
+// ancestor — /var -> /private/var on macOS being the one that bit.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	got, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", path, err)
+	}
+	return got
 }
