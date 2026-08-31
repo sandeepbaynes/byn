@@ -790,8 +790,22 @@ credential directory, or an `[auth]` gate being relaxed.
 ```
   45e16b0d2abe  /home/u/proj/.byn
       injects PSQL_CREDENTIALS
-      asked 3m12s ago, retried 2×
+      approving grants the .byn what it already asks for — it does not edit
+      the file, and nothing runs until it is attempted again
+      why: seeding the staging database (said by whoever asked — byn cannot verify it)
+      who: claude (pid 4021), no terminal in /home/u/proj
+      asked 3m12s ago, retried 2×, needed within 1m48s
 ```
+
+**Who** is byn's own account, read from the kernel: the agent behind the call,
+where it was working, whether anyone was at a terminal. **Why** is the asker's,
+passed with `byn exec --reason`, and is shown as the claim it is — byn cannot
+check a stated purpose and never lets one affect a decision. A request without
+one is allowed and says so.
+
+A caller that is waiting (`byn exec --wait-approval`) also says how long, so the
+list can separate "needed within 1m48s" from "no longer waiting". Answering
+after that still grants; the entry is marked as having arrived late.
 
 ### `byn approve [--password-stdin] ID...`
 
@@ -808,10 +822,90 @@ deliberate: if saying no costs more than saying yes, people learn to say yes.
 A request denied repeatedly goes on hold and stops being askable for a while,
 so a caller cannot re-ask until someone gives in.
 
+`--deny` does **not** take back a grant already given. Denying an
+already-approved request is refused outright and points at `--revoke`: it used
+to return quietly and reprint the grant line, so an owner who typed it believed
+a command had stopped being runnable when it had not.
+
+### `byn approve --revoke ID...`
+
+Takes back a grant before it lapses. Approving is the moment authority moves,
+and there has to be a moment it moves back — a command approved for a one-shot
+job otherwise stays runnable for the rest of the window, and "it expires in six
+hours" is not an answer to "this must stop being runnable now".
+
+Needs no password, for the same reason `--deny` does not: it can only ever
+remove capability, and a revoke you have to go and find a credential for is one
+that happens later than it should. Recorded as `approval.revoke`. The grant
+itself is zeroed rather than the record relabelled, so the next attempt raises a
+fresh request.
+
+### `byn approve [--for DURATION] [--anyone] ID...`
+
+`--for` sets how long an approved command runs free — default 6h, at most 24h.
+A command wanted once for the next ten minutes and one wanted all afternoon are
+different grants, and giving both the default makes the first a standing
+authority nobody asked for.
+
+`--anyone` widens the grant past the caller that asked for it. By default a
+grant belongs to whoever asked, by the same identity that governs values an
+agent created: you were asked whether one agent could run one command, and
+letting anything else in that directory use the answer would be a wider grant
+than the question. Widen it deliberately for a shared build command, or one that
+has to outlive the session that asked.
+
 ### `byn approve --all [--password-stdin]`
 
 Answers every pending request; one password covers the batch, so clearing a
 backlog does not become its own chore.
+
+### `byn runs [-n N] [--json]`
+
+What past executions were given: when, which `.byn` allowed it, the agent behind
+it, and which values it received. The question only ever gets asked afterwards —
+what did that process actually hold.
+
+Runs store **references**, never copies. A second copy of every value would grow
+without bound and would turn the trail into an archive of every secret the
+project has ever had, so a credential rotated after a leak would stay
+recoverable. Snapshots are stored as differences from the previous one, so a dev
+server restarted fifty times costs fifty run records and one snapshot.
+
+Listing needs no credential — byn already lists variable names without one.
+
+### `byn runs show ID [--reveal] [--password-stdin]`
+
+Names the values a run received, marking the ones byn took in unattended.
+`--reveal` shows the values themselves: gated exactly as reading a secret is,
+recorded as a read, and it warns before it prints.
+
+### `byn runs diff ID`
+
+Answers the question people actually bring here — has any of this been rotated
+since? — and prints nothing. Per name: `unchanged`, `changed since`, or `deleted
+since`. No credential, and it works while the vault is locked, because the
+answer comes from comparing a digest of the stored ciphertext, which needs no
+key.
+
+It exists because the safe command has to be the reachable one. While the only
+way to check whether a value had changed was the command that prints every
+value, checking meant putting live secrets on a terminal.
+
+The three wordings are three different claims. "changed since" means the entry
+is still there holding something else. "deleted since" means the entry that run
+used is gone — a name deleted and re-created is a new entry, not a new version
+of the old one. "could not be read" is about byn, and is not evidence that
+anything changed.
+
+### `byn exec --reason "TEXT" -- COMMAND`
+
+Says what the command is for. It travels with a request byn has to queue and is
+shown to whoever decides it, labelled as the asker's claim. Also spelled
+`--why`, and `BYN_WHY` in the environment does the same for a harness that
+builds byn's argv itself.
+
+Passing it on a retry fills in a blank reason on the same pending request; it
+never overwrites one already given.
 
 ### `byn exec --wait-approval[=DURATION] -- COMMAND`
 
