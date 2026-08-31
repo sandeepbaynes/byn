@@ -42,6 +42,10 @@ site:
 
 # CI guard: fail if the committed markdown would produce different HTML than
 # what is on disk (i.e. someone edited a doc but didn't re-run `make site`).
+# Local convenience: reports which generated pages your working tree would
+# change. CI cannot use this — the generated HTML is not committed, so a fresh
+# checkout has none of it and everything reads as stale. CI generates and then
+# checks that no TRACKED file moved.
 site-check:
 	$(GO) run ./tools/gensite -check
 

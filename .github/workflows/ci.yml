@@ -54,8 +54,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Generate, then fail if anything TRACKED moved. The generated HTML is
+      # not committed (see .gitignore) — it is built here and at deploy time —
+      # so the only thing this can catch is the hand-authored landing page
+      # still naming the previous release, which is exactly what it is for.
       - name: Docs site is current
-        run: make site-check
+        run: |
+          make site
+          git diff --exit-code
 
   lint:
     runs-on: ubuntu-latest
