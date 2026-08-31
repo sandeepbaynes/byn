@@ -686,7 +686,14 @@ type RunListReq struct {
 	// Reveal asks for the VALUES a run received, not only their names. It is
 	// credential-gated exactly like reading a secret, because that is what it
 	// is: the run record is not a second way to read values.
-	Reveal   bool   `json:"reveal,omitempty"`
+	Reveal bool `json:"reveal,omitempty"`
+	// Verify asks what became of each value the run used — rotated, deleted, or
+	// still the same — without any of them being printed. Ungated: the answer
+	// comes from comparing digests of stored ciphertext, so it needs no key,
+	// works while the vault is locked, and discloses nothing a listing does
+	// not. It exists so that the audit question has an answer that is not
+	// "print every secret".
+	Verify   bool   `json:"verify,omitempty"`
 	Password []byte `json:"password,omitempty"`
 }
 
@@ -713,17 +720,15 @@ type RunEntry struct {
 	Unattended []string `json:"unattended,omitempty"`
 	// Values is populated only when Reveal was granted.
 	Values map[string]string `json:"values,omitempty"`
-	// Superseded names values the run used that have since been replaced. byn
-	// does not retain a superseded secret, so it names them rather than
-	// pretending it can still show them.
-	Superseded []string `json:"superseded,omitempty"`
-	// Unavailable names values byn could not open for some other reason — the
-	// entry deleted since, or an error reading it. Kept apart from Superseded
-	// on purpose: "this was replaced" is a fact about the value's history and
-	// "byn could not read this" is a fact about byn, and an auditor told the
-	// first when the second is true has been misinformed about a rotation that
-	// never happened.
-	Unavailable []string `json:"unavailable,omitempty"`
+	// Status says what became of each value the run used: "unchanged",
+	// "changed", or "deleted". It answers the audit question — was this
+	// rotated? — without any value being printed, which is why it needs no
+	// credential: comparing a digest of stored ciphertext requires no key.
+	//
+	// One field rather than a list per outcome, so a caller cannot be told two
+	// different things about one name, and so a new outcome does not need a new
+	// list that older readers silently ignore.
+	Status map[string]string `json:"status,omitempty"`
 }
 
 // RunListResp returns them.

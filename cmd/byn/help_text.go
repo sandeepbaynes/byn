@@ -41,6 +41,7 @@ var commandHelp = map[string]string{
 SYNOPSIS
        byn runs [-n N] [--json]
        byn runs show ID [--json]
+       byn runs verify ID [--json]
        byn runs show ID --reveal [--password-stdin]
 
 DESCRIPTION
@@ -60,6 +61,26 @@ DESCRIPTION
        Listing asks for no credential. It shows names, and byn already
        lists variable names without one, so it reveals nothing new.
 
+       "byn runs verify ID" answers the question people actually bring
+       here — has any of this been rotated since? — and prints no
+       values. It says, per name: unchanged, changed since, or deleted
+       since. It needs no credential and works while the vault is
+       locked, because the answer comes from comparing a digest of the
+       stored ciphertext, which needs no key.
+
+       It exists because the safe command has to be the easy one. When
+       the only way to check whether a value had changed was the one
+       that prints every value, someone checking put a live credential
+       on a terminal to find out — which is a worse outcome than the
+       question going unanswered.
+
+       The three wordings are three different claims. "changed since"
+       means the entry is still there and holds something else.
+       "deleted since" means the entry this run used is gone — a name
+       deleted and re-created is a new entry, not a new version of the
+       old one. "could not be read" is a statement about byn, and is
+       not evidence that anything changed.
+
        --reveal is a different act: it hands over the VALUES, so it is
        gated exactly as reading a secret is, recorded as a read, and
        says what it is about to do first. If someone has asked you to
@@ -72,8 +93,9 @@ DESCRIPTION
 
 EXIT STATUS
        0    Ran.
-       1    No such run, or the values could not be shown.
-       3    A credential was needed for --reveal and none was supplied.
+       1    Bad usage — no run id where one was required.
+       3    The daemon said no: no such run, or --reveal without a
+            credential. Branch on --json rather than on the code.
 
 SEE ALSO
        byn-audit(1), byn-exec(1), byn-unattended(1)

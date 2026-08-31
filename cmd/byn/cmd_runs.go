@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,8 +35,12 @@ func runRuns(args []string, scope cliScope) int {
 	}
 
 	var id int64
+	verify := false
 	rest := fs.Args()
-	if len(rest) > 0 && rest[0] == "show" {
+	if len(rest) > 0 && (rest[0] == "show" || rest[0] == "verify") {
+		// `byn runs verify <id>` is the safe answer to the audit question:
+		// what became of each value, with none of them printed.
+		verify = rest[0] == "verify"
 		rest = rest[1:]
 	}
 	if len(rest) > 0 {
@@ -48,6 +53,10 @@ func runRuns(args []string, scope cliScope) int {
 	}
 	if *reveal && id == 0 {
 		fmt.Fprintf(os.Stderr, "%s --reveal needs one run: byn runs show <id> --reveal\n", boldRed("Error:"))
+		return exitErr
+	}
+	if verify && id == 0 {
+		fmt.Fprintf(os.Stderr, "%s verify needs one run: byn runs verify <id>\n", boldRed("Error:"))
 		return exitErr
 	}
 
@@ -65,9 +74,16 @@ func runRuns(args []string, scope cliScope) int {
 			boldYellow("Warning:"), id)
 		fmt.Fprintf(os.Stderr, "         %s\n",
 			dim("they will appear on this terminal and in anything capturing it"))
+		// Offered here because this is where the mistake happens. Someone
+		// asking "was this rotated?" reached for the only command that answers
+		// it, and it prints every secret the run held — once, into a chat
+		// window. The question has its own command; say so at the moment the
+		// wrong one is being run.
+		fmt.Fprintf(os.Stderr, "         %s\n",
+			dim(fmt.Sprintf("only need to know what changed? byn runs verify %d — no values, no password", id)))
 	}
 
-	req := ipc.RunListReq{Scope: scope.ToIPC(), Limit: *limit, ID: id, Reveal: *reveal}
+	req := ipc.RunListReq{Scope: scope.ToIPC(), Limit: *limit, ID: id, Reveal: *reveal, Verify: verify}
 	var resp ipc.RunListResp
 	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, nil, func(pw []byte) error {
 		req.Password = pw
@@ -91,6 +107,10 @@ func runRuns(args []string, scope cliScope) int {
 	}
 	for _, e := range resp.Entries {
 		printRun(e, id != 0)
+	}
+	if verify {
+		fmt.Fprintf(os.Stderr, "\n%s\n",
+			dim("no values were read. byn runs show <id> --reveal shows them, and asks for the password."))
 	}
 	return exitOK
 }
@@ -124,7 +144,7 @@ func printRun(e ipc.RunEntry, detailed bool) {
 	if !detailed {
 		return
 	}
-	if len(e.Names) > 0 && e.Values == nil {
+	if len(e.Names) > 0 && e.Values == nil && len(e.Status) == 0 {
 		fmt.Printf("     %s %s\n", dim("received:"), dim(strings.Join(markUnattended(e), ", ")))
 	}
 	for _, n := range e.Names {
@@ -132,17 +152,7 @@ func printRun(e ipc.RunEntry, detailed bool) {
 			fmt.Printf("     %s=%s\n", n, v)
 		}
 	}
-	if len(e.Superseded) > 0 {
-		fmt.Printf("     %s %s\n", yellow("changed since:"), strings.Join(e.Superseded, ", "))
-		fmt.Printf("     %s\n", dim("byn keeps no copy of a replaced value, so these cannot be shown"))
-	}
-	// Said separately, because it is a different claim. "Replaced since" is
-	// about the value; this is about byn, and printing it as the first would
-	// report a rotation that never happened.
-	if len(e.Unavailable) > 0 {
-		fmt.Printf("     %s %s\n", yellow("could not be read:"), strings.Join(e.Unavailable, ", "))
-		fmt.Printf("     %s\n", dim("byn could not open these — deleted since, or unreadable; not necessarily changed"))
-	}
+	printStatus(e)
 }
 
 // markUnattended annotates the names a run received, flagging the ones byn took
@@ -175,4 +185,44 @@ func ellipsize(s string, limit int) string {
 		return s
 	}
 	return s[:limit] + "\u2026"
+}
+
+// printStatus says what became of the values a run used.
+//
+// Each wording is a different claim and they are not interchangeable:
+// "changed since" means the entry is still there and holds a different blob;
+// "deleted since" means the entry the run used is gone — including a name
+// deleted and re-created, which is a new entry, not a new version of the old
+// one; "could not be read" means byn failed, which is a statement about byn and
+// not about the value's history.
+func printStatus(e ipc.RunEntry) {
+	if len(e.Status) == 0 {
+		return
+	}
+	groups := map[string][]string{}
+	for name, st := range e.Status {
+		groups[st] = append(groups[st], name)
+	}
+	for _, g := range []struct {
+		status, label, note string
+	}{
+		{"changed", "changed since:",
+			"byn keeps no copy of a replaced value, so these cannot be shown"},
+		{"deleted", "deleted since:",
+			"the entry this run used is gone — a name re-created since is a new entry, not this one"},
+		{"unreadable", "could not be read:",
+			"byn could not open these; that is about byn, not evidence the value changed"},
+	} {
+		names := groups[g.status]
+		if len(names) == 0 {
+			continue
+		}
+		sort.Strings(names)
+		fmt.Printf("     %s %s\n", yellow(g.label), strings.Join(names, ", "))
+		fmt.Printf("     %s\n", dim(g.note))
+	}
+	if unchanged := groups["unchanged"]; len(unchanged) > 0 {
+		sort.Strings(unchanged)
+		fmt.Printf("     %s %s\n", dim("unchanged:"), dim(strings.Join(unchanged, ", ")))
+	}
 }

@@ -322,3 +322,59 @@ func TestExecRun_RemembersWhichValuesWereUnattended(t *testing.T) {
 		t.Errorf("a run with no unattended values reported %v", runs[0].Meta.Unattended)
 	}
 }
+
+// The audit question — was this value rotated? — must be answerable without
+// printing a single secret. It is: the reference holds a digest of the stored
+// ciphertext, and comparing digests needs no key.
+func TestSnapshotStatus_AnswersWithoutOpeningAnything(t *testing.T) {
+	st, scope := execRunFixture(t)
+	ctx := context.Background()
+	for _, n := range []string{"KEPT", "ROTATED", "REMOVED"} {
+		if err := st.PutEnvVar(ctx, scope, n, []byte("v1-"+n), PutOpt{}); err != nil {
+			t.Fatalf("put %s: %v", n, err)
+		}
+	}
+	id, err := st.RecordExecRun(ctx, scope, ExecRunMeta{BynPath: "/p/.byn", Command: "run"},
+		[]string{"KEPT", "ROTATED", "REMOVED"})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	runs, err := st.ListExecRuns(ctx, 1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("list: %v (%d runs)", err, len(runs))
+	}
+	_ = id
+
+	if err := st.PutEnvVar(ctx, scope, "ROTATED", []byte("v2"), PutOpt{}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if err := st.DeleteEnvVar(ctx, scope, "REMOVED"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	got, err := st.SnapshotStatus(ctx, runs[0].SnapshotID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	for name, want := range map[string]RefStatus{
+		"KEPT": StatusUnchanged, "ROTATED": StatusChanged, "REMOVED": StatusDeleted,
+	} {
+		if got[name] != want {
+			t.Errorf("%s = %q, want %q", name, got[name], want)
+		}
+	}
+
+	// A name deleted and re-created is a NEW entry, not a new version of the
+	// old one. The run's value is gone either way, and reporting it as
+	// "changed" would imply byn had compared it against something.
+	if err := st.PutEnvVar(ctx, scope, "REMOVED", []byte("reborn"), PutOpt{}); err != nil {
+		t.Fatalf("re-create: %v", err)
+	}
+	got, err = st.SnapshotStatus(ctx, runs[0].SnapshotID)
+	if err != nil {
+		t.Fatalf("status after re-create: %v", err)
+	}
+	if got["REMOVED"] != StatusDeleted {
+		t.Errorf("re-created name = %q, want %q", got["REMOVED"], StatusDeleted)
+	}
+}

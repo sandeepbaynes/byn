@@ -255,3 +255,56 @@ func decideApproval(t *testing.T, c *ipc.Client, req ipc.ApprovalDecideReq) (ipc
 	err := c.Call(ipc.OpApprovalDecide, req, &resp)
 	return resp, err
 }
+
+// The audit question must have an answer that is not "print every secret".
+//
+// This is here because of what happened without it: the only command that could
+// say whether a value had been rotated was the one that prints them all, so
+// answering an audit question put a live credential into a chat window. Verify
+// needs no credential and works locked, because comparing digests of stored
+// ciphertext needs no key.
+func TestRunVerify_AnswersWithNoCredentialAndNoValues(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"KEPT\", \"ROTATED\"]\nactions = [\"mytool run\"]\n")
+	putVar(t, c, ipc.Scope{}, "KEPT", []byte("kept-v1"))
+	putVar(t, c, ipc.Scope{}, "ROTATED", []byte("rotated-v1"))
+	grantBynFile(t, c, byn, pw)
+	if _, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	}); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	var list ipc.RunListResp
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{Limit: 5}, &list); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	id := list.Entries[0].ID
+
+	putVar(t, c, ipc.Scope{}, "ROTATED", []byte("rotated-v2"))
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	var got ipc.RunListResp
+	if err := c.Call(ipc.OpRunList, ipc.RunListReq{ID: id, Verify: true}, &got); err != nil {
+		t.Fatalf("verify needed a credential: %v", err)
+	}
+	if len(got.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(got.Entries))
+	}
+	e := got.Entries[0]
+	if e.Status["KEPT"] != "unchanged" {
+		t.Errorf("KEPT = %q, want unchanged", e.Status["KEPT"])
+	}
+	if e.Status["ROTATED"] != "changed" {
+		t.Errorf("ROTATED = %q, want changed", e.Status["ROTATED"])
+	}
+	// The whole point: it answered, and printed nothing.
+	if len(e.Values) != 0 {
+		t.Fatalf("verify returned values: %v", e.Values)
+	}
+}

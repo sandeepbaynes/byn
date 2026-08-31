@@ -1686,10 +1686,7 @@ func TestRunReveal_LockedVaultIsNotARotation(t *testing.T) {
 	if got.Values["SEED"] != "seed-val" {
 		t.Errorf("SEED = %q, want seed-val", got.Values["SEED"])
 	}
-	if len(got.Superseded) != 0 {
-		t.Errorf("reported as replaced when nothing changed: %v", got.Superseded)
-	}
-	if len(got.Unavailable) != 0 {
-		t.Errorf("reported as unreadable when it read fine: %v", got.Unavailable)
+	if st := got.Status["SEED"]; st != "unchanged" {
+		t.Errorf("status = %q, want unchanged — nothing was touched", st)
 	}
 }

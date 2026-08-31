@@ -336,6 +336,56 @@ func (s *Store) ListExecRuns(ctx context.Context, limit int) ([]ExecRun, error) 
 	return out, nil
 }
 
+// RefStatus is what has become of one value a run used.
+type RefStatus string
+
+const (
+	// StatusUnchanged means the vault still holds the exact blob the run got.
+	StatusUnchanged RefStatus = "unchanged"
+	// StatusChanged means the entry is still there and has been rewritten.
+	StatusChanged RefStatus = "changed"
+	// StatusDeleted means the entry the run used is gone.
+	StatusDeleted RefStatus = "deleted"
+)
+
+// SnapshotStatus reports what became of each value a run received, WITHOUT
+// opening any of them.
+//
+// This exists because of what people were doing to get the answer. The only
+// command that could say whether a value had been replaced was the one that
+// prints every value, so asking an audit question meant putting live
+// credentials on a terminal — and, once, into a chat window. The question is
+// answerable from ciphertext alone: the reference records a digest of the
+// stored blob, and comparing digests needs no key and no credential. So this
+// needs neither, works while the vault is locked, and reveals nothing a listing
+// does not already give.
+func (s *Store) SnapshotStatus(ctx context.Context, snapshotID int64) (map[string]RefStatus, error) {
+	refs, err := s.ResolveSnapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]RefStatus, len(refs))
+	for name, ref := range refs {
+		var ct []byte
+		err := s.db.QueryRowContext(ctx,
+			`SELECT value FROM entries WHERE id = ?`, ref.EntryID).Scan(&ct)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// The row is gone. A name re-created since gets a new entry id, so
+			// this covers "deleted" and "deleted then re-created" alike — in
+			// both, what the run held is not there any more.
+			out[name] = StatusDeleted
+		case err != nil:
+			return nil, err
+		case blobDigest(ct) != ref.Digest:
+			out[name] = StatusChanged
+		default:
+			out[name] = StatusUnchanged
+		}
+	}
+	return out, nil
+}
+
 // SnapshotNames lists what a snapshot names, sorted. Names only — no values.
 func (s *Store) SnapshotNames(ctx context.Context, snapshotID int64) ([]string, error) {
 	refs, err := s.ResolveSnapshot(ctx, snapshotID)

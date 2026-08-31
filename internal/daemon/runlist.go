@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
-	"sort"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -58,6 +56,31 @@ func (d *Daemon) handleRunList(ctx context.Context, env *ipc.Envelope) *ipc.Enve
 		out = append(out, e)
 	}
 
+	// What became of each value — no values, so no credential. Deliberately
+	// before the Reveal block: this is the answer to the audit question, and it
+	// should be reachable without ever entering the one that prints secrets.
+	if req.Verify {
+		for i := range out {
+			if out[i].SnapshotID == 0 {
+				continue
+			}
+			st2, serr := st.SnapshotStatus(ctx, out[i].SnapshotID)
+			if serr != nil {
+				continue
+			}
+			out[i].Status = make(map[string]string, len(st2))
+			for n, v := range st2 {
+				out[i].Status[n] = string(v)
+			}
+			if len(out[i].Names) == 0 {
+				names, nerr := st.SnapshotNames(ctx, out[i].SnapshotID)
+				if nerr == nil {
+					out[i].Names = names
+				}
+			}
+		}
+	}
+
 	if req.Reveal {
 		if req.ID == 0 {
 			return ipc.NewError(env.ID, ipc.CodeBadRequest,
@@ -108,25 +131,32 @@ func (d *Daemon) revealRunValues(ctx context.Context, st *vault.Store, e *ipc.Ru
 	}
 	e.Names = names
 	e.Values = make(map[string]string, len(names))
+	// The same statuses the ungated verify reports, so the two can never
+	// describe one run differently.
+	if st2, serr := st.SnapshotStatus(ctx, e.SnapshotID); serr == nil {
+		e.Status = make(map[string]string, len(st2))
+		for n, v := range st2 {
+			e.Status[n] = string(v)
+		}
+	}
 	for _, n := range names {
 		val, verr := st.OpenSnapshotValue(ctx, e.SnapshotID, n)
 		switch {
-		case errors.Is(verr, vault.ErrValueSuperseded):
-			// The value has been replaced since. byn keeps no copy of the old
-			// one, so it says which rather than showing today's in its place.
-			e.Superseded = append(e.Superseded, n)
 		case verr != nil:
-			// Anything else is byn failing to read, which is a different
-			// statement from the value having changed. Reporting one as the
-			// other invents a rotation that never happened — and a rotation is
-			// exactly the kind of thing someone reads this trail to confirm.
-			e.Unavailable = append(e.Unavailable, n)
+			// No value, and no guess at why: Status already says whether it was
+			// replaced, deleted, or is simply unreadable. Inventing a second
+			// account here is how "byn could not read this" became "this was
+			// rotated" — a claim about the value's history that byn had not
+			// established.
+			if e.Status != nil {
+				if _, ok := e.Status[n]; !ok {
+					e.Status[n] = "unreadable"
+				}
+			}
 		default:
 			e.Values[n] = string(val)
 		}
 	}
-	sort.Strings(e.Superseded)
-	sort.Strings(e.Unavailable)
 }
 
 func itoa(n int) string { return itoa64(int64(n)) }

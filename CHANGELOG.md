@@ -127,6 +127,25 @@ next ten minutes should not become a standing authority.
 `--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
 environment does the same for harnesses that build byn's argv themselves.
 
+### `byn runs verify` — the audit question, without the secrets
+
+Asking "has this value been rotated since that run?" had exactly one answer:
+`--reveal`, which prints every value the run received. So checking meant putting
+live credentials on a terminal, and in one case into a chat window. The warning
+fired and was correct; the person went ahead, because it was the only command
+that answered the question.
+
+`byn runs verify <id>` answers it and prints nothing. Per name: unchanged,
+changed since, or deleted since. No credential, and it works while the vault is
+locked — the answer comes from comparing a digest of the stored ciphertext,
+which needs no key. `--reveal` now points at it at the moment it is being run.
+
+The three wordings are three claims and are not interchangeable. "changed since"
+means the entry is still there holding something else. "deleted since" means the
+entry that run used is gone — a name deleted and re-created is a new entry, not
+a new version of the old one. "could not be read" is about byn, and is not
+evidence that anything changed.
+
 ### One exit code for a refusal
 
 `byn delete --json` exited 1 on a refusal where every other command exited 3 on
