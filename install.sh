@@ -152,8 +152,27 @@ case ":$PATH:" in
     fi
     ;;
 esac
-if [ "$PRIVSEP_HELPER" = "1" ]; then
-  say "next:  sudo byn setup  &&  byn init"
+# ---- provision privilege separation -------------------------------------
+# Privilege separation is what keeps an exec child's secrets out of your own
+# `ps`, and it needs root once. Doing it here — while the user is present and
+# already expecting an install — is the difference between a byn that is
+# isolated by default and one that is isolated by whoever remembers to run a
+# second command. Opt out with BYN_NO_SETUP=1.
+if [ "$PRIVSEP_HELPER" = "1" ] && [ "${BYN_NO_SETUP:-0}" != "1" ]; then
+  say "provisioning privilege separation (needs root; you may be asked for your password)"
+  if [ "$(id -u)" = "0" ]; then
+    setup_cmd="$dest setup"
+  else
+    setup_cmd="sudo $dest setup"
+  fi
+  if $setup_cmd; then
+    say "next:  byn init"
+  else
+    # Never fail the install over this: byn works without privsep, and says so
+    # in `byn doctor`. A machine without systemd is a normal reason to land here.
+    say "warning: could not provision privilege separation automatically"
+    say "next:  sudo $dest setup   (then: byn init)"
+  fi
 else
   say "next:  byn start  &&  byn init"
 fi

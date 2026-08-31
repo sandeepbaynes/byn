@@ -89,6 +89,13 @@ nfpms:
         dst: /usr/share/man/man1/byn.1
       - src: LICENSE
         dst: /usr/share/doc/byn/LICENSE
+    # Provision privilege separation as part of the install, while the package
+    # manager is already root. Leaving it to a separate `sudo byn setup` meant
+    # every package install was half an install, and the missing half was the
+    # isolation byn exists to provide.
+    scripts:
+      postinstall: packaging/postinstall.sh
+      preremove: packaging/preremove.sh
 
 # Homebrew: auto-update the formula in your tap. Needs a HOMEBREW_TAP_GITHUB_TOKEN
 # secret (a PAT that can push to sandeepbaynes/homebrew-tap). This generated

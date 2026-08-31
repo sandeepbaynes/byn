@@ -26,11 +26,20 @@ brew install sandeepbaynes/tap/byn
 curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
 
 # With the Go toolchain — works today, builds from source.
-# Install BOTH: `byn setup` looks for the spawn helper beside the byn binary,
-# so privilege separation cannot be provisioned without it.
-go install github.com/sandeepbaynes/byn/cmd/byn@latest
-go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+# GOBIN puts byn somewhere already on your PATH; `go install` alone drops it in
+# ~/go/bin, which is on no default PATH and outside sudo's secure_path, so
+# `byn` would not be a command you can run. Install BOTH binaries: `byn setup`
+# installs the spawn helper from beside byn.
+GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
+GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+sudo byn setup      # provisions privilege separation, and links byn into /usr/local/bin
 ```
+
+The install script and the system packages do all of that for you, including
+the `sudo byn setup` step — they ask for your password during the install. The
+Go toolchain runs no install hook, so a `go install` cannot provision itself;
+`byn setup` is the first moment byn has root, and it is what puts `byn` on the
+system PATH.
 
 **New to byn? Follow the [5-minute quickstart](docs/quickstart.md)** — install →
 daemon → vault → first secret → portal.

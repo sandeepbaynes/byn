@@ -14,16 +14,29 @@ plaintext.
 brew install sandeepbaynes/tap/byn
 # or
 curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
-# or, with the Go toolchain (builds from source) — install BOTH binaries:
-go install github.com/sandeepbaynes/byn/cmd/byn@latest
-go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+# or, with the Go toolchain (builds from source) — install BOTH binaries
+# somewhere already on your PATH, then provision:
+GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
+GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+sudo byn setup
 ```
+
+> **The install script and the packages provision for you.** They run
+> `byn setup` as part of installing, which is why they ask for your password:
+> privilege separation is what keeps an exec child's secrets out of your own
+> `ps`, and it needs root once. A `go install` cannot do this — the Go toolchain
+> runs no install hook — so it is the one path with a manual step.
+
+> **Why GOBIN.** Plain `go install` drops the binary in `~/go/bin`, which is on
+> no default PATH and outside sudo's `secure_path`, so `byn` is not a command
+> you can run and neither is `sudo byn`. Pointing GOBIN at a directory already
+> on your PATH avoids that; `sudo byn setup` also links byn into
+> `/usr/local/bin` once it can.
 
 > **Why two binaries.** `byn setup` installs the privileged spawn helper from
 > **beside the byn binary**, so a `go install` of `cmd/byn` alone cannot
 > provision privilege separation — setup will not find the helper. Homebrew,
-> the install script and the system packages ship both. byn runs fine without
-> it (privsep is off by default), but you would not be able to turn it on.
+> the install script and the system packages ship both.
 
 > **`go install` does not put byn on your PATH.** It installs to
 > `$(go env GOPATH)/bin` (usually `~/go/bin`); if `byn` is not found straight

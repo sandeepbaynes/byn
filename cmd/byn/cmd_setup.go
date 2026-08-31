@@ -91,6 +91,11 @@ func runProvision(stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "byn provisioned: daemon runs as %s, owner UID %d allowlisted\n",
 		privsep.DaemonUser, res.OwnerUID)
+	// Setup is the first moment byn has root, and therefore the first moment it
+	// can make itself runnable as plain `byn`. A `go install` leaves the binary
+	// in ~/go/bin, which is on no default PATH and outside sudo's secure_path —
+	// an install that produces a working binary nobody can invoke.
+	ensureOnSystemPath(stdout, stderr)
 	if res.Migrated {
 		_, _ = fmt.Fprintf(stdout, "relocated legacy %s -> %s (trust + passkeys preserved)\n",
 			res.LegacyDir, res.SystemDir)

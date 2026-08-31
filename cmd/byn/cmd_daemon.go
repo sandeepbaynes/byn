@@ -446,6 +446,12 @@ func runDaemonStatus(args []string) int {
 		fmt.Println(string(out))
 		return exitOK
 	}
+	// Said once, where it will be read: a byn that is not on PATH works only
+	// when invoked by its full path, and the person who hits that cannot run
+	// `byn` to ask byn about it.
+	if hint := pathHint(); hint != "" {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("path:"), hint)
+	}
 	fmt.Printf("daemon:  running (version %s, protocol %d..%d)\n",
 		resp.Version, resp.ProtocolMin, resp.ProtocolMax)
 	if note := staleDaemonNote(resp.Version, version); note != "" {

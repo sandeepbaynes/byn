@@ -5,6 +5,35 @@ list; this file carries what you need to know before upgrading.
 
 ## v0.5.1 — unreleased
 
+### Installing byn now provisions byn
+
+Privilege separation is what keeps an exec child's secrets out of your own `ps`,
+and it needed root once — from a second command, run by whoever remembered.
+Every install was therefore half an install, and the missing half was the
+isolation.
+
+The system packages (deb/rpm/apk) and `install.sh` now run `byn setup` as part
+of installing, while the package manager or the script is already elevated —
+which is why installing or upgrading asks for your password. Upgrades re-run it
+deliberately: the service unit and the spawn helper change between releases, and
+a helper left behind by an older byn is a version-skew bug waiting to happen.
+Removing a package tears the service down again and never touches the vault; an
+upgrade is told apart from a removal, so it does not stop the daemon mid-upgrade.
+Neither one fails the install if provisioning does not work — a machine without
+systemd is a normal reason to land there, byn still runs, and `byn doctor` says
+what is missing.
+
+`byn setup` also links byn into `/usr/local/bin` when it was installed somewhere
+only your own shell can see. `go install` puts binaries in `~/go/bin`, which is
+on no default PATH and outside sudo's `secure_path` — so the install produced a
+working binary that could not be run as `byn`, and could not be reached by
+`sudo byn` either. A symlink rather than a copy, so a later `go install` is
+picked up without re-running setup.
+
+The Go toolchain runs no install hook, so a `go install` cannot provision or
+place itself; it is the one path with a manual step, and the docs now say so and
+show how to install straight onto your PATH with `GOBIN`.
+
 ### Fixed
 
 - **byn could not be started on a machine it had been uninstalled from.**
