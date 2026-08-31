@@ -12,6 +12,44 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.5.2
+
+**Headline:** the fix for v0.5.1 — a byn installed outside a system directory
+produced a service that could not start.
+
+### Fixed
+
+- **The service could not start when byn lived in a home directory.** v0.5.1
+  linked byn into `/usr/local/bin` with a symlink and wrote the service unit
+  pointing at wherever byn actually lived — which, for a `go install`, is inside
+  your home. The daemon runs as the `_byn` service user, which cannot read
+  there, so systemd failed at exec with `Permission denied` and the service
+  flapped until it gave up: `sudo byn restart` reported success while
+  `byn status` still said the daemon was down.
+
+  byn is now **copied** into `/usr/local/bin` before the service is installed,
+  and the unit points at that copy — a real file the service user can read. The
+  spawn helper is copied alongside it, since the daemon execs that by absolute
+  path too. The trade: a later `go install` needs `byn setup` re-run to take
+  effect. The packages already do that on upgrade, and a stale binary is a
+  smaller problem than a service that cannot start.
+- **`sudo byn …` suggestions were unrunnable from a `go install`.** sudo
+  resolves commands against `secure_path`, which never includes `~/go/bin` or
+  `~/.local/bin`. So `sudo byn setup` answered `byn: command not found` — and
+  the command being recommended was the one that fixes exactly that. byn now
+  prints the absolute path whenever it is not somewhere sudo searches.
+
+### Upgrade notes (from v0.5.1)
+
+- No schema change; vaults, trust records and audit logs are untouched.
+- If v0.5.1 left you with a service that will not start, re-running setup is the
+  whole fix — it replaces the symlink with a copy and rewrites the unit:
+  ```sh
+  sudo $(which byn) setup
+  ```
+
+---
+
 ## v0.5.1
 
 **Headline:** installing byn now installs byn — the packages and the install
