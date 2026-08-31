@@ -20,6 +20,15 @@ value the file never asked for.
 
 ### Fixed
 
+- **`byn get` asked for the master password and then refused the read.**
+  Supplying it authorized the action, but the value still needed the vault key
+  in memory, so byn prompted, accepted the right password, and answered "vault
+  is locked". A password now reads the value — the key is unwrapped for that one
+  read and zeroed immediately after, so the vault stays locked. It authorizes a
+  value, not a session: the next read without a credential is refused as before.
+
+  Note the remaining asymmetry: `byn put` on a locked vault still requires
+  `byn unlock`, and says so plainly rather than prompting first.
 - **Captured row keys bypassed the `.byn`'s own `[exec] env` list.** When a
   `.byn` is trusted, its capability captures a key per variable. The loop that
   injects from those keys intersected against `rec.EnvAllowlist()`, which

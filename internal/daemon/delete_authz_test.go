@@ -324,3 +324,40 @@ func TestDelete_MissingNameSaysSoRatherThanAskingForAPassword(t *testing.T) {
 		t.Fatalf("code = %v, want not_found", code)
 	}
 }
+
+// byn asks for the master password when a read needs authorizing. Having been
+// given the right one, it must read — not report "vault is locked".
+//
+// Verifying a password and holding the vault key are different things, and the
+// read used to fail on the second after succeeding at the first. Being asked
+// for a credential, supplying it, and being refused anyway is indistinguishable
+// from the tool being broken.
+func TestGet_PasswordReadsWithoutUnlocking(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SECRET", []byte("the-value"))
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	var resp ipc.GetResp
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "SECRET", Password: pw}, &resp); err != nil {
+		t.Fatalf("get with the master password: %v", err)
+	}
+	if string(resp.Value) != "the-value" {
+		t.Errorf("value = %q, want the-value", resp.Value)
+	}
+
+	// It authorized a value, not a session: the vault is still locked, so the
+	// next read without a credential is still refused.
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "SECRET"}, &ipc.GetResp{}); err == nil {
+		t.Fatal("a password read left the vault unlocked")
+	}
+
+	// And a wrong password reads nothing.
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "SECRET", Password: []byte("wrong")}, &ipc.GetResp{}); err == nil {
+		t.Fatal("a wrong password returned a value")
+	}
+}

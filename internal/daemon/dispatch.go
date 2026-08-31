@@ -1444,7 +1444,17 @@ func (d *Daemon) handleGet(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	var resp *ipc.Envelope
 	var err error
 	if !mineOK {
-		got, err = st.GetEnvVar(ctx, scope, req.Name)
+		// A locked vault with a password behind the call: read it with that
+		// password rather than refusing. byn had just asked for it, accepted
+		// it, and then reported "vault is locked" — which reads as byn
+		// ignoring what the person typed. The key is unwrapped for this one
+		// read and zeroed after, so the vault stays locked: this authorizes a
+		// value, not a session.
+		if st.IsLocked() && len(req.Password) > 0 {
+			got, err = st.GetEnvVarWithPassword(ctx, req.Password, scope, req.Name)
+		} else {
+			got, err = st.GetEnvVar(ctx, scope, req.Name)
+		}
 	}
 	if err != nil {
 		resp = mapVaultErr(env.ID, err)

@@ -1102,7 +1102,41 @@ func (s *Store) GetEnvVar(ctx context.Context, scope Scope, name string) (Entry,
 		return Entry{}, ErrLocked
 	}
 	defer zero(key)
+	return s.getEnvVarWithKey(ctx, key, scope, name)
+}
 
+// GetEnvVarWithPassword reads one value using a password, without unlocking.
+//
+// byn asks for the master password when a read needs authorizing, and then had
+// nothing to do with it: verifying a password and holding the vault key are
+// different things, and the read still failed with "vault is locked". Being
+// asked for a credential, giving the right one, and being refused anyway is the
+// kind of contradiction that makes a tool feel broken.
+//
+// The key is unwrapped for this one read and zeroed straight after, so the
+// vault stays locked: this authorizes a value, not a session.
+func (s *Store) GetEnvVarWithPassword(ctx context.Context, password []byte, scope Scope, name string) (Entry, error) {
+	if err := scope.Validate(); err != nil {
+		return Entry{}, err
+	}
+	if err := validateEntryName(name); err != nil {
+		return Entry{}, err
+	}
+	wrapped, err := os.ReadFile(filepath.Join(s.dir, wrappedFilename)) // #nosec G304 -- path is store-configured
+	if err != nil {
+		return Entry{}, fmt.Errorf("vault: read wrapped key: %w", err)
+	}
+	vk, err := vcrypto.Unwrap(password, wrapped)
+	if err != nil {
+		return Entry{}, err
+	}
+	defer zero(vk)
+	return s.getEnvVarWithKey(ctx, vk, scope, name)
+}
+
+// getEnvVarWithKey is the shared body: the same lookup and inheritance rules
+// whichever way the caller came by the vault key.
+func (s *Store) getEnvVarWithKey(ctx context.Context, key []byte, scope Scope, name string) (Entry, error) {
 	projectID, envID, err := s.scopeIDs(ctx, scope)
 	if err != nil {
 		return Entry{}, err

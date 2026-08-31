@@ -7,6 +7,13 @@ list; this file carries what you need to know before upgrading.
 
 ### Fixed
 
+- **`byn get` asked for the master password, then refused the read.** Supplying
+  the password authorized the action, but the value still needed the vault key
+  in memory — so byn prompted, accepted the right password, and answered "vault
+  is locked". Being asked for a credential, giving the correct one, and being
+  refused anyway is indistinguishable from the tool being broken. A password now
+  reads the value: the key is unwrapped for that one read and zeroed after, so
+  the vault stays locked and it authorizes a value rather than a session.
 - **A capability's captured row keys bypassed the `.byn`'s own `[exec] env`
   list.** The loop that injects values from keys captured at grant time
   intersected against `rec.EnvAllowlist()`, which returns nil both for "this is
