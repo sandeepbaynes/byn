@@ -602,8 +602,8 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// file has since dropped a variable, that is a narrowing the author asked
 	// for and it applies immediately — so injection is intersected with the
 	// allowlist currently in force. (A file that ADDED a name never reaches
-	// here: that is a widening and is refused until approved.)
-	allowed := rec.EnvAllowlist()
+	// here: that is a widening and is refused until approved.) That
+	// intersection is done per loop below, from the record's snapshot.
 
 	// A wildcard grant carries the scope key, which derives a row key for any
 	// entry in the scope — including ones written after the grant. Without it,
@@ -679,6 +679,14 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 		}
 	}
 
+	// The same allowlist the authored loop obeys, and for the same reason:
+	// rec.EnvAllowlist() returns nil both for "wildcard" and for "EnvGrants is
+	// empty", and EnvGrants is not persisted — so it is empty on the ordinary
+	// call, and a nil read as "inject everything" let every name captured at
+	// grant time through, past the .byn's own [exec] env list. Narrower than
+	// the same bug on the authored path (only names that existed at grant
+	// time), identical in kind.
+	capDeclared, capWildcard := snapshotEnvAllowlist(rec)
 	for name, rk := range rowKeys {
 		if name == vault.CapScopeKeyName || name == vault.CapAuthoredKeyName {
 			continue
@@ -686,15 +694,22 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 		if _, done := seen[name]; done {
 			continue
 		}
-		if allowed != nil {
-			if _, ok := allowed[name]; !ok {
-				continue
+		if !capWildcard {
+			if _, ok := capDeclared[name]; !ok {
+				continue // this .byn does not ask for it
 			}
 		}
 		val, verr := st.OpenEnvVarWithRowKey(ctx, scope, name, rk)
 		if verr != nil {
 			if errors.Is(verr, vault.ErrNotFound) {
 				continue // captured var since deleted — skip
+			}
+			if vault.ErrRowKeyUnsupported(verr) {
+				// Re-sealed under another scheme since the grant — an
+				// unattended write, typically. The authored key opens those,
+				// and did so above. Failing here aborted the entire exec over
+				// one value, including every value that WAS readable.
+				continue
 			}
 			return nil, internalErr(id, fmt.Errorf("decrypt %q via capability: %w", name, verr))
 		}

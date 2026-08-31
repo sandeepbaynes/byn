@@ -746,7 +746,12 @@ func (s *Store) OpenEnvVarWithRowKey(ctx context.Context, scope Scope, name stri
 		return vcrypto.DecryptWithAAD(rowKey, r.Value,
 			s.entryAADV3(r.ProjectID, r.EnvID, kindAADEnvVar, name))
 	default:
-		return nil, fmt.Errorf("vault: %q is not stored under a per-row key (aad_version=%d); re-trust the .byn", name, r.AADVersion)
+		// A sentinel, not just prose: exec has to tell "this entry is sealed
+		// under a different scheme, another path covers it" from "decryption
+		// failed". Reading the second as the first aborts a whole exec over a
+		// value the .byn never asked for.
+		return nil, fmt.Errorf("%w: %q (aad_version=%d); re-trust the .byn",
+			errRowKeyUnsupported, name, r.AADVersion)
 	}
 }
 
@@ -1846,6 +1851,14 @@ func (s *Store) OpenEnvVarWithScopeKey(ctx context.Context, scope Scope, name st
 // errScopeKeyUnsupported marks an entry a scope key cannot open — one still
 // sealed under an older per-row scheme.
 var errScopeKeyUnsupported = errors.New("vault: entry predates scope keys")
+
+// errRowKeyUnsupported marks an entry that is not sealed under a per-row key —
+// an authored (unattended) write, for instance, which the authored key opens.
+var errRowKeyUnsupported = errors.New("vault: entry is not stored under a per-row key")
+
+// ErrRowKeyUnsupported reports whether err is that case, so a caller holding a
+// captured row key can skip the entry rather than fail.
+func ErrRowKeyUnsupported(err error) bool { return errors.Is(err, errRowKeyUnsupported) }
 
 // ErrScopeKeyUnsupported reports whether err means an entry is stored under a
 // scheme a scope key cannot derive.

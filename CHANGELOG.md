@@ -3,6 +3,27 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.5.3 — unreleased
+
+### Fixed
+
+- **A capability's captured row keys bypassed the `.byn`'s own `[exec] env`
+  list.** The loop that injects values from keys captured at grant time
+  intersected against `rec.EnvAllowlist()`, which returns nil both for "this is
+  a wildcard grant" and for "EnvGrants is empty" — and EnvGrants is not
+  persisted, so it is empty on the ordinary call. A nil read as "inject
+  everything" let every name captured when the `.byn` was trusted through, past
+  the list the file actually declares. This is the same mistake as the
+  unattended-value bypass fixed earlier, at a second site; it is narrower, being
+  limited to names that already existed at grant time, and identical in kind.
+- **One undecryptable value aborted the entire exec.** A captured entry that had
+  since been re-sealed under another scheme — an unattended write, typically —
+  returned a decryption error that failed the whole call, so a value the `.byn`
+  never asked for stopped every value it did ask for from being delivered. Those
+  entries are opened by the authored key on another path; the capability loop
+  now skips them, and the vault reports the case as a distinct condition rather
+  than as prose inside a generic failure.
+
 ## v0.5.2 — 2026-08-31
 
 ### Fixed

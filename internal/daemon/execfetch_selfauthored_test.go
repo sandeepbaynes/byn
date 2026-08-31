@@ -1690,3 +1690,46 @@ func TestRunReveal_LockedVaultIsNotARotation(t *testing.T) {
 		t.Errorf("status = %q, want unchanged — nothing was touched", st)
 	}
 }
+
+// A capability's captured row keys are not a licence to inject anything.
+//
+// The per-row-key loop intersected against rec.EnvAllowlist(), which returns
+// nil both for "wildcard" and for "EnvGrants is empty" — and EnvGrants is not
+// persisted, so it is empty on the ordinary call. Reading that nil as "inject
+// everything" let every name captured at grant time through, past the .byn's
+// own [exec] env list. The same mistake as on the authored path, narrower only
+// because it is limited to names that existed when the grant was made.
+//
+// It also aborted the whole exec when one captured entry had since been
+// re-sealed under another scheme: a value the .byn never asked for could stop
+// every value it did ask for from being delivered.
+func TestExecCapability_CapturedKeysStillObeyTheAllowlist(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// Two values exist when the .byn is trusted, so the capability captures a
+	// row key for each — but the file only ever declares one of them.
+	putVar(t, c, ipc.Scope{}, "DECLARED", []byte("yes"))
+	putVar(t, c, ipc.Scope{}, "UNDECLARED", []byte("no"))
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"DECLARED\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	got := valueMap(resp.Values)
+	if got["DECLARED"] != "yes" {
+		t.Errorf("DECLARED = %q, want yes", got["DECLARED"])
+	}
+	if _, leaked := got["UNDECLARED"]; leaked {
+		t.Errorf("a value the .byn never declared was injected: %v", got)
+	}
+}
