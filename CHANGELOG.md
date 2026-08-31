@@ -3,6 +3,20 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.5.1 — unreleased
+
+### Fixed
+
+- **`go install` produced a binary that reported version 0.0.1.** The version is
+  stamped by the linker at release time, and `go install` applies none of those
+  flags — so a correctly installed v0.5.0 called itself by the placeholder that
+  a plain `go build` starts from. Go embeds the module version in the binary
+  itself, so when nothing was stamped byn now asks the binary: an install from
+  the module proxy reports its real version, and a build from a working tree
+  reports the commit it came from and says when that tree was edited. A stamped
+  version always wins, since `git describe` knows things a module version cannot
+  express.
+
 ## v0.5.0 — 2026-08-31
 
 byn stops needing a person in the middle of an agent's work.

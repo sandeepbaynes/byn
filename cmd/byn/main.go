@@ -16,17 +16,76 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 )
 
 // Build metadata. version/commit/buildDate are stamped at build time via
-// -ldflags '-X main.version=... -X main.commit=... -X main.buildDate=...'.
-// The defaults let a plain `go build` still report a sensible version.
+// -ldflags '-X main.version=... -X main.commit=... -X main.buildDate=...',
+// which is how the release builds and `make build` set them.
+//
+// ldflags are not the only way byn gets installed, though: `go install
+// github.com/sandeepbaynes/byn/cmd/byn@latest` applies none of them, and a
+// binary installed that way reported "byn 0.0.1" — this placeholder — while
+// being a perfectly good v0.5.0. Go embeds the module version in the binary
+// itself, so when nothing was stamped, ask the binary.
 var (
-	version   = "0.0.1"
+	version   = defaultVersion
 	commit    = ""
 	buildDate = ""
 )
+
+// defaultVersion is what an unstamped build starts from, and the signal that
+// the embedded build info should be consulted instead.
+const defaultVersion = "0.0.1"
+
+// init fills in the build metadata for installs that carry no ldflags.
+//
+// Stamped values always win: a release build knows its own version, including
+// the "0.4.1-78-g1be766a" form from `git describe` that carries the commits
+// since a tag, which the module version cannot express.
+func init() {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		version, commit, buildDate = fromBuildInfo(bi, version, commit, buildDate)
+	}
+}
+
+// fromBuildInfo fills in build metadata the linker did not stamp.
+//
+// Stamped values always win: a release build knows its own version, including
+// the "0.4.1-78-g1be766a" form from `git describe` that carries the commits
+// since a tag, which a module version cannot express.
+func fromBuildInfo(bi *debug.BuildInfo, ver, sha, date string) (string, string, string) {
+	if ver != defaultVersion {
+		return ver, sha, date // stamped; the binary knows better than we do
+	}
+	// go install module@version records the exact module version. A build from
+	// a working tree records "(devel)", which names no release.
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		ver = strings.TrimPrefix(v, "v")
+	}
+	dirty := false
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if sha == "" && len(s.Value) >= 7 {
+				sha = s.Value[:7]
+			}
+		case "vcs.time":
+			if date == "" {
+				date = s.Value
+			}
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	// A binary built from an edited tree is not the commit it names, and
+	// saying so costs one word.
+	if dirty && sha != "" {
+		sha += "-dirty"
+	}
+	return ver, sha, date
+}
 
 const (
 	appAuthor   = "Sandeep Baynes"

@@ -28,9 +28,31 @@ older things
 
 // A dated heading is a release; "unreleased" is not a version to put on a
 // website, and the next heading down is the one that shipped.
-func TestVersionFromChangelog_SkipsNothingButNeedsAVersion(t *testing.T) {
+func TestVersionFromChangelog_SkipsAnUnreleasedHeading(t *testing.T) {
+	got, err := VersionFromChangelog([]byte(`# Changelog
+
+## v0.5.1 — unreleased
+
+being written
+
+## v0.5.0 — 2026-08-31
+
+shipped
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got != "v0.5.0" {
+		t.Errorf("version = %q, want v0.5.0 — the site must not name a release nobody can install", got)
+	}
+}
+
+func TestVersionFromChangelog_NeedsADatedRelease(t *testing.T) {
 	if _, err := VersionFromChangelog([]byte("# Changelog\n\nnothing here\n")); err == nil {
 		t.Error("a CHANGELOG with no release heading should be an error, not a default")
+	}
+	if _, err := VersionFromChangelog([]byte("# Changelog\n\n## v9.9.9 — unreleased\n")); err == nil {
+		t.Error("an unreleased heading alone should be an error, not a version")
 	}
 }
 

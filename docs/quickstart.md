@@ -18,6 +18,12 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 go install github.com/sandeepbaynes/byn/cmd/byn@latest
 ```
 
+> **`go install` does not put byn on your PATH.** It installs to
+> `$(go env GOPATH)/bin` (usually `~/go/bin`); if `byn` is not found straight
+> after installing, that directory is missing from your PATH — add
+> `export PATH="$HOME/go/bin:$PATH"` to your shell rc. Homebrew and the install
+> script handle this for you.
+
 > **Install location matters for `sudo byn setup`.** The install script and
 > system packages (apt, dnf) put `byn` in `/usr/local/bin` or `/usr/bin` — paths
 > sudo can always find. Homebrew on Apple Silicon (`/opt/homebrew/bin`) and

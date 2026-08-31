@@ -24,9 +24,14 @@ var Version = "v0.0.0-dev"
 // linked from the site footer.
 const ReleasesURL = "https://github.com/sandeepbaynes/byn/releases"
 
-// changelogRelease matches a released version heading: "## v1.2.3", with
-// anything after it (the date). An unreleased heading has no version to show.
-var changelogRelease = regexp.MustCompile(`(?m)^## (v\d+\.\d+\.\d+)\b`)
+// changelogRelease matches a RELEASED version heading — "## v1.2.3 — 2026-08-31".
+//
+// The date is required, and that is the whole point. A heading is added as
+// "## v1.2.4 — unreleased" while the next version is being written, and
+// matching it would put a version on the website that nobody can install yet.
+// Dating the heading is the last thing done before tagging, so the site starts
+// naming a release at exactly the moment there is one.
+var changelogRelease = regexp.MustCompile(`(?m)^## (v\d+\.\d+\.\d+)\s+[—-]\s+\d{4}-\d{2}-\d{2}`)
 
 // VersionFromChangelog returns the newest release named in a CHANGELOG.
 //
@@ -37,7 +42,7 @@ var changelogRelease = regexp.MustCompile(`(?m)^## (v\d+\.\d+\.\d+)\b`)
 func VersionFromChangelog(changelog []byte) (string, error) {
 	m := changelogRelease.FindSubmatch(changelog)
 	if m == nil {
-		return "", fmt.Errorf("no released version heading (## vX.Y.Z) in CHANGELOG")
+		return "", fmt.Errorf("no dated release heading (## vX.Y.Z — YYYY-MM-DD) in CHANGELOG")
 	}
 	return string(m[1]), nil
 }
