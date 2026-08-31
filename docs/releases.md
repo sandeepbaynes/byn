@@ -12,6 +12,40 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.5.4
+
+**Headline:** `byn doctor` says when a newer byn is installed somewhere nothing
+will run it.
+
+### Fixed
+
+- **An upgrade could install a byn that never runs, silently.**
+  `go install …@latest` with no `GOBIN` puts the binary in `~/go/bin`, which is
+  on no default PATH. So an older byn elsewhere kept answering, and
+  `byn version` reported the old number immediately after a successful upgrade.
+
+  Nothing was broken and nothing said anything — the install succeeded, and the
+  wrong binary replied. Every observable was individually correct and the
+  conclusion you would draw from them was wrong.
+
+  `byn doctor` now lists every byn it can find with the version each reports,
+  and fails when they disagree, naming which one PATH actually reaches. Copies
+  at the same version pass quietly; a single install says nothing.
+
+### Upgrade notes (from v0.5.3)
+
+- No schema change; vaults, trust records and audit logs are untouched.
+- Installing with the Go toolchain, point `GOBIN` at a directory already on your
+  PATH, or `byn` will not be the byn you just installed:
+  ```sh
+  GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
+  GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+  sudo $(which byn) setup
+  ```
+  `byn doctor` will tell you if you have more than one.
+
+---
+
 ## v0.5.3
 
 **Headline:** grants can be taken back, and a `.byn`'s `[exec] env` list is the
