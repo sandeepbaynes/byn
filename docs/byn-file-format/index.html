@@ -312,9 +312,9 @@ test = &quot;cargo test&quot;
     symlink to <code>/private/tmp</code>, so the same file appears under two
     paths.)</li>
     <li><strong>sha256</strong> — SHA-256 of the file's bytes.</li>
-    <li><strong>mtime</strong> — modification time at trust-grant time (v2 records). A
-    <code>touch</code> that changes only the mtime is flagged as CHANGED, forcing
-    re-trust; use <code>byn trust diff PATH</code> to confirm nothing changed.</li>
+    <li><strong>mtime</strong> — modification time at trust-grant time. Recorded, but no
+    longer decisive on its own: a <code>touch</code> that changes only the mtime is
+    reconciled as an unchanged policy and does not force a re-trust.</li>
     <li><strong>snapshot</strong> — full file body at grant time, used by <code>byn trust diff</code>.</li>
     <li><strong>MACs</strong> — machine-fingerprint MAC + vault-key MAC (v2). Detects
     forged records and records copied from another machine.</li>
@@ -338,27 +338,76 @@ test = &quot;cargo test&quot;
     </thead>
     <tbody>
     <tr>
-    <td>Trusted (path + hash match, mtime match, MACs valid)</td>
+    <td>Trusted (hash matches, MACs valid)</td>
     <td><strong>Inject</strong> the allowlisted vars</td>
+    </tr>
+    <tr>
+    <td>Changed, but asking for no more than was granted</td>
+    <td><strong>Inject</strong> — see &quot;A change is judged by what it asks for&quot; below</td>
+    </tr>
+    <tr>
+    <td>Changed, asking for MORE than was granted</td>
+    <td><strong>Queue a decision</strong> and exit 75 with the request id — <code>byn approve &lt;id&gt;</code></td>
     </tr>
     <tr>
     <td>Untrusted (no record)</td>
     <td><strong>Abort</strong> — <code>byn trust PATH</code></td>
     </tr>
     <tr>
-    <td>Changed (hash or mtime differs)</td>
-    <td><strong>Abort</strong> — re-approve with <code>byn trust PATH</code> (use <code>byn trust diff PATH</code> to see what changed)</td>
-    </tr>
-    <tr>
     <td>Tampered (a MAC failed — forged / copied from another machine)</td>
     <td><strong>Abort</strong> — re-establish with <code>byn trust PATH</code></td>
     </tr>
     <tr>
-    <td>Stale (record predates v2 hardening)</td>
-    <td><strong>Abort</strong> — re-trust to add mtime + snapshot protection</td>
+    <td>Stale (record predates MAC hardening)</td>
+    <td><strong>Abort</strong> — re-trust to add snapshot protection</td>
     </tr>
     </tbody>
     </table>
+    <h3 id="a-change-is-judged-by-what-it-asks-for-not-by-its-bytes">A change is judged by what it asks for, not by its bytes</h3>
+    <p>Trust used to be pinned to the file's exact bytes and mtime, so any edit
+    blocked every command in the project until a human retyped the master
+    password. A reordered list, an added comment, a reformatted table, and the
+    <code>git checkout</code> that rewrites mtimes all landed there — and none of them ask
+    for anything new. An agent cannot answer that prompt, so one edit stalled
+    every agent working in the project.</p>
+    <p>byn now compares the <strong>policy</strong> a file requests — scope, the <code>[exec] env</code>
+    allowlist, pinned actions, writable paths, aliases, and <code>[auth]</code> overrides —
+    against the policy that was granted:</p>
+    <ul>
+    <li><strong>Nothing new requested</strong> → the run proceeds. Formatting, comments, and
+    ordering carry no authority.</li>
+    <li><strong>Less requested</strong> (a variable or action removed) → applies immediately,
+    with no re-approval. Nobody has to consent to being granted <em>less</em>, and
+    prompting for it only teaches people the prompt is noise. Enforcement
+    follows the current file, so a removed variable stops being injected at
+    once rather than lingering until the next re-trust.</li>
+    <li><strong>More requested</strong> → a decision is queued and the caller is told its id
+    instead of dying on a prompt. See <a href="#approvals">Approvals</a>.</li>
+    </ul>
+    <p>Four kinds of widening are treated as high-risk however small the diff
+    looks: introducing a wildcard, moving <code>[scope]</code>, granting write access to a
+    credential directory (<code>.ssh</code>, <code>.aws</code>, <code>.gnupg</code>, …), and relaxing an <code>[auth]</code>
+    gate. <code>get = &quot;none&quot;</code> turns every secret in scope into something any process
+    at your UID can print, so it must never read as a routine list addition.</p>
+    <h3 id="approvals">Approvals</h3>
+    <p>When a <code>.byn</code> asks for more than it was granted, <code>byn exec</code> does not stop at
+    a password prompt. It records the request, prints its id, and exits <strong>75</strong>
+    (<code>EX_TEMPFAIL</code>) — a distinct outcome from refusal, because retrying after
+    someone answers will succeed.</p>
+    <pre><code class="language-sh">byn approve                     # what is waiting, and why
+byn approve &lt;id&gt;                # grant it (asks for the master password)
+byn approve --deny &lt;id&gt;         # refuse it (no password needed)
+byn approve --all               # answer everything in one go
+byn exec --wait-approval -- CMD # block until answered, instead of polling
+</code></pre>
+    <p>Approving grants authority, so it takes the master password exactly as
+    <code>byn trust</code> does, and it re-grants the file so the caller's next attempt
+    succeeds. Denying grants nothing and needs no password — refusing is meant
+    to be the cheaper action.</p>
+    <p>Identical requests collapse onto one entry with a retry count, requests are
+    capped per project, and a question denied repeatedly goes on hold. An
+    approver worn down by a flood is how these systems get beaten in practice,
+    so the volume is bounded by design rather than left to the caller's manners.</p>
     <h3 id="granting-trust-is-a-separate-password-gated-act">Granting trust is a separate, password-gated act</h3>
     <p>Discovery never grants trust. You approve a <code>.byn</code> explicitly with
     <code>byn trust PATH</code>, which <strong>always requires the master password</strong> — proof
@@ -371,9 +420,9 @@ test = &quot;cargo test&quot;
     <ul>
     <li>A y/N prompt can be answered by the very agent that planted the file
     — it controls the CLI's stdin. A password it doesn't have cannot be.</li>
-    <li>A previously-trusted <code>.byn</code> that <em>changed</em> would otherwise be silently
-    re-trusted on a &quot;y&quot;. Now a change is <strong>refused</strong> until a human
-    re-approves it with the password.</li>
+    <li>A previously-trusted <code>.byn</code> that asks for MORE would otherwise be
+    silently re-trusted on a &quot;y&quot;. Now such a change waits for a human, who
+    approves it with the password.</li>
     </ul>
     <p>So the human approves once, in a deliberate password-gated step; the
     agent uses the result from then on but can never grant — or silently
@@ -497,6 +546,8 @@ export BYN_ENV=dev
     <a href="#trust-on-first-use-tofu" class="toc-item">Trust-on-First-Use (TOFU)</a>
     <a href="#storage" class="toc-item sub">Storage</a>
     <a href="#discovery-applies-the-scope-byn-exec-enforces-trust" class="toc-item sub">Discovery applies the scope; byn exec enforces trust</a>
+    <a href="#a-change-is-judged-by-what-it-asks-for-not-by-its-bytes" class="toc-item sub">A change is judged by what it asks for, not by its bytes</a>
+    <a href="#approvals" class="toc-item sub">Approvals</a>
     <a href="#granting-trust-is-a-separate-password-gated-act" class="toc-item sub">Granting trust is a separate, password-gated act</a>
     <a href="#skipping-discovery" class="toc-item">Skipping discovery</a>
     <a href="#examples" class="toc-item">Examples</a>
@@ -514,7 +565,7 @@ export BYN_ENV=dev
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn <a href="../../docs/releases/">v0.4.1</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/byn-file-format.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.5.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/byn-file-format.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>

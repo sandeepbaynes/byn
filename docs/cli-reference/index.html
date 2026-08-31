@@ -53,6 +53,7 @@
       <a href="#config-file-bynconfig" class="sb-item">Config file (~/.byn/config)</a>
       <a href="#environment-variables" class="sb-item">Environment variables</a>
       <a href="#related" class="sb-item">Related</a>
+      <a href="#approvals" class="sb-item">Approvals</a>
     </div>
   </aside>
 
@@ -156,12 +157,24 @@ Error: --vault specified twice with different values: &quot;a&quot; vs &quot;b&q
     <td><code>3</code></td>
     <td>Daemon returned a typed error (wrong password, locked, not found, audit chain broken, etc.)</td>
     </tr>
+    <tr>
+    <td><code>75</code></td>
+    <td>A decision is queued and nobody has answered it yet (<code>EX_TEMPFAIL</code>). Not a refusal — retry after <code>byn approve</code></td>
+    </tr>
     </tbody>
     </table>
     <p>Use these for scripting:</p>
     <pre><code class="language-sh">byn get DB_URL || case $? in
     2) echo &quot;start the daemon&quot; ;;
     3) echo &quot;unlock the vault&quot; ;;
+esac
+
+# An agent that must not block can carry on and retry later:
+byn exec -- ./build.sh
+case $? in
+    0)  ;;                                  # ran
+    75) echo &quot;waiting on a human; will retry&quot; ;;
+    *)  echo &quot;actually failed&quot; ;;
 esac
 </code></pre>
     <hr>
@@ -925,6 +938,41 @@ enabled = true
     <code>audit chain</code>.</li>
     <li><a href="troubleshooting/">Troubleshooting</a> — common errors with each command.</li>
     </ul>
+    <hr>
+    <h2 id="approvals">Approvals</h2>
+    <p>When a <code>.byn</code> asks for more authority than it was granted, <code>byn exec</code> does not
+    stop at a password prompt no agent can answer. It queues the decision, prints
+    its id, and exits <code>75</code>. The work resumes on the next attempt once someone has
+    answered.</p>
+    <h3 id="byn-approve---json"><code>byn approve [--json]</code></h3>
+    <p>Lists what is waiting: the file, what would be granted <strong>in plain words</strong>, how
+    long it has waited, and how many times it has been re-asked. Entries marked <code>!</code>
+    are the consequential ones — a wildcard, a scope move, write access to a
+    credential directory, or an <code>[auth]</code> gate being relaxed.</p>
+    <pre><code>  45e16b0d2abe  /home/u/proj/.byn
+      injects PSQL_CREDENTIALS
+      asked 3m12s ago, retried 2×
+</code></pre>
+    <h3 id="byn-approve---password-stdin-id"><code>byn approve [--password-stdin] ID...</code></h3>
+    <p>Grants the request. Takes the master password, exactly as <code>byn trust</code> does,
+    because approving grants authority. It re-grants the <code>.byn</code>, so the caller's
+    next attempt succeeds — recording a decision without applying it would leave
+    the caller stuck asking forever.</p>
+    <h3 id="byn-approve---deny-id"><code>byn approve --deny ID...</code></h3>
+    <p>Refuses. Needs no password, because refusing grants nothing. This asymmetry is
+    deliberate: if saying no costs more than saying yes, people learn to say yes.</p>
+    <p>A request denied repeatedly goes on hold and stops being askable for a while,
+    so a caller cannot re-ask until someone gives in.</p>
+    <h3 id="byn-approve---all---password-stdin"><code>byn approve --all [--password-stdin]</code></h3>
+    <p>Answers every pending request; one password covers the batch, so clearing a
+    backlog does not become its own chore.</p>
+    <h3 id="byn-exec---wait-approvalduration----command"><code>byn exec --wait-approval[=DURATION] -- COMMAND</code></h3>
+    <p>Blocks until the decision lands instead of returning <code>75</code> immediately. Defaults
+    to two minutes — what is being waited on is a person noticing a request. It
+    polls rather than holding a connection, so a daemon restart mid-wait costs one
+    interval rather than the whole wait.</p>
+    <p>The default remains non-blocking: a caller that must not be interrupted should
+    not be made to wait by default.</p>
 
     <div class="docs-nav">
       <a href="../quickstart/" class="docs-nav-btn">
@@ -998,6 +1046,12 @@ enabled = true
     <a href="#discovery--trust" class="toc-item sub">Discovery / trust</a>
     <a href="#pager-and-hint-env-vars" class="toc-item sub">Pager and hint env vars</a>
     <a href="#related" class="toc-item">Related</a>
+    <a href="#approvals" class="toc-item">Approvals</a>
+    <a href="#byn-approve---json" class="toc-item sub">byn approve [--json]</a>
+    <a href="#byn-approve---password-stdin-id" class="toc-item sub">byn approve [--password-stdin] ID...</a>
+    <a href="#byn-approve---deny-id" class="toc-item sub">byn approve --deny ID...</a>
+    <a href="#byn-approve---all---password-stdin" class="toc-item sub">byn approve --all [--password-stdin]</a>
+    <a href="#byn-exec---wait-approvalduration----command" class="toc-item sub">byn exec --wait-approval[=DURATION] -- COMMAND</a>
   </nav>
 
 </div>
@@ -1005,7 +1059,7 @@ enabled = true
 <footer class="site-footer">
   <div class="footer-brand">
     <div class="nav-mark" style="width:20px;height:20px;border-radius:5px;"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 7a5 5 0 0 0-5 5v3H9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-2v-3a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3h-6v-3a3 3 0 0 1 3-3zm0 8a2 2 0 0 1 1 3.73V22h-2v-1.27A2 2 0 0 1 16 17z" fill="#34d8a0"/></svg></div>
-    <span>byn <a href="../../docs/releases/">v0.4.1</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
+    <span>byn <a href="../../docs/releases/">v0.5.0</a> · docs sourced from <a href="https://github.com/sandeepbaynes/byn/blob/main/docs/cli-reference.md">github.com/sandeepbaynes/byn/docs</a></span>
   </div>
   <div>
     <a href="../../index.html">Home</a>

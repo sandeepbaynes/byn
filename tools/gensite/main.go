@@ -40,6 +40,19 @@ func run(args []string, out io.Writer) error {
 		return fmt.Errorf("docs dir %q not found (run from repo root or pass -root): %w", docsDir, err)
 	}
 
+	// The version the site shows comes from CHANGELOG.md, which is dated as
+	// part of releasing anyway. Deriving it means the site cannot be left
+	// naming the previous release, which is exactly what happened at v0.5.0.
+	changelog, err := os.ReadFile(filepath.Join(*root, "CHANGELOG.md")) //nolint:gosec // repo root from a flag
+	if err != nil {
+		return fmt.Errorf("read CHANGELOG.md (needed for the site version): %w", err)
+	}
+	version, err := site.VersionFromChangelog(changelog)
+	if err != nil {
+		return fmt.Errorf("CHANGELOG.md: %w", err)
+	}
+	site.Version = version
+
 	pages := site.Manifest()
 	changed := 0
 	for _, p := range pages {
@@ -69,10 +82,34 @@ func run(args []string, out io.Writer) error {
 		}
 	}
 
+	// The landing page is hand-authored HTML, not one of the manifest pages, so
+	// it has to be stamped separately — and it is the page that was wrong.
+	landingPath := filepath.Join(*root, "index.html")
+	landing, err := os.ReadFile(landingPath) //nolint:gosec // repo root from a flag
+	if err != nil {
+		return fmt.Errorf("read landing page: %w", err)
+	}
+	stamped, err := site.StampLanding(string(landing), version)
+	if err != nil {
+		return err
+	}
+	diff, err := writeOrCheck(landingPath, stamped, *check)
+	if err != nil {
+		return err
+	}
+	if diff {
+		changed++
+		if *check {
+			_, _ = fmt.Fprintf(out, "stale: %s\n", relTo(*root, landingPath))
+		} else {
+			_, _ = fmt.Fprintf(out, "wrote %s\n", relTo(*root, landingPath))
+		}
+	}
+
 	if *check && changed > 0 {
 		return fmt.Errorf("%d generated page(s) are stale — run `make site`", changed)
 	}
-	_, _ = fmt.Fprintf(out, "gensite: %d page(s) processed, %d changed\n", len(pages), changed)
+	_, _ = fmt.Fprintf(out, "gensite: %s, %d page(s) processed, %d changed\n", version, len(pages), changed)
 	return nil
 }
 

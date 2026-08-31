@@ -40,6 +40,23 @@ jobs:
       - name: Integration test
         run: make test-integration
 
+  # The generated docs site must match the markdown and the CHANGELOG it is
+  # generated from. This gate existed in the Makefile and was never wired up,
+  # so v0.5.0 shipped with the site's front page still saying v0.4.1 — the
+  # check that would have caught it was one line away from running.
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Docs site is current
+        run: make site-check
+
   lint:
     runs-on: ubuntu-latest
     steps:
