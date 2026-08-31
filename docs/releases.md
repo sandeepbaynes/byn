@@ -12,6 +12,62 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.5.0
+
+**Headline:** byn stops needing a person in the middle of an agent's work — an
+agent can create a secret, use it and keep working, without a human at a
+terminal and without the vault being left open.
+
+### What's new
+
+- **`byn put` no longer needs an unlocked vault.** A scope has a second key,
+  derived from the vault key and sealed into a trusted `.byn`'s capability under
+  the machine key, so a locked daemon can store what a caller creates and give it
+  back. It opens nothing that was already there. The honest cost: such a value is
+  protected by that machine as well as by your master password — strictly less
+  exposure than leaving the whole vault open.
+- **A caller may read, replace and delete the values it created**, without a
+  credential, for as long as its session lives and nobody else has written them.
+  Another writer ends it at that moment and the ordinary rules resume. See
+  `byn help unattended`.
+- **A command the `.byn` does not pin raises a decision** — an id and exit 75 —
+  instead of dead-ending at a password prompt no agent can answer. Approval cards
+  say who asked and why, what approving actually does (it grants; it runs
+  nothing), and how long the asker will wait. Grants are bound to the caller that
+  asked; `byn approve --anyone` widens one deliberately, `--for` sets its window.
+- **`byn runs`** records every command byn authorised: when, which `.byn` allowed
+  it, the agent behind it, and which values it received — by reference, never a
+  copy, stored as diffs. **`byn runs diff ID`** answers "has any of this been
+  rotated since?" without printing a single value, needs no credential, and works
+  while the vault is locked.
+- **Values an agent invented are never hidden** — in the audit log, in
+  `byn list --long`, in `byn doctor`, on the launch line, and on the run record.
+  A project can refuse them with `[exec] agent_put = false` or by name with
+  `agent_put_deny`.
+
+### Upgrade notes (from v0.4.x)
+
+Full procedure, rollback, and the behavior changes a script may notice:
+**[Upgrading byn](upgrading.md#v04x--v050)**. In short:
+
+- **`sudo byn setup` is required** for privsep installs — the systemd unit
+  changed. The old one had `ProtectProc=invisible`, which hid your processes from
+  the daemon, so the audit log recorded no caller name and the daemon could not
+  tell which agent stored a value. Both failed silently; `byn doctor` now reports
+  `daemon.sees_caller`.
+- **Vault schema v4 → v8**, migrating on first open. Additive only, no secret is
+  rewritten, and byn writes a verified `vault.db.v<N>.bak` snapshot beside the
+  vault before it starts. Note that upgrading is a one-way door: an older byn
+  refuses to open a newer vault, so that snapshot is your rollback.
+- **Re-trust each project** to enable locked-vault writes there. Optional and
+  self-healing — any write with the vault open re-seals the grant.
+- **Two audit events changed shape**: an uncredentialed write is `put.unattended`
+  rather than `put`, and raising an approval is `pending` rather than `denied`.
+- **`byn delete --json` reports a refusal as exit 3**, not 1, matching every
+  other command. Branch on the `--json` `status` field, not the exit code.
+
+---
+
 ## v0.4.1
 
 **Headline:** Linux/Fedora compatibility, macOS FDA status in `byn status`, and a cleaner portal config-auth flow.

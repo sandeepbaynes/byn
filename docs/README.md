@@ -19,6 +19,8 @@ you need; everything cross-links.
   current directory + TOFU trust.
 - **[File layout](file-layout.md)** — what the byn data root contains, modes,
   semantics.
+- **[Upgrading](upgrading.md)** — moving from one version to the next, what
+  byn backs up before it migrates a vault, and how to roll back.
 - **[Migration & setup](migration.md)** — `byn setup`, `byn migrate` (relocate
   vs import), privilege separation, and the data-root override removal upgrade
   note.

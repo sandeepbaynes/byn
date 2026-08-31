@@ -13,7 +13,9 @@ left open, which is what "just unlock it first" really means.
 
 ### Upgrading
 
-Two steps beyond replacing the binary. Both fail closed, so nothing breaks if
+Full procedure, rollback and the behavior changes a script may notice:
+[docs/upgrading.md](docs/upgrading.md). In short, two steps beyond replacing the
+binary. Both fail closed, so nothing breaks if
 you skip them; features stay dormant instead.
 
 1. **`sudo byn setup`** (privsep installs). The systemd unit changed. It had
@@ -36,9 +38,16 @@ no credential behind it is logged as `put.unattended` rather than `put`, and
 raising an approval is `pending` rather than `denied` — nothing was refused by
 asking, and the two were indistinguishable before.
 
-The vault schema moves to v5. It migrates on open, adds columns, and rewrites no
-secrets: existing entries keep the scheme they were written under and stay
-readable indefinitely.
+byn writes a verified snapshot of each vault (`vault.db.v<N>.bak`, beside the
+vault) before it migrates anything, because upgrading is a one-way door: an
+older byn refuses to open a newer vault rather than guess at a format it does
+not know. That snapshot is how you go back.
+
+The vault schema moves to v8. Every step migrates on open, only adds tables and
+columns, and rewrites no secrets: existing entries keep the scheme they were
+written under and stay readable indefinitely. v5 adds the per-entry ordering
+columns, v6 the exec-run tables, v7 the agent's name on a run record, v8 which
+of a run's values were stored unattended.
 
 ### An agent can now work alone
 
@@ -77,6 +86,45 @@ readable indefinitely.
   stops firing on a healthy machine.
 - `byn ps` shows which project each child belongs to; `byn approve --history`
   shows what was decided.
+
+### A record of what each run was given
+
+`byn runs` shows every command byn authorised: when, which `.byn` allowed it,
+the command, the process and agent behind it, and which values it received.
+`byn runs show ID` names them; `--reveal` shows the values, gated exactly as
+reading a secret is and recorded as a read.
+
+Runs store references, not copies. Copying would grow without bound and would
+turn the trail into an archive of every secret the project has ever had, so a
+credential rotated after a leak would stay recoverable — byn does not do that.
+Snapshots are stored as differences from the previous one, so a dev server
+restarted fifty times costs fifty run records and one snapshot. A value replaced
+since a run is named rather than shown: no copy of a superseded secret is kept.
+
+`byn runs show ID` marks which values byn took in unattended — one an agent
+invented and one you provisioned shape a program identically, and this is where
+you tell them apart once the launch warning has scrolled away. The list
+truncates long commands; `show` and `--json` keep them whole.
+
+**`byn runs diff ID`** answers the question people actually bring here — has any
+of this been rotated since? — and prints nothing. Per name: unchanged, changed
+since, or deleted since. It needs no credential and works while the vault is
+locked, because the answer comes from comparing a digest of the stored
+ciphertext, which needs no key.
+
+It exists because the safe command has to be the reachable one. While the only
+way to check whether a value had changed was the command that prints every
+value, checking meant putting live secrets on a terminal — so `--reveal` now
+names `diff` at the moment `--reveal` is being run. It is a diff in the literal
+sense, the digests recorded for the run against what the vault holds now, and is
+deliberately not called `verify`: `byn audit verify` already means the
+cryptographic check.
+
+Its three wordings are three different claims. "changed since" means the entry
+is still there holding something else. "deleted since" means the entry that run
+used is gone — a name deleted and re-created is a new entry, not a new version
+of the old one. "could not be read" is about byn, and is not evidence that
+anything changed.
 
 ### Approval cards say who asked, and what for
 
@@ -127,91 +175,6 @@ next ten minutes should not become a standing authority.
 `--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
 environment does the same for harnesses that build byn's argv themselves.
 
-### `byn runs diff` — the audit question, without the secrets
-
-Asking "has this value been rotated since that run?" had exactly one answer:
-`--reveal`, which prints every value the run received. So checking meant putting
-live credentials on a terminal, and in one case into a chat window. The warning
-fired and was correct; the person went ahead, because it was the only command
-that answered the question.
-
-`byn runs diff <id>` answers it and prints nothing. It is a diff in the literal
-sense — the digests recorded for the run against what the vault holds now — and
-is deliberately not called `verify`, since `byn audit verify` already means the
-cryptographic check. Per name: unchanged,
-changed since, or deleted since. No credential, and it works while the vault is
-locked — the answer comes from comparing a digest of the stored ciphertext,
-which needs no key. `--reveal` now points at it at the moment it is being run.
-
-The three wordings are three claims and are not interchangeable. "changed since"
-means the entry is still there holding something else. "deleted since" means the
-entry that run used is gone — a name deleted and re-created is a new entry, not
-a new version of the old one. "could not be read" is about byn, and is not
-evidence that anything changed.
-
-### One exit code for a refusal
-
-`byn delete --json` exited 1 on a refusal where every other command exited 3 on
-the identical refusal — and 1 is what byn uses for bad usage, so an agent
-branching on the code was told its arguments were wrong when it had been refused
-authorization. That is the one distinction that decides whether finding a
-credential is worth trying. Refusals are exit 3 everywhere now; `--json`
-`status` remains the field to branch on, separating "not_found" from
-"auth_required".
-
-### Smaller things the field found
-
-- Deleting a name that does not exist says so, instead of asking for a password
-  to delete nothing. Absence was never a protected fact here — byn lists the
-  names in a scope without a credential.
-- A run record marks which of its values byn took in unattended. A value the
-  owner provisioned and one an agent invented shape a program identically, and
-  the run record is where you go to tell them apart after the launch warning has
-  scrolled away. Vault schema v8, additive.
-- `byn runs` truncates the command in the list; `runs show` and `--json` keep it
-  whole. One `node -e` program was turning a single entry into five lines.
-- A run and an approval card now render the same identity the same way. Two
-  spellings read as two facts.
-
-### Three defects the live round found
-
-**An authenticated write was silently stored as the agent's.** `byn put
---password-stdin` sent the password only if the write was refused first, so
-whenever the unattended path happened to be open the owner's authenticated write
-landed under the scope's authored key — machine-protected, and still owned by the
-agent whose session created the value, which could go on reading, replacing and
-deleting it. Nothing said so. The password now goes with the write. On a locked
-vault that ends in "byn unlock, then retry" where it used to appear to succeed,
-which is the honest answer: byn cannot seal under a master key it does not hold.
-
-**A locked vault was reported as a rotation.** `byn runs show <id> --reveal`
-authorized the action, then failed to open each value because the key was not in
-memory, and reported every one as having been replaced since — telling an auditor
-that secrets had been rotated when nothing had changed but the lock. A locked
-vault is now said once, up front, and "byn could not read this" is reported apart
-from "this was replaced".
-
-**A run named its agent by pid alone.** By the time anyone audits, the process is
-gone and the number identifies nothing. The name is now recorded when the run
-happens (vault schema v7, additive).
-
-### A record of what each run was given
-
-`byn runs` shows every command byn authorised: when, which `.byn` allowed it,
-the command, the process and agent behind it, and which values it received.
-`byn runs show ID` names them; `--reveal` shows the values, gated exactly as
-reading a secret is and recorded as a read.
-
-Runs store references, not copies. Copying would grow without bound and would
-turn the trail into an archive of every secret the project has ever had, so a
-credential rotated after a leak would stay recoverable — byn does not do that.
-Snapshots are stored as differences from the previous one, so a dev server
-restarted fifty times costs fifty run records and one snapshot. A value replaced
-since a run is named rather than shown: no copy of a superseded secret is kept.
-
-Vault schema v6 adds the three tables this needs. Additive, migrates on open,
-rewrites nothing.
-
 ### Values an agent invented are never hidden
 
 byn cannot tell a value someone provisioned from one an agent made up, and an
@@ -257,3 +220,12 @@ not a way to put a name of your choosing into every process byn runs.
   reason it was actually refused.
 - `byn get`, `byn put` and `byn delete` report refusals as JSON under `--json`,
   in one shape; `delete` accepts `--json` at all.
+- Deleting a name that does not exist asked for authorization instead of saying
+  there was nothing to delete, sending a caller to find a credential in order to
+  remove nothing. Absence was never a protected fact: byn lists the names in a
+  scope without one.
+- `byn delete --json` reported a refusal as exit 1, which byn uses everywhere
+  else for bad usage, while every other command reported the same refusal as 3.
+  A caller branching on the code was told its arguments were wrong when it had
+  been refused authorization — the one distinction that decides whether finding
+  a credential is worth trying.

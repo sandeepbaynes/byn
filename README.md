@@ -76,6 +76,7 @@ byn ls             # names are always listable; values stay encrypted
 > [CLI reference](docs/cli-reference.md) ·
 > [`.byn` format](docs/byn-file-format.md) ·
 > [file layout](docs/file-layout.md) · [migration & setup](docs/migration.md) ·
+> [upgrading](docs/upgrading.md) ·
 > [glossary](docs/glossary.md) ·
 > [troubleshooting](docs/troubleshooting.md) ·
 > [TUI design](docs/tui-design.md) ·
@@ -306,7 +307,9 @@ are a hard error. Env-var fallbacks shown in `( )`.
 | `sudo byn setup [--uninstall [--purge]]` | One-sudo privsep provisioning: `_byn`/`_byn-exec` accounts, system service, spawn helper, owner record. Idempotent. `--uninstall` reverses it (vault kept); `--purge` also deletes the data dir |
 | `sudo byn migrate [--from PATH] [--force]` | Relocate legacy `~/.byn` → system path (keeps trust+passkeys), or import an external vault tree with `--from` (drops trust+passkeys → re-trust + re-enroll). Source verified without its password; adopt is atomic |
 
-See [`docs/migration.md`](docs/migration.md).
+See [`docs/migration.md`](docs/migration.md). Moving from one byn version to
+the next — including what byn backs up before it migrates a vault, and how to
+roll back — is [`docs/upgrading.md`](docs/upgrading.md).
 
 ### Structure (vault → project → env)
 
