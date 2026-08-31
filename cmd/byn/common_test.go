@@ -111,9 +111,12 @@ func TestMutateWithAuthRetry_CleanupCalledOnAuthRequired(t *testing.T) {
 	got := mutateWithAuthRetry(false, true, false, cleanup, func(_ []byte) error {
 		return authErr
 	})
-	// In jsonMode=true, no prompt — we get exitErr.
-	if got != exitErr {
-		t.Fatalf("got %d, want exitErr (%d)", got, exitErr)
+	// In jsonMode=true there is nobody to prompt, so it reports the refusal —
+	// as a refusal. exitErr would say "bad usage", which is what byn uses that
+	// code for everywhere else, and is the wrong thing to tell a caller that
+	// could have succeeded by supplying a credential.
+	if got != exitDaemonErr {
+		t.Fatalf("got %d, want exitDaemonErr (%d)", got, exitDaemonErr)
 	}
 	if !called {
 		t.Fatal("cleanupOnAuthRequired was not called")
@@ -128,8 +131,8 @@ func TestMutateWithAuthRetry_CleanupCalledOnLocked(t *testing.T) {
 	got := mutateWithAuthRetry(false, true, false, cleanup, func(_ []byte) error {
 		return lockedErr
 	})
-	if got != exitErr {
-		t.Fatalf("got %d, want exitErr (%d)", got, exitErr)
+	if got != exitDaemonErr {
+		t.Fatalf("got %d, want exitDaemonErr (%d)", got, exitDaemonErr)
 	}
 	if !called {
 		t.Fatal("cleanupOnAuthRequired was not called for locked error")
@@ -178,5 +181,34 @@ func TestStdinIsTTY_DevNullIsNotATerminal(t *testing.T) {
 
 	if stdinIsTTY() {
 		t.Error("stdinIsTTY() called /dev/null a terminal; an unattended caller would be offered a password prompt")
+	}
+}
+
+// One refusal, one exit code, whichever command met it.
+//
+// `byn delete --json X` exited 1 where `byn put --json X` exited 3 on the
+// identical refusal, and 1 is what byn uses for bad usage — so an agent
+// branching on the code was told its arguments were wrong when it had in fact
+// been refused authorization. That is the one distinction that decides whether
+// finding a credential is worth trying.
+func TestMutateWithAuthRetry_RefusalIsNotBadUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code ipc.ErrCode
+	}{
+		{"auth required", ipc.CodeAuthRequired},
+		{"locked", ipc.CodeLocked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mutateWithAuthRetry(false, true, false, nil, func(_ []byte) error {
+				return &ipc.ErrResponse{Code: tc.code, Message: "refused"}
+			})
+			if got == exitErr {
+				t.Fatalf("a refusal reported as bad usage (exit %d)", got)
+			}
+			if got != exitDaemonErr {
+				t.Fatalf("got %d, want exitDaemonErr (%d)", got, exitDaemonErr)
+			}
+		})
 	}
 }

@@ -242,7 +242,15 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 				red("authorization required"))
 			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Use:"), cyan("--password-stdin"))
 		}
-		return exitErr
+		// The daemon refused: exit 3, the same as every other refusal.
+		//
+		// This returned 1, which byn documents as "bad usage" and every other
+		// command uses for exactly that. So `byn delete --json X` exited 1 on a
+		// refusal while `byn put --json X` exited 3 on the identical refusal,
+		// and an agent branching on the code was told its arguments were wrong
+		// when it had been refused authorization — the one distinction that
+		// decides whether asking for a credential is worth trying.
+		return exitDaemonErr
 	}
 
 	// If the vault is locked and this op cannot proceed while locked, fail fast

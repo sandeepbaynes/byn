@@ -690,7 +690,11 @@ EXIT STATUS
        0    Deleted.
        1    No NAME given.
        2    Daemon unreachable.
-       3    Daemon error: not found, invalid name.
+       3    The daemon said no: no such value, an invalid name, or a
+            refusal. The exit code is deliberately coarse — branch on
+            --json "status" instead, which separates "not_found" (there
+            is nothing to delete) from "auth_required" (there is, and
+            you may not).
 
 SEE ALSO
        byn(1), byn-list(1)

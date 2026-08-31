@@ -127,6 +127,16 @@ next ten minutes should not become a standing authority.
 `--why` is accepted as a spelling of `--reason`, and `BYN_WHY` in the
 environment does the same for harnesses that build byn's argv themselves.
 
+### One exit code for a refusal
+
+`byn delete --json` exited 1 on a refusal where every other command exited 3 on
+the identical refusal — and 1 is what byn uses for bad usage, so an agent
+branching on the code was told its arguments were wrong when it had been refused
+authorization. That is the one distinction that decides whether finding a
+credential is worth trying. Refusals are exit 3 everywhere now; `--json`
+`status` remains the field to branch on, separating "not_found" from
+"auth_required".
+
 ### Smaller things the field found
 
 - Deleting a name that does not exist says so, instead of asking for a password
