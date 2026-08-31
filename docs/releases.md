@@ -12,6 +12,44 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.5.3
+
+**Headline:** a `.byn`'s `[exec] env` list is the whole list — closing a second
+site where captured keys got past it, and a failure that stopped an exec over a
+value the file never asked for.
+
+### Fixed
+
+- **Captured row keys bypassed the `.byn`'s own `[exec] env` list.** When a
+  `.byn` is trusted, its capability captures a key per variable. The loop that
+  injects from those keys intersected against `rec.EnvAllowlist()`, which
+  returns nil both for "this is a wildcard grant" and for "EnvGrants is empty" —
+  and EnvGrants is not persisted, so it is empty on the ordinary call. A nil
+  read as "inject everything" let every name captured at grant time through,
+  past the list the file declares.
+
+  This is the same mistake as the unattended-value bypass fixed in v0.5.0, at a
+  second site. It is narrower — only names that already existed when the grant
+  was made, not anything an agent stored later — and identical in kind. Both
+  loops now read the trust record's MAC-bound snapshot, which says what the file
+  declares whether or not anything has reconciled it.
+- **One undecryptable value aborted the entire exec.** A captured entry that had
+  since been re-sealed under another scheme — an unattended write, typically —
+  returned a decryption error that failed the whole call. So a value the `.byn`
+  never declared could stop every value it did declare from reaching the
+  process, and the command did not run at all. Those entries are opened by the
+  authored key on a path that has already run by then; the capability loop skips
+  them now, and the vault reports "sealed under a different scheme" as its own
+  condition rather than as prose inside a generic decryption failure.
+
+### Upgrade notes (from v0.5.2)
+
+- No schema change; vaults, trust records and audit logs are untouched.
+- No re-trust needed. Both fixes are in how a capability is read, not in how it
+  is written.
+
+---
+
 ## v0.5.2
 
 **Headline:** the fix for v0.5.1 — a byn installed outside a system directory
