@@ -91,6 +91,19 @@ func Manifest() []Page {
 			StampNote:    "Updated with each release",
 			GitHubPath:   "docs/audit.md",
 			Prev:         &NavLink{Label: "← Previous", Title: "Security model", Href: "../security/"},
+			Next:         &NavLink{Label: "Next →", Title: "Upgrading", Href: "../upgrading/"},
+		},
+
+		// ---- Upgrading (version to version) ----
+		{
+			SourceRel:    "upgrading.md",
+			OutDir:       "docs/upgrading",
+			Nav:          NavDocs,
+			Crumbs:       []Crumb{docsHome, {Label: "Upgrading", Current: true}},
+			SidebarTitle: "Upgrading",
+			GitHubPath:   "docs/upgrading.md",
+			VersionStamp: v,
+			Prev:         &NavLink{Label: "← Previous", Title: "Audit log", Href: "../audit/"},
 			Next:         &NavLink{Label: "Next →", Title: "Migration & setup", Href: "../migration/"},
 		},
 
@@ -102,7 +115,7 @@ func Manifest() []Page {
 			Crumbs:       []Crumb{docsHome, {Label: "Migration & setup", Current: true}},
 			SidebarTitle: "Migration & setup",
 			GitHubPath:   "docs/migration.md",
-			Prev:         &NavLink{Label: "← Previous", Title: "Audit log", Href: "../audit/"},
+			Prev:         &NavLink{Label: "← Previous", Title: "Upgrading", Href: "../upgrading/"},
 			Next:         &NavLink{Label: "Next →", Title: "Architecture", Href: "../architecture/"},
 		},
 
