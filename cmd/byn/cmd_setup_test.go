@@ -21,9 +21,9 @@ func TestRunSetup_RequiresRoot(t *testing.T) {
 		args     []string
 		wantHint string
 	}{
-		{"provision", nil, "sudo byn setup"},
-		{"uninstall", []string{"--uninstall"}, "sudo byn setup --uninstall"},
-		{"purge", []string{"--uninstall", "--purge"}, "sudo byn setup --uninstall --purge"},
+		{"provision", nil, sudoByn("setup")},
+		{"uninstall", []string{"--uninstall"}, sudoByn("setup", "--uninstall")},
+		{"purge", []string{"--uninstall", "--purge"}, sudoByn("setup", "--uninstall", "--purge")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

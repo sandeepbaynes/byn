@@ -119,7 +119,7 @@ func TestMigrate_NonRootRefused(t *testing.T) {
 	if calls.relocate != 0 || calls.imports != 0 {
 		t.Fatal("non-root must not invoke migrate")
 	}
-	if !strings.Contains(stderr, "root") || !strings.Contains(stderr, "sudo byn migrate") {
+	if !strings.Contains(stderr, "root") || !strings.Contains(stderr, sudoByn("migrate")) {
 		t.Fatalf("non-root error not actionable: %q", stderr)
 	}
 }

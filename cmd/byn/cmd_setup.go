@@ -54,15 +54,15 @@ func runSetupWith(args []string, euid func() int, stdin io.Reader, stdout, stder
 	}
 	if *purge && !*uninstall {
 		_, _ = fmt.Fprintf(stderr, "%s --purge is only valid with --uninstall\n", boldRed("Error:"))
-		_, _ = fmt.Fprintln(stderr, yellow("Run:")+"   "+cyan("sudo byn setup --uninstall --purge"))
+		_, _ = fmt.Fprintln(stderr, yellow("Run:")+"   "+cyan(sudoByn("setup", "--uninstall", "--purge")))
 		return exitErr
 	}
 
 	if euid() != 0 {
 		_, _ = fmt.Fprintln(stderr, boldRed("Error:")+" byn setup must run as root")
-		hint := "sudo byn setup"
+		hint := sudoByn("setup")
 		if *uninstall {
-			hint = "sudo byn setup --uninstall"
+			hint = sudoByn("setup", "--uninstall")
 			if *purge {
 				hint += " --purge"
 			}
@@ -84,6 +84,14 @@ func runProvision(stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "%s %v\n", boldRed("Error:"), err)
 		return exitErr
 	}
+	// Before provisioning, not after: the service unit records the path it
+	// execs, and the daemon runs as _byn, which cannot read inside a user's
+	// home. A byn installed by `go install` therefore has to be copied into a
+	// system location FIRST, so the unit points somewhere the service user can
+	// actually read. Writing the unit first produced a service that failed at
+	// exec with "Permission denied" and never started.
+	ensureOnSystemPath(stdout, stderr)
+
 	res, err := setup.Provision(deps)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s %v\n", boldRed("Error:"), err)
@@ -91,11 +99,6 @@ func runProvision(stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "byn provisioned: daemon runs as %s, owner UID %d allowlisted\n",
 		privsep.DaemonUser, res.OwnerUID)
-	// Setup is the first moment byn has root, and therefore the first moment it
-	// can make itself runnable as plain `byn`. A `go install` leaves the binary
-	// in ~/go/bin, which is on no default PATH and outside sudo's secure_path —
-	// an install that produces a working binary nobody can invoke.
-	ensureOnSystemPath(stdout, stderr)
 	if res.Migrated {
 		_, _ = fmt.Fprintf(stdout, "relocated legacy %s -> %s (trust + passkeys preserved)\n",
 			res.LegacyDir, res.SystemDir)
@@ -191,9 +194,9 @@ func defaultProvisionDeps() (setup.Deps, error) {
 			return privsep.Setup(run, srcHelper, privsep.HelperDestPath(), privsep.HelperConfigPath())
 		},
 		InstallService: func() error {
-			exe, eerr := os.Executable()
+			exe, eerr := serviceExecPath()
 			if eerr != nil {
-				return fmt.Errorf("determine byn executable path: %w", eerr)
+				return eerr
 			}
 			return privsep.InstallService(run, exe)
 		},

@@ -74,7 +74,7 @@ func runMigrateWith(args []string, deps migrateDeps, stdout, stderr io.Writer) i
 	// adopted tree. Mirror `byn setup`'s root check + recovery hint.
 	if deps.euid() != 0 {
 		_, _ = fmt.Fprintln(stderr, boldRed("Error:")+" byn migrate must run as root (it writes the system data path and chowns it to "+privsep.DaemonUser+")")
-		_, _ = fmt.Fprintln(stderr, yellow("Run:")+"   "+cyan("sudo byn migrate"))
+		_, _ = fmt.Fprintln(stderr, yellow("Run:")+"   "+cyan(sudoByn("migrate")))
 		return exitErr
 	}
 

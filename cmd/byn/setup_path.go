@@ -7,7 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sandeepbaynes/byn/internal/privsep"
 )
+
+// privsepDaemonUserName names the service account in error messages.
+var privsepDaemonUserName = privsep.DaemonUser
 
 // systemBinDir is where byn belongs so that both your shell and sudo can find
 // it. It is on the default PATH of every supported platform and inside sudo's
@@ -27,33 +32,47 @@ var systemBinDirs = []string{"/usr/local/bin", "/usr/bin", "/bin", "/opt/homebre
 // it. The Go toolchain runs no install hook, so this cannot be done during
 // `go install`; setup is the first moment byn has root and can.
 //
-// A symlink rather than a copy, so a later `go install ...@latest` is picked up
-// without re-running setup. Falls back to a copy where symlinking fails.
-func ensureOnSystemPath(stdout, stderr io.Writer) {
+// A COPY, not a symlink. A symlink into ~/.local/bin looks tidier and upgrades
+// itself, but the daemon runs as the _byn service user, which cannot read
+// inside a user's home — so systemd failed to exec it with "Permission denied"
+// and the service never came up. The binary the service runs has to live
+// somewhere the service user can read, which means a real file under
+// /usr/local/bin. The cost is that a later `go install` needs `byn setup`
+// re-run to be picked up; the packages do that automatically on upgrade.
+func ensureOnSystemPath(stdout, stderr io.Writer) (installedAt string) {
 	exe, err := os.Executable()
 	if err != nil {
-		return
+		return ""
 	}
 	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
 		exe = resolved
 	}
 	if inSystemBinDir(exe) {
-		return // already reachable; nothing to do
+		return exe // already somewhere the service user can read
 	}
 
 	dest := filepath.Join(systemBinDir, "byn")
-	// If something is already there pointing at us, we are done.
-	if current, lerr := filepath.EvalSymlinks(dest); lerr == nil && current == exe {
-		return
-	}
-	if err := linkOrCopy(exe, dest); err != nil {
+	if err := copyExecutable(exe, dest); err != nil {
 		_, _ = fmt.Fprintf(stderr, "warning: byn is installed at %s, which is not on the system PATH,\n", exe)
 		_, _ = fmt.Fprintf(stderr, "         and it could not be linked into %s: %v\n", systemBinDir, err)
 		_, _ = fmt.Fprintf(stderr, "         add %s to your PATH to run byn as `byn`.\n", filepath.Dir(exe))
-		return
+		return ""
 	}
 	restoreSELinuxContext(dest)
-	_, _ = fmt.Fprintf(stdout, "linked %s -> %s (so `byn` works from any shell, and under sudo)\n", dest, exe)
+	// The helper travels with it: the daemon execs it by absolute path, and it
+	// is no more readable by the service user in a home directory than byn is.
+	if src := filepath.Join(filepath.Dir(exe), "byn-exec-helper"); fileExists(src) {
+		if cerr := copyExecutable(src, filepath.Join(systemBinDir, "byn-exec-helper")); cerr == nil {
+			restoreSELinuxContext(filepath.Join(systemBinDir, "byn-exec-helper"))
+		}
+	}
+	_, _ = fmt.Fprintf(stdout, "installed %s (so `byn` works from any shell, under sudo, and for the service)\n", dest)
+	return dest
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
 }
 
 // inSystemBinDir reports whether path already lives somewhere on the PATH that
@@ -68,9 +87,9 @@ func inSystemBinDir(path string) bool {
 	return false
 }
 
-// linkOrCopy points dest at src, preferring a symlink so upgrades to src are
-// picked up without re-running setup.
-func linkOrCopy(src, dest string) error {
+// copyExecutable installs src at dest as a real file, readable and executable
+// by everyone — including the service user, which is the whole point.
+func copyExecutable(src, dest string) error {
 	// 0755, not the 0750 gosec prefers: this is a system bin directory, and
 	// every user on the machine has to be able to traverse it to run byn. A
 	// mode that excluded them would defeat the point of putting byn there.
@@ -80,15 +99,12 @@ func linkOrCopy(src, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	// Replace whatever is there: an older link, or a byn from a previous
-	// install. Removing first because os.Symlink refuses an existing name.
+	// Replace whatever is there — an older copy, or a symlink left by a byn
+	// that used to install one. Removing first so a stale symlink is not
+	// followed and written through.
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Symlink(src, dest); err == nil {
-		return nil
-	}
-	// A filesystem that cannot symlink, or a policy that forbids it: copy.
 	in, err := os.Open(src) //nolint:gosec // src is this process's own executable
 	if err != nil {
 		return err
@@ -135,4 +151,55 @@ func pathHint() string {
 	return fmt.Sprintf("byn is installed at %s, which is not on your PATH.\n"+
 		"Add it with:  export PATH=\"%s:$PATH\"   (or run `sudo %s setup`, which links it into %s)",
 		exe, dir, exe, systemBinDir)
+}
+
+// sudoByn renders a `sudo byn …` command that will actually run.
+//
+// sudo resolves commands against secure_path — typically /usr/local/bin,
+// /usr/bin, /bin and the sbins — and never the user's own PATH. A byn installed
+// by `go install` lives in ~/go/bin (or wherever GOBIN points), so every
+// message that said "run: sudo byn setup" was advice that could not be
+// followed: sudo answered "byn: command not found", and the command being
+// recommended was the one that fixes exactly this. Naming the absolute path
+// costs nothing and always works.
+func sudoByn(args ...string) string {
+	name := "byn"
+	if exe, err := os.Executable(); err == nil {
+		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+			exe = resolved
+		}
+		if !inSystemBinDir(exe) {
+			name = exe
+		}
+	}
+	if len(args) == 0 {
+		return "sudo " + name
+	}
+	return "sudo " + name + " " + strings.Join(args, " ")
+}
+
+// serviceExecPath is the byn the systemd unit / LaunchDaemon should exec.
+//
+// Never a path inside a user's home: the daemon runs as the _byn service user,
+// which cannot read there, and systemd reports that as a bare "Permission
+// denied" at exec with the service flapping until it gives up. When byn is
+// running from a home directory, the copy ensureOnSystemPath placed in
+// /usr/local/bin is the one the service must use.
+func serviceExecPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("determine byn executable path: %w", err)
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	if inSystemBinDir(exe) {
+		return exe, nil
+	}
+	dest := filepath.Join(systemBinDir, "byn")
+	if fileExists(dest) {
+		return dest, nil
+	}
+	return "", fmt.Errorf("byn runs from %s, which the %s service user cannot read, "+
+		"and it could not be installed into %s", exe, privsepDaemonUserName, systemBinDir)
 }

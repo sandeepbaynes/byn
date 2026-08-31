@@ -23,36 +23,47 @@ func TestInSystemBinDir(t *testing.T) {
 	}
 }
 
-// A symlink is preferred so a later `go install ...@latest` is picked up
-// without re-running setup — a copy would silently pin the version setup saw.
-func TestLinkOrCopy_PrefersASymlinkAndReplacesWhatIsThere(t *testing.T) {
+// A real file, not a symlink into wherever byn happened to be installed.
+//
+// The daemon runs as the _byn service user, which cannot read inside a user's
+// home — a symlink from /usr/local/bin into ~/.local/bin made systemd fail at
+// exec with "Permission denied" and the service never came up. What the service
+// execs has to be a file the service user can read.
+func TestCopyExecutable_InstallsARealFileAndReplacesWhatIsThere(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "byn-real")
-	if err := os.WriteFile(src, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(src, []byte("first"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(dir, "bin", "byn")
 
-	if err := linkOrCopy(src, dest); err != nil {
-		t.Fatalf("link: %v", err)
+	if err := copyExecutable(src, dest); err != nil {
+		t.Fatalf("copy: %v", err)
 	}
-	// Compare resolved against resolved. On macOS the temp dir lives under
-	// /var, which is itself a symlink to /private/var, so the literal path and
-	// the resolved one differ for reasons that have nothing to do with byn.
-	if got, want := resolved(t, dest), resolved(t, src); got != want {
-		t.Errorf("dest resolves to %q, want %q", got, want)
+	fi, err := os.Lstat(dest)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("installed a symlink — the service user may not be able to follow it")
+	}
+	if got := readFile(t, dest); got != "first" {
+		t.Errorf("dest content = %q, want the source's", got)
+	}
+	if fi.Mode().Perm()&0o111 == 0 {
+		t.Errorf("mode %v is not executable", fi.Mode().Perm())
 	}
 
 	// Replacing an existing entry must work: setup is re-run on every upgrade.
 	other := filepath.Join(dir, "byn-other")
-	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(other, []byte("second"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := linkOrCopy(other, dest); err != nil {
-		t.Fatalf("relink: %v", err)
+	if err := copyExecutable(other, dest); err != nil {
+		t.Fatalf("recopy: %v", err)
 	}
-	if got, want := resolved(t, dest), resolved(t, other); got != want {
-		t.Errorf("after relink dest resolves to %q, want %q", got, want)
+	if got := readFile(t, dest); got != "second" {
+		t.Errorf("after recopy dest content = %q, want the new source's", got)
 	}
 }
 
@@ -89,13 +100,11 @@ func TestPathHint_SilentWhenReachable(t *testing.T) {
 	}
 }
 
-// resolved canonicalises a path so comparisons are not defeated by a symlinked
-// ancestor — /var -> /private/var on macOS being the one that bit.
-func resolved(t *testing.T, path string) string {
+func readFile(t *testing.T, path string) string {
 	t.Helper()
-	got, err := filepath.EvalSymlinks(path)
+	b, err := os.ReadFile(path) //nolint:gosec // test-controlled path
 	if err != nil {
-		t.Fatalf("resolve %s: %v", path, err)
+		t.Fatalf("read %s: %v", path, err)
 	}
-	return got
+	return string(b)
 }

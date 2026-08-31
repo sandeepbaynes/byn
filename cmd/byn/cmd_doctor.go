@@ -38,7 +38,7 @@ func runDoctor(args []string, _ cliScope) int {
 	// hand. It needs root; without --repair, doctor only diagnoses (dry-run).
 	if *repair {
 		if os.Geteuid() != 0 {
-			fmt.Fprintf(os.Stderr, "%s byn doctor --repair needs root. Run:\n    sudo byn doctor --repair\n", boldRed("Error:"))
+			fmt.Fprintf(os.Stderr, "%s byn doctor --repair needs root. Run:\n    %s\n", boldRed("Error:"), sudoByn("doctor", "--repair"))
 			return exitErr
 		}
 		actions := repairHeal(env, execRunner)

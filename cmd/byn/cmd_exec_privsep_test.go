@@ -139,8 +139,10 @@ func TestRunExec_PrivsepNotProvisioned_HardError(t *testing.T) {
 	if rc != exitDaemonErr {
 		t.Fatalf("rc = %d, want exitDaemonErr (%d)", rc, exitDaemonErr)
 	}
-	if !strings.Contains(out, "not set up") || !strings.Contains(out, "byn setup") {
-		t.Errorf("stderr = %q, want 'not set up' + 'byn setup' hint", out)
+	// The hint names the byn that will actually run under sudo, which is an
+	// absolute path when byn is not on sudo's secure_path.
+	if !strings.Contains(out, "not set up") || !strings.Contains(out, sudoByn("setup")) {
+		t.Errorf("stderr = %q, want 'not set up' + a runnable setup hint", out)
 	}
 	if calls := fd.callsFor(ipc.OpExecFetch); len(calls) != 0 {
 		t.Errorf("exec.fetch calls = %d, want 0 (no silent fallback)", len(calls))

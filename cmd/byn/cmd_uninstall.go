@@ -42,7 +42,7 @@ func runUninstallWith(args []string, euid func() int, getenv func(string) string
 
 	if euid() != 0 {
 		_, _ = fmt.Fprintln(stderr, boldRed("Error:")+" byn uninstall must run as root")
-		_, _ = fmt.Fprintln(stderr, yellow("Run:")+"   "+cyan("sudo byn uninstall"))
+		_, _ = fmt.Fprintln(stderr, yellow("Run:")+"   "+cyan(sudoByn("uninstall")))
 		return exitErr
 	}
 

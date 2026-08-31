@@ -340,8 +340,8 @@ func daemonDownRemedy(privsepProvisioned bool) (cmd, note string) {
 	// restart a unit that was removed is a dead end, and it is the state an
 	// uninstall-keeping-the-vault leaves behind. Say what will actually fix it.
 	if privsepInstallStateFn() == privsepDataOnly {
-		return "sudo byn setup",
+		return sudoByn("setup"),
 			"(this machine has a byn data directory but no service installed — setup reinstalls it)"
 	}
-	return "sudo byn restart", "(it runs as the _byn service, so bringing it up needs root)"
+	return sudoByn("restart"), "(it runs as the _byn service, so bringing it up needs root)"
 }

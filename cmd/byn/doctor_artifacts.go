@@ -120,7 +120,7 @@ func checkHelperFresh(env healEnv) (healCheck, bool) {
 	}
 	c.Detail = fmt.Sprintf("%s is older than byn (%s vs %s) and they share the exec protocol",
 		helper, hi.ModTime().Format("2006-01-02"), si.ModTime().Format("2006-01-02"))
-	c.Fix = "sudo byn setup"
+	c.Fix = sudoByn("setup")
 	return c, true
 }
 

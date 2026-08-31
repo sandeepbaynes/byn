@@ -26,7 +26,7 @@ func staleDaemonNote(daemonVersion, cliVersion string) string {
 // daemon, which differs by whether byn is privsep-provisioned.
 func restartDaemonCommand() string {
 	if daemonProvisioned() {
-		return "sudo byn restart"
+		return sudoByn("restart")
 	}
 	return "byn restart"
 }

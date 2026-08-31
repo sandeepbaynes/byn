@@ -713,7 +713,7 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 		// service users. This is actionable and must NOT silently fall back to an
 		// owner-UID in-process run — that would defeat the opt-in.
 		fmt.Fprintln(os.Stderr, boldRed("Error:")+" privsep is enabled but not set up.")
-		fmt.Fprintln(os.Stderr, yellow("Run:")+" "+cyan("sudo byn setup")+"   "+
+		fmt.Fprintln(os.Stderr, yellow("Run:")+" "+cyan(sudoByn("setup"))+"   "+
 			dim("(or disable [security] privsep, or pass --no-privsep)"))
 		return exitDaemonErr, true
 	case isUnknownOpErr(callErr):

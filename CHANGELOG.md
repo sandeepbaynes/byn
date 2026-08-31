@@ -3,6 +3,27 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.5.2 — unreleased
+
+### Fixed
+
+- **A byn installed outside a system directory produced a service that could not
+  start.** v0.5.1 linked byn into `/usr/local/bin` with a symlink, and wrote the
+  service unit pointing at wherever byn actually lived — which for a `go install`
+  is inside the user's home. The daemon runs as the `_byn` service user, which
+  cannot read there, so systemd failed at exec with `Permission denied` and the
+  service flapped until it gave up: `sudo byn restart` reported success while
+  `byn status` still said the daemon was down. byn is now **copied** into
+  `/usr/local/bin` before the service is installed, and the unit points at that
+  copy — a real file the service user can read. The spawn helper is copied
+  alongside it for the same reason. The cost is that a later `go install` needs
+  `byn setup` re-run to take effect; the packages already do that on upgrade.
+- **Every `sudo byn …` byn suggested was unrunnable from a `go install`.** sudo
+  resolves commands against `secure_path`, which never includes `~/go/bin` or
+  `~/.local/bin`, so `sudo byn setup` answered `byn: command not found` — and
+  the command being recommended was the one that fixes exactly that. byn now
+  prints the absolute path when it is not on a path sudo searches.
+
 ## v0.5.1 — 2026-08-31
 
 ### Installing byn now provisions byn

@@ -62,13 +62,13 @@ func diagnoseHeal(e healEnv) []healCheck {
 		// a failure. Report it informationally (OK) and run no privsep-specific
 		// checks. The daemon-side checks still run separately when the daemon (here
 		// an owner daemon) is reachable.
-		return []healCheck{{Name: "privilege separation", OK: true, Detail: "not provisioned (opt-in) — enable with: sudo byn setup"}}
+		return []healCheck{{Name: "privilege separation", OK: true, Detail: "not provisioned (opt-in) — enable with: " + sudoByn("setup")}}
 	}
 	cs := []healCheck{{Name: "privilege separation", OK: true, Detail: "provisioned (daemon runs as _byn)"}}
-	cs = append(cs, healCheck{Name: "spawn helper installed", OK: e.exists(e.helperPath), Detail: e.helperPath, Fix: "run: sudo byn setup"})
+	cs = append(cs, healCheck{Name: "spawn helper installed", OK: e.exists(e.helperPath), Detail: e.helperPath, Fix: "run: " + sudoByn("setup")})
 
 	up := e.daemonUp()
-	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: sudo byn restart  (or sudo byn doctor --repair)"})
+	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: " + sudoByn("restart") + "  (or " + sudoByn("doctor", "--repair") + ")"})
 
 	if bynUID, ok := e.bynUID(); ok {
 		dirUID, okD := e.fileUID(e.dataDir)
@@ -77,11 +77,11 @@ func diagnoseHeal(e healEnv) []healCheck {
 		if okD && !owned {
 			detail = fmt.Sprintf("owned by uid %d, expected %s (uid %d) — a sudo-run left root-owned files", dirUID, privsep.DaemonUser, bynUID)
 		}
-		cs = append(cs, healCheck{Name: "data dir owned by " + privsep.DaemonUser, OK: owned, Detail: detail, Fix: "run: sudo byn doctor --repair"})
+		cs = append(cs, healCheck{Name: "data dir owned by " + privsep.DaemonUser, OK: owned, Detail: detail, Fix: "run: " + sudoByn("doctor", "--repair")})
 	}
 
 	if !up && e.exists(e.socketPath()) {
-		cs = append(cs, healCheck{Name: "no stale socket", OK: false, Detail: "socket present but the daemon is down", Fix: "run: sudo byn doctor --repair"})
+		cs = append(cs, healCheck{Name: "no stale socket", OK: false, Detail: "socket present but the daemon is down", Fix: "run: " + sudoByn("doctor", "--repair")})
 	}
 	return cs
 }

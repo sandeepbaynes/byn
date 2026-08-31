@@ -24,8 +24,8 @@ func TestDaemonDownRemedy_NamesWhatWillActuallyWork(t *testing.T) {
 		wantCmd     string
 	}{
 		{"nothing installed", false, privsepNone, "byn start"},
-		{"service installed", true, privsepService, "sudo byn restart"},
-		{"data but no service", true, privsepDataOnly, "sudo byn setup"},
+		{"service installed", true, privsepService, sudoByn("restart")},
+		{"data but no service", true, privsepDataOnly, sudoByn("setup")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stubInstallState(t, tc.state)

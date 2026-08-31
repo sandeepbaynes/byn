@@ -126,7 +126,7 @@ func enforceRootPolicy(cmd string, euid int, provisionedFn func() bool, w io.Wri
 	case classStart:
 		if euid == 0 {
 			_, _ = fmt.Fprintf(w, "%s don't start byn as root — the daemon runs as the _byn service.\n"+
-				"    Run \"byn start\" as yourself; if it's down, \"sudo byn restart\".\n",
+				"    Run \"byn start\" as yourself; if it's down, \""+sudoByn("restart")+"\".\n",
 				boldRed("Error:"))
 			return true
 		}
