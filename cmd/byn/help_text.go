@@ -2003,6 +2003,7 @@ SYNOPSIS
        byn approve --deny ID...
        byn approve --all [--password-stdin]
        byn approve [--for DURATION] [--anyone] ID...
+       byn approve [--once] ID...
        byn approve --revoke ID...
 
 DESCRIPTION
@@ -2058,6 +2059,17 @@ DESCRIPTION
        Approving grants authority, so it asks for the master password,
        exactly as "byn trust" does. Approving re-grants the .byn, so the
        caller's next attempt succeeds.
+
+       --once makes the grant single-use: it is spent the first time byn
+       authorizes a run with it, rather than staying live for the rest
+       of the window. One-shot scripts are what approvals are most often
+       used for, and the alternative is remembering to revoke afterwards
+       — a step easy to skip and invisible when skipped, leaving an
+       arbitrary command runnable for hours after the job it was
+       approved for finished. Spent on authorization, not on the child's
+       exit status: byn hands over the values and the command's fate is
+       its own, so tying the grant to an exit code would hold it open
+       across something byn does not watch. A dry run consumes nothing.
 
        --revoke takes a grant back before it lapses. Approving is the
        moment authority moves, and there has to be a moment it moves

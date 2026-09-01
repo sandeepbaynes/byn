@@ -21,6 +21,26 @@ untouched — it is what the fingerprint is computed from), and the pending list
 names `--history` whenever there is history behind it. Denials were always
 included and now read the same way.
 
+### Single-use grants, and a password that can write
+
+`byn approve --once <id>` makes a grant single-use: spent the first time byn
+authorizes a run with it. One-shot scripts are what approvals are most often
+used for, and the alternative was remembering to revoke afterwards — a step easy
+to skip and invisible when skipped, leaving an arbitrary command runnable for
+hours after the job it was approved for had finished. Spent on authorization,
+not on the command's exit status, because byn hands over the values and the
+command's fate is its own; a dry run consumes nothing.
+
+`byn put` now accepts the master password on a locked vault, as `byn get`
+already did. An authenticated write used to be refused outright while an
+*unauthenticated* one succeeded — an unattended caller writes under the scope's
+authored key, and an authenticated one is meant to seal under the vault key,
+which was not in memory. So supplying the password made a write harder rather
+than easier, and an owner could not take a value back from an agent without
+unlocking the whole vault. The value is sealed under the vault key exactly as it
+would be if the vault were open, so it means the same thing: the value is the
+owner's, and the agent's claim on the name does not survive it.
+
 ### Fixed
 
 - **`byn setup` claimed privilege separation was off when it was on.** It closed

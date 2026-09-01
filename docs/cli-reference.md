@@ -827,6 +827,18 @@ already-approved request is refused outright and points at `--revoke`: it used
 to return quietly and reprint the grant line, so an owner who typed it believed
 a command had stopped being runnable when it had not.
 
+### `byn approve --once ID...`
+
+Makes the grant single-use: spent the first time byn authorizes a run with it,
+rather than staying live for the rest of the window. One-shot scripts are what
+approvals are most often used for, and the alternative is remembering to revoke
+afterwards — easy to skip, and invisible when skipped.
+
+Spent on **authorization**, not on the command's exit status. byn hands over the
+values and the command's fate is its own, so tying the grant to an exit code
+would hold it open across something byn does not watch. `byn exec --dry-run`
+goes through a different path and consumes nothing.
+
 ### `byn approve --revoke ID...`
 
 Takes back a grant before it lapses. Approving is the moment authority moves,

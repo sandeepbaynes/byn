@@ -29,6 +29,8 @@ func runApprove(args []string, _ cliScope) int {
 	jsonOut := fs.Bool("json", false, "output as JSON")
 	all := fs.Bool("all", false, "answer every pending request")
 	history := fs.Bool("history", false, "show decided and expired requests too, not just what is waiting")
+	once := fs.Bool("once", false,
+		"single-use: the grant is spent the first time byn authorizes a run with it")
 	anyone := fs.Bool("anyone", false,
 		"let anything in that project use the approved command, not only whoever asked")
 	grantFor := fs.Duration("for", 0, "how long an approved command runs free (default 6h, max 24h)")
@@ -87,6 +89,7 @@ func runApprove(args []string, _ cliScope) int {
 			Via: "terminal", Reason: *reason, Password: password,
 			GrantForSeconds: int(*grantFor / time.Second),
 			Anyone:          *anyone,
+			Once:            *once,
 		}, &resp)
 		if cerr != nil {
 			rc = handleCallError(cerr)
@@ -108,9 +111,14 @@ func runApprove(args []string, _ cliScope) int {
 			if resp.Entry.Anyone {
 				who = "for anything in that project"
 			}
-			fmt.Fprintf(os.Stderr, "          %s\n",
-				dim(fmt.Sprintf("runs free for %s, %s — pin it in [exec] actions to make it permanent",
-					left, who)))
+			if resp.Entry.Once {
+				fmt.Fprintf(os.Stderr, "          %s\n",
+					dim(fmt.Sprintf("single use, %s — spent on the first run, or in %s if never used", who, left)))
+			} else {
+				fmt.Fprintf(os.Stderr, "          %s\n",
+					dim(fmt.Sprintf("runs free for %s, %s — pin it in [exec] actions to make it permanent",
+						left, who)))
+			}
 		}
 		if resp.Entry.Late {
 			fmt.Fprintf(os.Stderr, "          %s\n",
@@ -233,7 +241,11 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 					if e.Anyone {
 						who = "for anyone in that project"
 					}
-					detail += fmt.Sprintf(", runs free %s for another %s", who, left)
+					if e.Once {
+						detail += fmt.Sprintf(", single use %s, unused for another %s", who, left)
+					} else {
+						detail += fmt.Sprintf(", runs free %s for another %s", who, left)
+					}
 				} else {
 					detail += ", grant expired"
 				}

@@ -361,3 +361,57 @@ func TestGet_PasswordReadsWithoutUnlocking(t *testing.T) {
 		t.Fatal("a wrong password returned a value")
 	}
 }
+
+// An authenticated write to a locked vault used to be refused, while an
+// unauthenticated one succeeded — supplying the master password made a write
+// harder rather than easier, and left an owner unable to take a value back from
+// an agent without unlocking the whole vault.
+func TestPut_PasswordWritesWithoutUnlocking(t *testing.T) {
+	origin := stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// An agent stores a value while the vault is locked, and owns it.
+	lockVaultStore(t, d, "default")
+	held := c.Session
+	c.Session = nil
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"AGENT_VALUE\"]\n")
+	c.Session = held
+	grantBynFile(t, c, byn, pw)
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	putVar(t, c, ipc.Scope{}, "AGENT_VALUE", []byte("agent-wrote-this"))
+
+	// The owner takes it over with the master password, vault still locked.
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Name: "AGENT_VALUE", Value: []byte("owner-wrote-this"), Password: pw,
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("authenticated write to a locked vault: %v", err)
+	}
+
+	// Sealed under the vault key, so the agent's claim on the name is gone: it
+	// can no longer read it back without a credential, which is what "the owner
+	// took this over" has to mean.
+	origin(true) // still the same agent
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "AGENT_VALUE"}, &ipc.GetResp{}); err == nil {
+		t.Error("the agent still reads a value the owner took over")
+	}
+
+	// And the owner can read back what they wrote, with the same password.
+	var got ipc.GetResp
+	if err := c.Call(ipc.OpGet, ipc.GetReq{Name: "AGENT_VALUE", Password: pw}, &got); err != nil {
+		t.Fatalf("owner read back: %v", err)
+	}
+	if string(got.Value) != "owner-wrote-this" {
+		t.Errorf("value = %q, want owner-wrote-this", got.Value)
+	}
+
+	// A wrong password writes nothing.
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Name: "AGENT_VALUE", Value: []byte("nope"), Password: []byte("wrong"),
+	}, &ipc.PutResp{}); err == nil {
+		t.Error("a wrong password was accepted for a write")
+	}
+}

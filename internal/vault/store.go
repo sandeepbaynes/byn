@@ -1042,6 +1042,52 @@ func (s *Store) PutEnvVar(ctx context.Context, scope Scope, name string, value [
 		return ErrLocked
 	}
 	defer zero(key)
+	return s.putEnvVarWithKey(ctx, key, scope, name, value, opt)
+}
+
+// PutEnvVarWithPassword writes one value using a password, without unlocking.
+//
+// An authenticated write to a locked vault used to be refused outright — while
+// an UNAUTHENTICATED one succeeded, because an unattended caller writes under
+// the scope's authored key and an authenticated one is meant to seal under the
+// vault key, which was not in memory. Supplying the master password therefore
+// made a write harder rather than easier, which is backwards, and it left an
+// owner unable to take back a value an agent had stored without unlocking the
+// whole vault first.
+//
+// The value is sealed under the VAULT key, exactly as it would be if the vault
+// were open: the password proves who is asking, and the write means what it
+// means when unlocked — including that the agent's claim on the name does not
+// survive it. The key is unwrapped for this one write and zeroed after, so the
+// vault stays locked.
+func (s *Store) PutEnvVarWithPassword(ctx context.Context, password []byte, scope Scope,
+	name string, value []byte, opt PutOpt) error {
+
+	if err := scope.Validate(); err != nil {
+		return err
+	}
+	if err := validateEntryName(name); err != nil {
+		return err
+	}
+	if len(value) > MaxValueLen {
+		return fmt.Errorf("vault: value too large (%d > %d)", len(value), MaxValueLen)
+	}
+	wrapped, err := os.ReadFile(filepath.Join(s.dir, wrappedFilename)) // #nosec G304 -- path is store-configured
+	if err != nil {
+		return fmt.Errorf("vault: read wrapped key: %w", err)
+	}
+	vk, err := vcrypto.Unwrap(password, wrapped)
+	if err != nil {
+		return err
+	}
+	defer zero(vk)
+	return s.putEnvVarWithKey(ctx, vk, scope, name, value, opt)
+}
+
+// putEnvVarWithKey is the shared body: the same sealing and the same insert
+// rules whichever way the caller came by the vault key.
+func (s *Store) putEnvVarWithKey(ctx context.Context, key []byte, scope Scope,
+	name string, value []byte, opt PutOpt) error {
 
 	projectID, envID, err := s.scopeIDs(ctx, scope)
 	if err != nil {

@@ -1313,7 +1313,7 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	// with no grant to key it just takes the ordinary path, exactly as before.
 	useAuthored := authKey != nil
 	if st.IsLocked() {
-		if authKey == nil {
+		if authKey == nil && len(req.Password) == 0 {
 			// No trusted .byn covers this scope, so byn holds no key it could
 			// write with. Reported as auth_required rather than "locked",
 			// keeping NU-3's rule that an unauthenticated caller is not told
@@ -1338,6 +1338,18 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	put := func(opt vault.PutOpt) error {
 		if useAuthored {
 			return st.PutEnvVarAuthored(ctx, scope, req.Name, req.Value, authKey, opt)
+		}
+		// A locked vault with a password behind the call: seal with that
+		// password rather than refusing. An authenticated write used to be
+		// turned away while an unauthenticated one succeeded — supplying the
+		// master password made a write harder, and left an owner unable to take
+		// a value back from an agent without unlocking the whole vault.
+		//
+		// Sealed under the VAULT key, exactly as an attended write is when the
+		// vault is open, so it means the same thing: the value is the owner's
+		// and the agent's claim on the name does not survive it.
+		if st.IsLocked() && len(req.Password) > 0 {
+			return st.PutEnvVarWithPassword(ctx, req.Password, scope, req.Name, req.Value, opt)
 		}
 		return st.PutEnvVar(ctx, scope, req.Name, req.Value, opt)
 	}

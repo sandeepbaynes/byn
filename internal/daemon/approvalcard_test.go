@@ -382,3 +382,76 @@ func TestDeny_OnAnApprovedRequestIsRefused(t *testing.T) {
 		t.Fatal("denying an approved request reported success")
 	}
 }
+
+// A one-shot script is what approvals are most often used for, and the
+// alternative to a single-use grant is remembering to revoke afterwards — a
+// step that is easy to skip and invisible when skipped, leaving an arbitrary
+// command runnable for hours after the job it was approved for finished.
+func TestOnceGrant_SpentOnTheFirstRun(t *testing.T) {
+	_ = stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = [\"pinned run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	run := func() error {
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "migrate once", Argv: []string{"migrate", "once"},
+		})
+		return err
+	}
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatal("wanted a queued request")
+	}
+	pending := onlyPending(t, c)
+	resp, err := decideApproval(t, c, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Once: true, Password: pw,
+	})
+	if err != nil {
+		t.Fatalf("approve --once: %v", err)
+	}
+	if !resp.Entry.Once {
+		t.Error("the grant was not recorded as single-use, so no surface can show it")
+	}
+
+	// First run: authorized.
+	if err := run(); err != nil {
+		t.Fatalf("the approved command should run once: %v", err)
+	}
+	// Second: the grant is spent, so it is a fresh question.
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatalf("a single-use grant ran twice: code = %v", code)
+	}
+}
+
+// An ordinary grant is unaffected — it keeps running for its window.
+func TestOnceGrant_OrdinaryGrantsStillRepeat(t *testing.T) {
+	_ = stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nactions = [\"pinned run\"]\n")
+	grantBynFile(t, c, byn, pw)
+	run := func() error {
+		_, err := execFetch(t, c, ipc.ExecFetchReq{
+			Path: byn, Command: "build it", Argv: []string{"build", "it"},
+		})
+		return err
+	}
+	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
+		t.Fatal("wanted a queued request")
+	}
+	pending := onlyPending(t, c)
+	if _, err := decideApproval(t, c, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw,
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := run(); err != nil {
+			t.Fatalf("run %d: an ordinary grant should keep running: %v", i+1, err)
+		}
+	}
+}

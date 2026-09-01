@@ -74,6 +74,9 @@ const (
 	// from denied, which is an answer to a question; this undoes an answer
 	// already given, and the record has to show that it was once granted.
 	StatusRevoked Status = "revoked"
+	// StatusUsed means a single-use grant has been spent. Distinct from expired
+	// and revoked: nothing lapsed and nobody took it back — it did its job.
+	StatusUsed Status = "used"
 )
 
 // Kind classifies what is being asked for.
@@ -188,6 +191,14 @@ type Request struct {
 	// it right now. An approval after this time still grants — it just grants
 	// to nobody who is still listening, and says so.
 	NeededBy time.Time `json:"needed_by,omitempty"`
+	// Once makes the grant single-use: it is spent the first time byn authorizes
+	// a run with it, rather than staying live for the rest of the window.
+	//
+	// One-shot scripts are what approvals are most often used for, and the
+	// alternative is remembering to revoke afterwards — a step that is easy to
+	// skip and invisible when skipped, leaving an arbitrary command runnable for
+	// hours after the job it was approved for finished.
+	Once bool `json:"once,omitempty"`
 	// Anyone widens a command grant to the whole scope rather than the caller
 	// that asked for it.
 	//
@@ -230,7 +241,8 @@ type Request struct {
 
 // Answered reports whether a decision has been recorded.
 func (r Request) Answered() bool {
-	return r.Status == StatusApproved || r.Status == StatusDenied || r.Status == StatusRevoked
+	return r.Status == StatusApproved || r.Status == StatusDenied ||
+		r.Status == StatusRevoked || r.Status == StatusUsed
 }
 
 // file is the on-disk shape.
@@ -385,17 +397,23 @@ func (s *Store) Decide(id string, approve bool, via, reason string) (Request, er
 // all afternoon are different grants, and giving both of them six hours makes
 // the shorter one an unnecessary standing authority.
 func (s *Store) DecideFor(id string, approve bool, via, reason string, grantFor time.Duration) (Request, error) {
-	return s.decide(id, approve, via, reason, grantFor, false)
+	return s.decide(id, approve, via, reason, grantFor, false, false)
+}
+
+// DecideOnce approves a request as single-use: the grant is spent the first
+// time byn authorizes a run with it.
+func (s *Store) DecideOnce(id string, approve bool, via, reason string, grantFor time.Duration) (Request, error) {
+	return s.decide(id, approve, via, reason, grantFor, false, true)
 }
 
 // DecideForAnyone is DecideFor with the grant widened past the caller that
 // asked, which is a deliberate act and is recorded as one.
 func (s *Store) DecideForAnyone(id string, approve bool, via, reason string, grantFor time.Duration) (Request, error) {
-	return s.decide(id, approve, via, reason, grantFor, true)
+	return s.decide(id, approve, via, reason, grantFor, true, false)
 }
 
 func (s *Store) decide(id string, approve bool, via, reason string,
-	grantFor time.Duration, anyone bool) (Request, error) {
+	grantFor time.Duration, anyone, once bool) (Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -443,6 +461,9 @@ func (s *Store) decide(id string, approve bool, via, reason string,
 			}
 			if anyone {
 				r.Anyone = true
+			}
+			if once {
+				r.Once = true
 			}
 			r.Denials = 0
 			delete(f.Denials, r.Fingerprint)
@@ -515,6 +536,46 @@ func (s *Store) Revoke(id string) (Request, error) {
 		return out, nil
 	}
 	return Request{}, ErrNotFound
+}
+
+// ConsumeOnce spends a single-use grant, and reports whether it spent one.
+//
+// Called when byn authorizes a run against a grant — the moment the grant has
+// done what it was given for. Deliberately not "when the command succeeds":
+// byn hands over values or a token and the child's fate is its own, so tying
+// the grant to an exit code would mean holding it open across something byn
+// does not watch. Spent on authorization is a rule that can be stated exactly
+// and does not drift.
+//
+// A no-op for ordinary grants, so callers need not know which kind they hold.
+func (s *Store) ConsumeOnce(subject, fingerprint string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return false, err
+	}
+	now := s.now()
+	for i := range f.Requests {
+		r := &f.Requests[i]
+		if !r.Once || r.Status != StatusApproved {
+			continue
+		}
+		if r.Subject != subject || r.Fingerprint != fingerprint {
+			continue
+		}
+		if !now.Before(r.GrantedUntil) {
+			continue // already lapsed; nothing to spend
+		}
+		r.Status = StatusUsed
+		r.GrantedUntil = time.Time{}
+		r.DecidedAt = now
+		if err := s.save(f); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // LastDenial returns the most recent refusal of this exact question, if there

@@ -31,6 +31,7 @@ func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 		NeededBy:      decidedUnix(r.NeededBy),
 		Late:          r.Late,
 		Anyone:        r.Anyone,
+		Once:          r.Once,
 		Requestor: ipc.ApprovalActor{
 			PID: r.Requestor.PID, Exe: r.Requestor.Exe, Cwd: r.Requestor.Cwd,
 			User: r.Requestor.User, Agent: r.Requestor.Agent,
@@ -151,8 +152,11 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 			"byn approve "+req.ID+" --for 30m")
 	}
 	decide := d.approvals.DecideFor
-	if req.Anyone {
+	switch {
+	case req.Anyone:
 		decide = d.approvals.DecideForAnyone
+	case req.Once:
+		decide = d.approvals.DecideOnce
 	}
 	decided, err := decide(req.ID, req.Approve, via, req.Reason, grantFor)
 	if err != nil {

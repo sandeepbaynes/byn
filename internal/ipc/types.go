@@ -1659,7 +1659,10 @@ type ApprovalEntry struct {
 	Late     bool  `json:"late,omitempty"`
 	// Anyone says an approved command runs free for anything in the scope
 	// rather than only for whoever asked.
-	Anyone     bool   `json:"anyone,omitempty"`
+	Anyone bool `json:"anyone,omitempty"`
+	// Once says the grant is single-use — spent the first time byn authorizes a
+	// run with it.
+	Once       bool   `json:"once,omitempty"`
 	Status     string `json:"status"`
 	CreatedAt  int64  `json:"created_at"`
 	ExpiresAt  int64  `json:"expires_at"`
@@ -1719,7 +1722,10 @@ type ApprovalDecideReq struct {
 	Anyone bool `json:"anyone,omitempty"`
 	// Revoke takes back a grant already given. No credential: taking capability
 	// away is the safe direction, exactly as refusing one is.
-	Revoke   bool   `json:"revoke,omitempty"`
+	Revoke bool `json:"revoke,omitempty"`
+	// Once makes the grant single-use, spent the first time byn authorizes a
+	// run with it — the shape a one-shot script actually wants.
+	Once     bool   `json:"once,omitempty"`
 	Password []byte `json:"password,omitempty"`
 }
 

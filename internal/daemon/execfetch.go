@@ -445,10 +445,18 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 					// than the one the queue replaced, because it looks like progress.
 					if !matched && d.actionApproved(ctx, canon, req.Command, resolvedArgv) {
 						matched = true
-						d.auditEmit(ctx, vaultName, audit.Event{
+						// A single-use grant is spent here — the moment byn
+						// authorizes a run with it. Dry-run and preflight go
+						// through a different op, so neither consumes it.
+						spent := d.consumeOnceGrant(canon, req.Command, resolvedArgv)
+						ev := audit.Event{
 							Op: "exec.action_approved", Outcome: audit.OutcomeOK, BynPath: canon,
 							Command: strings.Join(resolvedArgv, " "),
-						})
+						}
+						if spent {
+							ev.Command += " (single-use grant spent)"
+						}
+						d.auditEmit(ctx, vaultName, ev)
 					}
 
 					if !matched {

@@ -930,6 +930,12 @@ comes from comparing a digest of the stored ciphertext, which needs no
 key. Use it instead of \fB\-\-reveal\fR whenever the question is
 whether something was rotated rather than what its value was.
 .TP
+.B \-\-once
+Used by \fBapprove\fR. Make the grant single\-use: spent the first time
+byn authorizes a run with it, rather than staying live for the rest of
+the window. Spent on authorization, not on the command's exit status; a
+dry run consumes nothing.
+.TP
 .B \-\-revoke
 Used by \fBapprove\fR. Take back a grant already given, before it
 lapses. No password: it can only remove capability, exactly as

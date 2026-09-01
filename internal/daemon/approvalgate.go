@@ -393,3 +393,18 @@ func (d *Daemon) grantUsableBy(ctx context.Context) func(approval.Request) bool 
 		return sharesAncestryFn(pid, []procRef{want})
 	}
 }
+
+// consumeOnceGrant spends a single-use grant for this command, if that is what
+// authorized it. Reports whether one was spent, for the audit line.
+//
+// Best-effort: a queue byn cannot write is not a reason to refuse a command it
+// has already decided to allow. The grant outliving its single use is the
+// lesser failure, and it still expires.
+func (d *Daemon) consumeOnceGrant(canon, command string, resolvedArgv []string) bool {
+	if d.approvals == nil {
+		return false
+	}
+	_, _, fingerprint := actionApprovalKey(canon, command, resolvedArgv)
+	spent, err := d.approvals.ConsumeOnce(canon, fingerprint)
+	return err == nil && spent
+}
