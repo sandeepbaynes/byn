@@ -47,6 +47,20 @@ func runRepairArtifacts(args []string, _ cliScope) int {
 			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Note:"),
 				dim(fmt.Sprintf("could not refresh the inherited ACL on %s: %v", abs, gerr)))
 		}
+		// The tool-state directories the .byn declares, too — a shared
+		// credential file that a chmod locked is repaired the same way, and
+		// this is the only route to it while a service is still running.
+		//
+		// exec reconciles these on the way in, which is enough when the file is
+		// locked between runs. It is not enough for a long-lived service: a
+		// token refreshed by the owner while the service is up leaves the child
+		// unable to read it until something restarts, and a dev server that has
+		// been running for days is exactly the case. Repair fixes it in place.
+		if dirs := privsep.WritableDirsExist(execWritableDirs(filepath.Join(abs, ".byn"), home)); len(dirs) > 0 {
+			if n := privsep.ReconcileWritableACLs(ownerACLRun, dirs, privsep.ExecUser); n > 0 {
+				fmt.Printf("  restored %s access to %d tool-state file(s)\n", privsep.ExecUser, n)
+			}
+		}
 	}
 
 	// The helper reads the caller's uid itself rather than taking a username

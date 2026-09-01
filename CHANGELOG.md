@@ -26,6 +26,12 @@ It runs as you, which bounds what it can fix: changing a file's ACL requires
 being its owner, so this repairs files *you* locked. The mirror case, a file the
 exec child locked that you can no longer read, is what `byn repair` is for.
 
+`byn repair` now covers the declared writable directories as well, not just the
+project. Reconciling on the way into an exec is enough when a file was locked
+between runs, and not enough for a service that is already up: a token refreshed
+while a dev server has been running for days leaves that child unable to read it
+until something restarts. Repair fixes it in place, without one.
+
 ### Trusting a large project no longer takes minutes
 
 `byn trust --recursive` over a monorepo took two to three minutes, and it runs
