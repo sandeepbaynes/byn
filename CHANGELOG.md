@@ -71,6 +71,25 @@ wildcard one, on a key that is locally computable — a real loss of least
 privilege to fix a reporting bug. The common case already heals itself: writing
 a value while the vault is open re-seals the grant.
 
+### `byn setup` asks for the password itself
+
+Running it without root used to end at "byn setup must run as root — Run: sudo
+byn setup", which is a command you then retype. Worse from a `go install`, where
+byn lives outside sudo's `secure_path`: `sudo byn setup` answers `command not
+found` for the very command that fixes that.
+
+It now re-runs itself under sudo, so sudo prompts and setup continues. byn
+re-executes its own resolved path rather than a name looked up on PATH — the
+point is to run *this* byn as root, and a PATH lookup under `secure_path` could
+find a different one. It says what it is about to do before the prompt appears:
+an unexplained password prompt is alarming, and teaches people to type their
+password at whatever asks.
+
+If sudo refuses — not a sudoer, wrong password, cancelled, no terminal to prompt
+on — its message stands, since it is the accurate one, and byn adds the command
+to run, which sudo cannot know. A guard env var means a sudo that does not
+actually elevate produces one honest error rather than an infinite re-exec.
+
 ### `byn setup` enables privilege separation, not just provisions it
 
 Provisioning was necessary and not sufficient. `byn exec` asks the daemon

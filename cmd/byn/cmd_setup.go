@@ -59,6 +59,14 @@ func runSetupWith(args []string, euid func() int, stdin io.Reader, stdout, stder
 	}
 
 	if euid() != 0 {
+		// Ask for the password rather than telling someone to retype the
+		// command with sudo in front of it. byn knows what it needs to run and
+		// where it lives — and where it lives is the hard part, since a
+		// `go install` puts byn outside sudo's secure_path, so `sudo byn setup`
+		// answers "command not found" for the very command that fixes it.
+		if rc, took := elevateWithSudo(args, stdin, stdout, stderr); took {
+			return rc
+		}
 		_, _ = fmt.Fprintln(stderr, boldRed("Error:")+" byn setup must run as root")
 		hint := sudoByn("setup")
 		if *uninstall {

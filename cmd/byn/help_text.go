@@ -2196,7 +2196,13 @@ SYNOPSIS
 
 DESCRIPTION
        Provisions the full privilege-separation install in one idempotent,
-       root-required step. byn setup:
+       root-required step. Run it without root and, on a terminal, it
+       re-runs itself under sudo so you are prompted rather than told to
+       retype the command — which matters most after a "go install",
+       where byn lives outside sudo's secure_path and "sudo byn setup"
+       would answer "command not found". With no terminal to prompt on
+       it prints the command instead of hanging on a prompt nothing can
+       answer. byn setup:
 
          1. Creates the _byn and _byn-exec service accounts and installs the
             prebuilt privileged spawn helper (byn-exec-helper) plus its
@@ -2221,12 +2227,17 @@ DESCRIPTION
        byn binary; if it is missing, setup fails telling you to reinstall byn.
        On platforms other than Linux and macOS, byn setup is not supported.
 
-       Setup provisions privsep; it does not enable it. Privilege separation is
-       opt-in: set "[security] privsep = true" in ~/.byn/config and restart the
-       daemon to engage it. With privsep enabled and provisioned, the daemon
-       spawns trusted-.byn pinned exec children as _byn-exec. Enable privsep
+       Setup provisions privsep AND enables it: it writes
+       "[security] privsep = true" and restarts the daemon, so exec children run
+       as _byn-exec. It never overwrites an explicit setting, privsep = false
+       included — turning it off is a decision and setup does not overturn it.
+
+       Provisioning alone is not enough: byn exec asks the daemon whether
+       privsep is on and the daemon answers from that key, so a machine can be
+       fully provisioned with every exec child still at your UID. Enable privsep
        WITHOUT having run setup and the daemon warns and trusted-.byn exec fails
-       closed (it never silently runs owner-UID).
+       closed (it never silently runs owner-UID). "byn doctor" reports the state
+       in force.
 
        --uninstall reverses a previous setup: it uninstalls the system service,
        removes the spawn helper + its config, and removes the owner record. By
