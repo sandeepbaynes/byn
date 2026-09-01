@@ -12,6 +12,66 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.5.5
+
+**Headline:** installing byn now leaves you isolated — `byn setup` enables
+privilege separation and asks for the password itself — plus single-use grants,
+revocable grants, and a locked vault that accepts the password it asks for.
+
+### What's new
+
+- **`byn setup` enables privsep, not just provisions it.** It writes
+  `[security] privsep = true` and restarts the daemon. Provisioning alone was
+  never enough: `byn exec` asks the daemon whether privsep is on and the daemon
+  answers from that key, so a machine could have the service user, the spawn
+  helper and the ACLs all in place and still run every exec child at the owner's
+  UID. An explicit setting is never overwritten, `privsep = false` included.
+- **`byn setup` asks for the password itself.** Run without root on a terminal,
+  it re-runs itself under sudo instead of telling you to retype the command —
+  which after a `go install` would not have worked anyway, since byn lives
+  outside sudo's `secure_path`. With no terminal it prints the command rather
+  than hanging on a prompt nothing can answer.
+- **`byn approve --once`** makes a grant single-use, spent the first time byn
+  authorizes a run with it. One-shot scripts are what approvals are mostly used
+  for, and the alternative was remembering to revoke afterwards.
+- **`byn approve --revoke`** takes a grant back before it lapses, with no
+  password: it can only remove capability. `--deny` on an already-approved
+  request is now refused loudly instead of returning quietly while reprinting
+  the grant line.
+- **A locked vault accepts the master password for `get` and `put`.** `get`
+  prompted for the password and then refused the read; `put` refused an
+  authenticated write while accepting an unauthenticated one. The key is
+  unwrapped for that one operation and zeroed after — a password authorizes a
+  value, `byn unlock` authorizes a session.
+- **Alias exec runs under privilege separation.** `byn exec <alias>` ran the
+  child as you, so the ergonomic form was the unprotected one.
+- **The approval history is readable.** Expired entries are dated from when they
+  lapsed and say when they were asked; long commands collapse to one line in the
+  list; and `byn approve` names `--history` whenever there is history behind it.
+
+### Fixed
+
+- Captured row keys bypassed the `.byn`'s own `[exec] env` list — the same
+  mistake as the unattended-value bypass, at a second site.
+- One undecryptable value aborted an entire exec, so a value the `.byn` never
+  declared could stop every value it did.
+- A declared name whose value exists but which the grant cannot open was
+  reported as having no value, sending you to set it again when the fix is to
+  re-trust.
+- The portal's error toast collapsed to one word per line.
+- `byn doctor` reports when several byn binaries disagree about the version.
+
+### Upgrade notes (from v0.5.4)
+
+- No schema change; vaults, trust records and audit logs are untouched.
+- **Privilege separation gets enabled on upgrade** if you have never set
+  `[security] privsep` either way — the packages re-run `byn setup`, which now
+  writes the key and restarts the daemon. Exec children that ran at your UID
+  will start running as `_byn-exec`. Set `privsep = false` first if you do not
+  want that; setup will leave it alone.
+
+---
+
 ## v0.5.4
 
 **Headline:** `byn doctor` says when a newer byn is installed somewhere nothing

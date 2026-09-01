@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## v0.5.5 — unreleased
+## v0.5.5 — 2026-09-01
 
 ### The approval history is readable
 
