@@ -41,7 +41,9 @@ func runRepairArtifacts(args []string, _ cliScope) int {
 	// one whose ACL was cleared — needs the cause fixed too.
 	if u, uerr := user.Current(); uerr == nil {
 		home, _ := os.UserHomeDir()
-		if gerr := privsep.GrantProjectACLFor(ownerACLRun, abs, home, u.Username); gerr != nil {
+		// Forced: repair is called when a tree is known to be wrong, so the
+		// inheritable entry on the root proves nothing about what is beneath it.
+		if gerr := privsep.GrantProjectACLForce(ownerACLRun, abs, home, u.Username); gerr != nil {
 			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Note:"),
 				dim(fmt.Sprintf("could not refresh the inherited ACL on %s: %v", abs, gerr)))
 		}

@@ -5,6 +5,25 @@ list; this file carries what you need to know before upgrading.
 
 ## v0.5.6 — unreleased
 
+### Trusting a large project no longer takes minutes
+
+`byn trust --recursive` over a monorepo took two to three minutes, and it runs
+after every `.byn` edit. The search was never the problem — finding every `.byn`
+in a 330,000-entry tree takes 0.39 seconds. The cost was a recursive `setfacl`
+over the whole project, once per `.byn` found, measured at 191 seconds on a tree
+that size. It is slow because nearly every entry already carries an ACL, so each
+one is a real xattr read and rewrite.
+
+That walk only ever needed to run once. A default ACL is inherited at creation,
+at any depth, whoever creates the file — so everything added after the first
+grant already carries the entry, and only what predates it needs the walk. Trust
+now checks whether the project directory already has the inheritable entry, one
+`getfacl` on one directory, and skips the walk when it does.
+
+`byn repair` still forces it. Repair is called when a tree is known to be wrong,
+and the entry on the root proves nothing about what lies beneath it — which is
+exactly the situation repair exists to fix.
+
 ### The docs site publishes what it renders, and nothing else
 
 The pages workflow copied `docs/` into the built site verbatim, so every

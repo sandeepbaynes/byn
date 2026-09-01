@@ -4,7 +4,9 @@ package privsep
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // aclGrantCommands returns the setfacl invocations to give `user` access to a
@@ -97,16 +99,58 @@ func GrantProjectACL(run func(name string, args ...string) error, projectDir, ho
 // GrantProjectACLFor is GrantProjectACL with the owner named, so files the exec
 // child creates stay writable by the person who owns the project.
 func GrantProjectACLFor(run func(name string, args ...string) error, projectDir, homeDir, owner string) error {
+	return grantProjectACL(run, projectDir, homeDir, owner, false)
+}
+
+// GrantProjectACLForce is GrantProjectACLFor with the deep walk always run.
+//
+// `byn repair` exists to fix a tree that is already wrong, so it must not take
+// the presence of the inheritable entry as proof that everything beneath it is
+// in order — that is precisely the situation it is called to repair.
+func GrantProjectACLForce(run func(name string, args ...string) error, projectDir, homeDir, owner string) error {
+	return grantProjectACL(run, projectDir, homeDir, owner, true)
+}
+
+func grantProjectACL(run func(name string, args ...string) error, projectDir, homeDir, owner string, force bool) error {
 	for _, c := range aclGrantCommands(projectDir, homeDir, ExecUser, owner) {
 		if err := run(c[0], c[1:]...); err != nil {
 			return err
 		}
 	}
-	// Best-effort deep grant: covers existing nested dirs (node_modules/.vite,
-	// .astro, etc.) that pnpm/Vite/Astro need to write to on first run. Ignored
-	// on error — e.g. when _byn-exec-owned cache dirs are present in the tree.
+	// Best-effort deep grant: covers entries that already existed when the
+	// project was first trusted — node_modules/.vite, .astro and friends that
+	// pnpm/Vite/Astro write to on first run. Ignored on error, e.g. when
+	// _byn-exec-owned cache dirs are already present in the tree.
+	//
+	// Skipped once the directory carries the inheritable entry, and that is the
+	// whole performance story. This walk touches every entry under the project:
+	// on a monorepo of 330k entries it took over three minutes, and it ran again
+	// on every re-trust — which is every time a .byn is edited.
+	//
+	// Running it once is enough because a default ACL is inherited at creation,
+	// at any depth, whoever creates the file. Anything added after the first
+	// grant already carries the entry; only what predates it needs the walk. If
+	// the entry is ever stripped, this check sees that and the walk runs again.
+	if !force && deepGrantDone(projectDir) {
+		return nil
+	}
 	_ = run("setfacl", "-R", "-m", fmt.Sprintf("u:%s:rwX", ExecUser), projectDir)
 	return nil
+}
+
+// deepGrantDone reports whether projectDir already carries the inheritable
+// _byn-exec entry — the mark left by a previous grant.
+//
+// One getfacl on one directory, so asking is free compared with acting. It
+// deliberately reads the DEFAULT entry rather than the access one: the default
+// is what makes future files inherit, so its presence is what makes skipping
+// the walk safe.
+func deepGrantDone(projectDir string) bool {
+	out, err := exec.Command("getfacl", "-c", "--", projectDir).Output() //nolint:gosec // fixed binary; path is the project being trusted
+	if err != nil {
+		return false // cannot tell — do the work rather than assume it is done
+	}
+	return strings.Contains(string(out), "default:user:"+ExecUser+":")
 }
 
 // RevokeProjectACL removes the _byn-exec ACL entries added by GrantProjectACL.
