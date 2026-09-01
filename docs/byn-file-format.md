@@ -66,6 +66,25 @@ migrate = "python manage.py migrate"
   actions = ["pnpm dev"]
   writable = ["~/Library/pnpm"]   # only if your tool uses an uncommon dir
   ```
+
+  **Shared state files, and why byn re-checks them.** Granting access at trust
+  time is not enough on its own: no permission scheme survives an explicit
+  `chmod`. A tool that rewrites its own state file — the AWS CLI does this to
+  its SSO cache — creates the file and then chmods it to `0600`, discarding the
+  inherited ACL. Whichever identity wrote last owns a file the other cannot
+  read: refresh a token as yourself and every exec child loses its credentials;
+  let a child refresh it and you lose yours.
+
+  So before each privsep exec, byn re-grants `_byn-exec` access to files under
+  these directories that have been locked down since the last run. It looks at
+  the file mode rather than reading each ACL, because reading ACLs entry by
+  entry is what makes a recursive pass cost minutes. It says nothing unless it
+  actually repaired something.
+
+  It runs as you, and that is a limit worth knowing: changing a file's ACL
+  requires being its owner, so this fixes files **you** locked. For the mirror
+  case — a file the exec child locked, which you can no longer read — use
+  `byn repair`, which does the same work through the privileged helper.
 - `[auth]` keys (`get`, `update`, `delete`, `exec`) override the session
   gate for this scope. Values: `"always"` (tightens, always requires fresh
   auth even with an active session), `"none"` (relaxes, skips the gate

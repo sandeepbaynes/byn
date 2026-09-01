@@ -5,6 +5,27 @@ list; this file carries what you need to know before upgrading.
 
 ## v0.5.6 — unreleased
 
+### Shared tool-state files stop locking one identity out
+
+A tool that rewrites its own state file and then chmods it to `0600` — the AWS
+CLI does exactly this to its SSO cache — discards whatever ACL it inherited.
+Whichever identity wrote last owns a file the other cannot read, and it goes
+both ways: refresh a token as yourself and every exec child loses its
+credentials with a `CredentialsProviderError`, or let a child refresh it and
+your own AWS CLI dies on a `KeyError` it cannot explain. Reported from real use,
+where it broke a live service.
+
+No permission scheme survives an explicit chmod, so byn reconciles instead:
+before each privsep exec it re-grants `_byn-exec` access to files under the
+`.byn`'s declared `[exec] writable` directories that have been locked down since
+the last run. It tests the file mode rather than reading each ACL — reading ACLs
+entry by entry is what makes a recursive pass cost minutes — and it is silent
+unless it repaired something.
+
+It runs as you, which bounds what it can fix: changing a file's ACL requires
+being its owner, so this repairs files *you* locked. The mirror case, a file the
+exec child locked that you can no longer read, is what `byn repair` is for.
+
 ### Trusting a large project no longer takes minutes
 
 `byn trust --recursive` over a monorepo took two to three minutes, and it runs

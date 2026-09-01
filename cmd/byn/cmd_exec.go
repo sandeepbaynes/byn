@@ -304,6 +304,16 @@ func runExec(args []string, scope cliScope) int {
 		}
 	}
 
+	// A tool that rewrites its own state file — the AWS CLI does this to its SSO
+	// cache — chmods it to 0600 afterwards, discarding the inherited ACL. The
+	// file then belongs to whoever wrote last and the other identity is locked
+	// out: refresh the token as yourself and every exec child loses its
+	// credentials. Repaired here, by the owner, because changing a file's ACL
+	// needs its owner; the mirror case is `byn repair`.
+	if privsepOn && scope.SourcePath != "" {
+		reconcileWritableACLs(scope.SourcePath)
+	}
+
 	if privsepOn && scope.SourcePath != "" && !isAliasExec {
 		if rc, handled := runExecPrivsep(client, req, childArgv, waitApproval, hasWait); handled {
 			return rc
@@ -1201,4 +1211,27 @@ func resolveAliasArgv(client *ipc.Client, bynPath, alias string, extra []string)
 		return nil
 	}
 	return resp.ResolvedArgv
+}
+
+// reconcileWritableACLs re-grants the exec user access to declared writable
+// paths that have been locked down since the last run.
+//
+// Silent on success: this is maintenance on the way to a command the caller
+// asked for, and a line about tool-state permissions every single exec would be
+// noise. It says something only when it actually repaired one, which is the
+// event worth knowing about — a credential file was unreadable and now is not.
+func reconcileWritableACLs(bynPath string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dirs := privsep.WritableDirsExist(execWritableDirs(bynPath, home))
+	if len(dirs) == 0 {
+		return
+	}
+	if n := privsep.ReconcileWritableACLs(ownerACLRun, dirs, privsep.ExecUser); n > 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", dim("note:"),
+			dim(fmt.Sprintf("restored %s access to %d tool-state file(s) locked down since the last run",
+				privsep.ExecUser, n)))
+	}
 }
