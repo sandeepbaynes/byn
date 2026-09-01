@@ -285,8 +285,8 @@ func TestOpenEnvVarWithRowKey_RefusesLegacyV1(t *testing.T) {
 // Reads (GetEnvVar / ListEnvVars) fall back from a non-default env to the
 // project's default env for missing names. The capability capture + open path
 // must apply the SAME fallback, or a var whose value lives only in default is
-// silently absent from trusted exec while `byn get` shows it (real incident:
-// example-project EXAMPLE_TIMEOUT_SECONDS, 2026-07-28).
+// silently absent from trusted exec while `byn get` shows it — a variable set
+// once in default and read from every env is the ordinary shape of this bug.
 
 // TestCaptureRowKeys_InheritsDefaultEnv: capturing in a non-default env picks
 // up a var that exists only in the default env.

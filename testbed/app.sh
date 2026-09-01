@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stands in for a real service: every config value must arrive from byn.
 # Missing vars crash loudly rather than defaulting, matching the rule the
-# example-project project enforces (no env-var fallback defaults, ever).
+# this testbed enforces (no env-var fallback defaults, ever).
 set -euo pipefail
 
 require() {

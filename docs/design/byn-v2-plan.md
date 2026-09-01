@@ -8,7 +8,7 @@
 
 ## Context
 
-A month of real use (example-project, privsep on) proved byn v1 slows dev down. Quantified from 56 agent transcripts (201 MB): **215 EACCES, 104 EPERM, 118 "Operation not permitted", 101 `make byn-trust` references, 31 master-password prompts.** The project grew a whole workaround layer: `make byn-trust` after every `.byn` edit, cache resets before `dev-all`, ~100 lines of kill-wrapper shell, `sudo rm -rf .next` rituals. Root causes:
+A month of real use with privsep on proved byn v1 slows dev down. Quantified from 56 agent transcripts (201 MB): **215 EACCES, 104 EPERM, 118 "Operation not permitted", 101 `make byn-trust` references, 31 master-password prompts.** The project grew a whole workaround layer: `make byn-trust` after every `.byn` edit, cache resets before `dev-all`, ~100 lines of kill-wrapper shell, `sudo rm -rf .next` rituals. Root causes:
 1. Trust pins file bytes + mtime; exec capability freezes var names at grant → every edit is a password re-trust, new vars silently missing.
 2. Files created by `_byn-exec` aren't owned by the user → EACCES on builds, undeletable caches.
 3. `kill`/`ps` on `_byn-exec` processes → EPERM.
@@ -184,7 +184,7 @@ suite is green (25 packages). The portal half of item 6 is done too.
 | 6a | portal approvals page | `2e5836f`, `2de0ffa` (audit) |
 | — | v1 fixes found by using it | `8b9efa5`, `3c229c5`, `fbaa368`, `98c3b71`, `530d885` |
 
-Verified on example-project: API server starts under `byn exec` with zero
+Verified end to end: an API server starts under `byn exec` with zero
 missing-variable errors and tears down with no orphans.
 
 **Still open:** item 6b (sync bridge), 7 (byn-server), 8 (Expo app), 9 (macOS

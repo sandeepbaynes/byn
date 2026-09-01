@@ -87,8 +87,8 @@ need authentication.
 
 ### 9. Killing `byn exec` left orphaned servers holding ports — FIXED
 
-Found by running example-project's api dev server under `byn exec` and killing
-the wrapper. Two `_byn-exec` processes survived, still bound to ports 8083 and
+Found by running a long-lived dev server under `byn exec` and killing the
+wrapper. Two `_byn-exec` processes survived, still bound to ports 8083 and
 8583, invisible to `byn ps`, and unkillable by the owner (EPERM across the UID
 boundary). Recovery needed `byn-exec-helper --kill-pgrp` by hand.
 
@@ -100,8 +100,8 @@ real server is a grandchild and outlives everything.
 Fixed in `3c229c5`: the wrapper sweeps its own process group through the helper
 on exit — signal path and after `Wait` — skipping the sweep unless it leads the
 group, so a failed `Setpgid` cannot aim the signal at the caller's shell job.
-This is the same class of bug the sandbox spike hit, and it is why
-example-project grew ~100 lines of kill-wrapper shell.
+This is the same class of bug the sandbox spike hit, and it is why a project
+using byn ends up writing kill-wrapper shell to work around it.
 
 ## The build-artifact trap, reproduced in two commands
 
