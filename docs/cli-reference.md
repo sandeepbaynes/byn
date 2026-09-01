@@ -171,8 +171,10 @@ flags, `byn setup`:
 - The prebuilt `byn-exec-helper` must sit beside the `byn` binary.
 - Linux uses `systemd-sysusers(8)`; macOS uses `sysadminctl(8)`. Other platforms
   are unsupported.
-- Setup **provisions** privsep; it does not **enable** it. Engage it with
-  `[security] privsep = true` in the config + a daemon restart. With privsep
+- Setup **provisions and enables** privsep: it writes
+  `[security] privsep = true` and restarts the daemon, leaving an explicit
+  setting alone. Before v0.5.5 it provisioned only, so a fully set-up machine
+  could still run every exec child at the owner's UID. With privsep
   enabled but **not** provisioned, the daemon warns and trusted-`.byn` exec
   **fails closed** — it never silently runs as the owner UID.
 - `--uninstall` reverses a previous setup (uninstall the service, remove the

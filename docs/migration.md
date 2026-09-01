@@ -71,8 +71,10 @@ What `byn setup` does, in order:
 4. Records your owner UID (from `SUDO_UID`).
 5. Verifies the result.
 
-It **provisions** privsep; it does not **enable** it. Engage it with
-`[security] privsep = true` in the config and a **daemon restart**. With privsep
+It provisions privsep **and enables it**: setup writes
+`[security] privsep = true` and restarts the daemon, unless the key is already
+set either way. Before v0.5.5 it provisioned only, and a machine could be fully
+set up with every exec child still running at the owner's UID. With privsep
 enabled but **not** provisioned, the daemon warns and trusted-`.byn` exec **fails
 closed** — it never silently falls back to running as your UID. (`byn exec
 --no-privsep` is a per-call escape hatch — not a setup-time opt-out — that forces

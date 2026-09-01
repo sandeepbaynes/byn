@@ -71,6 +71,27 @@ wildcard one, on a key that is locally computable — a real loss of least
 privilege to fix a reporting bug. The common case already heals itself: writing
 a value while the vault is open re-seals the grant.
 
+### `byn setup` enables privilege separation, not just provisions it
+
+Provisioning was necessary and not sufficient. `byn exec` asks the daemon
+whether privsep is on and the daemon answers from `[security] privsep`, so a
+machine could have the service user, the spawn helper and the ACLs all in place
+and still run every exec child at the owner's UID — the protection built and
+switched off, waiting on a config edit most people never made.
+
+Setup now writes the key and restarts the daemon, which is the moment byn has
+both root and your attention. It never overwrites an explicit setting, including
+`privsep = false`: turning it off is a decision, and setup is not the place to
+overturn it. Re-running is idempotent, which matters because the packages run
+setup on every upgrade.
+
+Since v0.5.5 `byn setup` sets `[security] privsep = true` for you and restarts
+the daemon, so a normal install ends up separated. It never overwrites an
+explicit setting — including `privsep = false`, which is a deliberate choice
+setup does not overturn. Without that key exec children run at your UID: the
+flag is what `byn exec` asks the daemon about, so provisioning alone does not
+isolate anything.
+
 ### Documentation corrections
 
 - `spec.md` listed trust-record tampering as undetected with HMAC signing

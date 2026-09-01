@@ -109,14 +109,40 @@ func runProvision(stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stdout, "")
 	_, _ = fmt.Fprintln(stdout, "Run byn as your normal user (NOT sudo) — only "+cyan("byn setup")+" needs root.")
 	// Provisioning is necessary and not sufficient: `byn exec` asks the daemon
-	// whether privsep is on and the daemon answers from [security] privsep, so
-	// without that key the child still runs at the owner's UID. Setup says the
-	// remaining step rather than claiming the job is done.
-	_, _ = fmt.Fprintln(stdout, "One step left to isolate exec children: set "+
-		cyan("[security] privsep = true")+" (via "+cyan("byn web")+" → Settings, or by editing "+
-		cyan(filepath.Join(res.SystemDir, "config"))+" as root), then restart the daemon.")
-	_, _ = fmt.Fprintln(stdout, "Until then commands run as you, and anything at your UID can read "+
-		"their injected secrets. "+cyan("byn doctor")+" reports which state you are in.")
+	// whether privsep is on and the daemon answers from [security] privsep. A
+	// machine could be fully provisioned and still run every exec child at the
+	// owner's UID because one key was never set — the protection built and
+	// switched off. Setup is the moment byn has both root and your attention,
+	// so it sets the key and restarts the daemon to read it.
+	uid, gid, uerr := privsep.LookupDaemonUser()
+	if uerr != nil {
+		uid, gid = 0, 0 // chown skipped; the write still succeeds as root
+	}
+	switch changed, cerr := enablePrivsepInConfig(res.SystemDir, uid, gid); {
+	case cerr != nil:
+		_, _ = fmt.Fprintf(stderr, "warning: could not enable privilege separation: %v\n", cerr)
+		_, _ = fmt.Fprintln(stderr, "         set "+cyan("[security] privsep = true")+" in "+
+			cyan(filepath.Join(res.SystemDir, "config"))+" and restart the daemon.")
+	case changed:
+		// The daemon reads its config at start, and InstallService's
+		// `enable --now` does not restart one that was already running — so an
+		// upgrade would keep serving with the old config and the key would look
+		// like it had done nothing.
+		if rerr := privsep.RestartService(privilegedRunner()); rerr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: privilege separation is set but the daemon "+
+				"has not reloaded: %v\n", rerr)
+			_, _ = fmt.Fprintln(stderr, "         run "+cyan(sudoByn("restart"))+" to engage it.")
+			break
+		}
+		_, _ = fmt.Fprintln(stdout, "Privilege separation enabled: exec children run as "+
+			cyan(privsep.ExecUser)+", so their injected secrets are not readable from your own "+
+			cyan("ps")+".")
+	default:
+		// An explicit setting was already there — including `false`, which is
+		// somebody's decision and not setup's to overturn.
+		_, _ = fmt.Fprintln(stdout, "Privilege separation: left as your config sets it ("+
+			cyan("[security] privsep")+"). "+cyan("byn doctor")+" reports the state in force.")
+	}
 	printMacOSFDANote(stdout)
 	return exitOK
 }
