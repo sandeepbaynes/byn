@@ -71,6 +71,41 @@ wildcard one, on a key that is locally computable — a real loss of least
 privilege to fix a reporting bug. The common case already heals itself: writing
 a value while the vault is open re-seals the grant.
 
+### The docs now describe the byn that exists
+
+A pass over every doc surface, checking that what shipped is described and that
+what was fixed is no longer logged as open.
+
+The consequential one: **privilege separation was documented in thirteen places
+as opt-in and off by default.** It is neither. Provisioning engages it — and the
+install script and system packages now provision as part of installing — while
+`[security] privsep` gates only a server-side spawn path the CLI never calls.
+The security model, the threat table, the architecture overview, the quickstart,
+the migration guide, the CLI reference, the man page and `byn help setup` all
+told a provisioned reader to set a flag to protect themselves, and implied they
+were exposed until they did. Understating your own protection is milder than
+overstating it, but it is the document people use to decide how much to trust
+the tool.
+
+Also corrected:
+
+- `spec.md` listed trust-record tampering as undetected with HMAC signing "designed"
+  — it shipped: records carry an FPMAC and a VKMAC.
+- `spec.md` listed the audit-chain crash window as awaiting a repair mode — it
+  shipped: the logger reconciles its head on restart, and `byn audit reseal`
+  answers a genuine break.
+- `spec.md` stated as **contract** that a same-UID process can read an exec
+  child's environ. True on an unprovisioned machine and for ad-hoc exec; false
+  for a pinned exec on a provisioned one, which is now the ordinary case.
+- `spec.md` listed scope CRUD as deferred everywhere; the portal has it.
+- The CLI reference said `get` and `put` require an unlock while `delete` does
+  not. All three now take the master password on a locked vault.
+- `byn help lock` said value reads and writes fail until unlock, without
+  mentioning the password, the authored-key path, or that a trusted `.byn` still
+  injects.
+
+Historical release notes are left alone: they describe what was true at the time.
+
 ### Fixed
 
 - **The portal's error toast collapsed to one word per line.** The stack it sits

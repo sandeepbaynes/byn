@@ -173,7 +173,8 @@ See
 .TP
 .B list \fR[\fINAME\fR|\fIGLOB\fR]
 List secret names. Works while the vault is locked (the index is
-plaintext metadata; only values require unlock). With a
+plaintext metadata; a value needs the vault key or the master
+password). With a
 .I NAME
 or
 .I GLOB
@@ -656,15 +657,16 @@ On Linux, accounts are created via
 On macOS,
 .BR sysadminctl (8)
 is used. Other platforms are unsupported.
-Setup provisions privsep; it does not enable it.
-Privilege separation is opt\-in: set
-.B [security] privsep = true
-in
-.I ~/.byn/config
-and restart the daemon to engage it.
-With privsep enabled and provisioned, the daemon spawns trusted\-.byn pinned
-exec children as
-.IR _byn\-exec .
+Provisioning is what engages privilege separation: once setup has run, the
+daemon runs as
+.I _byn
+and trusted\-.byn pinned exec children run as
+.IR _byn\-exec ,
+with no config change and no flag.
+.B [security] privsep
+is vestigial \(em it gates a server\-side spawn path the CLI no longer calls,
+so setting it changes nothing. Check the real state with
+.BR "byn doctor" .
 Enable privsep without having run setup and the daemon warns; trusted\-.byn
 exec then fails closed (it never silently runs owner\-UID).
 .IP

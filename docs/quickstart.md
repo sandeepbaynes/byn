@@ -95,9 +95,9 @@ affecting other open sessions.
 > **Optional: harden with privilege separation.** byn can run the daemon as a
 > dedicated `_byn` service user and run trusted-pinned `byn exec` children as
 > `_byn-exec`, so a same-(owner)-UID **non-root** process can't ptrace the daemon
-> or read an exec child's injected env. It is **opt-in and off by default** — run
-> `sudo byn setup` once, then set `[security] privsep = true` and restart the
-> daemon. It raises the bar to root (it does **not** defend against root /
+> or read an exec child's injected env. **Provisioning engages it** — `sudo byn
+> setup`, which the install script and the system packages run for you, so a
+> normal install is already separated. It raises the bar to root (it does **not** defend against root /
 > `CAP_SYS_PTRACE`). See [Migration & setup](migration.md) and the
 > [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56).
 

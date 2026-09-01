@@ -435,11 +435,20 @@ SYNOPSIS
 
 DESCRIPTION
        Asks the daemon to zero the in-memory vault key. Subsequent
-       value reads/writes will return a "vault is locked" error until
-       the vault is unlocked again.
+       value reads and writes need a credential: supply the master
+       password and byn unwraps the key for that one operation and
+       zeroes it after, leaving the vault locked. Without one they
+       return a "vault is locked" error.
 
-       Locking does NOT stop the daemon. The metadata index remains
-       browseable; only value reads require unlock.
+       Locking does NOT stop the daemon. The metadata index stays
+       browseable — names, scopes, and what a past run received are
+       readable with no credential at all.
+
+       Two things still work with no credential on a locked vault: a
+       trusted .byn injecting its allowlisted values into byn exec,
+       and an agent reading back a value it stored itself. Both are
+       sealed under keys derived for exactly that purpose, not under
+       the vault key. See "byn help unattended".
 
        With --session, only the CLI session token for the current
        terminal is revoked without locking the vault for other callers
@@ -2212,12 +2221,15 @@ DESCRIPTION
        byn binary; if it is missing, setup fails telling you to reinstall byn.
        On platforms other than Linux and macOS, byn setup is not supported.
 
-       Setup provisions privsep; it does not enable it. Privilege separation is
-       opt-in: set "[security] privsep = true" in ~/.byn/config and restart the
-       daemon to engage it. With privsep enabled and provisioned, the daemon
-       spawns trusted-.byn pinned exec children as _byn-exec. Enable privsep
-       WITHOUT having run setup and the daemon warns and trusted-.byn exec fails
-       closed (it never silently runs owner-UID).
+       Provisioning is what engages privilege separation. Once setup has
+       run, the daemon runs as _byn and trusted-.byn pinned exec children
+       run as _byn-exec — no config change, no flag.
+
+       "[security] privsep" is vestigial. It gates a server-side spawn
+       path the CLI no longer calls, so setting it changes nothing. byn
+       used to document it as the switch, which told a provisioned user
+       who left it unset that they were unprotected when they were not.
+       Check the real state with "byn doctor".
 
        --uninstall reverses a previous setup: it uninstalls the system service,
        removes the spawn helper + its config, and removes the owner record. By

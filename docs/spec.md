@@ -604,15 +604,13 @@ changes (Enter on env leaf, scope picker apply).
 Enter on it currently flashes `vault creation not yet wired in TUI —
 use 'byn init'`. This is a deliberate gap, NOT a bug.
 
-8.7.4. **Scope CRUD from the rail — DEFERRED (planned, not built).**
-Creating and deleting vaults, projects, and envs from the TUI rail
-(and, once it exists, the browser portal) is a planned feature. Today
-the only way to add or remove a scope is the CLI (`vault init/delete`,
-`project create/delete`, `env create/delete`). The TUI/portal MUST
-eventually offer: add vault/project/env, and delete vault/project/env
-(with the §2.1.2 refusal-to-delete-`default` rules and a confirm
-step). Tracked on the roadmap. Until then,
-this is a known gap, NOT a bug.
+8.7.4. **Scope CRUD — shipped in the portal, still absent from the TUI
+rail.** The browser portal creates vaults, projects and envs
+(`internal/ui/api.go` → `vault.init`, `project.create`, `env.create`);
+the TUI rail does not, and the CLI remains the other way in
+(`vault init/delete`, `project create/delete`, `env create/delete`).
+The §2.1.2 refusal-to-delete-`default` rules apply wherever deletion is
+offered. The remaining TUI gap is a known gap, NOT a bug.
 
 ### 8.8 Inheritance badges
 
@@ -718,19 +716,24 @@ refreshes. `v` runs an `audit verify`.
   is brief (prompt → IPC send) but real; daemon-side wrapping
   requires changing the `vault.Unlock([]byte)` interface and the
   `crypto/wrap.Unwrap` workspace.
-- `~/.byn/trusted_byn.json` and `~/.byn/auth-state.json` are
-  protected only by UNIX file permissions. Tampering by an attacker
-  who can write `~` is undetected. HMAC signing is designed; see
-  internal design notes.
+- ~~`trusted_byn.json` tampering is undetected~~ — **shipped.** Trust
+  records carry two MACs (`internal/trust/mac.go`): an FPMAC keyed
+  from the machine fingerprint, verifiable while the vault is locked,
+  and a VKMAC keyed from the vault key, verified at use time. An
+  attacker who can write the file cannot forge a record that byn will
+  accept. `auth-state.json` remains permission-protected only.
 - `vault.unlock` is not currently constant-time across the entire
   decision path. The wrap/unwrap primitive itself uses
   `hmac.Equal`; surrounding code does not.
 - `ipc.DecodeBody` does not currently use `DisallowUnknownFields`.
   Envelope decode does. A malicious peer can pad request bodies with
   arbitrary fields without effect today.
-- The audit chain has a (small) crash window between log file fsync
-  and chain head MetaSet. A repair mode in `byn doctor` is the
-  planned mitigation; not yet shipped.
+- ~~The audit chain crash window needs a repair mode~~ — **shipped.**
+  The window still exists (fsync then chain-head MetaSet is two
+  writes), but the logger now reconciles its head from the last
+  on-disk line on restart, so a clean crash repairs itself; a genuine
+  break is reported by `byn doctor` and answered by
+  `byn audit reseal`, which records who resealed and why.
 
 These qualifications ARE part of the contract — they bound what we
 promise. Don't tighten them without shipping the corresponding work.
@@ -761,10 +764,18 @@ Today (env-var injection + audit, shipped):
 
 **Accepted limitation (contract):** env-var values injected into a
 child process ARE readable from that child's `/proc/<pid>/environ` by a
-same-UID process. byn does not attempt to prevent this — the consuming
-process must read them. For env vars the guarantee is *no accidental
-file read* + *audited access*, NOT concealment from a determined
-same-UID reader.
+same-UID process — **on an unprovisioned machine, and for ad-hoc exec
+(no `.byn`) anywhere.** For those the guarantee is *no accidental file
+read* + *audited access*, NOT concealment from a determined same-UID
+reader.
+
+On a **provisioned** machine (`byn setup`, which the install script and
+the system packages run as part of installing) a trusted-`.byn` pinned
+exec runs its child as `_byn-exec`, and the kernel's ptrace-mode check
+denies a same-UID **non-root** process that read — verified by the
+privsep integration test. Root and `CAP_SYS_PTRACE` remain the ceiling,
+permanently. This paragraph described the unprovisioned case as the
+whole contract, which understated what a normal install now provides.
 
 Intended extension as later phases land (the *target* model — the
 sealed-tool/broker/FUSE pieces are NOT yet shipped):
