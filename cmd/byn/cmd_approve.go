@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -159,7 +160,11 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "%s %s  %s\n", marker, cyan(e.ID), e.Subject)
 		for _, line := range e.Summary {
-			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", line)
+			// One line each. A `node -e '<300-char program>'` printed verbatim
+			// buried every other entry on the screen, which is the opposite of
+			// what a list is for — and this is the list someone scans to find
+			// what an agent asked for.
+			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", oneLine(line, 100))
 		}
 		// What approving would DO. "runs make dev" reads like a button that
 		// runs make dev, and the first question anyone asked of these cards was
@@ -195,6 +200,17 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 			detail = e.Status
 			if e.DecidedAt > 0 {
 				detail += " " + time.Since(time.Unix(e.DecidedAt, 0)).Truncate(time.Second).String() + " ago"
+			} else if e.Status == "expired" && e.ExpiresAt > 0 {
+				// Nothing decides an expiry, so there is no decision time — but
+				// the moment it lapsed is exactly ExpiresAt. Without this an
+				// expired entry read "expired" and nothing else, so a request
+				// that lapsed an hour ago and one from last week looked the
+				// same, which makes the history unusable for the thing it is
+				// for: working out what an agent asked for, and when.
+				detail += " " + time.Since(time.Unix(e.ExpiresAt, 0)).Truncate(time.Second).String() + " ago"
+			}
+			if e.CreatedAt > 0 {
+				detail += ", asked " + time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second).String() + " ago"
 			}
 			if e.DecidedVia != "" {
 				detail += " via " + e.DecidedVia
@@ -259,6 +275,16 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
 	}
+	if !history {
+		// Named whenever there is something to see, not only when the queue is
+		// empty. A request that expires leaves nothing on screen, so an owner
+		// who never learns this flag exists is left with "the agent said it
+		// asked for something" and no way to find out what.
+		if n := decidedCount(c); n > 0 {
+			fmt.Fprintf(os.Stderr, "\n%s\n",
+				dim(fmt.Sprintf("%d decided or expired request(s) — byn approve --history to see what was asked, and why", n)))
+		}
+	}
 	fmt.Fprintf(os.Stderr, "\n%s\n", dim("Approving authorizes; it runs nothing and edits no file. Whoever asked runs it again."))
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "),
@@ -293,4 +319,31 @@ func whatApprovingDoes(kind string) string {
 	default:
 		return ""
 	}
+}
+
+// oneLine renders a summary line for a list: newlines collapsed, length capped.
+//
+// The text itself is never rewritten in the record — it is what the request
+// fingerprint is computed from, so changing it would invalidate pending
+// requests and existing grants. This is presentation only.
+func oneLine(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	return ellipsize(s, limit)
+}
+
+// decidedCount counts requests that are no longer pending, so the pending list
+// can say how much history is behind it. Best-effort: a count byn cannot get is
+// simply not mentioned.
+func decidedCount(c *ipc.Client) int {
+	var all ipc.ApprovalListResp
+	if err := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{}, &all); err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range all.Entries {
+		if e.Status != "pending" {
+			n++
+		}
+	}
+	return n
 }

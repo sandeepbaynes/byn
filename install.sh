@@ -166,6 +166,17 @@ if [ "$PRIVSEP_HELPER" = "1" ] && [ "${BYN_NO_SETUP:-0}" != "1" ]; then
     setup_cmd="sudo $dest setup"
   fi
   if $setup_cmd; then
+    # A shell that has already run byn remembers where it found it. This script
+    # has just put a byn somewhere else, so the old path is what the caller's
+    # shell will keep trying — reporting "No such file or directory" for a
+    # command that is installed and working. Cheap to pre-empt; confusing to
+    # debug from the error alone.
+    if command -v hash >/dev/null 2>&1 && hash -t byn >/dev/null 2>&1; then
+      cached=$(hash -t byn 2>/dev/null || true)
+      if [ -n "$cached" ] && [ "$cached" != "$dest" ]; then
+        say "your shell has $cached cached — run:  hash -r   (or open a new terminal)"
+      fi
+    fi
     say "next:  byn init"
   else
     # Never fail the install over this: byn works without privsep, and says so

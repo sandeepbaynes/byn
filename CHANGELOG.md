@@ -3,6 +3,38 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.5.5 — unreleased
+
+### The approval history is readable
+
+`byn approve --history` already kept every request — nothing is ever pruned —
+but you could not use it to answer the question it exists for. An expired entry
+said only `expired`, with no when, so one that lapsed an hour ago and one from
+last week looked identical. A command containing a program (`node -e "…"`) was
+printed verbatim, burying every other entry. And the flag was only ever
+mentioned when the queue was empty, so an owner whose request had expired was
+left with "the agent said it asked for something" and no way to find out what.
+
+Now: expired entries are dated from the moment they lapsed and say when they
+were asked, summaries are collapsed to one line in the list (the stored text is
+untouched — it is what the fingerprint is computed from), and the pending list
+names `--history` whenever there is history behind it. Denials were always
+included and now read the same way.
+
+### Fixed
+
+- **`byn setup` claimed privilege separation was off when it was on.** It closed
+  by telling you to set `[security] privsep = true` — but the exec path engages
+  privsep from the provisioning state setup has just established, and that flag
+  only ever gated a server-side spawner since superseded. So it advised editing
+  a config file to enable something already running, and told anyone who read it
+  and did nothing that they were unprotected when they were not. It now states
+  what is true and points at `byn doctor`.
+- **`install.sh` warns when your shell has a stale byn cached.** Installing byn
+  to a new location leaves the calling shell still resolving the old path, so a
+  working install reports `No such file or directory`. The script now notices
+  and says to run `hash -r`.
+
 ## v0.5.4 — 2026-08-31
 
 ### Fixed
