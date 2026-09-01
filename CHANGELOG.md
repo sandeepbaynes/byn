@@ -41,6 +41,36 @@ unlocking the whole vault. The value is sealed under the vault key exactly as it
 would be if the vault were open, so it means the same thing: the value is the
 owner's, and the agent's claim on the name does not survive it.
 
+### Alias exec is no longer the unprotected form
+
+`byn exec <alias>` ran the child as you, with none of privilege separation's
+isolation — so the ergonomic form was the one without protection, and byn said
+so on every run rather than fixing it. Authorization was never the obstacle: the
+daemon expands an alias and gates the result exactly as it gates a direct
+command. The CLI simply could not pin an absolute target before handing one to
+the spawn helper, because for an alias it did not know what the target was.
+
+Preflight already answers that, and answers it without side effects — it queues
+nothing and spends no grant — so the alias is resolved first and then run
+through the ordinary privsep path as the command it actually is. Verified: the
+same alias that ran as uid 1000 now runs as `_byn-exec`, and build artifacts are
+still removable by their owner.
+
+### A value byn cannot reach is not a value that is missing
+
+A declared variable that the launch did not receive was reported as having no
+value — whether it had none, or had one this grant could not open. An
+explicit-name capability captures a key per name that has a value when the
+`.byn` is trusted, so a name that gains one later is not in it. Being told "no
+value" about a value sitting in the vault sends you to set it again; the fix is
+to re-trust the `.byn`, and byn now says so.
+
+Nothing changed about which names a grant covers. Widening explicit grants to
+derive any value in their scope would have made every capability as broad as a
+wildcard one, on a key that is locally computable — a real loss of least
+privilege to fix a reporting bug. The common case already heals itself: writing
+a value while the vault is open re-seals the grant.
+
 ### Fixed
 
 - **`byn setup` claimed privilege separation was off when it was on.** It closed

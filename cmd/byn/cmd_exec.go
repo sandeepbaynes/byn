@@ -273,12 +273,35 @@ func runExec(args []string, scope cliScope) int {
 	// An alias silently took the legacy path, so the child ran as the caller
 	// with none of privsep's isolation — the ergonomic form was the unprotected
 	// one. Say so rather than degrade quietly; the direct form is the fix.
+	// An alias used to take the legacy path unconditionally, so the ergonomic
+	// form was the unprotected one: the child ran as the caller, and anything
+	// at that UID could read its environment. The obstacle was never
+	// authorization — the daemon expands the alias and gates the result exactly
+	// as it gates a direct command — but the CLI has to pin an absolute target
+	// before it hands one to the helper, and for an alias it does not know what
+	// the target IS until the daemon says.
+	//
+	// Preflight already answers that, and answers it without side effects: it
+	// returns the expanded argv, queues nothing, and consumes no grant. So the
+	// alias is resolved first and then run through the ordinary privsep path as
+	// the command it actually is.
 	if privsepOn && scope.SourcePath != "" && isAliasExec {
-		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Warning:"),
-			dim("alias exec runs without privilege separation — the child runs as you, "+
-				"and other processes at your UID can read its environment."))
-		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("For isolation:"),
-			cyan("byn exec -- <command>")+dim(" (pin it in [exec] actions)"))
+		if resolved := resolveAliasArgv(client, scope.SourcePath, aliasName, extraArgs); len(resolved) > 0 {
+			childArgv = resolved
+			// A direct exec of the expanded command, which is what it was
+			// always going to be: sending both would have the daemon read Argv
+			// as extra arguments to the alias.
+			req.Alias = ""
+			req.Argv = resolved
+			req.Command = execCommandLabel(resolved)
+			isAliasExec = false
+		} else {
+			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Warning:"),
+				dim("this alias could not be resolved, so it runs without privilege separation — "+
+					"the child runs as you, and other processes at your UID can read its environment."))
+			fmt.Fprintf(os.Stderr, "%s %s\n", yellow("For isolation:"),
+				cyan("byn exec -- <command>")+dim(" (pin it in [exec] actions)"))
+		}
 	}
 
 	if privsepOn && scope.SourcePath != "" && !isAliasExec {
@@ -1161,4 +1184,21 @@ func waitSeconds(d time.Duration, waiting bool) int {
 		return 0
 	}
 	return int(d / time.Second)
+}
+
+// resolveAliasArgv asks the daemon what an alias expands to, so the privsep
+// path can pin an absolute target the way it does for a direct command.
+//
+// Preflight is the right question to ask: it resolves the alias against the
+// trusted .byn, queues no decision, and spends no grant — so asking costs
+// nothing and changes nothing. An empty answer means byn could not resolve it
+// (an untrusted or missing .byn, an unknown alias), and the caller falls back
+// rather than guessing at a target.
+func resolveAliasArgv(client *ipc.Client, bynPath, alias string, extra []string) []string {
+	var resp ipc.ExecPreflightResp
+	if err := client.Call(ipc.OpExecPreflight,
+		ipc.ExecPreflightReq{Path: bynPath, Alias: alias, Argv: extra}, &resp); err != nil {
+		return nil
+	}
+	return resp.ResolvedArgv
 }

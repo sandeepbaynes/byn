@@ -1733,3 +1733,63 @@ func TestExecCapability_CapturedKeysStillObeyTheAllowlist(t *testing.T) {
 		t.Errorf("a value the .byn never declared was injected: %v", got)
 	}
 }
+
+// "Missing" and "cannot be reached" are different facts, and byn reported both
+// as the first. An explicit-name capability captures a key per name that has a
+// value at trust time, so a name that gains one later is not in it — and the
+// launch line said "no value" about a value sitting right there, sending the
+// reader to set it again when the fix is to re-trust the .byn.
+func TestExecLaunch_ExistingButUnreachableIsNotReportedAsMissing(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+
+	// Declared, but with no value when the .byn is trusted — so the capability
+	// captures no key for it.
+	byn := writeBynContent(t, "[scope]\n\n[exec]\nenv = [\"LATER\", \"ABSENT\"]\nactions = [\"mytool run\"]\n")
+	grantBynFile(t, c, byn, pw)
+
+	// The value appears afterwards, written by the owner while the vault is
+	// LOCKED. That is the case the capability cannot heal from: re-sealing it
+	// needs the vault key in memory, so an ordinary put on an open vault
+	// refreshes the grant and this one cannot.
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+	if err := c.Call(ipc.OpPut, ipc.PutReq{
+		Name: "LATER", Value: []byte("set-after-trust"), Password: pw,
+	}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("owner write to a locked vault: %v", err)
+	}
+
+	resp, err := execFetch(t, c, ipc.ExecFetchReq{
+		Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"},
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	var later, absent string
+	for _, m := range resp.MissingValues {
+		switch {
+		case strings.HasPrefix(m, "LATER"):
+			later = m
+		case strings.HasPrefix(m, "ABSENT"):
+			absent = m
+		}
+	}
+	if later == "" {
+		t.Fatalf("LATER was not reported at all: %v", resp.MissingValues)
+	}
+	if !strings.Contains(later, "re-trust") {
+		t.Errorf("LATER = %q, want it named as present but unreachable", later)
+	}
+	// A name that genuinely has no value must still read as plainly missing —
+	// the distinction is worthless if everything gets the same caveat.
+	if absent == "" {
+		t.Fatalf("ABSENT was not reported: %v", resp.MissingValues)
+	}
+	if strings.Contains(absent, "re-trust") {
+		t.Errorf("ABSENT = %q, want a plain missing report", absent)
+	}
+}

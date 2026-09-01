@@ -569,9 +569,43 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		sort.Strings(invented)
 	}
 	d.recordExecRun(ctx, st, scope, req, resolvedArgv, values, invented)
+	notDelivered := missingAllowlisted(allow, optionalEnv, wildcard, values)
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard,
-		missingAllowlisted(allow, optionalEnv, wildcard, values), invented, nil
+		d.splitUnreachable(ctx, st, scope, notDelivered), invented, nil
 }
+
+// splitUnreachable rewrites "missing" names that are not actually missing.
+//
+// A declared name is reported missing when the launch did not receive it, and
+// that lumps two different situations together: the vault has no value, or it
+// has one this grant cannot open. The second happens when a name had no value
+// when the .byn was trusted — an explicit-name capability captures a key per
+// name that exists, so a name that gains a value later is not in it.
+//
+// Telling someone "no value" when the value is right there sends them to set it
+// again; the fix is to re-trust the .byn. Checking costs nothing and needs no
+// key: entry names are readable while the vault is locked.
+func (d *Daemon) splitUnreachable(ctx context.Context, st *vault.Store, scope vault.Scope, missing []string) []string {
+	if len(missing) == 0 || st == nil {
+		return missing
+	}
+	out := make([]string, 0, len(missing))
+	for _, name := range missing {
+		if has, err := st.HasEnvVar(ctx, scope, name); err == nil && has {
+			// Marked rather than dropped: the program still does not receive
+			// it, which is the fact the launch line exists to report.
+			out = append(out, name+unreachableSuffix)
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// unreachableSuffix marks a declared name whose value exists but which this
+// grant cannot derive. Carried on the name so every surface that already prints
+// missing values says the more precise thing without a new field to ignore.
+const unreachableSuffix = " (value exists — re-trust the .byn to reach it)"
 
 // execValuesFromCapability decrypts a trusted .byn's allowlisted vars via its
 // sealed exec capability (rec.ExecCapability) — using ONLY the machine
