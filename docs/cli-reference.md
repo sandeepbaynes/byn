@@ -171,12 +171,10 @@ flags, `byn setup`:
 - The prebuilt `byn-exec-helper` must sit beside the `byn` binary.
 - Linux uses `systemd-sysusers(8)`; macOS uses `sysadminctl(8)`. Other platforms
   are unsupported.
-- Setup **provisions and thereby engages** privsep: once it has run, the daemon
-  is `_byn` and trusted-`.byn` pinned exec children are `_byn-exec`. This page
-  used to say setup did not enable it and that `[security] privsep = true` was
-  the switch; that flag gates only a server-side spawn path the CLI no longer
-  calls, so setting it changes nothing and leaving it unset never meant you were
-  unprotected.
+- Setup **provisions** privsep; it does not **enable** it. Engage it with
+  `[security] privsep = true` in the config + a daemon restart. With privsep
+  enabled but **not** provisioned, the daemon warns and trusted-`.byn` exec
+  **fails closed** — it never silently runs as the owner UID.
 - `--uninstall` reverses a previous setup (uninstall the service, remove the
   helper + config + owner record). It **leaves the vault intact** by default. Add
   `--purge` to also delete the system data dir and every secret in it — a
@@ -345,9 +343,7 @@ Allowed while locked (names only, no values touched).
 - A locked vault accepts `delete`, `get` and `put` with the master password.
   The key is unwrapped for that one operation and zeroed after, so the vault
   stays locked: a password authorizes a value, `byn unlock` authorizes a
-  session. (`get` and `put` used to require an unlock — `get` prompted for the
-  password and then refused the read, and `put` refused an authenticated write
-  while accepting an unauthenticated one.)
+  session.
 
 ### `byn rename OLD NEW [--password-stdin]` (alias: `byn mv OLD NEW`)
 

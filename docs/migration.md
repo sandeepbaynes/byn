@@ -24,8 +24,9 @@ for the threat reasoning and the honest ceiling.
 #   sudo $(which byn) setup
 sudo byn setup
 
-# That is the whole thing: provisioning is what engages privilege separation.
-# (The install script and the deb/rpm/apk packages run step 1 for you.)
+# 2. Turn privsep on in the config and restart the daemon.
+#    Add `privsep = true` under [security] in the byn config, then:
+byn daemon stop && byn daemon start
 ```
 
 `byn setup` is idempotent and safe to re-run on every install and upgrade. If you
@@ -70,12 +71,10 @@ What `byn setup` does, in order:
 4. Records your owner UID (from `SUDO_UID`).
 5. Verifies the result.
 
-It **provisions privsep, and provisioning is what engages it**: once setup has
-run, the daemon is `_byn` and trusted-`.byn` pinned exec children are
-`_byn-exec`. This guide used to say setup did not enable it and that
-`[security] privsep = true` was the switch — that flag gates only a server-side
-spawn path the CLI no longer calls, so setting it changes nothing and leaving it
-unset never meant you were unprotected. (`byn exec
+It **provisions** privsep; it does not **enable** it. Engage it with
+`[security] privsep = true` in the config and a **daemon restart**. With privsep
+enabled but **not** provisioned, the daemon warns and trusted-`.byn` exec **fails
+closed** — it never silently falls back to running as your UID. (`byn exec
 --no-privsep` is a per-call escape hatch — not a setup-time opt-out — that forces
 the legacy in-process path for a single exec, running that child at your UID
 instead of `_byn-exec`, so the same-UID ptrace / env-read weaknesses apply for

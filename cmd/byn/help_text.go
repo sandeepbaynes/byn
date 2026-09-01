@@ -2221,15 +2221,12 @@ DESCRIPTION
        byn binary; if it is missing, setup fails telling you to reinstall byn.
        On platforms other than Linux and macOS, byn setup is not supported.
 
-       Provisioning is what engages privilege separation. Once setup has
-       run, the daemon runs as _byn and trusted-.byn pinned exec children
-       run as _byn-exec — no config change, no flag.
-
-       "[security] privsep" is vestigial. It gates a server-side spawn
-       path the CLI no longer calls, so setting it changes nothing. byn
-       used to document it as the switch, which told a provisioned user
-       who left it unset that they were unprotected when they were not.
-       Check the real state with "byn doctor".
+       Setup provisions privsep; it does not enable it. Privilege separation is
+       opt-in: set "[security] privsep = true" in ~/.byn/config and restart the
+       daemon to engage it. With privsep enabled and provisioned, the daemon
+       spawns trusted-.byn pinned exec children as _byn-exec. Enable privsep
+       WITHOUT having run setup and the daemon warns and trusted-.byn exec fails
+       closed (it never silently runs owner-UID).
 
        --uninstall reverses a previous setup: it uninstalls the system service,
        removes the spawn helper + its config, and removes the owner record. By

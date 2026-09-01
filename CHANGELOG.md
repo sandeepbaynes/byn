@@ -71,40 +71,20 @@ wildcard one, on a key that is locally computable — a real loss of least
 privilege to fix a reporting bug. The common case already heals itself: writing
 a value while the vault is open re-seals the grant.
 
-### The docs now describe the byn that exists
+### Documentation corrections
 
-A pass over every doc surface, checking that what shipped is described and that
-what was fixed is no longer logged as open.
-
-The consequential one: **privilege separation was documented in thirteen places
-as opt-in and off by default.** It is neither. Provisioning engages it — and the
-install script and system packages now provision as part of installing — while
-`[security] privsep` gates only a server-side spawn path the CLI never calls.
-The security model, the threat table, the architecture overview, the quickstart,
-the migration guide, the CLI reference, the man page and `byn help setup` all
-told a provisioned reader to set a flag to protect themselves, and implied they
-were exposed until they did. Understating your own protection is milder than
-overstating it, but it is the document people use to decide how much to trust
-the tool.
-
-Also corrected:
-
-- `spec.md` listed trust-record tampering as undetected with HMAC signing "designed"
-  — it shipped: records carry an FPMAC and a VKMAC.
+- `spec.md` listed trust-record tampering as undetected with HMAC signing
+  "designed" — it shipped: records carry an FPMAC and a VKMAC.
 - `spec.md` listed the audit-chain crash window as awaiting a repair mode — it
   shipped: the logger reconciles its head on restart, and `byn audit reseal`
   answers a genuine break.
-- `spec.md` stated as **contract** that a same-UID process can read an exec
-  child's environ. True on an unprovisioned machine and for ad-hoc exec; false
-  for a pinned exec on a provisioned one, which is now the ordinary case.
-- `spec.md` listed scope CRUD as deferred everywhere; the portal has it.
+- `spec.md` listed scope CRUD as deferred everywhere; the portal has it. The TUI
+  rail still does not, which is now what it says.
 - The CLI reference said `get` and `put` require an unlock while `delete` does
   not. All three now take the master password on a locked vault.
 - `byn help lock` said value reads and writes fail until unlock, without
-  mentioning the password, the authored-key path, or that a trusted `.byn` still
-  injects.
-
-Historical release notes are left alone: they describe what was true at the time.
+  mentioning the password path, the authored-key path, or that a trusted `.byn`
+  still injects.
 
 ### Fixed
 
@@ -113,13 +93,12 @@ Historical release notes are left alone: they describe what was true at the time
   space available in its containing block — which was zero — so the card fell
   back to its longest word. It had a `max-width`, which caps a width but never
   supplies one. It now sets a width and reads as a sentence.
-- **`byn setup` claimed privilege separation was off when it was on.** It closed
-  by telling you to set `[security] privsep = true` — but the exec path engages
-  privsep from the provisioning state setup has just established, and that flag
-  only ever gated a server-side spawner since superseded. So it advised editing
-  a config file to enable something already running, and told anyone who read it
-  and did nothing that they were unprotected when they were not. It now states
-  what is true and points at `byn doctor`.
+- **`byn setup` was vague about the step still outstanding.** It closed by
+  naming `[security] privsep = true` without saying what is true until you set
+  it: exec children run at your UID, and anything there can read their injected
+  secrets. Provisioning is necessary and not sufficient — `byn exec` asks the
+  daemon whether privsep is on, and the daemon answers from that key. Setup now
+  says what is not yet protected and points at `byn doctor` for the real state.
 - **`install.sh` warns when your shell has a stale byn cached.** Installing byn
   to a new location leaves the calling shell still resolving the old path, so a
   working install reports `No such file or directory`. The script now notices

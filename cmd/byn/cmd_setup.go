@@ -108,16 +108,15 @@ func runProvision(stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintln(stdout, "")
 	_, _ = fmt.Fprintln(stdout, "Run byn as your normal user (NOT sudo) — only "+cyan("byn setup")+" needs root.")
-	// Setup used to close by telling people to enable privilege separation.
-	// It is already on at this point: the exec path engages it from the
-	// provisioning state that setup has just established, and the
-	// [security] privsep flag only ever gated a server-side spawner that has
-	// since been superseded. So the line advised editing a config file to turn
-	// on something already running — and, worse, told someone who read it and
-	// did nothing that they were unprotected when they were not.
-	_, _ = fmt.Fprintln(stdout, "Privilege separation is now active: commands run under "+
-		cyan(privsep.ExecUser)+", so their injected secrets are not visible to your own "+cyan("ps")+".")
-	_, _ = fmt.Fprintln(stdout, "Check it any time with "+cyan("byn doctor")+".")
+	// Provisioning is necessary and not sufficient: `byn exec` asks the daemon
+	// whether privsep is on and the daemon answers from [security] privsep, so
+	// without that key the child still runs at the owner's UID. Setup says the
+	// remaining step rather than claiming the job is done.
+	_, _ = fmt.Fprintln(stdout, "One step left to isolate exec children: set "+
+		cyan("[security] privsep = true")+" (via "+cyan("byn web")+" → Settings, or by editing "+
+		cyan(filepath.Join(res.SystemDir, "config"))+" as root), then restart the daemon.")
+	_, _ = fmt.Fprintln(stdout, "Until then commands run as you, and anything at your UID can read "+
+		"their injected secrets. "+cyan("byn doctor")+" reports which state you are in.")
 	printMacOSFDANote(stdout)
 	return exitOK
 }

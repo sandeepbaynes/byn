@@ -151,12 +151,10 @@ override. Summary:
 ## Privilege separation (three-UID, opt-in)
 
 byn can run under a **three-UID model** that separates the human, the daemon, and
-exec children. It is engaged by **provisioning** (`byn setup`, which the
-install script and the system packages run as part of installing). Where setup
-has not run, byn behaves as it always did — the daemon and exec children run at
-your UID, and the same-UID env-sniff / daemon-ptrace holes remain open.
-`[security] privsep` is vestigial: it gates a server-side spawn path the CLI no
-longer calls. The full threat reasoning, the off-state holes,
+exec children. It is **opt-in and off by default this release** (`[security]
+privsep = true`, provisioned by `byn setup`). When off, byn behaves exactly as
+before — the daemon and exec children run at your UID, and the same-UID env-sniff
+/ daemon-ptrace holes remain open. The full threat reasoning, the off-state holes,
 and the honest ceiling are in the [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56);
 this section is the architecture sketch.
 

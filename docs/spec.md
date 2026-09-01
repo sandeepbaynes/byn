@@ -720,8 +720,8 @@ refreshes. `v` runs an `audit verify`.
   records carry two MACs (`internal/trust/mac.go`): an FPMAC keyed
   from the machine fingerprint, verifiable while the vault is locked,
   and a VKMAC keyed from the vault key, verified at use time. An
-  attacker who can write the file cannot forge a record that byn will
-  accept. `auth-state.json` remains permission-protected only.
+  attacker who can write the file cannot forge a record byn accepts.
+  `auth-state.json` remains permission-protected only.
 - `vault.unlock` is not currently constant-time across the entire
   decision path. The wrap/unwrap primitive itself uses
   `hmac.Equal`; surrounding code does not.
@@ -730,10 +730,9 @@ refreshes. `v` runs an `audit verify`.
   arbitrary fields without effect today.
 - ~~The audit chain crash window needs a repair mode~~ — **shipped.**
   The window still exists (fsync then chain-head MetaSet is two
-  writes), but the logger now reconciles its head from the last
-  on-disk line on restart, so a clean crash repairs itself; a genuine
-  break is reported by `byn doctor` and answered by
-  `byn audit reseal`, which records who resealed and why.
+  writes), but the logger reconciles its head from the last on-disk
+  line on restart, so a clean crash repairs itself; a genuine break is
+  reported by `byn doctor` and answered by `byn audit reseal`.
 
 These qualifications ARE part of the contract — they bound what we
 promise. Don't tighten them without shipping the corresponding work.
@@ -764,18 +763,10 @@ Today (env-var injection + audit, shipped):
 
 **Accepted limitation (contract):** env-var values injected into a
 child process ARE readable from that child's `/proc/<pid>/environ` by a
-same-UID process — **on an unprovisioned machine, and for ad-hoc exec
-(no `.byn`) anywhere.** For those the guarantee is *no accidental file
-read* + *audited access*, NOT concealment from a determined same-UID
-reader.
-
-On a **provisioned** machine (`byn setup`, which the install script and
-the system packages run as part of installing) a trusted-`.byn` pinned
-exec runs its child as `_byn-exec`, and the kernel's ptrace-mode check
-denies a same-UID **non-root** process that read — verified by the
-privsep integration test. Root and `CAP_SYS_PTRACE` remain the ceiling,
-permanently. This paragraph described the unprovisioned case as the
-whole contract, which understated what a normal install now provides.
+same-UID process. byn does not attempt to prevent this — the consuming
+process must read them. For env vars the guarantee is *no accidental
+file read* + *audited access*, NOT concealment from a determined
+same-UID reader.
 
 Intended extension as later phases land (the *target* model — the
 sealed-tool/broker/FUSE pieces are NOT yet shipped):
