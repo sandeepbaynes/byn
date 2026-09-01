@@ -41,11 +41,16 @@ machine can't talk to your daemon.
 **Connection model:** one envelope per connection. CLI dials, sends,
 reads, closes. No multiplexing yet; not needed.
 
-**Who the daemon runs as.** By default (privsep off) the daemon runs at *your*
-UID. When you opt into privilege separation (`[security] privsep = true`, after
-`byn setup`), the daemon runs as the dedicated **`_byn`** service account instead
-— a different UID from you — so a same-(owner)-UID process can no longer ptrace
-the daemon and lift the vault key. See [Privilege separation](#privilege-separation-three-uid-opt-in)
+**Who the daemon runs as.** On a machine that has been provisioned — `byn setup`,
+which the install script and the system packages run for you — the daemon runs
+as the dedicated **`_byn`** service account, a different UID from you, so a
+same-(owner)-UID process cannot ptrace it and lift the vault key. Without
+provisioning (a bare `go install`, or a tarball on a machine where setup has not
+run) it runs at *your* UID and that protection is absent.
+
+Provisioning is the switch. `[security] privsep` gates only a server-side spawn
+path the CLI no longer uses, and setting it changes nothing about the exec path
+described here. See [Privilege separation](#privilege-separation-three-uid-opt-in)
 below and the [security model](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56)
 for the threat reasoning and the honest ceiling.
 

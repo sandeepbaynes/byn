@@ -73,6 +73,11 @@ a value while the vault is open re-seals the grant.
 
 ### Fixed
 
+- **The portal's error toast collapsed to one word per line.** The stack it sits
+  in is a zero-width anchor, and an absolutely positioned box shrinks to fit the
+  space available in its containing block — which was zero — so the card fell
+  back to its longest word. It had a `max-width`, which caps a width but never
+  supplies one. It now sets a width and reads as a sentence.
 - **`byn setup` claimed privilege separation was off when it was on.** It closed
   by telling you to set `[security] privsep = true` — but the exec path engages
   privsep from the provisioning state setup has just established, and that flag

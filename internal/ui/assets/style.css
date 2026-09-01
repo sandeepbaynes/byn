@@ -476,6 +476,12 @@ select.input { appearance: none; cursor: pointer; }
 .toast-err-card {
   position: absolute; bottom: 0; left: 0;
   display: flex; align-items: flex-start; gap: 12px;
+  /* width, not just max-width. The stack is a zero-width anchor, and an
+     absolutely positioned box shrinks to fit the space available in its
+     containing block — which is zero — so it collapsed to its longest word and
+     wrapped one word per line. max-width caps a width; it never supplies one. */
+  width: max-content;
+  min-width: min(260px, 90vw);
   max-width: min(560px, 90vw);
   animation: none;
   transition: transform .18s var(--ease), opacity .18s var(--ease);

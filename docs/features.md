@@ -241,11 +241,14 @@ clearly marked.
   the vault key as `_byn`, so a same-(owner)-UID **non-root** process can't
   ptrace it; a pinned exec child runs as `_byn-exec`, so that process can't
   read its `/proc/<pid>/environ`.
-- **Opt-in this release, off by default** (`[security] privsep = true`,
-  provisioned by `byn setup`). When off, byn behaves exactly as before —
-  the daemon and exec children run at your UID and the same-UID env-sniff /
-  daemon-ptrace holes remain open. Stated plainly so there's no false
-  assurance.
+- **Engaged by provisioning** (`byn setup`, run for you by the install script
+  and the system packages). On an unprovisioned machine the daemon and exec
+  children run at your UID and the same-UID env-sniff / daemon-ptrace holes
+  remain open — `byn doctor` says which state you are in. Stated plainly so
+  there is no false assurance in either direction.
+- `[security] privsep` is vestigial: it gates a server-side spawn path the CLI
+  no longer uses. It was documented as the switch, which meant a provisioned
+  user who left it unset believed they were unprotected when they were not.
 - **Honest ceiling:** privsep raises the bar to **root** — it does **not**
   defend against root, `CAP_SYS_PTRACE`, or a root `task_for_pid`. Linux
   adds `PR_SET_DUMPABLE=0`; macOS hardened-runtime only takes effect for a

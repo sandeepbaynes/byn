@@ -130,11 +130,22 @@ Print:
 
 ## System setup (privilege separation)
 
-These commands provision and migrate the **opt-in** [three-UID privilege
+These commands provision [three-UID privilege
 separation](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56)
 (daemon as `_byn`, exec children as `_byn-exec`, you as the owner). Both require
-root. Privsep is off by default; enable it with `[security] privsep = true` in
-the config and restart the daemon. See the [migration guide](migration.md).
+root.
+
+Privilege separation is engaged by **provisioning**, not by a config flag: once
+`byn setup` has run — which the install script and the system packages now do
+for you — the daemon runs as `_byn` and trusted-pinned `byn exec` children run
+as `_byn-exec`.
+
+`[security] privsep` is vestigial. It gates only a server-side spawn path that
+the CLI no longer uses; the live exec path checks provisioning state alone. The
+flag is documented here because it exists in the config, not because setting it
+changes anything.
+
+See the [migration guide](migration.md).
 
 ### `byn setup [--uninstall [--purge]]`
 

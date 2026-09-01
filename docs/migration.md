@@ -5,10 +5,14 @@ what changes when you upgrade. This covers the **opt-in** three-UID model — se
 [Security model → privilege separation](security.md#privilege-separation-the-three-uid-model-opt-in-nu-56)
 for the threat reasoning and the honest ceiling.
 
-> **Privsep is opt-in this release and off by default.** Nothing here happens
-> until you choose to enable it (`[security] privsep = true`) and run
-> `byn setup`. If you do nothing, byn keeps running exactly as before: the daemon
-> at your own UID, state under `~/.byn`.
+> **Provisioning is what engages privilege separation** — running `byn setup`,
+> which the install script and the system packages now do as part of installing.
+> Once it has run, the daemon runs as `_byn` and trusted-pinned exec children as
+> `_byn-exec`. Until it has, byn runs at your own UID with state under `~/.byn`.
+>
+> `[security] privsep` is **not** the switch, despite what this guide used to
+> say. It gates a server-side spawn path the CLI no longer uses; setting it
+> changes nothing. `byn doctor` reports which state the machine is actually in.
 
 ---
 
