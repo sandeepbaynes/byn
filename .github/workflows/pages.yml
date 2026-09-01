@@ -54,8 +54,24 @@ jobs:
           mkdir -p _site
           cp index.html _site/
           cp -r assets _site/assets
-          cp -r docs _site/docs
+          # Only the GENERATED pages. `cp -r docs` copied the markdown sources
+          # too, so every file under docs/ was served raw — including
+          # docs/design/ and docs/research/, which are internal notes that were
+          # never meant to be published and were reachable at their .md path.
+          # What is public is what the site manifest renders; nothing else
+          # leaves the repo.
+          find docs -name index.html -exec cp --parents {} _site/ \;
           touch _site/.nojekyll
+
+      # A guard, not a comment: the previous rule was also "do not publish the
+      # sources", and it was enforced by nobody.
+      - name: No markdown sources in the published site
+        run: |
+          if find _site -name "*.md" | grep -q .; then
+            echo "::error::markdown sources found in _site — only generated pages may be published:"
+            find _site -name "*.md"
+            exit 1
+          fi
 
       - uses: actions/configure-pages@v5
 

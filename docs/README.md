@@ -64,3 +64,19 @@ you need; everything cross-links.
   on macOS) once the machine is provisioned for privilege separation
   (`byn setup`), or the legacy per-user `~/.byn` when unprovisioned (the default).
   See [File layout](file-layout.md). There is no data-root env override.
+
+## Public and internal docs
+
+Everything on this page is **public**: the site renders exactly the pages listed
+in `tools/gensite/site/manifest.go`, and those are what appear at
+`sandeepbaynes.github.io/byn`.
+
+`docs/design/` and `docs/research/` are **internal** — plans, spikes, and
+decisions in progress. They live here so the reasoning stays next to the code,
+and they are never published. The deploy fails if any markdown source reaches
+the built site, which is what keeps the two apart.
+
+Adding a doc for users means adding it to the manifest. A doc that is not in the
+manifest is internal by default, which is the safe direction: the failure that
+prompted this was a design note being served raw at its own `.md` URL because
+the whole directory was copied verbatim.

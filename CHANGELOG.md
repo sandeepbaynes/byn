@@ -3,6 +3,22 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.5.6 — unreleased
+
+### The docs site publishes what it renders, and nothing else
+
+The pages workflow copied `docs/` into the built site verbatim, so every
+markdown source under it was served raw at its own `.md` URL — including
+`docs/design/` and `docs/research/`, which are internal notes that were never
+meant to be published.
+
+The site now publishes only the generated pages, which is exactly what
+`tools/gensite/site/manifest.go` names. A doc that is not in the manifest is
+internal by default. That is the safe direction, and it is enforced rather than
+documented: the deploy fails if any markdown source reaches the built site at
+all, because the previous rule was also "do not publish the sources" and nothing
+checked.
+
 ## v0.5.5 — 2026-09-01
 
 ### The approval history is readable
