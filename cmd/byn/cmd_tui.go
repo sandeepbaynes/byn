@@ -42,7 +42,13 @@ const tuiBinary = "byn-tui"
 // A fixed path also means an installed byn always finds its editor, whatever the
 // caller's PATH happens to be — including under sudo, whose secure_path is not
 // the user's.
-const tuiLibexecPath = "/usr/local/libexec/" + tuiBinary
+//
+// A variable, not a constant, so a test can point it somewhere that does not
+// exist. With a fixed absolute path these tests passed on any machine without
+// byn installed and failed on any machine with it — including, eventually, this
+// one. A test whose result depends on whether the product is installed is not
+// testing the product.
+var tuiLibexecPath = "/usr/local/libexec/" + tuiBinary
 
 // execTUI replaces this process with the editor.
 //

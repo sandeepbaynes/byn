@@ -14,6 +14,7 @@ import (
 // situation `byn doctor` already reports; launching the older editor against the
 // newer daemon because PATH happened to name it first would be a poor answer.
 func TestFindTUIBinary_PrefersTheOneBesideByn(t *testing.T) {
+	noInstalledEditor(t)
 	dir := t.TempDir()
 	beside := filepath.Join(dir, tuiBinary)
 	if err := os.WriteFile(beside, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -38,6 +39,7 @@ func TestFindTUIBinary_PrefersTheOneBesideByn(t *testing.T) {
 // A non-executable file next to byn is not the editor. Picking it would produce
 // a permission error at exec time instead of the actionable message below.
 func TestFindTUIBinary_IgnoresANonExecutableNeighbour(t *testing.T) {
+	noInstalledEditor(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, tuiBinary), []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
@@ -52,6 +54,7 @@ func TestFindTUIBinary_IgnoresANonExecutableNeighbour(t *testing.T) {
 // is a separate binary — never a bare "exec: no such file", which sends someone
 // looking for a bug in byn.
 func TestFindTUIBinary_MissingSaysWhatIsWrong(t *testing.T) {
+	noInstalledEditor(t)
 	t.Setenv("PATH", t.TempDir())
 	_, err := findTUIBinaryNear(filepath.Join(t.TempDir(), "byn"))
 	if err == nil {
@@ -131,5 +134,48 @@ func TestTUIModuleRef_PinsAReleaseVersion(t *testing.T) {
 	version = "0.6.4-2-gabc1234-dirty"
 	if got := tuiModuleRef(); !strings.HasSuffix(got, "@latest") {
 		t.Errorf("a development build must fall back to @latest, got %q", got)
+	}
+}
+
+// noInstalledEditor points the libexec lookup at somewhere empty.
+//
+// Without it these tests read the real /usr/local/libexec/byn-tui and pass or
+// fail according to whether byn is installed on the machine running them — which
+// is how they went green in development and red the moment v0.6.4 was installed
+// here.
+func noInstalledEditor(t *testing.T) {
+	t.Helper()
+	orig := tuiLibexecPath
+	tuiLibexecPath = filepath.Join(t.TempDir(), "absent", tuiBinary)
+	t.Cleanup(func() { tuiLibexecPath = orig })
+}
+
+// TestFindTUIBinary_PrefersLibexecOverPATH is the other half, and the one the
+// injectable path made testable: an installed byn must use its own editor, not
+// whichever copy happens to be earlier on someone's PATH — a stale one from an
+// older install, say.
+func TestFindTUIBinary_PrefersLibexecOverPATH(t *testing.T) {
+	libexec := filepath.Join(t.TempDir(), tuiBinary)
+	if err := os.WriteFile(libexec, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := tuiLibexecPath
+	tuiLibexecPath = libexec
+	t.Cleanup(func() { tuiLibexecPath = orig })
+
+	// A decoy both on PATH and beside byn, either of which would otherwise win.
+	decoyDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(decoyDir, tuiBinary), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", decoyDir)
+
+	got, err := findTUIBinaryNear(filepath.Join(decoyDir, "byn"))
+	if err != nil {
+		t.Fatalf("should have resolved: %v", err)
+	}
+	if got != libexec {
+		t.Fatalf("resolved %q, want byn's own copy at %q — an installed byn must not be "+
+			"shadowed by a stray one on PATH", got, libexec)
 	}
 }
