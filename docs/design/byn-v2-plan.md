@@ -171,9 +171,15 @@ Sees: email, device/vault counts, blob sizes/timing, approval frequency/outcome,
 
 # Build order
 
-**Shipped so far (2026-09-02).** Items 0–4 are done, verified live, and the
-suite is green. Item 6's portal half is done, and the approval system has since
-grown the asker's side and reached all three surfaces.
+**Shipped so far (2026-09-02, released as v0.6.0).** Items 0–4 are done,
+verified live, and the suite is green. Item 6's portal half is done, and the
+approval system has since grown the asker's side and reached all three surfaces
+— terminal, portal and TUI.
+
+The version step from the 0.5.x line is deliberate. Those were patches for bugs
+found by using byn; this one adds a command, two flags, two IPC operations and a
+TUI pane, which is a different kind of change and should not be numbered like a
+fix.
 
 | # | Item | State |
 |---|---|---|
