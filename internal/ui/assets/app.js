@@ -1478,12 +1478,25 @@ function toggleApprovals() {
 // fact nobody can make a decision from.
 async function renderApprovalsView() {
   const box = $("#content-body"); box.innerHTML = "";
-  box.appendChild(el("div", "browse-head", "waiting on you"));
+  const head = el("div", "browse-head", state.approvalHistory ? "decided and expired" : "waiting on you");
+  // A request that expires leaves nothing on screen. Without a way to look back,
+  // an owner is left with "the agent said it asked for something" and no way to
+  // find out what — which is the same gap the terminal's --history closes.
+  const toggle = el("button", "btn btn-ghost sm",
+    state.approvalHistory ? "show what is waiting" : "history");
+  toggle.onclick = () => { state.approvalHistory = !state.approvalHistory; renderApprovalsView(); };
+  head.appendChild(toggle);
+  box.appendChild(head);
   let data;
-  try { data = await api("GET", "/api/approvals?status=pending"); }
+  const q = state.approvalHistory ? "" : "?status=pending";
+  try { data = await api("GET", "/api/approvals" + q); }
   catch (e) { box.appendChild(emptyHint(e.message)); return; }
-  const entries = data.entries || [];
-  if (!entries.length) { box.appendChild(emptyHint("nothing waiting")); return; }
+  let entries = data.entries || [];
+  if (state.approvalHistory) entries = entries.filter((e) => e.status !== "pending");
+  if (!entries.length) {
+    box.appendChild(emptyHint(state.approvalHistory ? "nothing on record" : "nothing waiting"));
+    return;
+  }
 
   const tbl = el("div", "trust-tbl");
   for (const a of entries) {
@@ -1529,6 +1542,16 @@ async function renderApprovalsView() {
       card.appendChild(w);
     }
 
+    // What the asker asked for, on its own line rather than in the meta strip.
+    // It changes what approving DOES, so it belongs where the decision is being
+    // made, not at the end of a run of bookkeeping.
+    if (a.ask_once) {
+      const once = el("div", "approval-once");
+      once.appendChild(el("span", "approval-label", "wants"));
+      once.appendChild(el("span", "", "a single use \u2014 approving grants one run, not a window"));
+      card.appendChild(once);
+    }
+
     const meta = [];
     if (a.created_at) meta.push("asked " + relTime(a.created_at));
     if (a.repeats) meta.push("retried " + a.repeats + "\u00d7");
@@ -1544,10 +1567,51 @@ async function renderApprovalsView() {
     }
     card.appendChild(el("div", "approval-meta", meta.join(" \u00b7 ")));
 
+    // A decided request shows the outcome and the words that went with it, and
+    // nothing else: there is no decision left to make.
+    if (a.status && a.status !== "pending") {
+      const out = el("div", "approval-outcome");
+      out.appendChild(el("span", "approval-label", "outcome"));
+      out.appendChild(el("span", "approval-status-" + a.status, a.status +
+        (a.once ? " (single use)" : "") + (a.decided_via ? " via " + a.decided_via : "")));
+      card.appendChild(out);
+      if (a.decided_reason) {
+        const dr = el("div", "approval-reason");
+        dr.appendChild(el("span", "approval-label", "said"));
+        dr.appendChild(el("span", "", a.decided_reason));
+        card.appendChild(dr);
+      }
+      // Revoke is offered only where there is a live grant to take back.
+      if (a.status === "approved" && a.granted_until &&
+          a.granted_until > Math.floor(Date.now() / 1000)) {
+        const racts = el("div", "trust-row-acts");
+        const rev = el("button", "btn btn-ghost sm", "revoke");
+        rev.title = "stop this being runnable before its window lapses";
+        rev.onclick = () => revokeApproval(a);
+        racts.appendChild(rev);
+        card.appendChild(racts);
+      }
+      tbl.appendChild(card);
+      continue;
+    }
+
     const acts = el("div", "trust-row-acts");
-    const grant = el("button", "btn btn-primary sm", "approve");
+    // The primary button does what the asker asked for, whatever that was: a
+    // request for a single use is approved as a single use by the plain button,
+    // so the narrow path is the default path. The second button is the
+    // override, and it is labelled with what it actually does rather than with
+    // a flag name.
+    const grant = el("button", "btn btn-primary sm", a.ask_once ? "approve once" : "approve");
     grant.onclick = () => decideApproval(a, true);
     acts.appendChild(grant);
+    const alt = a.ask_once
+      ? el("button", "btn btn-ghost sm", "approve for the window")
+      : el("button", "btn btn-ghost sm", "approve once");
+    alt.title = a.ask_once
+      ? "grant normally, though the asker only asked for one run"
+      : "spend the grant on the first run instead of leaving it live";
+    alt.onclick = () => decideApproval(a, true, a.ask_once ? "always" : "once");
+    acts.appendChild(alt);
     const refuse = el("button", "btn btn-ghost sm", "deny");
     refuse.onclick = () => decideApproval(a, false);
     acts.appendChild(refuse);
@@ -1583,8 +1647,14 @@ function relTime(unixSecs) {
 // Approving grants authority, so it asks for the master password exactly as the
 // terminal does. Denying grants nothing and asks for none: refusing has to stay
 // the cheaper action, or people learn to approve by reflex.
-async function decideApproval(entry, approve) {
+async function decideApproval(entry, approve, override) {
   let password = "";
+  let reason = "";
+  // Unset means "do what the asker asked for". The two overrides are what an
+  // approver sets to disagree with it, and they are sent as a pair so the
+  // daemon — not this file — decides what the combination means.
+  const once = override === "once";
+  const always = override === "always";
   if (approve) {
     // Show what is being granted at the moment of granting it — an approval
     // screen that hides the diff behind a link is one nobody reads.
@@ -1600,23 +1670,61 @@ async function decideApproval(entry, approve) {
       fields: [
         { key: "password", label: "master password", type: "password",
           validate: (v) => (v ? null : "password required") },
+        // Optional, and worth offering even so: it is carried back to whoever
+        // asked, and it is the difference between an agent that adjusts and one
+        // that asks the same thing again.
+        { key: "reason", label: "why (optional, sent to the asker)", type: "text" },
       ],
     });
     if (!r) return;
     password = r.password;
+    reason = r.reason || "";
     r.password = "";
   } else {
-    const ok = await openDialog({
+    // A refusal stops the asker until somebody changes something, so the single
+    // most useful thing to hand back is why. Optional here as at the terminal —
+    // requiring it would make denying more work than approving, and refusing
+    // has to stay the cheaper action.
+    const d = await openDialog({
       title: "Deny this request", danger: true, okText: "deny",
-      message: entry.subject + "\n\nThe caller will be told it was refused. " +
-        "Denying the same request repeatedly puts it on hold.",
+      message: entry.subject + "\n\nThe caller will be told it was refused, and told why " +
+        "if you say. Denying the same request repeatedly puts it on hold.",
+      fields: [
+        { key: "reason", label: "why (optional, sent to the asker)", type: "text" },
+      ],
     });
-    if (!ok) return;
+    if (!d) return;
+    reason = d.reason || "";
   }
   try {
     await api("POST", "/api/approvals/decide",
-      { id: entry.id, approve: approve, password: password });
-    toast(approve ? "approved" : "denied");
+      { id: entry.id, approve: approve, password: password, reason: reason,
+        // The asker's request is honoured by default and overridden only by an
+        // explicit choice — the same rule the daemon applies for the terminal.
+        once: once, always: always });
+    toast(approve ? (once ? "approved (single use)" : "approved") : "denied");
+  } catch (e) {
+    toast(e.message, true);
+  }
+  renderApprovalsView();
+}
+
+// revokeApproval takes back a grant already given.
+//
+// Named separately from deny because the two are easily confused and the
+// confusion is expensive: denying something already approved does NOT take the
+// grant back, and an owner who assumed it did would be wrong about what is still
+// runnable.
+async function revokeApproval(entry) {
+  const ok = await openDialog({
+    title: "Revoke this grant", danger: true, okText: "revoke",
+    message: entry.subject + "\n\nThe command stops being runnable now, before its " +
+      "window lapses. Whoever asked will have to ask again.",
+  });
+  if (!ok) return;
+  try {
+    await api("POST", "/api/approvals/decide", { id: entry.id, revoke: true });
+    toast("revoked");
   } catch (e) {
     toast(e.message, true);
   }

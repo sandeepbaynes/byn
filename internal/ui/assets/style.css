@@ -1455,3 +1455,15 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   opacity: .6; flex: 0 0 auto; padding-top: 1px;
 }
 .approval-reason { font-style: italic; }
+
+/* Approval card: the asker's request and the decider's answer.
+   Both are labelled the same way as "why" and "who" above them, so a reader
+   goes down one column of labels rather than parsing five shapes of line. */
+.approval-once,
+.approval-outcome { margin-top: 4px; font-size: 12px; }
+.approval-once span:last-child { color: var(--amber); }
+.approval-status-approved { color: var(--signal); }
+.approval-status-denied,
+.approval-status-revoked { color: var(--danger); }
+.approval-status-expired,
+.approval-status-cancelled { opacity: .65; }

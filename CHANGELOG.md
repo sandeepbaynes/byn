@@ -125,6 +125,22 @@ Cancelling is not denying. A denial is the owner's judgment and counts toward
 the cooldown that stops a fingerprint being re-asked; a cancellation is the
 asker changing its mind, and leaves no mark on the owner's answer history.
 
+The portal gained the same decisions the terminal has. It could only approve or
+deny plainly: no reason, no single-use, no revoke, and it only ever showed what
+was pending.
+
+It now carries a reason on both approve and deny — optional, as at the terminal,
+because requiring one would make refusing more work than approving and refusing
+has to stay the cheaper action. A request that asked for a single use says so on
+the card, and the primary button does what the asker asked for, with the
+override next to it labelled by what it does rather than by a flag name. Decided
+requests are visible behind a history toggle, with the outcome and the words
+that went with it. A live grant can be revoked, which previously meant going to
+a terminal.
+
+The rules stay in the daemon and the portal only carries the fields, so a tap in
+the browser and `byn approve <id>` cannot come to mean different things.
+
 A request that asked for a single use says so on its own line in `byn approve`,
 directly under the command, and is marked `[once]` in the history table. It was
 first written into the timing row between the retry count and the vault name —

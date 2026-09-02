@@ -79,15 +79,38 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 // has to stay the cheaper action, or people learn to approve by reflex.
 func (s *Server) handleApprovalDecide(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		ID       string `json:"id"`
-		Approve  bool   `json:"approve"`
+		ID      string `json:"id"`
+		Approve bool   `json:"approve"`
+		// Revoke takes back a grant already given. It needs no password, for
+		// the same reason denying does not: it can only ever remove authority.
+		Revoke   bool   `json:"revoke"`
 		Password string `json:"password"`
+		// Reason is the decider's own words. It is carried back to whoever
+		// asked — through the watch, which is the only place an asker sees it —
+		// and it is why a refusal from the portal is as useful as one from a
+		// terminal instead of a bare "denied".
+		Reason string `json:"reason"`
+		// Once and Always are the approver's override of what the asker asked
+		// for. Both are sent, and the daemon resolves them: the rule lives in
+		// one place so a tap here and `byn approve <id>` cannot mean different
+		// things.
+		Once   bool `json:"once"`
+		Always bool `json:"always"`
+		// Anyone widens a command grant to the whole scope rather than the
+		// caller that asked.
+		Anyone bool `json:"anyone"`
+		// GrantForSeconds shortens the window an approved command runs free.
+		GrantForSeconds int `json:"grant_for_seconds"`
 	}
 	if err := decodeJSON(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req := ipc.ApprovalDecideReq{ID: b.ID, Approve: b.Approve, Via: "portal"}
+	req := ipc.ApprovalDecideReq{
+		ID: b.ID, Approve: b.Approve, Revoke: b.Revoke, Via: "portal",
+		Reason: b.Reason, Once: b.Once, Always: b.Always, Anyone: b.Anyone,
+		GrantForSeconds: b.GrantForSeconds,
+	}
 	if b.Password != "" {
 		req.Password = []byte(b.Password)
 	}
