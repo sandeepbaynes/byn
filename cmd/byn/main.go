@@ -459,6 +459,8 @@ System (run with sudo — these manage the _byn service):
   migrate [--from PATH]      Adopt a vault into the system path (relocate
                              legacy ~/.byn, or import an external vault)
   restart | reload | stop    Bounce / reload / stop the _byn system daemon
+                             (sudo only once provisioned — before that they
+                             act on your own daemon, so run them as yourself)
 
 Misc:
   version                    Print version

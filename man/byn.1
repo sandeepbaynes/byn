@@ -38,6 +38,12 @@ you to re\-run without it. Only the commands that manage the \fB_byn\fR system
 daemon need root: \fBsudo byn restart\fR / \fBreload\fR / \fBstop\fR,
 \fBsudo byn setup\fR, and \fBsudo byn doctor \-\-repair\fR. \fBbyn start\fR is run
 as yourself (it never starts the daemon as root).
+.PP
+\fBrestart\fR, \fBreload\fR and \fBstop\fR need root only once byn is
+\fIprovisioned\fR. Before that there is no \fB_byn\fR service and they act on your
+own daemon, so they are refused under \fBsudo\fR \(em run them as yourself. The
+refusal happens before anything is stopped: \fBrestart\fR is stop\-then\-start, and
+a root start is itself refused, so allowing it would leave you with no daemon.
 .SH COMMANDS
 .SS Setup and lifecycle
 .TP

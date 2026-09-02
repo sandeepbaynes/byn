@@ -131,9 +131,28 @@ func enforceRootPolicy(cmd string, euid int, provisionedFn func() bool, w io.Wri
 			return true
 		}
 	case classRootWhenProvisioned:
-		if euid != 0 && provisionedFn() {
+		provisioned := provisionedFn()
+		if euid != 0 && provisioned {
 			_, _ = fmt.Fprintf(w, "%s byn %s manages the _byn system daemon and needs root. Run:\n    sudo byn %s\n",
 				boldRed("Error:"), cmd, cmd)
+			return true
+		}
+		// Root on an UNPROVISIONED machine: there is no _byn service to manage,
+		// only your own daemon — and root cannot run it.
+		//
+		// This has to refuse HERE, before dispatch, because restart is
+		// stop-then-start: the stop succeeds and the start is then refused for
+		// being root, so the machine ends up with no daemon and an error about a
+		// privsep install it does not have. `start` has always refused root up
+		// front (classStart above); these three did not, and the asymmetry is the
+		// whole bug — the command that takes a daemon down was the one allowed to
+		// get that far.
+		if euid == 0 && !provisioned {
+			_, _ = fmt.Fprintf(w, "%s byn %s runs as you here — byn is not provisioned, so there is no "+
+				"_byn service to manage, just your own daemon (which cannot run as root).\n"+
+				"    Re-run without sudo:\n        byn %s\n"+
+				"    To run the daemon as the _byn service instead: %s\n",
+				boldRed("Error:"), cmd, cmd, sudoByn("setup"))
 			return true
 		}
 	}

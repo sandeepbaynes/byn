@@ -43,7 +43,15 @@ func TestEnforceRootPolicy(t *testing.T) {
 		{"start as you not refused by guard", "start", owner, true, false, ""},
 		{"restart as you+provisioned needs root", "restart", owner, true, true, "needs root"},
 		{"restart as you not-provisioned runs", "restart", owner, false, false, ""},
-		{"restart as root runs", "restart", root, true, false, ""},
+		{"restart as root+provisioned runs", "restart", root, true, false, ""},
+		// The regression: sudo byn restart on an UNPROVISIONED machine used to
+		// pass the guard, stop the owner's daemon, then fail to start it because
+		// a daemon may not run as root — leaving no daemon at all. It must be
+		// refused before anything is stopped.
+		{"restart as root not-provisioned refused", "restart", root, false, true, "Re-run without sudo"},
+		{"stop as root not-provisioned refused", "stop", root, false, true, "Re-run without sudo"},
+		{"reload as root not-provisioned refused", "reload", root, false, true, "Re-run without sudo"},
+		{"restart as root not-provisioned points at setup", "restart", root, false, true, "setup"},
 		{"stop as you+provisioned needs root", "stop", owner, true, true, "needs root"},
 		{"setup as root ignored by guard", "setup", root, true, false, ""},
 		{"doctor as root ignored by guard", "doctor", root, true, false, ""},
