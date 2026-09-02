@@ -48,6 +48,8 @@ func runSetupWith(args []string, euid func() int, stdin io.Reader, stdout, stder
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
+	// Said before anything is provisioned, so it can still be acted on.
+	warnIfProvisioningAnOlderByn(stderr, findBynInstalls(bynVersionOf))
 	if fs.NArg() > 0 {
 		_, _ = fmt.Fprintf(stderr, "%s byn setup takes no positional arguments\n", boldRed("Error:"))
 		return exitErr

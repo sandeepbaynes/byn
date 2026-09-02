@@ -33,7 +33,9 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 # by the first `byn edit`, which asks first. Packaged installs bundle all three.
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
-sudo byn setup      # provisions privilege separation, and links byn into /usr/local/bin
+# Name the path: sudo resolves against secure_path, not your PATH, so a plain
+# `sudo byn setup` can silently run an OLDER byn from /usr/local/bin instead.
+sudo "$(command -v byn)" setup   # provisions privsep, and links byn into /usr/local/bin
 ```
 
 The install script and the system packages do all of that for you, including

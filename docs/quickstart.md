@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 # itself the first time you run `byn edit`:
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
-sudo byn setup
+sudo "$(command -v byn)" setup
 ```
 
 **Homebrew, the install script and the system packages bundle everything.** byn
@@ -55,11 +55,20 @@ fetch it, pinned to your byn's own version, and asks before doing so.
 > `export PATH="$HOME/go/bin:$PATH"` to your shell rc. Homebrew and the install
 > script handle this for you.
 
-> **Install location matters for `sudo byn setup`.** The install script and
-> system packages (apt, dnf) put `byn` in `/usr/local/bin` or `/usr/bin` — paths
-> sudo can always find. Homebrew on Apple Silicon (`/opt/homebrew/bin`) and
-> `go install` (`~/go/bin`) are outside sudo's `secure_path`. If `sudo byn setup`
-> says "command not found", use: `sudo $(which byn) setup`
+> **Why `sudo "$(command -v byn)" setup` and not `sudo byn setup`.** sudo
+> resolves commands against `secure_path` — typically `/usr/local/sbin`,
+> `/usr/local/bin`, `/usr/sbin`, `/usr/bin` — and never your own PATH. The
+> install script and the system packages put `byn` in one of those, so plain
+> `sudo byn setup` works for them. Homebrew on Apple Silicon
+> (`/opt/homebrew/bin`) and `go install` (`~/go/bin`, or the `GOBIN` above) are
+> outside it.
+>
+> "Command not found" is the harmless outcome. The one to avoid is an OLDER byn
+> already sitting in `/usr/local/bin`: sudo finds that one, it provisions
+> happily using its own helper, and reports success — so you upgrade, run setup,
+> and are told everything worked while the new byn was never involved. Naming
+> the path removes the guess. `byn doctor` reports the same disagreement after
+> the fact.
 
 ---
 
