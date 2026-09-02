@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## v0.5.6 — unreleased
+## v0.6.0 — 2026-09-02
 
 ### Shared tool-state files stop locking one identity out
 
@@ -55,6 +55,8 @@ for the same answer seventeen times.
 
 `byn repair` still forces it.
 
+### The fix for that reconcile was doing it to `byn exec`
+
 The writable-path reconcile added the day before was doing the same thing to
 `byn exec` that the recursive walk did to trust: 13.6 seconds added to every
 exec on a real monorepo, repeating identical work. Two causes, both fixed.
@@ -75,6 +77,8 @@ the mode test selects.
 
 Measured on the monorepo: 13.591s to 0.016s, and a file whose entry is stripped
 by hand is still healed on the next exec, in 27ms.
+
+### `byn approve` is laid out, not written out
 
 `byn approve` is laid out rather than written out. Every field now has a name in
 a fixed left column and a value that starts where every other value starts, so
@@ -98,6 +102,8 @@ Also: the per-kind explanation of what approving does is said once for the list
 instead of under every card, and durations are one unit for an age ("2d ago",
 not "46h9m15s ago") and two for a deadline, where the second unit is the half
 hour you were deciding whether you had.
+
+### Agents can be told the outcome of their own request
 
 An asker can now watch its own approval and be told the outcome the moment it
 happens, and withdraw a request it no longer needs.
@@ -125,6 +131,8 @@ Cancelling is not denying. A denial is the owner's judgment and counts toward
 the cooldown that stops a fingerprint being re-asked; a cancellation is the
 asker changing its mind, and leaves no mark on the owner's answer history.
 
+### A stale grant no longer reports itself as corruption
+
 A grant that can no longer open a value now says so, instead of reporting
 corruption. It used to fail with `wrapped key tampered or corrupted`, which on a
 vault holding the only copy of an encryption key reads as "your secret is gone" —
@@ -145,6 +153,8 @@ starting the child without the value would trade a clear error for a failure dee
 inside the program. What changed is that it now names the variable, says the
 value is intact, and gives the command that fixes it.
 
+### The approve dialog stops describing the wrong decision
+
 The approve dialog no longer claims it re-trusts the file. It said so for every
 request — true of a trust widening, false of an unpinned command, where
 approving records a grant and touches no file at all. The portal already had
@@ -157,6 +167,8 @@ reads "Approving lets this run:" with the bare command, and a widening reads
 "The .byn asks for:", which composes with details written in their own voice.
 The stored summary is untouched — it is what the request fingerprint is computed
 from. And a single-use request now says so in the dialog, not only on the card.
+
+### The portal's approvals page was unreachable
 
 The portal's approvals page was unreachable, and had been for its whole life.
 Clicking the tab showed an empty page while the badge next to it counted the
@@ -178,6 +190,8 @@ The approval card also shows the request id now. It renders the .byn path but
 never the id — the thing you type at a terminal, and the `approval_id` an agent
 just printed — so a card could not be tied back to `byn approve <id>`.
 
+### The TUI can answer approvals
+
 The TUI can answer approvals. `g p` opens the queue: what is waiting, what it
 wants to run, whether it asked for a single use, who asked and why. `a` grants,
 `o` grants a single use, `d` refuses, `v` takes a grant back, `r` types a reason
@@ -193,6 +207,8 @@ Denying and revoking do not: they can only remove authority, and refusing has to
 stay the cheaper action or people learn to approve by reflex. The once/always
 pair is passed to the daemon rather than resolved in the TUI, so the same gesture
 cannot come to mean different things in different surfaces.
+
+### The portal gained the decisions the terminal already had
 
 The portal gained the same decisions the terminal has. It could only approve or
 deny plainly: no reason, no single-use, no revoke, and it only ever showed what
@@ -221,6 +237,8 @@ The decider's `--reason` now reaches the asker, through the watch and nowhere
 else. A refusal without a reason leaves an agent guessing between "fix it and
 ask again" and "stop". Owners still see it in `byn approve --history`.
 
+### byn asks for the password on the terminal, not on a busy stdin
+
 byn now asks for the master password on the controlling terminal when stdin is
 carrying data. `echo "$V" | byn put NAME` used to answer "this action requires
 authorization (run `byn unlock` …)" to somebody sitting at a terminal: the value
@@ -234,6 +252,8 @@ controlling terminal (cron, a container, CI) still reports the refusal instead
 of hanging on a prompt nobody can answer. The lines explaining the prompt travel
 to the terminal with it, so redirecting stderr no longer files the explanation
 away while a bare "Master password:" waits on screen.
+
+### `byn put` asks for the value instead of refusing to
 
 `byn put NAME` on a terminal now asks for the value and hides what you type,
 the way a password prompt does. It used to refuse and explain how to pipe the
@@ -257,6 +277,8 @@ it is almost always a stray Enter — with the deliberate form given, because an
 empty value is legitimate.
 
 Piped and redirected input are unchanged, so every script keeps working.
+
+### An asker can ask for a single use
 
 An asker can now request a single-use approval itself: `byn exec --once` (or
 `--ask-once`) marks the request, and a plain `byn approve <id>` then authorizes
@@ -287,6 +309,8 @@ character landed on the last column: "the .byn is no / t changed",
 "services/ap / i". A wrapped value now continues inside its own column instead
 of restarting at the left margin, and `COLUMNS` is honoured so a piped list can
 be told the width it will be read at.
+
+### `byn doctor` notices a daemon that is not the installed byn
 
 `byn doctor` now checks that the running daemon IS the installed byn. Installing
 byn replaces a file; it does not replace a running process, so until the service
