@@ -14,6 +14,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/daemon"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/paths"
+	"github.com/sandeepbaynes/byn/internal/secmem"
 )
 
 // Exit codes.
@@ -269,7 +270,7 @@ func mutateWithAuthRetry(pwStdin bool, jsonMode bool, retryOnLocked bool, cleanu
 	// reason. Two of them addressed to a person who was not there, and the one
 	// that explains the refusal last. handleCallError prints the reason and the
 	// recovery hint, which is what a caller can act on.
-	if !pwStdin && !stdinIsTTY() {
+	if !pwStdin && !canPrompt() {
 		return handleCallError(err)
 	}
 
@@ -299,16 +300,45 @@ func authorizingPasswordWithLeadIn(pwStdin bool, leadIn string) (pw []byte, wipe
 		}
 		return pw, func() { zero(pw) }, nil
 	}
-	fmt.Fprintln(os.Stderr, leadIn)
+	// Context travels with the question. When the prompt goes to the
+	// controlling terminal, so must the lines explaining it — printing them to
+	// stderr would put the explanation in a redirect file and leave a bare
+	// "Master password:" on the screen with nothing saying what it is for.
+	lead := []string{leadIn}
 	if strings.Contains(leadIn, "locked") {
-		fmt.Fprintln(os.Stderr, dim("The vault stays locked — its values are never exposed."))
+		lead = append(lead, dim("The vault stays locked — its values are never exposed."))
 	}
-	buf, err := auth.PromptStdinSecure("Master password: ")
+	buf, err := promptMasterPassword("Master password: ", lead)
 	if err != nil {
 		return nil, func() {}, err
 	}
 	return buf.Bytes(), buf.Wipe, nil
 }
+
+// promptMasterPassword asks on stdin when stdin is a terminal, and on the
+// controlling terminal when it is not.
+//
+// The order matters. stdin first keeps every existing interactive path exactly
+// as it was, including the tests that drive it; /dev/tty is the fallback for the
+// case stdin cannot serve, which is a command whose stdin is carrying data.
+func promptMasterPassword(prompt string, lead []string) (*secmem.Buffer, error) {
+	if stdinIsTTY() {
+		for _, l := range lead {
+			fmt.Fprintln(os.Stderr, l)
+		}
+		return auth.PromptStdinSecure(prompt)
+	}
+	return auth.PromptTTYSecureWithLead(prompt, lead)
+}
+
+// canPrompt reports whether there is a person to ask, as opposed to whether
+// stdin happens to be a terminal.
+//
+// Those were the same question until a value could arrive on stdin. `echo "$V" |
+// byn put NAME` makes stdin a pipe, and byn read that as "nobody is here" and
+// told the person sitting in front of it to go run `byn unlock` instead of
+// asking them for the password it needed.
+func canPrompt() bool { return auth.HaveTerminal(int(os.Stdin.Fd())) }
 
 // firstRunClient / firstRunVault let mutateWithAuthRetry reach the daemon to
 // create a missing vault. They are set by the command handlers that already

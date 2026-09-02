@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
@@ -30,7 +29,7 @@ func isNotInitErr(err error) bool {
 // non-interactive returns false untouched — creating a vault is not something
 // to do silently on behalf of a script that may simply have the wrong name.
 func offerVaultInit(c *ipc.Client, vaultName string, jsonMode bool) bool {
-	if jsonMode || !stdinIsTTY() {
+	if jsonMode || !canPrompt() {
 		return false
 	}
 	name := vaultName
@@ -43,7 +42,7 @@ func offerVaultInit(c *ipc.Client, vaultName string, jsonMode bool) bool {
 	fmt.Fprintf(os.Stderr, "%s\n",
 		dim("It cannot be recovered if you lose it, and byn never sends it anywhere."))
 
-	pwBuf, err := auth.PromptStdinSecure("New master password: ")
+	pwBuf, err := promptMasterPassword("New master password: ", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return false
@@ -54,7 +53,7 @@ func offerVaultInit(c *ipc.Client, vaultName string, jsonMode bool) bool {
 			boldRed("Error:"), minMasterPasswordLen)
 		return false
 	}
-	confirmBuf, err := auth.PromptStdinSecure("Confirm master password: ")
+	confirmBuf, err := promptMasterPassword("Confirm master password: ", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return false

@@ -365,8 +365,8 @@ func runExec(args []string, scope cliScope) int {
 		//   (b) trusted-.byn exec with an unmatched/empty [exec] actions
 		// Both take the same retry path. The daemon's message distinguishes
 		// them for the user; we just need to get the password and retry.
-		if !stdinIsTTY() {
-			// Non-TTY path: fail with an actionable hint.
+		if !canPrompt() {
+			// Nobody to ask: fail with an actionable hint.
 			// Extract the daemon message if available for a richer hint.
 			var em *ipc.ErrResponse
 			if errors.As(callErr, &em) {
@@ -717,9 +717,11 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 		}
 	}
 
-	// Auth retry: an auth_required reply on a TTY prompts once and retries with
-	// the password attached. Same UX as the legacy exec.fetch path.
-	if isAuthRequiredErr(callErr) && stdinIsTTY() {
+	// Auth retry: an auth_required reply prompts once and retries with the
+	// password attached. Same UX as the legacy exec.fetch path. "On a TTY" here
+	// means a person is reachable, not that stdin is one — a byn exec whose
+	// stdin is a pipe feeding the child still has a terminal to ask on.
+	if isAuthRequiredErr(callErr) && canPrompt() {
 		leadIn := yellow("Authorization required.") + dim(" Enter the master password to authorize.")
 		if scopeHasByn(req) {
 			var em *ipc.ErrResponse

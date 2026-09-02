@@ -75,3 +75,95 @@ func PromptStdinSecure(prompt string) (*secmem.Buffer, error) {
 	}
 	return secmem.NewBufferFrom(raw)
 }
+
+// ttyDevice is the process's controlling terminal. Reading a password from it
+// rather than from stdin is what lets a command whose stdin carries data still
+// ask a person a question.
+const ttyDevice = "/dev/tty"
+
+// PromptTTY reads a password from the controlling terminal, regardless of what
+// stdin is connected to.
+//
+// It exists because stdin is not always free. `echo "$V" | byn put NAME` hands
+// the value in on stdin, so when the daemon then asks for authorization there is
+// nothing left to prompt on — and byn told a person sitting at a terminal to go
+// run `byn unlock`, because it had checked the wrong file descriptor for their
+// presence. stdin says how data arrived; it does not say whether anybody is
+// there.
+//
+// This is what sudo, ssh, git and gpg all do for the same reason. Returns
+// ErrNoTerminal when there is no controlling terminal — a cron job, a container,
+// a CI runner — which is the honest answer there and leaves the caller free to
+// report the refusal instead of hanging on a prompt nobody can answer.
+//
+// The prompt is written to the terminal too, not to stderr: a caller redirecting
+// stderr to a file should not have the question it is waiting on land in the
+// file rather than on the screen.
+func PromptTTY(prompt string) ([]byte, error) { return promptTTYWithLead(prompt, nil) }
+
+// openTTY opens the controlling terminal. A variable rather than a direct call
+// so a test can supply one: /dev/tty is a fixed path with no seam, and a test
+// binary usually has no controlling terminal at all — which would leave the
+// interesting branch skipped exactly where it most needs covering.
+var openTTY = func() (*os.File, error) { return os.OpenFile(ttyDevice, os.O_RDWR, 0) }
+
+func promptTTYWithLead(prompt string, lead []string) ([]byte, error) {
+	tty, err := openTTY()
+	if err != nil {
+		return nil, ErrNoTerminal
+	}
+	defer func() { _ = tty.Close() }()
+	for _, l := range lead {
+		if _, werr := fmt.Fprintln(tty, l); werr != nil {
+			return nil, werr
+		}
+	}
+	return Prompt(int(tty.Fd()), tty, prompt)
+}
+
+// PromptTTYSecure is PromptTTY into an mlock'd buffer. Callers MUST Wipe it.
+func PromptTTYSecure(prompt string) (*secmem.Buffer, error) {
+	return PromptTTYSecureWithLead(prompt, nil)
+}
+
+// PromptTTYSecureWithLead writes lead lines to the terminal before the prompt,
+// so the explanation for a question lands where the question does. A caller
+// that has redirected stderr should not have the reason it is being asked go
+// into the redirect while the prompt waits on screen.
+func PromptTTYSecureWithLead(prompt string, lead []string) (*secmem.Buffer, error) {
+	raw, err := promptTTYWithLead(prompt, lead)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		for i := range raw {
+			raw[i] = 0
+		}
+	}()
+	if len(raw) == 0 {
+		return secmem.NewBuffer(1)
+	}
+	buf, err := secmem.NewBuffer(len(raw))
+	if err != nil {
+		return nil, err
+	}
+	copy(buf.Bytes(), raw)
+	return buf, nil
+}
+
+// HaveTerminal reports whether a person can be asked a question at all: either
+// stdin is a terminal, or the process has a controlling terminal to fall back
+// to. It is the question "is anybody there", which is not the same question as
+// "did data arrive on a pipe".
+func HaveTerminal(stdinFd int) bool {
+	if term.IsTerminal(stdinFd) {
+		return true
+	}
+	tty, err := openTTY()
+	if err != nil {
+		return false
+	}
+	isTTY := term.IsTerminal(int(tty.Fd()))
+	_ = tty.Close()
+	return isTTY
+}

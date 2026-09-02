@@ -99,6 +99,20 @@ instead of under every card, and durations are one unit for an age ("2d ago",
 not "46h9m15s ago") and two for a deadline, where the second unit is the half
 hour you were deciding whether you had.
 
+byn now asks for the master password on the controlling terminal when stdin is
+carrying data. `echo "$V" | byn put NAME` used to answer "this action requires
+authorization (run `byn unlock` …)" to somebody sitting at a terminal: the value
+had arrived on stdin, so stdin was a pipe, so byn concluded nobody was there.
+stdin says how data arrived; it does not say whether anybody is present. It now
+falls back to /dev/tty, which is what sudo, ssh, git and gpg all do.
+
+The same mistake was in three places — the shared auth retry, `byn exec`, and
+the first-run vault offer — so all three are fixed. A machine with no
+controlling terminal (cron, a container, CI) still reports the refusal instead
+of hanging on a prompt nobody can answer. The lines explaining the prompt travel
+to the terminal with it, so redirecting stderr no longer files the explanation
+away while a bare "Master password:" waits on screen.
+
 `byn put NAME` on a terminal now asks for the value and hides what you type,
 the way a password prompt does. It used to refuse and explain how to pipe the
 value in, which left the obvious thing — type it — as the one option byn would
