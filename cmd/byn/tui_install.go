@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,13 @@ import (
 	"regexp"
 	"strings"
 )
+
+// errInstallDeclined means the person was asked and said no.
+//
+// A sentinel rather than a message the caller matches on: comparing errors by
+// their text couples every caller to the wording, and the wording is the part
+// most likely to be improved by somebody who does not know it is load-bearing.
+var errInstallDeclined = errors.New("editor install declined")
 
 // modulePath is byn's own module, used to fetch the editor from the same place
 // byn itself came from.
@@ -47,7 +55,7 @@ func offerTUIInstall(dest string) (installed string, err error) {
 	fmt.Fprintf(os.Stderr, "%s ", dim("into "+dest+" [y/N]:"))
 
 	if !confirmYes() {
-		return "", fmt.Errorf("declined")
+		return "", errInstallDeclined
 	}
 	cmd := exec.Command(goBin, "install", ref) // #nosec G204 -- ref is byn's own module at byn's own version
 	cmd.Env = append(os.Environ(), "GOBIN="+dest)

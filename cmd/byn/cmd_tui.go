@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
@@ -83,16 +82,16 @@ func runTUI(args []string, scope cliScope) int {
 		// bundles the editor. So rather than print a command and stop, offer to
 		// run it: the Go toolchain that installed byn is right there, and the
 		// person is at a terminal by definition, since the editor needs one.
-		if dest, derr := tuiInstallDest(); derr == nil {
-			if got, ierr := offerTUIInstall(dest); ierr == nil {
-				path = got
-			} else if !strings.Contains(ierr.Error(), "declined") {
-				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), ierr)
-			}
-		}
+		//
+		// Whatever goes wrong here, the caller sees ONE message. Reporting both
+		// the install failure and the original "not found" describes a single
+		// problem twice and buries the actionable half.
+		path, err = installEditorInteractively(err)
 	}
 	if path == "" {
-		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
+		if !errors.Is(err, errInstallDeclined) {
+			fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
+		}
 		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Fix:"), dim("install it with ")+cyan("go install "+tuiModuleRef()))
 		fmt.Fprintf(os.Stderr, "%s %s\n", dim("     "),
 			dim("or reinstall byn — every packaged install bundles the editor"))
@@ -215,4 +214,28 @@ func tuiInstallDest() (string, error) {
 		return "", fmt.Errorf("%s is not writable", dir)
 	}
 	return dir, nil
+}
+
+// installEditorInteractively offers to build the editor, and returns the path
+// only when there is genuinely something to run.
+//
+// notFound is carried through unchanged when nothing better happens, so the
+// caller reports one problem rather than a chain of them.
+func installEditorInteractively(notFound error) (string, error) {
+	dest, derr := tuiInstallDest()
+	if derr != nil {
+		return "", notFound
+	}
+	got, ierr := offerTUIInstall(dest)
+	if ierr != nil {
+		return "", ierr
+	}
+	// Trust the result only after checking it. `go install` can report success
+	// having written somewhere other than where we asked — a GOFLAGS or GOBIN
+	// already in the environment, a toolchain that disagrees — and exec'ing a
+	// path that is not there turns a clear message into "no such file".
+	if !usable(got) {
+		return "", fmt.Errorf("go install reported success but %s is not there", got)
+	}
+	return got, nil
 }

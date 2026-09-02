@@ -22,6 +22,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -82,8 +83,7 @@ func run(args []string) int {
 	}
 	var status ipc.StatusResp
 	if cerr := client.Call(ipc.OpStatus, ipc.StatusReq{}, &status); cerr != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", cerr)
-		return exitUnreach
+		return reportCallError(cerr)
 	}
 	locked, exists := vaultStateByName(status, target)
 	if !exists {
@@ -118,8 +118,7 @@ func unlock(client *ipc.Client, dir, vaultName string) int {
 	tok, cerr := client.CallAndCaptureSession(ipc.OpVaultUnlock,
 		ipc.VaultUnlockReq{Name: vaultName, Password: pwBuf.Bytes()}, &resp, client.Session)
 	if cerr != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", cerr)
-		return exitDaemonErr
+		return reportCallError(cerr)
 	}
 	// Prefer the envelope header; fall back to the body for daemons that set
 	// only one of them.
@@ -161,4 +160,34 @@ func vaultStateByName(status ipc.StatusResp, name string) (locked, exists bool) 
 		}
 	}
 	return false, false
+}
+
+// reportCallError renders a daemon failure the way byn does.
+//
+// Before the editor moved out of byn it went through byn's own error handling,
+// so a dead daemon produced "byn daemon is not running" and the command to start
+// it. Printing the raw error here instead would be a quiet regression for the
+// most common failure there is — and the person met it after typing `byn edit`,
+// so the answer should look like byn's.
+//
+// The distinction between codes matters too: unreachable and refused are
+// different conditions with different remedies, and collapsing both to one exit
+// status makes a script unable to tell "start the daemon" from "the daemon said
+// no".
+func reportCallError(err error) int {
+	if errors.Is(err, ipc.ErrDaemonDown) {
+		fmt.Fprintln(os.Stderr, "Error: byn daemon is not running.")
+		fmt.Fprintln(os.Stderr, "Run: byn start   (or: sudo byn restart, if byn is provisioned)")
+		return exitUnreach
+	}
+	var ipcErr *ipc.ErrResponse
+	if errors.As(err, &ipcErr) {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", ipcErr.Message)
+		if ipcErr.Recover != "" {
+			fmt.Fprintf(os.Stderr, "Try: %s\n", ipcErr.Recover)
+		}
+		return exitDaemonErr
+	}
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	return exitErr
 }
