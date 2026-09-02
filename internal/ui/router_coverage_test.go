@@ -85,3 +85,31 @@ func TestApprovalCard_ShowsTheRequestID(t *testing.T) {
 		t.Fatal("the approval card no longer renders the request id")
 	}
 }
+
+// TestApproveDialog_DoesNotClaimItRetrustsEveryRequest guards a sentence that
+// was telling people the wrong thing about what they were authorizing.
+//
+// The approve dialog ended with "Approving re-trusts the file, so the caller's
+// next attempt succeeds" for EVERY request. That is true of a trust widening and
+// false of an unpinned command, where approving records a grant and touches no
+// file at all. The portal already had per-kind wording in whatApprovingDoes()
+// and the dialog simply did not use it.
+//
+// Found while fixing the header above it, which read "This would grant: runs
+// /bin/date" — two verbs where one belongs. The awkward phrasing was the
+// visible fault; the false claim underneath it was the one worth catching.
+func TestApproveDialog_DoesNotClaimItRetrustsEveryRequest(t *testing.T) {
+	src := readAsset(t, "assets/app.js")
+	if strings.Contains(src, `"\n\nApproving re-trusts the file`) {
+		t.Fatal("the approve dialog claims it re-trusts the file for every request; " +
+			"that is false for an unpinned command — use whatApprovingDoes(entry.kind)")
+	}
+	if !strings.Contains(src, "whatApprovingDoes(entry.kind)") {
+		t.Fatal("the approve dialog must take its closing sentence from the per-kind text")
+	}
+	// And the header must not fight the summary's own verb.
+	if strings.Contains(src, `"\n\nThis would grant:\n"`) {
+		t.Fatal(`the dialog header "This would grant:" collides with a summary that ` +
+			`already starts with a verb ("runs …")`)
+	}
+}

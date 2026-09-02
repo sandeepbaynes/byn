@@ -145,6 +145,19 @@ starting the child without the value would trade a clear error for a failure dee
 inside the program. What changed is that it now names the variable, says the
 value is intact, and gives the command that fixes it.
 
+The approve dialog no longer claims it re-trusts the file. It said so for every
+request — true of a trust widening, false of an unpinned command, where
+approving records a grant and touches no file at all. The portal already had
+per-kind wording and the dialog was not using it, so it told people the wrong
+thing about what they were authorizing.
+
+Its header no longer fights the summary either. "This would grant:" above
+"runs /bin/date" is two verbs where one belongs; a request to run something now
+reads "Approving lets this run:" with the bare command, and a widening reads
+"The .byn asks for:", which composes with details written in their own voice.
+The stored summary is untouched — it is what the request fingerprint is computed
+from. And a single-use request now says so in the dialog, not only on the card.
+
 The portal's approvals page was unreachable, and had been for its whole life.
 Clicking the tab showed an empty page while the badge next to it counted the
 requests waiting.

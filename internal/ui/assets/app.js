@@ -1679,15 +1679,20 @@ async function decideApproval(entry, approve, override) {
   if (approve) {
     // Show what is being granted at the moment of granting it — an approval
     // screen that hides the diff behind a link is one nobody reads.
-    const summary = (entry.summary || []).map((l) => "  \u2022 " + l).join("\n");
+    const asked = describeAsk(entry);
     const r = await openDialog({
       title: "Approve this request",
       okText: "approve",
-      message: entry.subject + "\n\nThis would grant:\n" + summary +
+      message: entry.subject + "\n\n" + asked.heading + "\n" + asked.body +
+        (entry.ask_once ? "\n\nThe asker asked for a SINGLE USE: approving grants one run, not a window." : "") +
         (entry.reason ? "\n\nWhy, as stated by whoever asked (byn cannot verify it):\n  " + entry.reason : "") +
         ((entry.requestor && entry.requestor.display) ? "\n\nAsked by: " + entry.requestor.display : "") +
-        "\n\nApproving re-trusts the file, so the caller's next attempt succeeds. " +
-        "Nothing runs now, and the .byn is not edited.",
+        // Per kind, not one sentence for both. This said "approving re-trusts
+        // the file" for every request — true of a trust widening and false of an
+        // unpinned command, where approving records a grant and touches no file.
+        // Telling somebody the wrong thing about what they are authorizing is a
+        // worse fault than the awkward wording that led me here.
+        "\n\n" + capitalizeFirst(whatApprovingDoes(entry.kind)) + ".",
       fields: [
         { key: "password", label: "master password", type: "password",
           validate: (v) => (v ? null : "password required") },
@@ -5744,3 +5749,30 @@ async function boot() {
 }
 
 boot();
+
+
+// describeAsk renders what a request wants, without the header and the summary
+// line fighting each other.
+//
+// It used to print "This would grant:" above "• runs /bin/date", which reads as
+// "grant runs" — two verbs where one belongs. The summary carries its own verb
+// because that is the form the request fingerprint is computed from, so the fix
+// is to make the header agree with it rather than to rewrite the stored text.
+function describeAsk(entry) {
+  const lines = entry.summary || [];
+  const allRuns = lines.length > 0 && lines.every((l) => l.startsWith("runs "));
+  if (allRuns) {
+    return {
+      heading: "Approving lets this run:",
+      body: lines.map((l) => "  \u2022 " + l.slice("runs ".length)).join("\n"),
+    };
+  }
+  // A widening's details are written in their own voice — "runs make dev", "adds
+  // APP_*" — so the header must not take an object of its own, or it collides
+  // with whichever verb the detail happens to start with.
+  return { heading: "The .byn asks for:", body: lines.map((l) => "  \u2022 " + l).join("\n") };
+}
+
+function capitalizeFirst(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
