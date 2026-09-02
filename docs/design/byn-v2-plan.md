@@ -171,8 +171,9 @@ Sees: email, device/vault counts, blob sizes/timing, approval frequency/outcome,
 
 # Build order
 
-**Shipped so far (2026-08-03).** Items 0–4 are done, verified live, and the
-suite is green (25 packages). The portal half of item 6 is done too.
+**Shipped so far (2026-09-02).** Items 0–4 are done, verified live, and the
+suite is green. Item 6's portal half is done, and the approval system has since
+grown the asker's side and reached all three surfaces.
 
 | # | Item | State |
 |---|---|---|
@@ -182,19 +183,48 @@ suite is green (25 packages). The portal half of item 6 is done too.
 | 3 | trust v2 policy + diff | `88f42ba`, `e94f816` |
 | 4 | approval queue + non-blocking exec | `cf74235`, `e221d18`, `1b74aa2`, `c2fda8e` |
 | 6a | portal approvals page | `2e5836f`, `2de0ffa` (audit) |
-| — | v1 fixes found by using it | `8b9efa5`, `3c229c5`, `fbaa368`, `98c3b71`, `530d885` |
+| 4b | asker-side approvals: watch ticket, instant callback, cancel, reason delivery | `2f51b75`, `fca77c6` |
+| 4c | agent-requested single use (`byn exec --once`), approver override (`--always`) | `64906ed` |
+| 4d | approvals on every surface — portal decisions + history + revoke, TUI pane (`g p`) | `a1e1578`, `2d84be3`, `3df36ba` |
+| — | v1 fixes found by using it | `8b9efa5`, `3c229c5`, `fbaa368`, `98c3b71`, `530d885`, `d58d4e7`, `810ad38`, `16d2139`, `721fb43` |
 
 Verified end to end: an API server starts under `byn exec` with zero
-missing-variable errors and tears down with no orphans.
+missing-variable errors and tears down with no orphans. The approval callback was
+verified against a live daemon by raising a real request, blocking on it, and
+having a person answer — which is how the 60-second client timeout was found,
+after the integration test had passed throughout because its decisions came back
+in under a second.
+
+**What using it keeps teaching.** Every defect in the fixes column above was
+found by running byn, not by testing it. The pattern is consistent enough to be
+worth stating: a unit test proves a piece works, and the failures have all been
+in the joins between pieces. `/approvals` had a correct route parser, a correct
+renderer, and no branch connecting them (`3df36ba`). A watch had a correct daemon
+handler and a client that hung up first (`fca77c6`). An ACL reconcile did correct
+work and repeated it before every exec (`d58d4e7`). None of those is visible from
+inside the unit that owns it.
 
 **Still open:** item 6b (sync bridge), 7 (byn-server), 8 (Expo app), 9 (macOS
 tier), 10 (egress-proxy spike). Item 5 (first-run lazy init / zero-setup) is
-NOT done — byn still requires `sudo byn setup` for privsep provisioning.
+partly done: `byn setup` is no longer a thing the user has to know about — the
+installer runs it, and it can elevate itself — but privsep provisioning still
+happens through it rather than lazily on first touch.
 
-Two deferred decisions worth revisiting:
-- **Alias exec still bypasses privsep** — it warns loudly now, but the real
-  fix needs the daemon to expand the alias before the CLI resolves a target,
-  which is a protocol change.
+**TUI parity is now its own piece of work.** The TUI can answer approvals, but
+the portal still has a dozen things it does not: trust management, vault/project/
+env rename and delete, config read and validate, `.byn` read/write/simulate,
+daemon reload/restart, lock/unlock, and vault password change. Passkeys stay
+browser-only. This is a project rather than a follow-up and should be scoped as
+one.
+
+**Resolved since this was written.** *Alias exec bypasses privsep* — it did, and
+it now does not. `byn exec <alias>` asks the daemon to expand the alias before
+the CLI resolves a target (`resolveAliasArgv`, an ExecPreflight call that queues
+no decision and spends no grant), so an alias runs under privilege separation
+like any other command. The protocol change it was waiting on turned out to be a
+preflight, not a redesign.
+
+One deferred decision worth revisiting:
 - **Explicit-name grants still freeze to their list.** Only `"*"` auto-flows.
   ~~Conservative on purpose; revisit if it produces approval churn in practice.~~
   **Revisited — it did.** Every variable an agent introduced stopped its own
