@@ -297,6 +297,21 @@ async function renderFromLocation() {
     renderContent();
     return;
   }
+  // Approvals, like trust, is vault-independent: the queue exists so a request
+  // can be raised, listed and answered while the vault is locked, and scoping
+  // the view would hide exactly the requests that matter most.
+  //
+  // This branch was missing entirely. locationToRoute knew about /approvals and
+  // renderContent knew how to draw it, but nothing in between ever set
+  // state.view — so the route fell through to the entries case at the bottom
+  // and rendered an empty scope. The badge counted correctly, the page was
+  // blank, and both were telling the truth about different things.
+  if (route.view === "approvals") {
+    state.view = "approvals";
+    await renderTree();
+    renderContent();
+    return;
+  }
   if (route.view === "settings") {
     state.view = "settings";
     await renderTree();
@@ -1508,6 +1523,12 @@ async function renderApprovalsView() {
       flag.title = "granting this is unusually consequential";
       head.appendChild(flag);
     }
+    // The id, first, because it is the thing you type. A card you cannot tie
+    // back to `byn approve <id>` — or to the approval_id an agent just printed
+    // — makes the browser and the terminal two separate systems that happen to
+    // show similar things.
+    const rid = el("span", "approval-id", a.id); rid.title = "byn approve " + a.id;
+    head.appendChild(rid);
     const subj = el("span", "t-path", a.subject); subj.title = a.subject;
     head.appendChild(subj);
     card.appendChild(head);

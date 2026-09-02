@@ -145,6 +145,26 @@ starting the child without the value would trade a clear error for a failure dee
 inside the program. What changed is that it now names the variable, says the
 value is intact, and gives the command that fixes it.
 
+The portal's approvals page was unreachable, and had been for its whole life.
+Clicking the tab showed an empty page while the badge next to it counted the
+requests waiting.
+
+Three pieces each looked right on their own. `locationToRoute` mapped
+`/approvals` to the approvals view, `renderContent` knew how to draw that view,
+and the renderer drew it correctly. Nothing joined the first to the third:
+`renderFromLocation` had no branch for it, so navigating there fell through to
+the entries case and rendered an empty scope. The page was not blank — it was
+the entries view saying "no env-vars in this scope". The badge and the page were
+both telling the truth, about different things.
+
+A test now checks that every view the route parser can produce is one the router
+handles. It fails against the old code, which is the only way to know a guard
+guards anything.
+
+The approval card also shows the request id now. It renders the .byn path but
+never the id — the thing you type at a terminal, and the `approval_id` an agent
+just printed — so a card could not be tied back to `byn approve <id>`.
+
 The TUI can answer approvals. `g p` opens the queue: what is waiting, what it
 wants to run, whether it asked for a single use, who asked and why. `a` grants,
 `o` grants a single use, `d` refuses, `v` takes a grant back, `r` types a reason

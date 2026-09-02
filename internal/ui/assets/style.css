@@ -1467,3 +1467,4 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .approval-status-revoked { color: var(--danger); }
 .approval-status-expired,
 .approval-status-cancelled { opacity: .65; }
+.approval-id { font-family: var(--mono, monospace); color: var(--signal); margin-right: 8px; }
