@@ -5,6 +5,30 @@ list; this file carries what you need to know before upgrading.
 
 ## v0.6.4 — unreleased
 
+### `make install` failed on macOS once byn was provisioned
+
+It refreshes the privileged spawn helper in place, using the Linux form
+unconditionally: `install -o root -g root -m 0755` followed by `setcap`. macOS
+has no `root` GROUP — it is `wheel` — so the install aborted with
+"install: unknown group root", after the CLI had already been replaced. The
+build left a machine half-upgraded and returned an error naming a group nobody
+asked for.
+
+Had the group been right it would have been worse. macOS has no file
+capabilities, so `byn setup` installs that helper **setuid-root at 4755**;
+refreshing it at 0755 drops the setuid bit and leaves a helper that can no longer
+drop to `_byn-exec`. That is a silent break — privsep exec stops working with
+nothing in the output to say why — where the group error at least failed loudly.
+
+Both paths now follow what `byn setup` already knew: 4755 root:wheel on macOS,
+0755 plus file capabilities on Linux.
+
+The same asymmetry, quieter, in the line below it: the post-install ownership fix
+tested only `/var/lib/byn`, so it was a no-op on macOS, where the system data dir
+is `/Library/Application Support/byn`. It now finds the right one and asserts
+mode 0711 as well as ownership — on macOS the daemon socket lives inside that
+directory, and 0700 is the lockout fixed in v0.6.2.
+
 ### `byn ps` and `byn kill` work on macOS
 
 They were Linux-only, and `kill` failed in the worst way available: it reported

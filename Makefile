@@ -89,10 +89,22 @@ install: build
 	@# flag byn had just started sending. Refresh it in place when it exists —
 	@# never create it here, since an unprovisioned machine has no service user
 	@# for it to drop to.
+	@# How the helper holds its privilege differs per OS, and `byn setup` already
+	@# knows: Linux gives it file capabilities and mode 0755; macOS has no file
+	@# capabilities, so it is setuid-root at 4755, owned root:wheel. Refreshing it
+	@# with the Linux form on a Mac fails outright ("install: unknown group root",
+	@# since the group is wheel) — and had that succeeded, mode 0755 would have
+	@# dropped the setuid bit and left a helper that can no longer drop to
+	@# _byn-exec, which is a silent break rather than a loud one.
 	@if [ -x /usr/local/libexec/byn-exec-helper ]; then \
-		install -o root -g root -m 0755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
-		setcap cap_setuid,cap_setgid+ep /usr/local/libexec/byn-exec-helper && \
-		echo "Refreshed /usr/local/libexec/byn-exec-helper (privsep helper)"; \
+		if [ "$$(uname -s)" = "Darwin" ]; then \
+			install -o root -g wheel -m 4755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
+			echo "Refreshed /usr/local/libexec/byn-exec-helper (setuid-root privsep helper)"; \
+		else \
+			install -o root -g root -m 0755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
+			setcap cap_setuid,cap_setgid+ep /usr/local/libexec/byn-exec-helper && \
+			echo "Refreshed /usr/local/libexec/byn-exec-helper (privsep helper)"; \
+		fi; \
 	fi
 	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
 		echo "Signing installed binaries with: $(CODESIGN_IDENTITY)"; \
@@ -103,9 +115,19 @@ install: build
 		echo "Signed. Re-add /usr/local/bin/byn to Full Disk Access once; the grant then persists across reinstalls signed with this identity."; \
 	fi
 	@echo "Installed $(BINDIR)/byn (+ byn-exec-helper) ($(VERSION))"
-	@if id _byn >/dev/null 2>&1 && [ -d /var/lib/byn ]; then \
-		chown _byn:_byn /var/lib/byn && echo "  fixed /var/lib/byn ownership → _byn:_byn"; \
-	fi
+	@# Same asymmetry, quieter: the system data dir is /var/lib/byn on Linux and
+	@# "/Library/Application Support/byn" on macOS, so testing only the Linux path
+	@# made this a no-op on a Mac rather than a failure. Mode matters as much as
+	@# owner here — macOS keeps the daemon socket INSIDE this directory, so it is
+	@# 0711 (traverse, no listing) and a 0700 leaves the owner unable to reach a
+	@# running daemon.
+	@_dir=""; \
+	 if [ "$$(uname -s)" = "Darwin" ]; then _dir="/Library/Application Support/byn"; \
+	 else _dir="/var/lib/byn"; fi; \
+	 if id _byn >/dev/null 2>&1 && [ -d "$$_dir" ]; then \
+		chown _byn:_byn "$$_dir" && chmod 0711 "$$_dir" && \
+		echo "  fixed $$_dir ownership → _byn:_byn (mode 0711)"; \
+	 fi
 	@$(MAKE) install-man 2>/dev/null || echo "  (man page skipped — $(MANDIR) not writable)"
 
 # Remove byn binaries, man page, and (if provisioned) the system service +
