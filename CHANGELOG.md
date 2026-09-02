@@ -99,6 +99,29 @@ instead of under every card, and durations are one unit for an age ("2d ago",
 not "46h9m15s ago") and two for a deadline, where the second unit is the half
 hour you were deciding whether you had.
 
+An asker can now request a single-use approval itself: `byn exec --once` (or
+`--ask-once`) marks the request, and a plain `byn approve <id>` then authorizes
+exactly one run instead of leaving the command live for the rest of the window.
+
+It is the narrowest thing a caller can ask for, and asking narrowly has to be
+the easy path or nobody does it. The only party who knows one run is enough is
+the one asking — an agent running a one-off script knows it at the moment it
+asks; the owner reading a list an hour later does not, and was left choosing
+between a wide grant and remembering to revoke.
+
+The request sets a default, never the decision. `--once` on approve still
+narrows a request that did not ask; `--always` is the new opposite override,
+granting normally despite the ask. An explicit override wins over the request,
+and if both are passed the narrower one does — an approver who said both did not
+mean to widen. The rule lives in the daemon rather than the CLI, so the portal
+and a phone answer the same way a terminal does.
+
+A single-use grant nobody named a window for lapses in 30 minutes rather than
+six hours. The two are answers to different questions: an ordinary grant covers
+a working session, a one-shot covers a run that is usually already waiting on
+it, and six hours of authority for a run that happened in the first minute is
+six hours nobody asked for.
+
 The list also wraps to your terminal. An 80-column window is the common case,
 and several lines ran to 110 — so the terminal broke them itself, at whatever
 character landed on the last column: "the .byn is no / t changed",

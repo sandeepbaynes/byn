@@ -1113,10 +1113,19 @@ type ExecFetchReq struct {
 	// listening: an approval granted after that is a real grant with nobody
 	// left to use it, and a list that cannot tell the two apart shows an urgent
 	// request and an abandoned one as the same row.
-	WaitSeconds int    `json:"wait_seconds,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Scope       Scope  `json:"scope,omitempty"`
-	Command     string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
+	WaitSeconds int `json:"wait_seconds,omitempty"`
+	// AskOnce asks for a single-use grant rather than one that stays live for
+	// the rest of the window.
+	//
+	// It is the narrowest thing a caller can ask for, and asking narrowly has
+	// to be easy or nobody does it. An agent running a one-off script knows
+	// that at the moment it asks; the approver, reading a list later, does not.
+	// The decision still belongs to the approver, who can override it either
+	// way — this only sets what a plain `byn approve <id>` will do.
+	AskOnce bool   `json:"ask_once,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Scope   Scope  `json:"scope,omitempty"`
+	Command string `json:"command,omitempty"` // child argv label (≤200 chars), for audit only
 	// Argv is the exact untruncated child argv for the direct form (Alias==""),
 	// or the extra passthrough args for the alias form (Alias!="").
 	// An old CLI that does not send Argv gets empty-Argv behavior: treated as
@@ -1662,7 +1671,11 @@ type ApprovalEntry struct {
 	Anyone bool `json:"anyone,omitempty"`
 	// Once says the grant is single-use — spent the first time byn authorizes a
 	// run with it.
-	Once       bool   `json:"once,omitempty"`
+	Once bool `json:"once,omitempty"`
+	// AskOnce is what the ASKER asked for, where Once is what was granted. A
+	// surface shows the first so a person can see whether a single-use grant
+	// was the agent's own request or their restraint.
+	AskOnce    bool   `json:"ask_once,omitempty"`
 	Status     string `json:"status"`
 	CreatedAt  int64  `json:"created_at"`
 	ExpiresAt  int64  `json:"expires_at"`
@@ -1725,7 +1738,15 @@ type ApprovalDecideReq struct {
 	Revoke bool `json:"revoke,omitempty"`
 	// Once makes the grant single-use, spent the first time byn authorizes a
 	// run with it — the shape a one-shot script actually wants.
-	Once     bool   `json:"once,omitempty"`
+	Once bool `json:"once,omitempty"`
+	// Always is the opposite override: grant normally even though the asker
+	// asked for a single use.
+	//
+	// A separate field rather than making Once tri-state, because the three
+	// states are genuinely different and a *bool would put the distinction
+	// somewhere a JSON client cannot see. Unset means "follow what was asked
+	// for"; the two flags are what an approver sets to disagree with it.
+	Always   bool   `json:"always,omitempty"`
 	Password []byte `json:"password,omitempty"`
 }
 

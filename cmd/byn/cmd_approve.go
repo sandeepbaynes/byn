@@ -31,6 +31,8 @@ func runApprove(args []string, _ cliScope) int {
 	history := fs.Bool("history", false, "show decided and expired requests too, not just what is waiting")
 	once := fs.Bool("once", false,
 		"single-use: the grant is spent the first time byn authorizes a run with it")
+	always := fs.Bool("always", false,
+		"grant normally even though the asker asked for a single use")
 	anyone := fs.Bool("anyone", false,
 		"let anything in that project use the approved command, not only whoever asked")
 	grantFor := fs.Duration("for", 0, "how long an approved command runs free (default 6h, max 24h)")
@@ -90,6 +92,7 @@ func runApprove(args []string, _ cliScope) int {
 			GrantForSeconds: int(*grantFor / time.Second),
 			Anyone:          *anyone,
 			Once:            *once,
+			Always:          *always,
 		}, &resp)
 		if cerr != nil {
 			rc = handleCallError(cerr)

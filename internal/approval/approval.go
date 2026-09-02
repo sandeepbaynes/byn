@@ -199,6 +199,18 @@ type Request struct {
 	// skip and invisible when skipped, leaving an arbitrary command runnable for
 	// hours after the job it was approved for finished.
 	Once bool `json:"once,omitempty"`
+	// AskOnce records that the ASKER asked for a single-use grant, as opposed to
+	// Once, which records what was actually granted.
+	//
+	// They are deliberately separate fields. An agent that knows it needs a
+	// command once should be able to say so — it is the narrowest thing it can
+	// ask for, and asking narrowly should be easy or nobody does it. But what
+	// the asker wants is not the decision: the approver still chooses, and can
+	// widen or narrow it. Collapsing the two would lose the difference between
+	// "granted once because that is all it wanted" and "granted once because
+	// that is all I was willing to give", which is exactly what an audit log is
+	// read to find out.
+	AskOnce bool `json:"ask_once,omitempty"`
 	// Anyone widens a command grant to the whole scope rather than the caller
 	// that asked for it.
 	//

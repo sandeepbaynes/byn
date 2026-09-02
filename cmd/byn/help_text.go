@@ -742,10 +742,10 @@ SEE ALSO
 
 SYNOPSIS
        byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
-                [--reason TEXT] [--no-privsep] [--inspect[=TARGET]]
+                [--reason TEXT] [--once] [--no-privsep] [--inspect[=TARGET]]
                 -- COMMAND [ARGS...]
        byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
-                [--reason TEXT] [--no-privsep] [--inspect[=TARGET]]
+                [--reason TEXT] [--once] [--no-privsep] [--inspect[=TARGET]]
                 NAME [ARGS...]
 
 DESCRIPTION
@@ -857,6 +857,31 @@ DESCRIPTION
            Only byn's own flags are read before the command; a
            --reason after -- (or after an alias name) belongs to the
            child.
+
+       byn exec --once            (also --ask-once)
+           Ask for a single-use approval rather than one that stays live
+           for the rest of the window. Approving it with a plain
+           "byn approve ID" authorizes exactly one run.
+
+           It is the narrowest thing a caller can ask for, and the only
+           party who knows one run is enough is the one asking: an agent
+           running a one-off script knows it at the moment it asks, and
+           the owner reading a list later does not. Without it the owner
+           chose between a wide grant and remembering to revoke.
+
+           It sets a default, not the decision. The owner still decides,
+           and can override in either direction: --once on approve
+           narrows a normal request, --always widens a request that
+           asked for a single use. An explicit override always wins.
+
+           An unspent single-use grant lapses after 30 minutes rather
+           than the usual 6 hours, unless the approver names a window
+           with --for. The two are answers to different questions: a
+           normal grant covers a working session, and a one-shot covers
+           a run that is usually already waiting on it.
+
+           Only byn's own flags are read before the command; a --once
+           after -- (or after an alias name) belongs to the child.
 
        byn exec --force-ask
            Raise a fresh decision for a command that was already refused.
@@ -2012,7 +2037,7 @@ SYNOPSIS
        byn approve --deny ID...
        byn approve --all [--password-stdin]
        byn approve [--for DURATION] [--anyone] ID...
-       byn approve [--once] ID...
+       byn approve [--once|--always] ID...
        byn approve --revoke ID...
 
 DESCRIPTION
@@ -2079,6 +2104,14 @@ DESCRIPTION
        exit status: byn hands over the values and the command's fate is
        its own, so tying the grant to an exit code would hold it open
        across something byn does not watch. A dry run consumes nothing.
+
+       An asker can request a single use itself with "byn exec --once",
+       and a plain approval then honours it — --once here is for
+       narrowing a request that did not ask. --always is the opposite
+       override: grant normally even though the asker asked for one use.
+       If both are passed the narrower wins, because an approver who
+       said both did not mean to widen. A single-use grant nobody named
+       a window for lapses in 30 minutes rather than 6 hours.
 
        --revoke takes a grant back before it lapses. Approving is the
        moment authority moves, and there has to be a moment it moves

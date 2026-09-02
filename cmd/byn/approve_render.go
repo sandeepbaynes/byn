@@ -80,6 +80,12 @@ func pendingTiming(e ipc.ApprovalEntry, now time.Time) string {
 	if e.Repeats > 0 {
 		parts = append(parts, fmt.Sprintf("retried %d×", e.Repeats))
 	}
+	// What the asker asked for, when it asked for less than the default. Worth
+	// a word on the card because it changes what plain `byn approve <id>` will
+	// do, and an approver should not have to learn that from the result.
+	if e.AskOnce {
+		parts = append(parts, "asked for a single use")
+	}
 	// Whether anything is still listening. Two requests an hour apart look
 	// identical on a list, and one may have a process sitting on it right now
 	// while the other was abandoned before you sat down.

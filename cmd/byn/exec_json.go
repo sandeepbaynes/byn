@@ -299,3 +299,43 @@ func stripExecReason(args []string) ([]string, string) {
 	}
 	return out, reason
 }
+
+// stripExecAskOnce removes byn's own --once / --ask-once from an exec argv and
+// reports whether it was there.
+//
+// It asks for a single-use grant: approving it authorizes exactly one run
+// rather than leaving the command runnable for the rest of the window. An agent
+// running a one-off script is the only party that knows, at the moment of
+// asking, that once is enough — the approver reading a list later does not, and
+// was left choosing between a wide grant and remembering to revoke.
+//
+// Two spellings for the same reason --reason and --why both exist: --once is
+// what people write, --ask-once is what it means. The second is worth having
+// because `byn approve --once` is a different act by a different party, and a
+// reader who meets --once on exec first should be able to find the distinction.
+//
+// Same boundary rule as the other exec flags: everything after the first
+// non-flag argument belongs to the child, so `byn exec -- prog --once` passes
+// --once to prog rather than byn taking it.
+func stripExecAskOnce(args []string) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	askOnce := false
+	boundary := false
+	for _, a := range args {
+		if boundary {
+			out = append(out, a)
+			continue
+		}
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			boundary = true
+			out = append(out, a)
+			continue
+		}
+		if a == "--once" || a == "--ask-once" {
+			askOnce = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, askOnce
+}

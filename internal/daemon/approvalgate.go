@@ -42,6 +42,7 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		Requestor:   d.requestorOf(ctx, vaultName, req),
 		Reason:      requestReason(req.Reason),
 		NeededBy:    neededBy(req.WaitSeconds),
+		AskOnce:     req.AskOnce,
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):
@@ -238,6 +239,7 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 		Requestor:   d.requestorOf(ctx, vaultName, req),
 		Reason:      requestReason(req.Reason),
 		NeededBy:    neededBy(req.WaitSeconds),
+		AskOnce:     req.AskOnce,
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):

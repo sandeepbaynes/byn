@@ -18,10 +18,21 @@ import (
 // to is pinning it in [exec] actions.
 const maxGrantWindow = 24 * time.Hour
 
+// onceGrantWindow is how long an unspent single-use grant stays live when the
+// approver did not name a window.
+//
+// Shorter than the ordinary default because the two are answers to different
+// questions. A normal grant is meant to cover a working session; a single-use
+// grant covers one run that the asker is usually already waiting on. Thirty
+// minutes absorbs an approver who was away from their desk without leaving an
+// arbitrary command authorized for the rest of the afternoon on the strength of
+// a run that already happened.
+const onceGrantWindow = 30 * time.Minute
+
 func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 	return ipc.ApprovalEntry{
 		ID: r.ID, Kind: string(r.Kind), Vault: r.Vault, Subject: r.Subject,
-		Summary: r.Summary, HighRisk: r.HighRisk, Status: string(r.Status),
+		Summary: r.Summary, HighRisk: r.HighRisk, Status: string(r.Status), AskOnce: r.AskOnce,
 		CreatedAt: r.CreatedAt.Unix(), ExpiresAt: r.ExpiresAt.Unix(),
 		Repeats: r.Repeats, DecidedVia: r.DecidedVia,
 		DecidedReason: r.DecidedReason,
@@ -151,12 +162,31 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 			fmt.Sprintf("a grant window must be between 0 and %s", maxGrantWindow),
 			"byn approve "+req.ID+" --for 30m")
 	}
+	// Single-use is decided here, not in the CLI, so every surface answers the
+	// same way — the portal and a phone approve through this path too, and a
+	// rule that lived in one client would make `byn approve <id>` and a tap on
+	// the same card do different things.
+	//
+	// The asker's request is a DEFAULT, never a decision. An agent that said it
+	// only needs one run gets exactly that from a plain approval, which is the
+	// point: asking narrowly should be the easy path or nobody does it. The
+	// approver still overrides in either direction, and an explicit override
+	// always wins over what was asked for.
+	once := resolveOnce(req.Once, req.Always, pending.AskOnce)
 	decide := d.approvals.DecideFor
 	switch {
 	case req.Anyone:
 		decide = d.approvals.DecideForAnyone
-	case req.Once:
+	case once:
 		decide = d.approvals.DecideOnce
+	}
+	// A single-use grant that lingers for six hours is six hours of authority
+	// for one run that probably happened in the first minute. When nobody named
+	// a window, a one-shot gets a short one — long enough to cover an approver
+	// who was away from the desk, short enough that a grant nobody spent stops
+	// being live. An explicit --for still wins.
+	if once && grantFor == 0 {
+		grantFor = onceGrantWindow
 	}
 	decided, err := decide(req.ID, req.Approve, via, req.Reason, grantFor)
 	if err != nil {
@@ -224,4 +254,19 @@ func reasonSuffix(reason string) string {
 		reason = reason[:200] + "…"
 	}
 	return ": " + reason
+}
+
+// resolveOnce decides whether a grant is single-use, from what the asker asked
+// for and what the approver said.
+//
+// Three inputs and one rule: an explicit override wins over the request, and
+// between the two overrides the NARROWER one wins. An approver who passed both
+// --once and --always did not mean to widen, and reading it the other way would
+// hand out more authority than anyone asked for — the direction to be wrong in
+// is always the one that grants less.
+//
+// A function rather than an expression inline so a test can exercise the real
+// rule. A table that mirrors the logic proves the mirror right, not the code.
+func resolveOnce(approverOnce, approverAlways, askedOnce bool) bool {
+	return approverOnce || (!approverAlways && askedOnce)
 }

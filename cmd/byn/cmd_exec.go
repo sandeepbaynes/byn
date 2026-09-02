@@ -100,6 +100,9 @@ func runExec(args []string, scope cliScope) int {
 	// claim, not evidence — but a card that says what a command is for is the
 	// difference between answering it and going to ask.
 	args, reason := stripExecReason(args)
+	// Asked for by the caller, decided by the approver. This only sets what a
+	// plain `byn approve <id>` will do; the approver can still override it.
+	args, askOnce := stripExecAskOnce(args)
 	if reason == "" {
 		// BYN_WHY exists for harnesses that build byn's argv themselves and
 		// cannot add a flag to it. A wrapper script can export it once and
@@ -228,6 +231,7 @@ func runExec(args []string, scope cliScope) int {
 			Argv:     extraArgs,
 			ForceAsk: forceAsk,
 			Reason:   reason,
+			AskOnce:  askOnce,
 			// Only when actually waiting: a caller that exits immediately has
 			// no deadline to state, and claiming one would put a hurry on the
 			// list that nothing is behind.
@@ -242,6 +246,7 @@ func runExec(args []string, scope cliScope) int {
 			Argv:     childArgv,
 			ForceAsk: forceAsk,
 			Reason:   reason,
+			AskOnce:  askOnce,
 			// Only when actually waiting: a caller that exits immediately has
 			// no deadline to state, and claiming one would put a hurry on the
 			// list that nothing is behind.
