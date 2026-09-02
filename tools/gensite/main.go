@@ -63,9 +63,9 @@ func run(args []string, out io.Writer) error {
 	if newest, ok := site.ReleaseNotesCover(notes, version); !ok {
 		return fmt.Errorf(
 			"docs/releases.md has no section for %s (newest is %s) — CHANGELOG.md dates %s, "+
-				"so every page would footer that version and link to notes that stop short of it.\n"+
-				"Add a \"## %s\" section with the headline changes and an \"Upgrade notes\" subsection.",
-			version, dashIfEmpty(newest), version, version)
+				"so every page would footer that version and link to notes that stop short of it; "+
+				"add a %q section with the headline changes and an \"Upgrade notes\" subsection",
+			version, dashIfEmpty(newest), version, "## "+version)
 	}
 
 	pages := site.Manifest()
