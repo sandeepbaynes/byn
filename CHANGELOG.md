@@ -74,7 +74,16 @@ from 0660 from an ACL mask, so the pass now reads the ACL itself for candidates
 the mode test selects.
 
 Measured on the monorepo: 13.591s to 0.016s, and a file whose entry is stripped
-by hand is still healed on the next exec, in 27ms. Repair is called when a tree is known to be wrong,
+by hand is still healed on the next exec, in 27ms.
+
+`byn doctor` now checks that the running daemon IS the installed byn. Installing
+byn replaces a file; it does not replace a running process, so until the service
+restarts the old daemon keeps serving from the binary it started with — and a
+restart that silently did not happen looks exactly like one that did. `byn
+status` already said so. Doctor did not: it reported "daemon running (version
+…)" and a clean bill of health on a machine whose daemon was two commits behind
+the CLI asking. Doctor is the command people run to find out whether an upgrade
+landed, so it is the one that has to notice. Repair is called when a tree is known to be wrong,
 and the entry on the root proves nothing about what lies beneath it — which is
 exactly the situation repair exists to fix.
 

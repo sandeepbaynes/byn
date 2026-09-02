@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/paths"
 	"github.com/sandeepbaynes/byn/internal/privsep"
 )
@@ -47,6 +48,10 @@ type healEnv struct {
 	fileUID     func(path string) (int, bool) // owner uid of a path
 	bynUID      func() (int, bool)            // uid of the _byn service user
 	daemonUp    func() bool                   // daemon socket reachable
+	// daemonVersion is what the RUNNING daemon reports, which is not what the
+	// installed byn is after an upgrade that was not followed by a restart.
+	// Empty when the daemon is down or will not say.
+	daemonVersion func() string
 	// installs lists the byn binaries on this machine. Injected like every
 	// other probe so a test describes the machine it means, rather than
 	// reporting on whatever happens to be installed on the one running it.
@@ -86,6 +91,7 @@ func diagnoseHeal(e healEnv) []healCheck {
 
 	up := e.daemonUp()
 	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: " + sudoByn("restart") + "  (or " + sudoByn("doctor", "--repair") + ")"})
+	cs = append(cs, daemonIsInstalledBynCheck(up, e.daemonVersion, version)...)
 
 	if bynUID, ok := e.bynUID(); ok {
 		dirUID, okD := e.fileUID(e.dataDir)
@@ -163,9 +169,16 @@ func productionHealEnv(dir string) healEnv {
 		fileUID:     fileUID,
 		bynUID:      func() (int, bool) { return lookupUID(privsep.DaemonUser) },
 		daemonUp:    func() bool { return daemonReachable(dir) },
-		installs:    func() []bynInstall { return findBynInstalls(bynVersionOf) },
-		dataDir:     dir,
-		helperPath:  privsep.HelperDestPath(),
+		daemonVersion: func() string {
+			var resp ipc.StatusResp
+			if err := newClient(dir, "").Call(ipc.OpStatus, ipc.StatusReq{}, &resp); err != nil {
+				return ""
+			}
+			return resp.Version
+		},
+		installs:   func() []bynInstall { return findBynInstalls(bynVersionOf) },
+		dataDir:    dir,
+		helperPath: privsep.HelperDestPath(),
 	}
 }
 
@@ -212,4 +225,38 @@ func daemonReachable(dir string) bool {
 // execRunner runs a fixed-shape recovery command (chown / launchctl / systemctl).
 func execRunner(name string, args ...string) error {
 	return exec.Command(name, args...).Run() // #nosec G204 -- fixed-shape recovery commands, root-gated
+}
+
+// daemonIsInstalledBynCheck reports whether the running daemon is the byn that
+// is installed, which after an upgrade is a different question from whether one
+// is running at all.
+//
+// Installing byn replaces a file; it does not replace a running process. Until
+// the service is actually restarted the old daemon keeps serving from the binary
+// it started with — so a restart that silently did not happen looks exactly like
+// one that did, and the fix you just installed appears not to work. `byn status`
+// already said this. `byn doctor` did not: it reported "daemon running (version
+// …)" and a clean bill of health on a machine whose daemon was two commits
+// behind the CLI asking the question. Doctor is the command people run to find
+// out whether an upgrade landed, so it is the one that has to notice.
+//
+// Skipped entirely when the daemon is down — "daemon running" already failed and
+// a second line about its version is noise on top of it.
+func daemonIsInstalledBynCheck(up bool, daemonVersion func() string, cliVersion string) []healCheck {
+	if !up || daemonVersion == nil {
+		return nil
+	}
+	running := daemonVersion()
+	if running == "" || cliVersion == "" {
+		return nil // nothing to compare; say nothing rather than guess
+	}
+	if running == cliVersion {
+		return []healCheck{{Name: "daemon is the installed byn", OK: true, Detail: running}}
+	}
+	return []healCheck{{
+		Name:   "daemon is the installed byn",
+		OK:     false,
+		Detail: fmt.Sprintf("running %s, installed %s — the restart did not take", running, cliVersion),
+		Fix:    "run: " + restartDaemonCommand(),
+	}}
 }
