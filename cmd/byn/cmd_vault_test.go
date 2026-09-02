@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -60,10 +61,15 @@ func TestReadPasswordStdin_Empty(t *testing.T) {
 	}
 }
 
-func TestReadSecretValue_TerminalStdinRejected(t *testing.T) {
-	// /dev/tty test would actually need a terminal. Instead point stdin
-	// at a CharDevice-mimicking source: open /dev/null which is a
-	// character device.
+// A character device that is not a real terminal cannot be prompted on, and
+// must fail with the pipe form named rather than with a bare read error. This
+// is the shape of a cron job or a container whose stdin is /dev/null: byn now
+// tries to prompt there, and what it does when it cannot is the interesting
+// half.
+func TestReadSecretValue_UnpromptableTerminalNamesThePipeForm(t *testing.T) {
+	// A real terminal test would need a real terminal. /dev/null is a
+	// character device, so it takes the prompt branch and then fails the
+	// terminal check inside it — exactly the case being described.
 	prev := os.Stdin
 	defer func() { os.Stdin = prev }()
 	f, err := os.Open(os.DevNull)
@@ -72,14 +78,18 @@ func TestReadSecretValue_TerminalStdinRejected(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 	os.Stdin = f
-	if _, err := readSecretValue(); err == nil {
-		t.Fatal("expected terminal-rejection")
+	_, err = readSecretValue("DB_URL")
+	if err == nil {
+		t.Fatal("a non-terminal character device cannot be prompted on; expected an error")
+	}
+	if !strings.Contains(err.Error(), "byn put DB_URL") {
+		t.Fatalf("the error must name the pipe form for this name, got: %v", err)
 	}
 }
 
 func TestReadSecretValue_PipedOK(t *testing.T) {
 	withStdin(t, "hello\n")
-	got, err := readSecretValue()
+	got, err := readSecretValue("DB_URL")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -90,7 +100,7 @@ func TestReadSecretValue_PipedOK(t *testing.T) {
 
 func TestReadSecretValue_NoTrailingNewline(t *testing.T) {
 	withStdin(t, "hello")
-	got, err := readSecretValue()
+	got, err := readSecretValue("DB_URL")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

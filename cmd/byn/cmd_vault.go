@@ -239,7 +239,7 @@ func runPut(args []string, scope cliScope) int {
 	}
 	switch {
 	case fs.NArg() == 0:
-		fmt.Fprintln(os.Stderr, "Usage: byn put <name>   (value is read from stdin)")
+		fmt.Fprintln(os.Stderr, "Usage: byn put <name>   (prompts for the value, or reads it from stdin)")
 		return exitErr
 	case fs.NArg() > 1:
 		fmt.Fprintf(os.Stderr, "%s %s\n",
@@ -252,17 +252,21 @@ func runPut(args []string, scope cliScope) int {
 		fmt.Fprintln(os.Stderr, dim("the command line is no longer a secret — treat the value you just"))
 		fmt.Fprintln(os.Stderr, dim("typed as exposed and rotate it before storing for real."))
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s read from a file (only the filename ends up in shell history):\n",
+		// The recommendation used to be `echo -n "$VAR" | byn put NAME`, which
+		// has the same flaw as the mistake being reported: the value passes
+		// through a command line. Typing it at a prompt is the answer, and it
+		// is now the one byn offers first.
+		fmt.Fprintf(os.Stderr, "%s let byn ask for it — nothing reaches your history:\n",
 			bold(yellow("Recommended —")))
-		fmt.Fprintf(os.Stderr, "  %s\n", cyan(fmt.Sprintf("byn put %s < secret.txt", fs.Arg(0))))
+		fmt.Fprintf(os.Stderr, "  %s\n", cyan(fmt.Sprintf("byn put %s", fs.Arg(0))))
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, bold(yellow("Other safe options:")))
+		fmt.Fprintln(os.Stderr, bold(yellow("Or, for a value already on disk or multi-line:")))
+		fmt.Fprintf(os.Stderr, "  %s  %s\n",
+			cyan(fmt.Sprintf("byn put %s < secret.txt", fs.Arg(0))),
+			dim("# only the filename hits history"))
 		fmt.Fprintf(os.Stderr, "  %s  %s\n",
 			cyan(fmt.Sprintf("pbpaste | byn put %s", fs.Arg(0))),
 			dim("# paste from clipboard (macOS)"))
-		fmt.Fprintf(os.Stderr, "  %s  %s\n",
-			cyan(fmt.Sprintf("echo -n \"$VAR\" | byn put %s", fs.Arg(0))),
-			dim("# env var (shell expands at runtime, $VAR is what hits history)"))
 		return exitErr
 	}
 	name := fs.Arg(0)
@@ -297,7 +301,7 @@ func runPut(args []string, scope cliScope) int {
 		defer zero(prereadPw)
 	}
 
-	value, err := readSecretValue()
+	value, err := readSecretValue(name)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return exitErr
@@ -635,13 +639,13 @@ func runRename(args []string, scope cliScope) int {
 // terminal it errors out (we don't want users to accidentally type a
 // secret into an echoing prompt); the value must be piped or
 // redirected.
-func readSecretValue() ([]byte, error) {
+func readSecretValue(name string) ([]byte, error) {
 	stat, err := os.Stdin.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat stdin: %w", err)
 	}
 	if (stat.Mode() & os.ModeCharDevice) != 0 {
-		return nil, errors.New("stdin is a terminal — pipe or redirect the value (e.g. `echo s3cr3t | byn put k`)")
+		return promptSecretValue(name)
 	}
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -689,4 +693,44 @@ func emitJSONLine(w *os.File, obj map[string]any) {
 	if b, err := json.Marshal(obj); err == nil {
 		_, _ = fmt.Fprintln(w, string(b))
 	}
+}
+
+// promptSecretValue reads a value from the terminal without echoing it.
+//
+// It replaces an error. `byn put NAME` on a terminal used to refuse and explain
+// how to pipe the value in, which left the obvious thing — type it — as the one
+// option byn would not take. Every workaround it suggested is worse than
+// prompting: `echo s3cr3t | byn put k` puts the secret in shell history, in the
+// argv of a process anyone can see in `ps`, and possibly in an audit log. byn
+// warns about exactly that when a value arrives as an argument, then recommended
+// a form with the same flaw.
+//
+// Hidden input, like a password, because the threat is the same: a terminal is a
+// shared surface — shoulders, screen shares, scrollback that outlives the
+// session. Saying so on the prompt matters too. An unexplained silent cursor
+// reads as a hung program, and the reflex is to press keys until something
+// happens.
+//
+// One line only. A multi-line secret (a PEM key, a JSON blob) still comes from a
+// pipe or a file, which the message names — reading until EOF here would leave
+// someone typing a certificate with no way to say they had finished except
+// Ctrl-D, and no sign that it was expected.
+func promptSecretValue(name string) ([]byte, error) {
+	value, err := auth.PromptStdin(fmt.Sprintf("Value for %s (hidden): ", name))
+	if err != nil {
+		if errors.Is(err, auth.ErrNoTerminal) {
+			// stat said terminal and the prompt disagrees. Rather than guess,
+			// name the original contract.
+			return nil, errors.New("stdin is a terminal but cannot be read — pipe the value instead: byn put " + name + " < secret.txt")
+		}
+		return nil, err
+	}
+	// Empty is almost always a stray Enter. It is a legitimate value, so the
+	// message says how to store one deliberately rather than claiming it is
+	// impossible — but making it the accident-shaped path would silently write
+	// an empty secret over a real one.
+	if len(value) == 0 {
+		return nil, errors.New("no value entered — to store an empty value deliberately: printf '' | byn put " + name)
+	}
+	return value, nil
 }

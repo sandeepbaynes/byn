@@ -482,9 +482,21 @@ SYNOPSIS
        byn put [--create-only] [--password-stdin] NAME
 
 DESCRIPTION
-       Stores or updates a secret called NAME. The secret value is
-       read from stdin — never the command line — so it does not show
+       Stores or updates a secret called NAME. On a terminal byn asks
+       for the value and hides what you type, the way a password
+       prompt does. Otherwise the value is read from stdin. Either
+       way it never comes from the command line, so it does not show
        up in argv, ps output, shell history, or audit logs.
+
+       The prompt takes ONE line. A multi-line secret — a PEM key, a
+       JSON blob — still comes from a file or a pipe, because reading
+       until EOF at a prompt would leave you typing a certificate with
+       no way to say you had finished but Ctrl-D, and no sign that it
+       was expected.
+
+       An empty entry is refused rather than stored: at a prompt it is
+       almost always a stray Enter. To store an empty value on
+       purpose, pipe one: printf '' | byn put NAME
 
        Existing secrets are upserted by default. Use --create-only to
        refuse overwrites.
@@ -546,6 +558,10 @@ OPTIONS
                $ { echo "$BYN_PW"; printf 'new-val'; } | byn put key --password-stdin
 
 EXAMPLES
+       Typed at a prompt, hidden, nothing in shell history:
+           $ byn put aws-access-key
+           Value for aws-access-key (hidden):
+
        From a pipe:
            $ echo -n "AKIA..." | byn put aws-access-key
 
@@ -578,6 +594,10 @@ SECURITY NOTES
        is rejected with an explanation: the value would otherwise
        end up in shell history files, in "ps aux" while the process
        runs, and possibly in OS process accounting logs.
+
+       The prompt hides what you type for the same reason a password
+       prompt does: a terminal is a shared surface — people behind
+       you, a screen share, scrollback that outlives the session.
 
 SEE ALSO
        byn(1), byn-get(1), byn-unlock(1)

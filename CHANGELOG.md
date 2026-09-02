@@ -99,6 +99,29 @@ instead of under every card, and durations are one unit for an age ("2d ago",
 not "46h9m15s ago") and two for a deadline, where the second unit is the half
 hour you were deciding whether you had.
 
+`byn put NAME` on a terminal now asks for the value and hides what you type,
+the way a password prompt does. It used to refuse and explain how to pipe the
+value in, which left the obvious thing — type it — as the one option byn would
+not take.
+
+Every workaround it suggested is worse than prompting. `echo -n "$VAR" | byn
+put NAME` puts the value in shell history, in the argv of a process anyone can
+read out of `ps`, and possibly in an audit log. byn already warns about exactly
+that when a value arrives as an argument, and then recommended a form with the
+same flaw; that recommendation is now the prompt.
+
+The input is hidden for the same reason a password prompt hides it: a terminal
+is a shared surface — people behind you, a screen share, scrollback that
+outlives the session. The prompt says it is hidden, because an unexplained
+silent cursor reads as a hung program.
+
+One line only: a multi-line secret still comes from a file or a pipe, which the
+message names. An empty entry is refused rather than stored, since at a prompt
+it is almost always a stray Enter — with the deliberate form given, because an
+empty value is legitimate.
+
+Piped and redirected input are unchanged, so every script keeps working.
+
 An asker can now request a single-use approval itself: `byn exec --once` (or
 `--ask-once`) marks the request, and a plain `byn approve <id>` then authorizes
 exactly one run instead of leaving the command live for the rest of the window.
