@@ -236,4 +236,16 @@ func installTUIHelper(srcDir string, stdout io.Writer) {
 	}
 	restoreSELinuxContext(tuiLibexecPath)
 	_, _ = fmt.Fprintf(stdout, "installed %s (the editor `byn edit` runs)\n", tuiLibexecPath)
+
+	// v0.6.3 put the editor in the system bin dir. Now that the authoritative
+	// copy is in libexec, that one is stale: on PATH where it does not belong,
+	// and frozen at whatever version installed it while byn moves on. Removing
+	// it only AFTER the libexec copy is in place, so a failure above can never
+	// leave the machine with no editor at all.
+	stale := filepath.Join(systemBinDir, tuiBinary)
+	if fileExists(stale) {
+		if rerr := os.Remove(stale); rerr == nil {
+			_, _ = fmt.Fprintf(stdout, "removed %s (superseded; the editor lives in libexec now)\n", stale)
+		}
+	}
 }

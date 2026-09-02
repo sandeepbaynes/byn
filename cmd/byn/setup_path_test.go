@@ -123,3 +123,33 @@ func TestEnsureOnSystemPath_TakesTheEditorAlong(t *testing.T) {
 			"would have no byn-tui in the system bin dir")
 	}
 }
+
+// TestInstallTUIHelper_RemovesTheStaleBinDirCopy.
+//
+// v0.6.3 installed the editor into the system bin dir. v0.6.4 moved it to
+// libexec, which leaves upgraders with a copy on PATH that byn no longer uses
+// and nothing ever updates — frozen at the version that installed it while byn
+// moves on, and a shadow waiting for the day libexec is missing.
+//
+// Removed only AFTER the libexec copy is in place, so a failure there can never
+// leave a machine with no editor at all.
+func TestInstallTUIHelper_RemovesTheStaleBinDirCopy(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "byn-tui"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile("setup_path.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "os.Remove(stale)") {
+		t.Fatal("setup no longer removes the superseded bin-dir copy; upgraders keep a " +
+			"stale editor on PATH for ever")
+	}
+	// Order matters more than the removal: the remove must come after the copy.
+	if strings.Index(s, "os.Remove(stale)") < strings.Index(s, "copyExecutable(src, tuiLibexecPath)") {
+		t.Fatal("the stale copy is removed BEFORE the replacement is installed; a failure " +
+			"in between would leave the machine with no editor")
+	}
+}

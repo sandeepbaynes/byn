@@ -97,6 +97,16 @@ token takes the VALUE of a preceding flag for the command. Where an explicit
 The Linux `execCmdSummary` still has the original behaviour, and its own doc
 comment already documents the corrected one.
 
+### Upgrading from v0.6.3 cleans up after itself
+
+v0.6.3 installed the editor into the system bin directory. Now that it belongs
+in `libexec`, `byn setup` removes the superseded copy — otherwise upgraders keep
+one on `PATH` that byn no longer uses and nothing ever updates, frozen at the
+version that installed it.
+
+It is removed only after the replacement is in place, so a failure cannot leave
+a machine with no editor at all.
+
 ### The editor is part of byn, not something to install
 
 v0.6.3 split the editor into `byn-tui` and left it looking like a separate
