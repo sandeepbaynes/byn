@@ -125,6 +125,26 @@ Cancelling is not denying. A denial is the owner's judgment and counts toward
 the cooldown that stops a fingerprint being re-asked; a cancellation is the
 asker changing its mind, and leaves no mark on the owner's answer history.
 
+A grant that can no longer open a value now says so, instead of reporting
+corruption. It used to fail with `wrapped key tampered or corrupted`, which on a
+vault holding the only copy of an encryption key reads as "your secret is gone" —
+and it sent somebody diagnosing data loss for a condition `byn trust` fixes in a
+second.
+
+The cause is inheritance, and it needs no file edit at all. A capability holds
+the key that opened a row AT GRANT TIME. A value inherited from the default env
+lives in the default env's row; a later `byn put` in the child env creates an
+override — a different row, in a different env, under a different key — and the
+captured key stops opening it. The AEAD fails, and an AEAD failure looks exactly
+like real ciphertext damage. So a plain `byn put` can invalidate a live grant for
+exactly one variable, which is why one secret failed while others in the same
+env decrypted normally.
+
+byn still fails closed: it cannot re-derive the key without the vault key, and
+starting the child without the value would trade a clear error for a failure deep
+inside the program. What changed is that it now names the variable, says the
+value is intact, and gives the command that fixes it.
+
 The portal gained the same decisions the terminal has. It could only approve or
 deny plainly: no reason, no single-use, no revoke, and it only ever showed what
 was pending.

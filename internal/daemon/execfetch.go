@@ -753,6 +753,27 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 				// one value, including every value that WAS readable.
 				continue
 			}
+			if errors.Is(verr, vcrypto.ErrTampered) {
+				// A capability holds the key that opened this row AT GRANT TIME.
+				// The row can move without any file changing: a value inherited
+				// from the default env lives in the default env's row, and a
+				// later `byn put` in this env creates an override — a different
+				// row, under a different key. The captured key stops opening it,
+				// the AEAD fails, and an AEAD failure is indistinguishable from
+				// real ciphertext damage.
+				//
+				// So this was reported as "wrapped key tampered or corrupted",
+				// which on a vault holding the only copy of an encryption key
+				// reads as "your secret is gone". It sent somebody diagnosing
+				// data corruption for a condition that `byn trust` fixes in a
+				// second. The value is intact; only this grant is out of date.
+				//
+				// Still fail-closed: byn cannot re-derive the key without the
+				// vault key, and starting the child without the value would
+				// swap a clear error for a failure deep inside the program.
+				msg, hint := staleCapabilityText(name, rec.Path)
+				return nil, ipc.NewError(id, ipc.CodeTrustDenied, msg, hint)
+			}
 			return nil, internalErr(id, fmt.Errorf("decrypt %q via capability: %w", name, verr))
 		}
 		values = append(values, ipc.ExecFetchValue{Name: name, Value: val})
@@ -950,4 +971,13 @@ func execRunCommand(req ipc.ExecFetchReq, resolvedArgv []string) string {
 		cmd = cmd[:500] + "…"
 	}
 	return cmd
+}
+
+// staleCapabilityText is the wording for a grant that can no longer open a
+// value, kept in one place so a test can hold it to what it must not say.
+func staleCapabilityText(name, bynPath string) (msg, hint string) {
+	return fmt.Sprintf("this grant is out of date for %q — it cannot open the current value", name),
+		"re-trust to refresh it: byn trust " + bynPath +
+			"  (the value is intact; a grant goes stale when a variable is overridden " +
+			"in this env, or re-sealed by another writer)"
 }
