@@ -44,6 +44,9 @@ const (
 	ModeRename
 	ModeScopeRename
 	ModeAuthRequired
+	// ModeApprovals is the decision queue: what an agent is blocked on and
+	// waiting for a person to answer.
+	ModeApprovals
 )
 
 func (m Mode) String() string {
@@ -74,6 +77,8 @@ func (m Mode) String() string {
 		return "RENAME"
 	case ModeAuthRequired:
 		return "AUTHORIZE"
+	case ModeApprovals:
+		return "APPROVALS"
 	}
 	return "?"
 }
@@ -300,6 +305,27 @@ type Model struct {
 	// Audit
 	audit    []ipc.AuditEvent
 	auditErr error
+
+	// approvals is the decision queue. Held on the model rather than fetched on
+	// each render so the list does not flicker or reorder under the cursor
+	// while somebody is deciding what to answer.
+	approvals       []ipc.ApprovalEntry
+	approvalsErr    error
+	approvalCursor  int
+	approvalHistory bool
+	// approvalReason is the decider's own words, typed before answering. It is
+	// carried back to whoever asked — through the watch, the only place an asker
+	// sees it — which is what makes a refusal from here as useful as one from a
+	// terminal instead of a bare "denied".
+	approvalReason string
+	// approvalTyping is true while the reason line has the keyboard, so j/k
+	// scroll the list at other times and type letters here.
+	approvalTyping bool
+	// pendingApproval parks a decision that needs the master password, so the
+	// existing auth overlay can collect it and the decision can be replayed
+	// unchanged. Without it, the password step would have to know what it was
+	// authorizing, and every future gated action would have to teach it again.
+	pendingApproval *pendingApproval
 
 	// defaultEnvNames is the set of entry names that live in the
 	// *default* env of the active project. Populated when the active
@@ -689,4 +715,11 @@ func (m Model) currentEntry() *ipc.SecretMeta {
 		return nil
 	}
 	return &es[m.entryCursor]
+}
+
+// pendingApproval is an approval waiting only on a password.
+type pendingApproval struct {
+	ID     string
+	Once   bool
+	Reason string
 }

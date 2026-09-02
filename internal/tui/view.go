@@ -27,6 +27,8 @@ func (m Model) View() string {
 		return m.composeOverlay(m.renderHelp())
 	case ModeAudit:
 		return m.composeOverlay(m.renderAudit())
+	case ModeApprovals:
+		return m.composeOverlay(m.renderApprovals(m.Width, m.Layout.Content.H+m.Layout.TopBar.H))
 	}
 
 	// Compose rail | content | detail with status line at the bottom.
@@ -206,6 +208,8 @@ func (m Model) modeBadge() string {
 		return m.styles.ModeScope.Render("SCOPE")
 	case ModeAudit:
 		return m.styles.ModeAudit.Render("AUDIT")
+	case ModeApprovals:
+		return m.styles.ModeAudit.Render("APPROVALS")
 	case ModeHelp:
 		return m.styles.ModeHelp.Render("HELP")
 	case ModeAuthRequired:
@@ -275,6 +279,8 @@ func (m Model) statusHints() string {
 		return m.styles.StatusHint.Render("↑↓ pick  Tab col  Enter apply  ESC cancel")
 	case ModeAudit:
 		return m.styles.StatusHint.Render("q back  r refresh  / filter")
+	case ModeApprovals:
+		return m.styles.StatusHint.Render("j/k move  a approve  o once  d deny  v revoke  r reason  h history  ESC close")
 	case ModeHelp:
 		return m.styles.StatusHint.Render("ESC close")
 	case ModeAuthRequired:

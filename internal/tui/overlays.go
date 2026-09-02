@@ -170,6 +170,7 @@ func (m Model) renderHelp() string {
 		"  " + m.styles.StatusNew.Render("✦") + "       created in this env, not in default",
 		"",
 		m.styles.SectionHeader.Render("OTHER"),
+		"  g p       approvals — what an agent is blocked on",
 		"  g a       audit log",
 		"  :         command palette",
 		"  /         search/filter entries",

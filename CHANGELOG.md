@@ -145,6 +145,22 @@ starting the child without the value would trade a clear error for a failure dee
 inside the program. What changed is that it now names the variable, says the
 value is intact, and gives the command that fixes it.
 
+The TUI can answer approvals. `g p` opens the queue: what is waiting, what it
+wants to run, whether it asked for a single use, who asked and why. `a` grants,
+`o` grants a single use, `d` refuses, `v` takes a grant back, `r` types a reason
+that travels with whichever answer follows, and `h` shows what has been decided.
+
+It matters because the queue is where work stops. An agent blocked on consent
+stays blocked until a person answers, and until now answering meant leaving the
+editor for a terminal or a browser — so the tool already open in front of you was
+the one place that could not unblock anything.
+
+Approving asks for the master password, exactly as the terminal and portal do.
+Denying and revoking do not: they can only remove authority, and refusing has to
+stay the cheaper action or people learn to approve by reflex. The once/always
+pair is passed to the daemon rather than resolved in the TUI, so the same gesture
+cannot come to mean different things in different surfaces.
+
 The portal gained the same decisions the terminal has. It could only approve or
 deny plainly: no reason, no single-use, no revoke, and it only ever showed what
 was pending.

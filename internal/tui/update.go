@@ -164,6 +164,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			strconv.Itoa(msg.Bytes)+" bytes; reveal in audit log)", true)
 		return m, loadAuditCmd(m.client, m.scope.Vault, 10)
 
+	case approvalsLoadedMsg:
+		m.approvals = msg.Resp.Entries
+		m.approvalsErr = msg.Err
+		if m.approvalCursor >= len(m.approvals) {
+			m.approvalCursor = 0
+		}
+		return m, nil
+	case approvalDecidedMsg:
+		if msg.Err != nil {
+			m.flash("could not decide "+msg.ID+": "+msg.Err.Error(), true)
+			return m, nil
+		}
+		// The reason belonged to the decision just made; carrying it silently
+		// onto the next one would attach somebody's words to a request they
+		// were not talking about.
+		m.approvalReason = ""
+		m.pendingApproval = nil
+		m.Mode = ModeApprovals
+		m.flash(msg.ID+" "+msg.Status, false)
+		return m, loadApprovalsCmd(m.client, m.approvalHistory)
 	case authRetryMsg:
 		return m.handleAuthRetry(msg)
 
@@ -263,6 +283,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keySearch(msg)
 	case ModeAudit:
 		return m.keyAudit(msg)
+	case ModeApprovals:
+		return m.keyApprovals(msg)
 	case ModeHelp:
 		return m.keyHelp(msg)
 	case ModeAuthRequired:
@@ -300,6 +322,14 @@ func (m Model) keyNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.railCursor = 0
 			}
 			return m, nil
+		case "p":
+			// p for pending. `a` is taken by the audit log, and approvals are
+			// what somebody is waiting on rather than a record of what happened.
+			m.Mode = ModeApprovals
+			m.approvalCursor = 0
+			m.approvalReason = ""
+			m.approvalTyping = false
+			return m, loadApprovalsCmd(m.client, m.approvalHistory)
 		case "a":
 			m.Mode = ModeAudit
 			m.auditBefore = 0 // enter live at the newest page
@@ -1663,6 +1693,10 @@ func (m Model) keyAuthRequired(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = authRetryDeleteCmd(m.client, ar.scope, ar.name, pw)
 		case authRetryRename:
 			cmd = authRetryRenameCmd(m.client, ar.scope, ar.name, ar.newName, pw)
+		case authRetryApprove:
+			if p := m.pendingApproval; p != nil {
+				cmd = decideApprovalCmd(m.client, p.ID, true, false, p.Once, false, p.Reason, pw)
+			}
 		}
 		return m, cmd
 	case "backspace":

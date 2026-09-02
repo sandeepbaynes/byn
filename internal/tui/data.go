@@ -82,6 +82,22 @@ type auditLoadedMsg struct {
 	Err   error
 }
 
+// approvalsLoadedMsg carries the decision queue into the TUI.
+type approvalsLoadedMsg struct {
+	Resp ipc.ApprovalListResp
+	Err  error
+	// History says these are the decided ones, so the view knows which list it
+	// is holding without a second flag to keep in step.
+	History bool
+}
+
+// approvalDecidedMsg reports the outcome of answering one request.
+type approvalDecidedMsg struct {
+	ID     string
+	Status string
+	Err    error
+}
+
 type tickMsg time.Time
 
 // ---- Commands -----------------------------------------------------------
@@ -299,6 +315,10 @@ const (
 	authRetryPut
 	authRetryDelete
 	authRetryRename
+	// authRetryApprove reuses the password overlay for granting an approval.
+	// Approving hands out authority, so it is gated exactly as a put is; denying
+	// and revoking are not, because they only ever remove it.
+	authRetryApprove
 )
 
 // authRetryGetCmd re-issues OpGet with the supplied password.
@@ -366,5 +386,40 @@ func authRetryRenameCmd(c Client, scope ipc.Scope, oldName, newName string, pw [
 			pw[i] = 0
 		}
 		return authRetryMsg{kind: authRetryRename, name: newName, err: err}
+	}
+}
+
+// loadApprovalsCmd fetches what a person still owes a decision on.
+//
+// No vault argument: the queue is deliberately vault-independent so a request
+// can be raised, listed and answered while the vault is locked. Scoping this
+// view to the selected vault would hide exactly the requests an owner most
+// needs to see — the ones blocking an agent that cannot unlock anything.
+func loadApprovalsCmd(c Client, history bool) tea.Cmd {
+	return func() tea.Msg {
+		status := "pending"
+		if history {
+			status = ""
+		}
+		var resp ipc.ApprovalListResp
+		err := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{Status: status}, &resp)
+		return approvalsLoadedMsg{Resp: resp, Err: err, History: history}
+	}
+}
+
+// decideApprovalCmd answers one request.
+//
+// once and always are passed through rather than resolved here: the rule that
+// decides what they mean together lives in the daemon, so the TUI, the portal
+// and `byn approve` cannot drift into meaning different things by the same
+// gesture.
+func decideApprovalCmd(c Client, id string, approve, revoke, once, always bool, reason string, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		var resp ipc.ApprovalDecideResp
+		err := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+			ID: id, Approve: approve, Revoke: revoke, Once: once, Always: always,
+			Reason: reason, Password: pw, Via: "tui",
+		}, &resp)
+		return approvalDecidedMsg{ID: id, Status: resp.Entry.Status, Err: err}
 	}
 }
