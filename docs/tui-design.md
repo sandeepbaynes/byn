@@ -292,6 +292,43 @@ Replaces the Content pane with a sortable audit log table.
 
 Columns: `WHEN  OP  ENTRY  OUTCOME` (size-adapted to tier).
 
+### APPROVALS (`gp`)
+
+Replaces the Content pane with the decision queue — what an agent is blocked on
+and waiting for a person to answer.
+
+The queue is where work stops. An agent blocked on consent stays blocked until
+somebody answers, and before this the only way to answer was to leave the editor
+for a terminal or a browser: the tool already open in front of you was the one
+place that could not unblock anything.
+
+- `j`/`k` move. Only the selected request expands — a queue of a dozen rendered
+  as full records is a wall to scroll rather than a list to scan.
+- `a` approves, `o` approves a single use, `d` denies, `v` revokes a grant
+  already given.
+- `r` opens a reason line whose text travels with whichever answer follows.
+  While it is open it owns the keyboard, or `d` would deny instead of typing a
+  `d`. The reason is cleared after each decision: carrying it onto the next one
+  would attach somebody's words to a request they were not talking about.
+- `h` toggles decided and expired requests, with the outcome and the words that
+  went with it.
+- `ESC`/`q` returns to NORMAL.
+
+The selected card shows what would run, whether the asker asked for a **single
+use** (which changes what a plain approve does, so it is on its own line rather
+than in the timing strip), the stated reason marked as the claim it is, and who
+asked as read from the kernel.
+
+Approving reuses the AUTHORIZE overlay: it hands out authority, so it is gated
+exactly as a put is. Denying and revoking are not gated — they can only remove
+authority, and refusing has to stay the cheaper action or people learn to approve
+by reflex. Revoke is refused on a pending request rather than quietly treated as
+a denial.
+
+`once`/`always` are sent to the daemon as a pair rather than resolved here, so a
+keystroke, `byn approve <id>` and a tap in the portal cannot come to mean
+different things.
+
 ### HELP (`?`)
 
 Full-screen modal listing all keybindings grouped by section

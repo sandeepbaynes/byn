@@ -442,6 +442,13 @@ Approvals (decisions a .byn is waiting on):
   approve <id>...            Grant it (asks for the master password)
   approve --deny <id>...     Refuse it (no password: refusing grants nothing)
   approve --all              Answer every pending request in one go
+  approve --once|--always    Grant a single use, or the full window
+  approve --revoke <id>      Take back a grant already given
+
+Approvals (the asker's own side — for agents):
+  request watch <ticket>     Block until your request is answered, then print
+                             the outcome and the decider's reason as JSON
+  request cancel <ticket>    Withdraw a request you no longer need
 
 Repair:
   repair [DIR]               Give yourself back access to build artifacts a

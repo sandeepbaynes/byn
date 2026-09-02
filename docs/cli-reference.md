@@ -279,8 +279,16 @@ Rename. Refuses `default`.
 
 Store an env-var entry under `(scope.Project, scope.Env)`.
 
-- Value comes from **stdin only**. `byn put NAME VALUE` is
-  rejected — values in argv leak to ps and shell history.
+- On a terminal byn **prompts for the value and hides what you type**, the way a
+  password prompt does. Otherwise the value is read from stdin. Either way it
+  never comes from the command line: `byn put NAME VALUE` is rejected, because
+  values in argv leak to `ps` and shell history.
+- The prompt takes one line. A multi-line secret (a PEM key, a JSON blob) still
+  comes from a file or a pipe — reading to EOF at a prompt would leave you typing
+  a certificate with no way to say you had finished but Ctrl-D.
+- An empty entry at the prompt is refused rather than stored: it is almost always
+  a stray Enter. To store an empty value deliberately, pipe one:
+  `printf "" | byn put NAME`.
 - `--create-only` fails with `already_exists` if the name is taken
   (used by `import --skip-existing`).
 - Hint on success: `Stored "NAME" in vault/project/env.`
@@ -854,6 +862,28 @@ values and the command's fate is its own, so tying the grant to an exit code
 would hold it open across something byn does not watch. `byn exec --dry-run`
 goes through a different path and consumes nothing.
 
+### `byn approve --always ID...`
+
+Grants normally even though the asker asked for a single use — the opposite
+override to `--once`.
+
+The two exist because a request is a *default*, not a decision. An agent that
+knows it needs a command once can say so with `byn exec --once`, and a plain
+`byn approve <id>` then honours it: asking narrowly has to be the easy path or
+nobody does it. The owner still decides, and can go either way. If both flags
+are passed the narrower wins, because an approver who said both did not mean to
+widen.
+
+The rule lives in the daemon rather than in any one client, so `byn approve`, a
+tap in the portal and a keystroke in the TUI cannot drift into meaning different
+things.
+
+An unspent single-use grant lapses after 30 minutes rather than the usual six
+hours, unless `--for` names a window. The two answer different questions: an
+ordinary grant covers a working session, a one-shot covers a run that is usually
+already waiting on it, and six hours of authority for a run that happened in the
+first minute is six hours nobody asked for.
+
 ### `byn approve --revoke ID...`
 
 Takes back a grant before it lapses. Approving is the moment authority moves,
@@ -866,6 +896,54 @@ remove capability, and a revoke you have to go and find a credential for is one
 that happens later than it should. Recorded as `approval.revoke`. The grant
 itself is zeroed rather than the record relabelled, so the next attempt raises a
 fresh request.
+
+### `byn request watch TICKET [--timeout SECONDS] [--human]`
+
+The asker's side of an approval: block until your own request is answered, then
+print the outcome as JSON.
+
+```json
+{"approval_id":"8ffa7d4f6f54","status":"denied","reason":"deny test",
+ "decided_via":"portal","once":false,"granted_until":0}
+```
+
+`status` is `approved`, `denied`, `expired`, `cancelled` or `revoked` — or
+`pending` with `"timed_out":true` when you stopped waiting first. Exit codes:
+`0` approved, `3` denied/expired/cancelled, `75` still pending. **Branch on the
+code**: a script that treats "denied" and "not yet" alike will retry a refusal
+for ever, which is the loop the approval queue exists to prevent.
+
+The decider's reason reaches the asker here and nowhere else. A refusal without
+one leaves an agent guessing between "fix it and ask again" and "stop".
+
+Decisions are published in-process, so the wait ends the moment somebody answers
+rather than on a poll interval. Before this, the only way to learn an outcome was
+to re-run the whole command every couple of seconds — which can observe exactly
+one result, success, because a poller cannot tell "denied" from "not yet".
+
+**The ticket.** It arrives once, in the `watch_ticket` field of the
+`approval_pending` response that raised the request. Keep it: no command returns
+one for an existing request, and a retry that re-attaches to a request already
+waiting is handed nothing. Both halves are deliberate — a way to re-request a
+ticket would be a way for anything else on the machine to request yours, and then
+answer for you or withdraw your request. byn stores only a SHA-256 of it.
+
+Possession of the ticket is the entire authorization, which is what lets a
+privsep exec child — a different uid, no session, no password — learn the outcome
+of its own request without any wider access to the queue.
+
+Prefer passing it on stdin over argv where you can: an argument is visible in
+`ps` to every process on the machine while the command runs.
+
+### `byn request cancel TICKET`
+
+Withdraw a request you no longer need, so nobody spends attention answering it.
+
+Cancelling is **not** denying. A denial is the owner's judgment and counts toward
+the cooldown that stops a fingerprint being re-asked; a cancellation is the asker
+changing its mind and leaves no mark on the owner's answer history. A cancel that
+races a decision reports the decision — the answer that exists is the one that
+counts.
 
 ### `byn approve [--for DURATION] [--anyone] ID...`
 

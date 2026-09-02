@@ -29,8 +29,7 @@ func runRequest(args []string, scope cliScope) int {
 	case "cancel":
 		return runRequestCancel(args[1:], scope)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stderr, requestHelp)
-		return exitOK
+		return printCommandHelp("request")
 	default:
 		fmt.Fprintf(os.Stderr, "byn request: unknown subcommand %q\n", args[0])
 		return exitErr
@@ -192,40 +191,6 @@ func ticketArg(rest []string) string {
 	}
 	return string(line)
 }
-
-// requestHelp is the asker's half of the approval system, written for the
-// program that will read it rather than for a person browsing.
-const requestHelp = `byn request — the asker's side of an approval
-
-Usage:
-  byn request watch  <ticket> [--timeout SECONDS] [--human]
-  byn request cancel <ticket> [--json]
-
-A watch ticket is handed to you ONCE, in the "watch_ticket" field of the
-approval_pending response that raised the request. Keep it: there is no way to
-ask for it again, and no command returns one for an existing request. That is
-deliberate — a way to re-request a ticket would be a way for anything else on
-the machine to request yours, and then answer for you or withdraw your request.
-
-A retry that re-attaches to a request already waiting does not get a ticket
-either. Only the caller that actually raised the question holds one.
-
-  watch    Block until the request is answered, then print the outcome as JSON:
-           {"approval_id","status","reason","decided_via","once","granted_until"}
-           status is approved | denied | expired | cancelled | revoked, or
-           pending with "timed_out":true when you stopped waiting first.
-           The decider's reason reaches you here and nowhere else.
-
-           Exit: 0 approved · 3 denied/expired/cancelled · 4 still pending.
-           Branch on the code; a script that treats "denied" and "not yet" alike
-           will retry a refusal for ever.
-
-  cancel   Withdraw a request you no longer need, so nobody spends attention
-           answering it. Cancelling is not denying: it leaves no mark on the
-           owner's answer history and counts toward no cooldown.
-
-Pass the ticket on stdin instead of argv when you can — an argument is visible
-in "ps" to every process on the machine while the command runs.`
 
 // defaultWatchSeconds mirrors the daemon's default wait. The CLI sends it
 // explicitly rather than sending zero and letting the daemon choose, so the two

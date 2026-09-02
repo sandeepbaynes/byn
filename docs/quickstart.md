@@ -105,13 +105,26 @@ affecting other open sessions.
 
 ## 4. Store your first secret
 
-`byn put` reads the value from **stdin**, so it never lands in your shell
-history:
+`byn put` asks for the value and hides what you type, so it never lands in your
+shell history:
 
 ```sh
-printf 'postgres://user:pass@localhost/app' | byn put DATABASE_URL
+byn put DATABASE_URL
+# Value for DATABASE_URL (hidden):
 byn list                    # → DATABASE_URL
 ```
+
+For a value already on disk, or a multi-line one, pipe or redirect it instead —
+only the filename reaches your history:
+
+```sh
+byn put TLS_KEY < server.key
+printf 'postgres://user:pass@localhost/app' | byn put DATABASE_URL
+```
+
+What byn will not accept is `byn put NAME value`: an argument is visible in `ps`
+to every process on the machine while the command runs, and it is written to your
+shell history file.
 
 ---
 

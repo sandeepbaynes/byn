@@ -26,6 +26,14 @@ func helpFor(name string) string {
 		return commandHelp["edit"]
 	case "start", "stop", "restart", "reload":
 		return commandHelp["daemon"]
+	case "approval", "approvals":
+		// Two different verbs answer to this word, held by two different
+		// parties: an owner approves somebody else's request, an asker watches
+		// and withdraws its own. Sending this to one of them would hide the
+		// other, so it goes to the page that names both.
+		return commandHelp["approve"]
+	case "watch", "cancel":
+		return commandHelp["request"]
 	case "locked", "agent", "agents":
 		// The question gets asked in several words; they all lead to the
 		// one page that answers it.
@@ -35,6 +43,103 @@ func helpFor(name string) string {
 }
 
 var commandHelp = map[string]string{
+	"request": `NAME
+       byn-request - the asker's side of an approval
+
+SYNOPSIS
+       byn request watch  TICKET [--timeout SECONDS] [--human]
+       byn request cancel TICKET [--json]
+
+DESCRIPTION
+       Where "byn approve" is what an owner does to somebody else's
+       request, these are what the asker does to its own: wait for an
+       answer, and withdraw a question it no longer needs. Different
+       authorities, held by different parties, so they are different
+       commands — folding them together would put "answer this" and "I
+       no longer need this" one flag apart.
+
+       A watch TICKET is handed to you ONCE, in the "watch_ticket"
+       field of the approval_pending response that raised the request.
+       Keep it. No command returns a ticket for an existing request,
+       and a retry that re-attaches to a request already waiting is
+       handed nothing.
+
+       Both halves are deliberate. A way to re-request a ticket would
+       be a way for anything else on the machine to request yours, and
+       then answer for you or withdraw your request. byn stores only a
+       SHA-256 of it, because approvals.db is readable by the owner and
+       a stored ticket would let anything that reads the file speak for
+       the process that asked.
+
+       Possession of the ticket is the entire authorization. That is
+       what lets a privsep exec child — a different uid, with no
+       session and no password — learn the outcome of its own request
+       without being given any wider access to the queue.
+
+       byn request watch TICKET
+           Block until the request is answered, then print the outcome
+           as JSON:
+
+             {"approval_id":"...","status":"denied","reason":"wrong
+              target","decided_via":"portal","once":false,
+              "granted_until":0}
+
+           status is approved, denied, expired, cancelled or revoked —
+           or pending with "timed_out":true when you stopped waiting
+           first. Decisions are published as they happen, so the wait
+           ends the moment somebody answers rather than on a poll
+           interval.
+
+           The decider's reason reaches you HERE and nowhere else. A
+           refusal without one leaves you guessing between "fix it and
+           ask again" and "stop", and that guess is the difference
+           between a useful retry and a pestering loop.
+
+           --timeout SECONDS  how long to wait (default 30m, max 6h).
+           --human            prose instead of JSON.
+
+       byn request cancel TICKET
+           Withdraw a request you no longer need, so nobody spends
+           attention answering it.
+
+           Cancelling is not denying. A denial is the owner's judgment
+           and counts toward the cooldown that stops a fingerprint
+           being re-asked; a cancellation is you changing your mind,
+           and leaves no mark on the owner's answer history. A cancel
+           that races a decision reports the decision — the answer that
+           exists is the one that counts.
+
+       Pass the ticket on stdin rather than argv where you can. An
+       argument is visible in "ps" to every process on the machine for
+       as long as the command runs.
+
+EXIT STATUS
+       0    Approved (watch), or the request was withdrawn (cancel).
+       1    Bad usage, or no ticket given.
+       2    Daemon unreachable.
+       3    Denied, expired, cancelled or revoked.
+       75   Still pending — you stopped waiting first.
+
+       Branch on the code. A script that treats "denied" and "not yet"
+       alike will retry a refusal for ever, which is the loop the
+       approval queue exists to prevent.
+
+EXAMPLES
+       Wait for the decision on a command that was queued:
+           $ out=$(byn exec --json -- ./deploy.sh)
+           $ ticket=$(printf '%s' "$out" | jq -r .watch_ticket)
+           $ byn request watch "$ticket"
+
+       Ask for a single run, then wait for it:
+           $ byn exec --once --reason "one-shot migration" -- ./migrate.sh
+
+       Withdraw a request you worked out you do not need:
+           $ byn request cancel "$ticket"
+
+SEE ALSO
+       byn(1), byn-approve(1), byn-exec(1)
+`,
+
 	"runs": `NAME
        byn-runs - what past executions were given
 

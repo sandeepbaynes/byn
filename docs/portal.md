@@ -235,6 +235,35 @@ aliases) so you can review it before relying on it.
 
 ---
 
+## Approvals
+
+The decision queue, at `/approvals` — reachable from the nav badge, which counts
+what is waiting.
+
+Each card leads with the request id (the thing you type at a terminal, and the
+`approval_id` an agent printed), then what would run, whether the asker asked for
+a **single use**, the stated reason marked as unverifiable, and who asked as read
+from the kernel.
+
+- **approve** hands out authority, so it asks for the master password exactly as
+  the terminal does. The primary button does what the asker asked for — a
+  one-shot request is approved as a one-shot by the plain button, so the narrow
+  path is the default path — and the override sits beside it labelled with what
+  it does rather than with a flag name.
+- **deny** asks for no password. Refusing grants nothing, and it has to stay the
+  cheaper action or people learn to approve by reflex.
+- Both dialogs take an optional **reason**, carried back to whoever asked through
+  their watch. On a refusal it is the difference between an agent that fixes its
+  request and one that asks the same thing again.
+- **history** shows decided and expired requests with their outcomes and reasons.
+- **revoke** appears where there is a live grant to take back. It is named apart
+  from deny because the two are easily confused, and denying something already
+  approved does *not* remove the grant.
+
+The rules — what `once` and `always` mean together, whether a password is
+required — live in the daemon. The portal carries the fields and does not decide,
+so a tap here and `byn approve <id>` cannot drift apart.
+
 ## Settings panel
 
 The **Settings** panel (gear icon, top-right) exposes the global config file

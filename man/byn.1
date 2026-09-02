@@ -156,8 +156,13 @@ Rename an env.
 .SS Secret CRUD
 .TP
 .B put \fINAME\fR \fR[\fB\-\-create\-only\fR] \fR[\fB\-\-password\-stdin\fR]
-Store a secret. The value is read from stdin; piping or redirection
-is required so the value never appears in argv or shell history.
+Store a secret. On a terminal byn asks for the value and hides what you
+type, the way a password prompt does; otherwise it is read from stdin.
+Either way the value never comes from the command line, so it never
+appears in argv, \fBps\fR output, shell history or audit logs. The
+prompt takes one line \(em a multi\-line secret still comes from a file
+or a pipe \(em and an empty entry is refused rather than stored, since
+at a prompt that is almost always a stray Enter.
 Overwriting an existing secret requires the master password (or an active
 session); use \fB\-\-password\-stdin\fR for scripts.
 See
@@ -446,6 +451,53 @@ chain as intact (annotated with the acknowledged reseal). The vault must be
 unlocked (a deliberate owner action). Prompts for a reason and an explicit
 confirmation; \fB\-\-reason\fR with \fB\-\-yes\fR runs non\-interactively. A forged
 marker (without the chain seed) cannot clear a break.
+.SS Approvals (decisions a \fB.byn\fR is waiting on)
+.TP
+.B approve \fR[\fB\-\-json\fR] \fR[\fB\-\-history\fR]
+List what is waiting for a decision. Each card says what would be
+granted, who asked, why they say they need it, and whether the asker
+asked for a single use. \fB\-\-history\fR shows decided and expired
+requests as a table \(em what an agent asked for, and what you said.
+Listing needs no credentials: a request describes what is being asked
+for and never carries a secret.
+.TP
+.B approve \fR[\fB\-\-password\-stdin\fR] \fIID\fR...
+Grant it. Approving hands out authority, so it asks for the master
+password exactly as \fBtrust\fR does. Nothing runs now: whoever asked
+has to attempt the command again.
+.TP
+.B approve \fB\-\-deny\fR \fR[\fB\-\-reason\fR \fIR\fR] \fIID\fR...
+Refuse it. No password, because refusing grants nothing \(em and
+refusing has to stay the cheaper action, or people learn to approve by
+reflex. The reason is carried back to whoever asked and is the
+difference between an agent that fixes its request and one that asks
+the same thing again.
+.TP
+.B approve \fB\-\-revoke\fR \fIID\fR
+Take a grant back before it lapses. Distinct from \fB\-\-deny\fR, which
+does NOT remove a grant already given.
+.TP
+.B request watch \fITICKET\fR \fR[\fB\-\-timeout\fR \fISECONDS\fR] \fR[\fB\-\-human\fR]
+The asker's side. Block until the request that ticket speaks for is
+answered, then print the outcome as JSON: \fBstatus\fR (approved,
+denied, expired, cancelled, revoked), the decider's \fBreason\fR,
+\fBonce\fR, and \fBgranted_until\fR. Exits 0 approved, 3
+denied/expired/cancelled, 75 still pending. Branch on the code: a
+script that treats "denied" and "not yet" alike will retry a refusal
+for ever.
+.IP
+The ticket arrives once, in the \fBwatch_ticket\fR field of the
+approval\-pending response that raised the request, and authorizes
+watching and cancelling it. Possession is the whole proof, which is what
+lets a privsep child \(em a different uid, no session, no password \(em
+learn the outcome of its own request without any wider access to the
+queue.
+.TP
+.B request cancel \fITICKET\fR
+Withdraw a request you no longer need, so nobody spends attention
+answering it. Cancelling is not denying: it leaves no mark on the
+owner's answer history and counts toward no cooldown.
+
 .SS Trust (\fB.byn\fR TOFU)
 .TP
 .B trust \fR[\fIPATH\fR...] \fR[\fB\-\-paths\fR \fI"a,b,c"\fR] \fR[\fB\-\-recursive\fR] \fR[\fB\-\-password\-stdin\fR]
@@ -902,9 +954,16 @@ name.
 Used by \fBexec\fR (in addition to the read commands). On the
 approval\-pending path, writes one JSON object to stdout describing the
 paused command \(em \fBapproval_id\fR, \fBkind\fR, \fBbyn\fR,
-\fBcommand\fR, \fBexpires_at\fR, \fBexit\fR \(em and keeps the prose on
-stderr. Read the id from the field; the sentence is written for people
-and will change.
+\fBcommand\fR, \fBexpires_at\fR, \fBwatch_ticket\fR, \fBexit\fR \(em and
+keeps the prose on stderr. Read the id from the field; the sentence is
+written for people and will change.
+.IP
+\fBwatch_ticket\fR is handed over exactly once, to the caller that
+raised the request. Keep it: no command returns one for an existing
+request, and a retry that re\-attaches to a request already waiting is
+handed nothing. That is deliberate \(em a way to re\-request a ticket
+would be a way for anything else on the machine to request yours, and
+then answer for you or withdraw your request. See \fBbyn request\fR.
 .TP
 .B \-\-dry\-run
 Used by \fBexec\fR. Answer whether the command would run and whether
@@ -915,6 +974,21 @@ anything and without queueing a decision for anyone. With \fB\-\-json\fR:
 \fBactions\fR, \fBmissing_env\fR, \fBoptional_missing\fR,
 \fBunattended_env\fR. Exits 0 (would run cleanly), 75 (would pause), or
 1 (would run short a required value).
+.TP
+.B \-\-once
+Used by \fBexec\fR (also \fB\-\-ask\-once\fR). Ask for a single\-use
+approval rather than one that stays live for the rest of the window: a
+plain \fBbyn approve \fIID\fR then authorizes exactly one run. It is
+the narrowest thing a caller can ask for, and the only party that knows
+one run is enough is the one asking. It sets a default, not the
+decision \(em the owner still overrides it either way. An unspent
+single\-use grant lapses after 30 minutes rather than the usual 6 hours.
+.TP
+.B \-\-always
+Used by \fBapprove\fR. Grant normally even though the asker asked for a
+single use. The opposite override to \fB\-\-once\fR; if both are given
+the narrower wins, because an approver who said both did not mean to
+widen.
 .TP
 .B \-\-wait\-approval[=\fIDURATION\fR]
 Used by \fBexec\fR. Block until a pending decision is answered instead

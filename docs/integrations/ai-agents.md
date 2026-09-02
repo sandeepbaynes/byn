@@ -189,6 +189,71 @@ When you ssh a long-running agent into a dev VM:
    15m); run `byn lock` (or `byn lock --session`) to drop access
    immediately.
 
+### Wait for an approval instead of polling
+
+When a command is not pinned, `byn exec` does not block — it queues a decision
+and exits 75 with the details on stdout:
+
+```json
+{"status":"approval_pending","approval_id":"8ffa7d4f6f54",
+ "watch_ticket":"kJ8f…","byn":"/p/.byn","command":"./deploy.sh","exit":75}
+```
+
+Keep the `watch_ticket` and wait on it:
+
+```sh
+byn request watch "$TICKET"          # blocks; wakes the moment somebody answers
+# {"approval_id":"8ffa7d4f6f54","status":"denied","reason":"wrong target",
+#  "decided_via":"portal","once":false}
+```
+
+Exit codes: `0` approved, `3` denied/expired/cancelled, `75` still pending.
+**Branch on the code, not on the prose.** A harness that treats "denied" the same
+as "not yet" will retry a refusal for ever — which is the loop the approval queue
+exists to prevent.
+
+The decider's reason reaches you here and nowhere else. It is the difference
+between an agent that fixes its request and one that asks the same thing again.
+
+If you work out that you no longer need it, withdraw it rather than leaving a
+card somebody will read and think about:
+
+```sh
+byn request cancel "$TICKET"
+```
+
+Cancelling is not denying: it leaves no mark on the owner's answer history and
+counts toward no cooldown.
+
+### Ask for only what you need
+
+If one run is enough, say so:
+
+```sh
+byn exec --once --reason "one-shot migration" -- ./migrate.sh
+```
+
+A plain `byn approve <id>` then grants exactly one run. It is the narrowest thing
+you can ask for, and you are the only party who knows at the moment of asking
+that once is enough — the owner reading a list an hour later does not. It sets a
+default, not the decision; the owner can still widen it.
+
+Pass `--reason` (or `BYN_WHY` in the environment) on anything that might queue. A
+card that says "runs make dev" and nothing about why sends the owner to ask you
+in a chat window, which is exactly the interruption the queue exists to remove.
+
+### The ticket is a capability
+
+It is handed over once, to the caller that raised the request. No command returns
+one for an existing request, and a retry that re-attaches to a request already
+waiting gets nothing back. That is deliberate: a way to re-request a ticket would
+be a way for any other process on the machine to request yours, and then answer
+for you or withdraw your request.
+
+Practical consequence: **store it for the life of the request**. If you lose it,
+you can still see the outcome with `byn approve --history --json`, but you cannot
+watch or cancel, and the decider's reason will not reach you.
+
 ### Audit trail
 
 Every `byn` op writes an HMAC-chained entry to the vault's audit
