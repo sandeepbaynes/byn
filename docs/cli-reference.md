@@ -1051,9 +1051,10 @@ executing. It answers what `ps` cannot once privilege separation is on: the
 children run as `_byn-exec`, so they are somebody else's processes as far as
 your shell is concerned.
 
-> **Linux only today.** On macOS it prints *"process listing is not yet
-> supported on this platform"* and lists nothing. Use `ps -axo pid,uid,command`
-> and filter on the `_byn-exec` uid until this lands.
+One row per job. Under privilege separation that row is the wrapper — the child
+beneath it is the same job seen from the inside, and signalling the wrapper takes
+the group with it. An exec-user process whose wrapper has died **is** listed: an
+orphan still holding injected values is exactly what you came here to find.
 
 ### `byn kill [--all] [PID...]`
 
@@ -1061,10 +1062,10 @@ Sends `SIGTERM` to one or every running `byn exec` process. A privsep child runs
 as a different user, so `kill(1)` from your own shell cannot signal it; this
 asks the daemon to do it.
 
-> **Linux only today**, because it selects processes through `byn ps`. On macOS
-> it reports *"no byn exec processes found"* even when children are running, and
-> stops nothing — the exit status does not report failure either. Until this
-> lands, stop a stuck child with `sudo kill PID`, or `sudo pkill -f <script>`.
+A PID that is not a byn exec process is refused rather than signalled, so a typo
+cannot stop something unrelated. The signal goes to the whole process group
+through the privileged helper, which is what lets `--all` end a job whose child
+you could not have signalled yourself.
 
 ### `byn repair [DIR]`
 

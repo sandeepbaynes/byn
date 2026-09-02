@@ -3,6 +3,47 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.6.4 — unreleased
+
+### `byn ps` and `byn kill` work on macOS
+
+They were Linux-only, and `kill` failed in the worst way available: it reported
+"no byn exec processes found" while children were running, stopped nothing, and
+returned success. A command that says it found nothing is indistinguishable from
+one that cannot look, so the honest reading of a clean `byn kill --all` was that
+there had been nothing to kill.
+
+Linux identifies these processes by walking `/proc`. macOS has no `/proc`, so
+the process table is read through `ps` once and classified. Three shapes count:
+the `byn exec` wrapper; a process running as the exec service user, an account
+that exists for nothing else; and a process carrying `BYN_EXEC_PID` equal to its
+own pid, which is the unprovisioned path where `syscall.Exec` replaced byn with
+the child so the pid never changed.
+
+One row per job. Under privilege separation that row is the wrapper — the child
+beneath it is the same job from the inside, and signalling the wrapper takes the
+group. Listing the exec user's processes indiscriminately put a row in `byn ps`
+for every iteration of a shell loop over `sleep`, so the output churned every
+second; a process whose parent is a listed wrapper, or is itself the exec user,
+is inside a job rather than being one. An orphan whose wrapper died IS listed,
+because a child still holding injected values is what you came to find.
+
+Killing works because the privileged helper signals the process group. The child
+runs as `_byn-exec` and your own shell cannot signal it — which is the same
+cross-UID boundary that makes `ps -E` show a privsep child no environment.
+
+The parsing is a pure function tested against real captured `ps` output,
+including a right-aligned column layout that positional reading would mis-parse
+and a path containing a space that rejoining split fields would corrupt. That
+shape of test is the lesson from v0.6.1: a platform file that compiles proves
+nothing about what it does.
+
+Also fixed here, and worth mirroring on Linux: summarising `byn exec --vault w
+-- npm i` reported the command as `w -- npm i`. Stopping at the first non-flag
+token takes the VALUE of a preceding flag for the command. Where an explicit
+`--` exists it is the only unambiguous boundary, so it is now looked for first.
+The Linux `execCmdSummary` still has the original behaviour, and its own doc
+comment already documents the corrected one.
 ## v0.6.3 — 2026-09-02
 
 ### Every byn command was paying five seconds on some terminals
