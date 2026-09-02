@@ -177,16 +177,24 @@ grown the asker's side and reached all three surfaces.
 
 | # | Item | State |
 |---|---|---|
-| 0 | env-inheritance fix | `ba26df6` |
-| 1 | sandbox spike | `7e5d70a` — proved the mechanism AND its ownership flaw |
-| 2 | vault v5 + K_env | `5e10165` |
-| 3 | trust v2 policy + diff | `88f42ba`, `e94f816` |
-| 4 | approval queue + non-blocking exec | `cf74235`, `e221d18`, `1b74aa2`, `c2fda8e` |
-| 6a | portal approvals page | `2e5836f`, `2de0ffa` (audit) |
-| 4b | asker-side approvals: watch ticket, instant callback, cancel, reason delivery | `2f51b75`, `fca77c6` |
-| 4c | agent-requested single use (`byn exec --once`), approver override (`--always`) | `64906ed` |
-| 4d | approvals on every surface — portal decisions + history + revoke, TUI pane (`g p`) | `a1e1578`, `2d84be3`, `3df36ba` |
-| — | v1 fixes found by using it | `8b9efa5`, `3c229c5`, `fbaa368`, `98c3b71`, `530d885`, `d58d4e7`, `810ad38`, `16d2139`, `721fb43` |
+| 0 | env-inheritance fix | `bf5363c` |
+| 1 | sandbox spike | `51e3b24` — proved the mechanism AND its ownership flaw |
+| 2 | vault v5 + K_env | `6105e32` |
+| 3 | trust v2 policy + diff | `01e39b3` |
+| 4 | approval queue + non-blocking exec | `0be4350`, `6391b91` |
+| 6a | portal approvals page | `498bdc6`, `6f8468d` (audit) |
+| 4b | asker-side approvals: watch ticket, instant callback, cancel, reason delivery | `585c1ac`, `1040332` |
+| 4c | agent-requested single use (`byn exec --once`), approver override (`--always`) | `345860a` |
+| 4d | approvals on every surface — portal decisions + history + revoke, TUI pane (`g p`) | `c8a200a`, `f879e3f`, `de26dc1` |
+| — | v1 fixes found by using it | `d95f8a1`, `4dd6914`, `eb869fc`, `1482b1e` |
+
+Some rows cite fewer commits than the work took. History has been rewritten
+twice — once to scrub external references, once to add a missing DCO sign-off —
+and the hashes those rows used to carry no longer name anything. Where the
+commit could be identified again by what it changed, the row now cites the
+current hash; where it could not, the hash is dropped rather than replaced with a
+guess. A wrong hash in a plan is worse than a missing one, because it reads as
+checkable and is not.
 
 Verified end to end: an API server starts under `byn exec` with zero
 missing-variable errors and tears down with no orphans. The approval callback was
@@ -199,9 +207,9 @@ in under a second.
 found by running byn, not by testing it. The pattern is consistent enough to be
 worth stating: a unit test proves a piece works, and the failures have all been
 in the joins between pieces. `/approvals` had a correct route parser, a correct
-renderer, and no branch connecting them (`3df36ba`). A watch had a correct daemon
-handler and a client that hung up first (`fca77c6`). An ACL reconcile did correct
-work and repeated it before every exec (`d58d4e7`). None of those is visible from
+renderer, and no branch connecting them (`de26dc1`). A watch had a correct daemon
+handler and a client that hung up first (`1040332`). An ACL reconcile did correct
+work and repeated it before every exec (`d95f8a1`). None of those is visible from
 inside the unit that owns it.
 
 **Still open:** item 6b (sync bridge), 7 (byn-server), 8 (Expo app), 9 (macOS
@@ -264,7 +272,7 @@ One deferred decision worth revisiting:
   return values while locked must hold a key that survives locking — and it is
   strictly smaller than the exposure it replaces.
 
-0. **Done (v1):** env-inheritance fix committed as `ba26df6`.
+0. **Done (v1):** env-inheritance fix committed as `bf5363c`.
 1. **Sandbox spike** — riskiest piece first: prove userns + idmapped-mount ownership end-to-end against the A1 compatibility matrix (Fedora SELinux enforcing, Ubuntu 24.04 package+tarball, WSL2 ±systemd, devcontainer, NFS-homed project), with the live-probe + degradation-ladder logic as the spike's skeleton. Each cell: works, or degrades cleanly with a named doctor remediation.
 2. Vault v5 + K_env layer (+ lamport/origin columns).
 3. Trust v2 policy model + diff engine.
