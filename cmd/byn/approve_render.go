@@ -19,38 +19,45 @@ import (
 // edge. Every value now sits in one column with its name beside it, and every
 // name is the same colour, so the eye can go down the labels or down the values
 // and the two never mix.
-func renderPendingEntry(w io.Writer, e ipc.ApprovalEntry, now time.Time) {
+func renderPendingEntry(w io.Writer, e ipc.ApprovalEntry, now time.Time, width int) {
 	marker := " "
 	if e.HighRisk {
 		marker = roleWarn("!")
 	}
-	_, _ = fmt.Fprintf(w, "%s %s  %s\n", marker, roleIdent(e.ID), tildeHome(e.Subject))
+	_, _ = fmt.Fprintf(w, "%s %s  %s\n", marker, roleIdent(e.ID),
+		ellipsize(tildeHome(e.Subject), maxInt(width-len(e.ID)-4, 20)))
 
 	for _, line := range e.Summary {
-		label, value := splitSummaryVerb(oneLine(line, 100))
-		_, _ = fmt.Fprint(w, fieldRow(label, value))
+		label, value := splitSummaryVerb(oneLine(line, 400))
+		_, _ = fmt.Fprint(w, fieldRowsWrapped(label, value, width, nil))
 	}
 
 	// Why, in the asker's words, marked as the claim it is. byn cannot check a
 	// stated purpose and does not pretend to.
 	switch {
 	case e.Reason != "":
-		_, _ = fmt.Fprint(w, fieldRow("why", e.Reason+roleNote("  (said by whoever asked — byn cannot verify it)")))
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("why", e.Reason, width, nil))
+		// Provenance on its own line rather than trailing the sentence. Glued
+		// to the end it was the thing that made the reason row overflow, and it
+		// qualifies the whole reason, not its last word.
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("", "(said by whoever asked — byn cannot verify it)", width, roleNote))
 	default:
-		_, _ = fmt.Fprint(w, fieldRow("why", roleNote(`not given — an agent can pass one with byn exec --reason "…"`)))
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("why", `not given — an agent can pass one with byn exec --reason "…"`, width, roleNote))
 	}
 
 	// Who asked, from the kernel rather than from the request. This is the half
 	// byn can vouch for, and it answers "was that my agent or something else".
 	if who := e.Requestor.Display; who != "" {
-		_, _ = fmt.Fprint(w, fieldRow("who", who))
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("who", who, width, nil))
 	}
 	// Split out of "who". A path is a different kind of fact from an identity,
 	// and gluing them with " in " made the longest line on the card out of the
 	// two shortest facts on it.
 	if e.Requestor.Cwd != "" {
-		_, _ = fmt.Fprint(w, fieldRow("where", tildeHome(e.Requestor.Cwd)))
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("where", tildeHome(e.Requestor.Cwd), width, nil))
 	}
+	// Not wrapped: the timing parts are already coloured, and it is the one
+	// field built to stay short.
 	_, _ = fmt.Fprint(w, fieldRow("asked", pendingTiming(e, now)))
 }
 
@@ -233,5 +240,85 @@ func compactLeft(d time.Duration) string {
 			return fmt.Sprintf("%dd%dh", int(d.Hours())/24, h)
 		}
 		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	}
+}
+
+// wrapTo word-wraps text to width, indenting every line after the first by
+// indent spaces so a wrapped value stays inside its column.
+//
+// Without it the terminal breaks the line itself, at whatever character happens
+// to land on the last column — mid-word, mid-path, and hard against the left
+// margin. That is what turned an 80-column view of this list into "the .byn is
+// no/t changed" and "services/ap/i": the layout was fine and the text was
+// simply too wide for it. A column that only holds on a wide terminal is not a
+// column.
+//
+// Colour is applied by the caller, per line, because wrapping a string that
+// already contains escape sequences would count them toward the width and break
+// exactly what it is here to fix.
+func wrapTo(text string, width, indent int) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 || width <= indent+8 {
+		return []string{text} // too narrow to wrap usefully; let it overflow honestly
+	}
+	pad := strings.Repeat(" ", indent)
+	var out []string
+	line := ""
+	for _, w := range words {
+		switch {
+		case line == "":
+			line = w
+		case len([]rune(line))+1+len([]rune(w)) <= width-indent:
+			line += " " + w
+		default:
+			out = append(out, line)
+			line = w
+		}
+	}
+	out = append(out, line)
+	for i := 1; i < len(out); i++ {
+		out[i] = pad + out[i]
+	}
+	return out
+}
+
+// fieldRowsWrapped is fieldRow for a value that may not fit: the first line
+// carries the label, continuations line up under the value.
+func fieldRowsWrapped(label, value string, width int, color func(string) string) string {
+	var b strings.Builder
+	for i, line := range wrapTo(value, width, fieldLabelWidth+2) {
+		if color != nil {
+			// Colour each line separately so the escape bytes never enter the
+			// width arithmetic.
+			trimmed := strings.TrimLeft(line, " ")
+			line = line[:len(line)-len(trimmed)] + color(trimmed)
+		}
+		if i == 0 {
+			b.WriteString(fieldRow(label, line))
+			continue
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
+// printWrapped writes dim helper text wrapped to the terminal, preserving the
+// leading indent of the text it is given.
+//
+// The footer was the worst of it: one line ran 110 characters against an
+// 80-column terminal, so a sentence explaining that approving does not run
+// anything broke as "the .byn is no / t changed". Help text that is unreadable
+// on the width people actually use is not help.
+//
+// Goes to stderr with the rest of the guidance, so it gates on useColor rather
+// than useColorStdout.
+func printWrapped(w io.Writer, text string, indent int) {
+	trimmed := strings.TrimLeft(text, " ")
+	lead := len(text) - len(trimmed)
+	for i, line := range wrapTo(trimmed, termWidthStdout(), indent) {
+		if i == 0 {
+			line = strings.Repeat(" ", lead) + line
+		}
+		_, _ = fmt.Fprintln(w, dim(line))
 	}
 }

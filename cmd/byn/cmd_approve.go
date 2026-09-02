@@ -170,8 +170,9 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		fmt.Fprintf(os.Stderr, "\n%s\n", dim("Columns are truncated to your terminal; byn approve --history --json has every field in full."))
 		return exitOK
 	}
+	width := termWidthStdout()
 	for _, e := range resp.Entries {
-		renderPendingEntry(os.Stdout, e, now)
+		renderPendingEntry(os.Stdout, e, now, width)
 	}
 	if !history {
 		// Named whenever there is something to see, not only when the queue is
@@ -179,22 +180,23 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		// who never learns this flag exists is left with "the agent said it
 		// asked for something" and no way to find out what.
 		if n := decidedCount(c); n > 0 {
-			fmt.Fprintf(os.Stderr, "\n%s\n",
-				dim(fmt.Sprintf("%d decided or expired request(s) — byn approve --history to see what was asked, and why", n)))
+			fmt.Fprintln(os.Stderr)
+			printWrapped(os.Stderr, fmt.Sprintf(
+				"%d decided or expired request(s) — byn approve --history to see what was asked, and why", n), 0)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n%s\n", dim("Approving authorizes; it runs nothing and edits no file. Whoever asked runs it again."))
+	fmt.Fprintln(os.Stderr)
+	printWrapped(os.Stderr, "Approving authorizes; it runs nothing and edits no file. Whoever asked runs it again.", 0)
 	// Said once for the list, not once per card. It used to be printed under
 	// every entry — the same 100-character sentence repeated down the screen,
 	// which is most of what made the list feel scattered. It is still worth
 	// saying: both kinds were read as "byn will now do this", and one as a
 	// proposed edit to the .byn. Neither is true.
 	for _, note := range kindNotes(resp.Entries) {
-		fmt.Fprintf(os.Stderr, "%s\n", dim("  "+note))
+		printWrapped(os.Stderr, "  "+note, 2)
 	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
-	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "),
-		dim("add --for 30m to shorten the window a command runs free (default 6h)"))
+	printWrapped(os.Stderr, "        add --for 30m to shorten the window a command runs free (default 6h)", 8)
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Refuse:"), cyan("byn approve --deny <id>"))
 	// Named next to refuse because they are easily confused, and the confusion
 	// is expensive: --deny on something already approved does NOT take the
@@ -204,7 +206,7 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		dim("   take back a grant already given"))
 	// A refusal stops the asker until someone changes something, so the single
 	// most useful thing to hand back is why.
-	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "), dim("add --reason \"wrong target\" — the asker is told, and it is in the audit log"))
+	printWrapped(os.Stderr, "        add --reason \"wrong target\" — the asker is told, and it is in the audit log", 8)
 	return exitOK
 }
 

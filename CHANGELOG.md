@@ -99,6 +99,13 @@ instead of under every card, and durations are one unit for an age ("2d ago",
 not "46h9m15s ago") and two for a deadline, where the second unit is the half
 hour you were deciding whether you had.
 
+The list also wraps to your terminal. An 80-column window is the common case,
+and several lines ran to 110 — so the terminal broke them itself, at whatever
+character landed on the last column: "the .byn is no / t changed",
+"services/ap / i". A wrapped value now continues inside its own column instead
+of restarting at the left margin, and `COLUMNS` is honoured so a piped list can
+be told the width it will be read at.
+
 `byn doctor` now checks that the running daemon IS the installed byn. Installing
 byn replaces a file; it does not replace a running process, so until the service
 restarts the old daemon keeps serving from the binary it started with — and a

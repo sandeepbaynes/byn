@@ -21,7 +21,7 @@ func TestPendingEntry_ValuesShareOneColumn(t *testing.T) {
 		Reason:    "needed for the build",
 		Requestor: ipc.ApprovalActor{Display: "claude (pid 1)", Cwd: "/p"},
 		CreatedAt: now.Add(-5 * time.Minute).Unix(),
-	}, now)
+	}, now, 100)
 
 	rows := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")[1:]
 	if len(rows) < 4 {
@@ -31,7 +31,12 @@ func TestPendingEntry_ValuesShareOneColumn(t *testing.T) {
 	// each value begins — not where its label does. Measuring the label edge
 	// would fail on correct output for the same reason the old layout looked
 	// wrong: the label ends in a different place on every row.
+	//
+	// A row is either labelled or a wrapped continuation of the one above it.
+	// Both put their text in the value column; the label is what tells them
+	// apart, which is the point of giving it a column of its own.
 	const valueCol = fieldLabelWidth + 2
+	labelled := 0
 	for _, line := range rows {
 		if len(line) <= valueCol {
 			t.Fatalf("row too short to hold a value: %q", line)
@@ -40,8 +45,45 @@ func TestPendingEntry_ValuesShareOneColumn(t *testing.T) {
 			t.Fatalf("value does not begin at column %d — values must share a left edge:\n%s",
 				valueCol, b.String())
 		}
-		if strings.TrimSpace(line[:fieldLabelWidth]) == "" {
-			t.Fatalf("row has no label: %q", line)
+		if strings.TrimSpace(line[:fieldLabelWidth]) != "" {
+			labelled++
+		}
+	}
+	if labelled < 4 {
+		t.Fatalf("want a label on each of runs/why/who/where/asked, got %d:\n%s", labelled, b.String())
+	}
+}
+
+// TestPendingEntry_WrapsInsideItsColumn: an 80-column terminal is the common
+// case, not the narrow one. Before this, the terminal broke the line itself at
+// whatever character hit the last column — "the .byn is no / t changed",
+// "services/ap / i" — and a wrapped value restarted hard against the left
+// margin, through the label column and out the other side.
+func TestPendingEntry_WrapsInsideItsColumn(t *testing.T) {
+	var b bytes.Buffer
+	now := time.Now()
+	renderPendingEntry(&b, ipc.ApprovalEntry{
+		ID: "abc123", Subject: "/p/.byn", Kind: "action_unpinned",
+		Reason:    strings.Repeat("a reason long enough to need wrapping ", 4),
+		Summary:   []string{"runs " + strings.Repeat("cmd-arg ", 30)},
+		Requestor: ipc.ApprovalActor{Display: "claude (pid 1)", Cwd: "/p"},
+		CreatedAt: now.Unix(),
+	}, now, 80)
+
+	for _, line := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {
+		if len([]rune(line)) > 80 {
+			t.Fatalf("line is %d wide on an 80-column terminal:\n%q", len([]rune(line)), line)
+		}
+	}
+	// Continuations must stay inside the value column, not restart at column 0.
+	// Only continuation rows are checked: a labelled row legitimately begins
+	// further left, because that is where its right-aligned label starts.
+	for _, line := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n")[1:] {
+		if len(line) < fieldLabelWidth || strings.TrimSpace(line[:fieldLabelWidth]) != "" {
+			continue // labelled row
+		}
+		if indent := len(line) - len(strings.TrimLeft(line, " ")); indent < fieldLabelWidth+2 {
+			t.Fatalf("wrapped line escaped its column (indent %d): %q", indent, line)
 		}
 	}
 }

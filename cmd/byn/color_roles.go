@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"golang.org/x/term"
 )
@@ -64,6 +65,16 @@ const fieldLabelWidth = 10
 // termWidthStdout is the usable width for a table, or a conservative default
 // when stdout is not a terminal (piped, redirected, or under test).
 func termWidthStdout() int {
+	// COLUMNS first, so a pipe can be given the width it will eventually be
+	// read at. `byn approve | less` and a CI log both lose the terminal, and
+	// without this they get the default regardless of how wide they really are.
+	// It is also the only way to see the narrow layout without a narrow
+	// terminal, which is how the 80-column overflow went unnoticed.
+	if c := os.Getenv("COLUMNS"); c != "" {
+		if n, err := strconv.Atoi(c); err == nil && n >= 40 {
+			return n
+		}
+	}
 	w, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w < 40 {
 		return 100
