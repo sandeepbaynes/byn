@@ -469,19 +469,21 @@ List the \fBbyn exec\fR processes running now and the command each is executing.
 Under privilege separation the children run as \fB_byn\-exec\fR, so your shell's
 own \fBps\fR treats them as another user's processes.
 .IP
-\fBLinux only today.\fR On macOS it prints "process listing is not yet supported
-on this platform" and lists nothing; use
-\fBps \-axo pid,uid,command\fR filtered on the \fB_byn\-exec\fR uid instead.
+One row per job. Under privilege separation that row is the wrapper: the child
+beneath it is the same job seen from the inside, and signalling the wrapper takes
+the group. An exec\-user process whose wrapper has died IS listed \(em an orphan
+still holding injected values is the thing you came here to find.
 .TP
 .B kill \fR[\fB\-\-all\fR] \fR[\fIPID\fR...]
 Send \fBSIGTERM\fR to one or every running \fBbyn exec\fR process. A privsep child
 runs as a different user, so \fBkill\fR(1) from your shell cannot signal it \(em
 this asks the daemon to.
 .IP
-\fBLinux only today\fR, because it selects processes through \fBps\fR above. On
-macOS it reports "no byn exec processes found" even while children are running,
-stops nothing, and does not report failure in its exit status. Until this lands,
-use \fBsudo kill\fR \fIPID\fR.
+A PID that is not a byn exec process is refused rather than signalled, so a typo
+cannot stop something unrelated. Under privilege separation the child belongs to
+\fB_byn\-exec\fR and your shell cannot signal it \(em the privileged helper sends
+the signal to the whole process group, which is what makes \fB\-\-all\fR mean what
+it says.
 .TP
 .B runs \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-\-json\fR]
 What past executions were given: when, which \fB.byn\fR allowed it, the agent
