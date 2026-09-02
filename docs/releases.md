@@ -12,6 +12,122 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.6.2
+
+**Headline:** two ways byn could leave you without a working daemon, both fixed
+— and four commands that had shipped without documentation now have it.
+
+### What's new
+
+- **A relocate no longer locks you out of your own daemon.** On macOS the daemon
+  socket lives inside the system data dir, which `byn setup` creates `0711` so
+  that you — a different UID than `_byn` — can traverse to it. A relocated
+  legacy `~/.byn` was renamed over that directory carrying its own `0700`, after
+  which the daemon ran, bound its socket, and answered nobody: every command said
+  "daemon is not running" while `launchctl` said it was up. The adopt now carries
+  the destination's mode across the swap.
+- **`byn doctor` checks that you can traverse the data dir**, so the state above
+  names itself instead of looking like a dead daemon. `sudo byn doctor --repair`
+  restores the mode *before* it touches the service and then re-probes, so a
+  daemon that was merely unreachable is left running rather than restarted.
+- **`sudo byn restart` on an unprovisioned machine is refused** instead of
+  stopping your daemon and then failing to start it as root — which left no
+  daemon at all. The refusal happens before anything is stopped. `restart`,
+  `reload` and `stop` all behave this way now; `start` always did.
+- **`byn ps`, `byn kill`, `byn runs` and `byn repair` are documented** in the man
+  page, and `ps`, `kill` and `repair` in the CLI reference.
+
+### Upgrade notes
+
+- **If a `byn` command says the daemon is down while the service is running**,
+  you are in the state this release fixes. `sudo byn doctor --repair` heals it;
+  the fix means a fresh `sudo byn setup` will not reach it again.
+- **`byn ps` and `byn kill` are Linux-only today.** On macOS `ps` lists nothing
+  and `kill` reports "no byn exec processes found" even while exec children are
+  running — it stops nothing and its exit status does not report the failure. To
+  stop a stuck child on macOS, use `sudo kill PID`. This is now stated in both
+  the man page and the CLI reference.
+
+---
+
+## v0.6.1
+
+**Headline:** the writable-path reconcile did nothing at all on macOS.
+
+### What's new
+
+- **The per-file exec grant is a platform function.** It shelled out to
+  `setfacl` unconditionally; macOS has no `setfacl` — it has `chmod +a`, which
+  byn already used everywhere else on that platform. Every invocation failed with
+  "command not found", the error was dropped because the pass is deliberately
+  best-effort, and the credential lockout it exists to fix stayed unfixed. It
+  compiled, it vetted, it passed every test, and it did nothing.
+- **A test now asserts the command produced, per platform.** A cross-compile
+  catches a platform stub that will not build; nothing catches one that builds
+  and is wrong except asserting what it emits.
+
+### Upgrade notes
+
+- No action. If you are on macOS and hit a credential tool locking out your exec
+  children, this is the release that fixes it.
+
+---
+
+## v0.6.0
+
+**Headline:** approvals became answerable from every surface — terminal, portal
+and TUI — and an agent can now be told the outcome of its own request instead of
+retrying blind.
+
+### What's new
+
+- **Agents can watch their own request.** `byn exec` hands back a `watch_ticket`
+  with the `approval_pending` refusal; `byn request watch` blocks until the
+  request is answered and prints the outcome as JSON — approved, denied, expired,
+  cancelled or revoked, with the decider's reason. Until now the only way to
+  learn an outcome was to re-run the command every few seconds, and a poller
+  cannot tell "denied" from "not yet". `byn request cancel` withdraws a request.
+- **The ticket is the capability, issued exactly once** — to the caller that
+  raised the request. A retry, or a second agent asking the same thing, coalesces
+  onto the existing card and gets no ticket, so one agent cannot acquire
+  another's channel by guessing what it would ask for.
+- **The TUI can answer approvals.** `g p` opens the queue; `a` grants, `o` grants
+  a single use, `d` refuses, `v` revokes, `r` types a reason, `h` shows history.
+  The queue is where work stops, and until now answering meant leaving the editor.
+- **The portal gained the decisions the terminal already had** — a reason on both
+  approve and deny, single-use, revoke, and a view of what has been decided.
+- **The portal's approvals page was reachable for the first time.** The route
+  existed, the renderer existed, and nothing joined them: navigating there fell
+  through to the entries view and drew an empty scope while the badge counted
+  requests waiting.
+- **`byn approve` is laid out rather than written out** — a fixed label column,
+  six documented colour roles, and `--history` as a table. `--json` is unchanged.
+- **A stale grant no longer reports itself as corruption.** A capability holds the
+  key that opened a row at grant time; a later `byn put` in a child env creates an
+  override under a different key, and the AEAD failure looked exactly like real
+  ciphertext damage. It now names the variable, says the value is intact, and
+  gives the command that fixes it.
+- **Shared tool-state files stop locking one identity out.** A tool that rewrites
+  its own state file and chmods it `0600` — the AWS CLI does this to its SSO
+  cache — discards whatever ACL it inherited. byn reconciles the declared
+  `[exec] writable` directories before each privsep exec, and `byn repair` covers
+  them too.
+- **Trusting a large project no longer takes minutes.** `byn trust --recursive`
+  over a monorepo took two to three minutes and runs after every `.byn` edit; the
+  recursive `setfacl` only ever needed to run once, since a default ACL is
+  inherited at creation. Measured on the same tree, the exec-time pass went from
+  13.591s to 0.016s.
+
+### Upgrade notes
+
+- **No migration.** Existing vaults, trust records and grants are unchanged.
+- **Scripts that polled `byn exec` to detect approval should move to
+  `byn request watch`.** Branch on its exit status: `0` approved, `3` denied,
+  expired, cancelled or revoked, `75` still pending. A script that treats
+  "denied" and "not yet" alike will retry a refusal for ever.
+
+---
+
 ## v0.5.5
 
 **Headline:** installing byn now leaves you isolated — `byn setup` enables

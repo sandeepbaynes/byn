@@ -1021,3 +1021,49 @@ interval rather than the whole wait.
 
 The default remains non-blocking: a caller that must not be interrupted should
 not be made to wait by default.
+
+---
+
+## Running processes and their leftovers
+
+### `byn ps`
+
+Lists the `byn exec` processes running now, and the command each one is
+executing. It answers what `ps` cannot once privilege separation is on: the
+children run as `_byn-exec`, so they are somebody else's processes as far as
+your shell is concerned.
+
+> **Linux only today.** On macOS it prints *"process listing is not yet
+> supported on this platform"* and lists nothing. Use `ps -axo pid,uid,command`
+> and filter on the `_byn-exec` uid until this lands.
+
+### `byn kill [--all] [PID...]`
+
+Sends `SIGTERM` to one or every running `byn exec` process. A privsep child runs
+as a different user, so `kill(1)` from your own shell cannot signal it; this
+asks the daemon to do it.
+
+> **Linux only today**, because it selects processes through `byn ps`. On macOS
+> it reports *"no byn exec processes found"* even when children are running, and
+> stops nothing — the exit status does not report failure either. Until this
+> lands, stop a stuck child with `sudo kill PID`, or `sudo pkill -f <script>`.
+
+### `byn repair [DIR]`
+
+Gives you back access to files a privsep exec child created. A build that runs
+as `_byn-exec` leaves artifacts owned by `_byn-exec`, and a tool that rewrites
+its own state file and chmods it `0600` discards whatever ACL it inherited —
+after which one of you can read it and the other cannot.
+
+`byn exec` reconciles the declared `[exec] writable` directories on its way in,
+which covers a file locked between runs. It does not cover a service already
+up: a token refreshed while a dev server has run for days leaves that child
+unable to read it until something restarts. `repair` fixes it in place, without
+one, and covers the whole project plus the declared writable directories.
+
+It runs as you, which bounds what it can fix: changing a file's ACL requires
+being its owner. Files *you* locked, it repairs; a file the exec child locked
+that you can no longer read is the mirror case, and is what it is for.
+
+Defaults to the current directory. Reports what it repaired, and is silent when
+there was nothing to do.

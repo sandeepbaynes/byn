@@ -1,6 +1,6 @@
 # The AWS credentials file that cost me my account
 
-*Field note · from the author · coverage: v0.4.1*
+*Field note · from the author · coverage: v0.6.2*
 
 This one isn't from a vendor write-up. It happened to me, on my own
 infrastructure, and it is part of why byn exists.
@@ -126,9 +126,11 @@ depend on.**
 - An attacker patient enough to squat inside a terminal holding a
   **live session** could use that session until it expired or was
   locked — per-terminal sessions narrow this drastically, but the
-  same-UID ceiling is real with privilege separation off (the default).
-  Privsep is opt-in in v0.4.1 (`[security] privsep` + `sudo byn
-  setup`) and raises that bar to root.
+  same-UID ceiling is real wherever privilege separation is not engaged.
+  Since v0.5.5, `sudo byn setup` engages privsep itself: provisioning is
+  what turns it on, the daemon runs as `_byn`, pinned exec children run
+  as `_byn-exec`, and the old `[security] privsep` key is vestigial. That
+  raises the bar to root — it does not defend against root.
 - The on-box audit trail of a fully compromised machine can be tampered
   with by an attacker holding the vault file; **off-box anchoring** of
   the chain head is planned to close exactly that.

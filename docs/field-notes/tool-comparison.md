@@ -1,6 +1,6 @@
 # byn vs the other tools, honestly
 
-*Field note · coverage: v0.4.1 · updated with each release*
+*Field note · coverage: v0.6.2 · updated with each release*
 
 A strengths-**and**-weaknesses comparison of the tools developers
 actually use to handle secrets — including byn's own weaknesses, listed
@@ -147,12 +147,14 @@ them.**
   - **Young.** Pre-1.0, small community, no independent third-party
     security audit yet. The [security model](../security.md) is
     documented honestly, but maturity takes time.
-  - **The same-UID ceiling is real in v0.4.1 by default.** With privilege
-    separation off (the default), a code-executing process as your UID can
-    still ptrace the *unlocked* daemon or read an injected child's environ.
-    Privilege separation (daemon and exec children on their own service UIDs)
-    ships **opt-in** in v0.4.1 — enable it with `[security] privsep` +
-    `sudo byn setup`; it raises the bar to root but not past it. With it off,
+  - **The same-UID ceiling is real until byn is provisioned.** On a machine
+    where `sudo byn setup` has not run, the daemon and exec children run at
+    your UID, and a code-executing process as that UID can still ptrace the
+    *unlocked* daemon or read an injected child's environ. Provisioning is what
+    engages privilege separation — the daemon runs as `_byn`, pinned exec
+    children as `_byn-exec` — and it raises the bar to root but not past it.
+    The install script and the system packages run `byn setup` for you; a
+    `go install` or `make install` does not, so check `byn doctor`. Until then,
     OS-level isolation of untrusted code is the recommended companion control.
   - **The master passphrase is the at-rest floor.** The vault file is
     portable by design (no machine binding), so a stolen copy is

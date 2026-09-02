@@ -3,6 +3,60 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.6.2 — 2026-09-02
+
+### A relocate could lock you out of your own daemon
+
+`byn setup` creates the macOS system data dir `0711` on purpose: the daemon
+socket lives inside it, and you are a different UID than `_byn`, so you need
+`o+x` to traverse to the socket. The relocate that runs immediately afterwards
+renamed the staged `0700` tree straight over that directory.
+
+The daemon then ran, bound its socket, and answered nobody. Every command
+reported "daemon is not running" while `launchctl` reported it up, and `doctor`
+agreed with the CLI — so its advice was `sudo byn restart`, which genuinely
+succeeded and changed nothing. The one thing that was wrong was the only thing
+nothing checked.
+
+The staged `0700` is right for the *contents* — it stops a hostile source
+smuggling in a group- or other-readable artifact — and wrong for the *root*,
+which is provisioning's to set. The adopt now carries the destination's own mode
+across the swap. A destination that did not exist has no mode to carry, so the
+private `0700` still stands.
+
+It needed a legacy `~/.byn` to relocate, which means it hit anyone who ran byn
+*before* `sudo byn setup` — installing from source and trying `byn start` first
+is enough. The documented order (`sudo byn setup` first) avoids it.
+
+`byn doctor` now checks that you can traverse the data dir, and `--repair`
+restores `0711` **before** touching the service, then re-probes: both "daemon
+running" and "no stale socket" were describing the closed door, so a daemon that
+was only unreachable is left running instead of bounced.
+
+### `sudo byn restart` could leave you with no daemon at all
+
+On a machine that was not provisioned, it stopped the daemon and could not put
+it back: the stop succeeded, the start was refused because a daemon may not run
+as root, and what was left was no daemon and an error about privilege separation
+that had never been installed.
+
+`start` had always refused root up front. `restart`, `reload` and `stop` only
+ever checked the *non-root* case, so root on an unprovisioned machine passed the
+guard. The asymmetry was the bug: the command that takes a daemon down was the
+one allowed to get that far. They now refuse before dispatch — and therefore
+before anything is stopped — and name both ways out: re-run as yourself, or
+`sudo byn setup` if you wanted an `_byn` service to manage. Provisioned
+behaviour is unchanged, and `BYN_ALLOW_ROOT=1` still bypasses the guard.
+
+### `ps`, `kill`, `runs` and `repair` reached the documentation
+
+Four commands that shipped without a man page entry now have one, and `ps`,
+`kill` and `repair` are in the CLI reference. Both state plainly that `byn ps`
+and `byn kill` are **Linux-only today**: on macOS `ps` lists nothing and `kill`
+reports "no byn exec processes found" while children are running, stops nothing,
+and does not say so in its exit status. Documenting a gap is not fixing it, but
+an undocumented gap reads as a working command that found nothing.
+
 ## v0.6.1 — 2026-09-02
 
 ### The writable-path reconcile did nothing on macOS

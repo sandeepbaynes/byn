@@ -462,6 +462,55 @@ chain as intact (annotated with the acknowledged reseal). The vault must be
 unlocked (a deliberate owner action). Prompts for a reason and an explicit
 confirmation; \fB\-\-reason\fR with \fB\-\-yes\fR runs non\-interactively. A forged
 marker (without the chain seed) cannot clear a break.
+.SS Running processes and their leftovers
+.TP
+.B ps
+List the \fBbyn exec\fR processes running now and the command each is executing.
+Under privilege separation the children run as \fB_byn\-exec\fR, so your shell's
+own \fBps\fR treats them as another user's processes.
+.IP
+\fBLinux only today.\fR On macOS it prints "process listing is not yet supported
+on this platform" and lists nothing; use
+\fBps \-axo pid,uid,command\fR filtered on the \fB_byn\-exec\fR uid instead.
+.TP
+.B kill \fR[\fB\-\-all\fR] \fR[\fIPID\fR...]
+Send \fBSIGTERM\fR to one or every running \fBbyn exec\fR process. A privsep child
+runs as a different user, so \fBkill\fR(1) from your shell cannot signal it \(em
+this asks the daemon to.
+.IP
+\fBLinux only today\fR, because it selects processes through \fBps\fR above. On
+macOS it reports "no byn exec processes found" even while children are running,
+stops nothing, and does not report failure in its exit status. Until this lands,
+use \fBsudo kill\fR \fIPID\fR.
+.TP
+.B runs \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-\-json\fR]
+What past executions were given: when, which \fB.byn\fR allowed it, the agent
+behind it, and which values it received. Runs store \fIreferences\fR, never copies
+\(em a second copy of every value would turn the trail into an archive of every
+secret the project has ever held. Listing needs no credential.
+.TP
+.B runs show \fIID\fR \fR[\fB\-\-reveal\fR] \fR[\fB\-\-password\-stdin\fR]
+.TP
+.B runs diff \fIID\fR
+\fBdiff\fR answers whether anything a run received has been rotated since, and
+prints no values: per name, \fIunchanged\fR, \fIchanged since\fR, or \fIdeleted
+since\fR. It needs no credential and works while the vault is locked, because the
+answer comes from comparing a digest of the stored ciphertext. \fBshow\fR prints
+the run in full; \fB\-\-reveal\fR includes the values and needs a credential.
+.TP
+.B repair \fR[\fIDIR\fR]
+Give yourself back access to files a privsep exec child created. A build running
+as \fB_byn\-exec\fR leaves artifacts owned by it, and a tool that rewrites its own
+state file and chmods it \fB0600\fR discards whatever ACL it inherited \(em after
+which one of you can read it and the other cannot.
+.IP
+\fBbyn exec\fR reconciles the declared \fB[exec] writable\fR directories on the way
+in, which covers a file locked between runs. It does not cover a service already
+up: a token refreshed while a dev server has run for days leaves that child
+unable to read it until something restarts. \fBrepair\fR fixes it in place without
+one, across the project and the declared writable directories. It runs as you,
+which bounds what it can fix \(em changing a file's ACL requires being its owner.
+Defaults to the current directory; silent when there is nothing to do.
 .SS Approvals (decisions a \fB.byn\fR is waiting on)
 .TP
 .B approve \fR[\fB\-\-json\fR] \fR[\fB\-\-history\fR]
