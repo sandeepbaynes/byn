@@ -29,6 +29,34 @@ is `/Library/Application Support/byn`. It now finds the right one and asserts
 mode 0711 as well as ownership — on macOS the daemon socket lives inside that
 directory, and 0700 is the lockout fixed in v0.6.2.
 
+### The install script threw away the editor binary
+
+v0.6.3 split the TUI into its own `byn-tui`, and `byn edit` resolves it beside
+the running `byn` — the same way `byn setup` finds the privsep helper. The
+release archive contains it and the Makefile installs it, but `install.sh`
+handled only `byn` and `byn-exec-helper`: it unpacked `byn-tui` into a temp
+directory and deleted it with the rest. Anyone who installed v0.6.3 with
+`curl … | sh` has no editor, and re-running the installer is the fix.
+
+Two smaller drifts around the same binary. `docs/quickstart.md` still told the
+Go-toolchain path to install "BOTH binaries" and listed two of three, so that
+route also produced an installation without an editor. And `make dist` never
+built it, despite its own comment claiming it produces what the installer
+downloads — goreleaser, which actually builds the release, has built it all
+along.
+
+### A stale release-notes page is now a failing build
+
+The site version is DERIVED from CHANGELOG.md; `docs/releases.md` is written by
+hand. That asymmetry produced the same defect twice in two days: v0.6.3 dated its
+changelog heading, so every page footered v0.6.3, while the release-notes page
+those footers link to stopped at v0.6.2.
+
+`gensite` now refuses to publish a site naming a release its own notes do not
+describe, and says which section to add. This is the move `version.go` already
+made for the version constant, applied to the page that constant links to — not
+deriving the prose, which has to be written, but refusing to ship without it.
+
 ### `byn ps` and `byn kill` work on macOS
 
 They were Linux-only, and `kill` failed in the worst way available: it reported
@@ -68,6 +96,7 @@ token takes the VALUE of a preceding flag for the command. Where an explicit
 `--` exists it is the only unambiguous boundary, so it is now looked for first.
 The Linux `execCmdSummary` still has the original behaviour, and its own doc
 comment already documents the corrected one.
+
 ## v0.6.3 — 2026-09-02
 
 ### Every byn command was paying five seconds on some terminals

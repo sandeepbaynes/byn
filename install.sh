@@ -115,6 +115,22 @@ if [ -f "$work/byn-exec-helper" ]; then
   PRIVSEP_HELPER=1
 fi
 
+# ---- install the editor binary (alongside byn) ---------------------------
+# `byn edit` resolves byn-tui BESIDE the running byn, the same way setup finds
+# the privsep helper, so it has to land in $dir and not merely be unpacked.
+#
+# It ships in the archive from v0.6.3, when the TUI was split out so that `byn`
+# stops linking a terminal-querying framework. Extracting it and leaving it in
+# the temp dir is what this script did on first contact with that release, which
+# turned `byn edit` into "editor not found" for everyone who installed this way.
+if [ -f "$work/byn-tui" ]; then
+  tui_dest="$dir/byn-tui"
+  $SUDO mv "$work/byn-tui" "$tui_dest" || say "warning: could not install byn-tui to $tui_dest"
+  $SUDO chmod 0755 "$tui_dest" 2>/dev/null || true
+  $SUDO restorecon "$tui_dest" 2>/dev/null || true
+  say "installed $tui_dest (editor)"
+fi
+
 # ---- install man page (best-effort) -------------------------------------
 # $prefix/bin → $prefix/share/man/man1, the path `man` searches by default.
 if [ -f "$work/man/byn.1" ]; then

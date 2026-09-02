@@ -14,10 +14,11 @@ plaintext.
 brew install sandeepbaynes/tap/byn
 # or
 curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
-# or, with the Go toolchain (builds from source) — install BOTH binaries
+# or, with the Go toolchain (builds from source) — install ALL THREE binaries
 # somewhere already on your PATH, then provision:
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-tui@latest
 sudo byn setup
 ```
 

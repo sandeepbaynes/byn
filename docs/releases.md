@@ -12,6 +12,48 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.6.3
+
+**Headline:** every byn command was paying up to five seconds on terminals that
+do not answer a colour query — the editor now ships as its own binary and `byn`
+links no TUI framework at all.
+
+### What's new
+
+- **`byn` starts in 0.05s instead of 5.1s where a terminal does not reply.**
+  `bubbletea`'s package init asks the terminal for its background colour and
+  waits up to five seconds for an answer, unconditionally, so every command in a
+  binary that merely *links* it paid the cost. It is invisible on a normal
+  terminal, which answers at once, and that is why it went unnoticed — it bites
+  `script`, serial consoles, CI runners that allocate a tty, and agent harnesses.
+- **The editor is now a separate binary, `byn-tui`.** Go initialises imported
+  packages before the importing one, so byn cannot pre-empt a dependency's init
+  from its own code; not linking it is the only way not to run it. `byn edit`
+  resolves `byn-tui` beside the running `byn`.
+- **`byn put NAME --password-stdin` is refused instead of silently storing an
+  empty value.** With that flag the first line of stdin is the password and the
+  rest is the value, so `printf 'secret' | byn put NAME --password-stdin` sent
+  the secret as the password and left nothing to store. Where the write needed no
+  authorization the daemon accepted it, byn exited 0, and a later `get` returned
+  `""`. The message now names both working forms; deliberately storing an empty
+  value still works.
+
+### Upgrade notes
+
+- **A new binary ships with this release.** If you install with the script,
+  Homebrew, or a system package, you get it automatically. With the Go toolchain
+  you must install it yourself, alongside the other two:
+  ```sh
+  GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-tui@latest
+  ```
+  Without it, `byn edit` reports that the editor is missing; every other command
+  is unaffected.
+- **Installed with `curl | sh` before this note existed?** The v0.6.3 archive
+  contained `byn-tui` but the install script did not place it on your PATH, so
+  `byn edit` will not find it. Re-running the installer fixes it.
+
+---
+
 ## v0.6.2
 
 **Headline:** two ways byn could leave you without a working daemon, both fixed

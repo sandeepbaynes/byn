@@ -99,3 +99,37 @@ func TestStampLanding_MissingMarkerIsAnError(t *testing.T) {
 		t.Fatal("changed markup silently produced no error")
 	}
 }
+
+func TestReleaseNotesCover(t *testing.T) {
+	// The exact state that shipped: CHANGELOG dated v0.6.3, releases.md stopped
+	// at v0.6.2, so every page footered a version its own notes did not describe.
+	notes := []byte("# Release notes\n\n## v0.6.2\n\ntext\n\n## v0.6.1\n\ntext\n")
+
+	newest, ok := ReleaseNotesCover(notes, "v0.6.3")
+	if ok {
+		t.Error("v0.6.3 is not in the notes; want not covered")
+	}
+	if newest != "v0.6.2" {
+		t.Errorf("newest = %q, want v0.6.2", newest)
+	}
+
+	if _, ok := ReleaseNotesCover(notes, "v0.6.2"); !ok {
+		t.Error("v0.6.2 IS in the notes; want covered")
+	}
+	// Not the newest, but present — an older release must still count as covered.
+	if _, ok := ReleaseNotesCover(notes, "v0.6.1"); !ok {
+		t.Error("v0.6.1 is present; want covered")
+	}
+}
+
+func TestReleaseNotesCover_EmptyAndDatedHeadings(t *testing.T) {
+	if newest, ok := ReleaseNotesCover(nil, "v1.0.0"); ok || newest != "" {
+		t.Errorf("empty notes: got (%q,%v), want (\"\",false)", newest, ok)
+	}
+	// A dated heading belongs to CHANGELOG.md, not the curated page. Matching it
+	// here would let a changelog-shaped releases.md pass without prose.
+	dated := []byte("## v1.0.0 — 2026-01-01\n")
+	if _, ok := ReleaseNotesCover(dated, "v1.0.0"); ok {
+		t.Error("a dated heading should not satisfy the release-notes check")
+	}
+}
