@@ -76,6 +76,29 @@ the mode test selects.
 Measured on the monorepo: 13.591s to 0.016s, and a file whose entry is stripped
 by hand is still healed on the next exec, in 27ms.
 
+`byn approve` is laid out rather than written out. Every field now has a name in
+a fixed left column and a value that starts where every other value starts, so
+the eye can go down the labels or down the values without the two mixing. The
+leading verb of a request ("runs make dev") moves into the label column, which
+is what the complaint was: the word introducing a command was the same colour as
+the command.
+
+Colours now mean something. They had grown one at a time — `why:` yellow,
+`who:` cyan, everything else plain — so two labels of equal importance were
+different colours and nothing could be learned from a colour. There are six
+roles now (label, ident, warn, bad, good, note), documented, and every colour in
+the view comes from one of them. They gate on stdout, so a redirected list is
+plain text.
+
+`--history` is a table: dozens of decided requests are rows you scan, not
+records you read, and the same layout does not serve both. `--json` still
+carries every field untruncated, byte-identical to before.
+
+Also: the per-kind explanation of what approving does is said once for the list
+instead of under every card, and durations are one unit for an age ("2d ago",
+not "46h9m15s ago") and two for a deadline, where the second unit is the half
+hour you were deciding whether you had.
+
 `byn doctor` now checks that the running daemon IS the installed byn. Installing
 byn replaces a file; it does not replace a running process, so until the service
 restarts the old daemon keeps serving from the binary it started with — and a

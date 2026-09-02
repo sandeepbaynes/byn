@@ -161,131 +161,17 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		}
 		return exitOK
 	}
+	// Two shapes for two jobs. A handful of pending requests are records you
+	// READ — the reason and the asker are the decision. Dozens of decided ones
+	// are rows you SCAN, and the same layout does not serve both.
+	now := time.Now()
+	if history {
+		renderHistoryTable(os.Stdout, resp.Entries, now, termWidthStdout())
+		fmt.Fprintf(os.Stderr, "\n%s\n", dim("Columns are truncated to your terminal; byn approve --history --json has every field in full."))
+		return exitOK
+	}
 	for _, e := range resp.Entries {
-		marker := " "
-		if e.HighRisk {
-			marker = boldYellow("!")
-		}
-		_, _ = fmt.Fprintf(os.Stdout, "%s %s  %s\n", marker, cyan(e.ID), e.Subject)
-		for _, line := range e.Summary {
-			// One line each. A `node -e '<300-char program>'` printed verbatim
-			// buried every other entry on the screen, which is the opposite of
-			// what a list is for — and this is the list someone scans to find
-			// what an agent asked for.
-			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", oneLine(line, 100))
-		}
-		// What approving would DO. "runs make dev" reads like a button that
-		// runs make dev, and the first question anyone asked of these cards was
-		// whether approving executed something. It does not: it authorizes, and
-		// whoever asked has to come back and run it themselves.
-		if what := whatApprovingDoes(e.Kind); what != "" {
-			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(what))
-		}
-		// Why, in the asker's words — labelled as the claim it is. byn cannot
-		// check a stated purpose and does not pretend to; an unverified sentence
-		// still beats a card that says nothing about what the command is for.
-		if e.Reason != "" {
-			_, _ = fmt.Fprintf(os.Stdout, "      %s %s\n", yellow("why:"), e.Reason)
-			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim("     (said by whoever asked — byn cannot verify it)"))
-		} else if e.Status == "pending" {
-			_, _ = fmt.Fprintf(os.Stdout, "      %s\n",
-				dim("no reason given — an agent can pass one with byn exec --reason \"…\""))
-		}
-		// Who asked, from the kernel rather than from the request. This is the
-		// half byn can vouch for, and it is what tells you whether your own
-		// agent asked or something else in the same project did.
-		if who := e.Requestor.Display; who != "" {
-			line := who
-			if e.Requestor.Cwd != "" {
-				line += " in " + e.Requestor.Cwd
-			}
-			_, _ = fmt.Fprintf(os.Stdout, "      %s %s\n", cyan("who:"), line)
-		}
-		age := time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second)
-		detail := fmt.Sprintf("asked %s ago", age)
-		if e.Status != "pending" {
-			// An answered request: what happened is the useful part, not its age.
-			detail = e.Status
-			if e.DecidedAt > 0 {
-				detail += " " + time.Since(time.Unix(e.DecidedAt, 0)).Truncate(time.Second).String() + " ago"
-			} else if e.Status == "expired" && e.ExpiresAt > 0 {
-				// Nothing decides an expiry, so there is no decision time — but
-				// the moment it lapsed is exactly ExpiresAt. Without this an
-				// expired entry read "expired" and nothing else, so a request
-				// that lapsed an hour ago and one from last week looked the
-				// same, which makes the history unusable for the thing it is
-				// for: working out what an agent asked for, and when.
-				detail += " " + time.Since(time.Unix(e.ExpiresAt, 0)).Truncate(time.Second).String() + " ago"
-			}
-			if e.CreatedAt > 0 {
-				detail += ", asked " + time.Since(time.Unix(e.CreatedAt, 0)).Truncate(time.Second).String() + " ago"
-			}
-			if e.DecidedVia != "" {
-				detail += " via " + e.DecidedVia
-			}
-			if e.DecidedReason != "" {
-				detail += " — " + e.DecidedReason
-			}
-			if e.Late {
-				// The grant is real; the process that wanted it is not. Worth
-				// saying, because otherwise a granted-and-unused command looks
-				// exactly like one that ran.
-				detail += ", answered after the asker gave up"
-			}
-			// For a granted command, say whether it still runs free. An
-			// approval that has simply timed out otherwise looks exactly like
-			// one that was never there.
-			if e.GrantedUntil > 0 {
-				if left := time.Until(time.Unix(e.GrantedUntil, 0)).Truncate(time.Minute); left > 0 {
-					who := "for whoever asked"
-					if e.Anyone {
-						who = "for anyone in that project"
-					}
-					if e.Once {
-						detail += fmt.Sprintf(", single use %s, unused for another %s", who, left)
-					} else {
-						detail += fmt.Sprintf(", runs free %s for another %s", who, left)
-					}
-				} else {
-					detail += ", grant expired"
-				}
-			}
-			_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
-			continue
-		}
-		// How long is left, not just how long it has been waiting. A request
-		// raised at the end of a day can expire before anyone looks at it, and
-		// "asked 5h ago" does not tell you that you have an hour to answer.
-		if e.ExpiresAt > 0 {
-			if left := time.Until(time.Unix(e.ExpiresAt, 0)).Truncate(time.Minute); left > 0 {
-				detail += fmt.Sprintf(", expires in %s", left)
-			} else {
-				detail += ", expired"
-			}
-		}
-		if e.Repeats > 0 {
-			detail += fmt.Sprintf(", retried %d×", e.Repeats)
-		}
-		// Whether anything is still listening. Two requests an hour apart look
-		// identical on a list, and one of them may have a process sitting on it
-		// right now while the other was abandoned before you sat down.
-		if e.NeededBy > 0 {
-			if left := time.Until(time.Unix(e.NeededBy, 0)).Truncate(time.Second); left > 0 {
-				detail += fmt.Sprintf(", %s", boldYellow("needed within "+left.String()))
-			} else {
-				detail += ", " + dim("no longer waiting")
-			}
-		}
-		// The vault, when it is not the default one: two projects on one
-		// machine are told apart by it at a glance, and the JSON form has
-		// carried it all along.
-		if e.Vault != "" && e.Vault != "default" {
-			detail += ", vault " + e.Vault
-		}
-		if e.HighRisk {
-			detail += " — high risk"
-		}
-		_, _ = fmt.Fprintf(os.Stdout, "      %s\n", dim(detail))
+		renderPendingEntry(os.Stdout, e, now)
 	}
 	if !history {
 		// Named whenever there is something to see, not only when the queue is
@@ -298,6 +184,14 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n%s\n", dim("Approving authorizes; it runs nothing and edits no file. Whoever asked runs it again."))
+	// Said once for the list, not once per card. It used to be printed under
+	// every entry — the same 100-character sentence repeated down the screen,
+	// which is most of what made the list feel scattered. It is still worth
+	// saying: both kinds were read as "byn will now do this", and one as a
+	// proposed edit to the .byn. Neither is true.
+	for _, note := range kindNotes(resp.Entries) {
+		fmt.Fprintf(os.Stderr, "%s\n", dim("  "+note))
+	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Grant:"), cyan("byn approve <id>"))
 	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "),
 		dim("add --for 30m to shorten the window a command runs free (default 6h)"))
@@ -312,6 +206,24 @@ func listApprovals(c *ipc.Client, jsonOut, history bool) int {
 	// most useful thing to hand back is why.
 	fmt.Fprintf(os.Stderr, "%s %s\n", dim("       "), dim("add --reason \"wrong target\" — the asker is told, and it is in the audit log"))
 	return exitOK
+}
+
+// kindNotes returns the per-kind explanations relevant to THIS list, each at
+// most once, in a stable order. A list of one kind gets one line; a list of
+// both gets two; an empty list gets none.
+func kindNotes(entries []ipc.ApprovalEntry) []string {
+	var out []string
+	for _, kind := range []string{"action_unpinned", "trust_widening"} {
+		for _, e := range entries {
+			if e.Kind == kind {
+				if note := whatApprovingDoes(kind); note != "" {
+					out = append(out, note)
+				}
+				break
+			}
+		}
+	}
+	return out
 }
 
 // whatApprovingDoes says, per kind, what a yes actually does.
