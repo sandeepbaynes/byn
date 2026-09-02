@@ -244,6 +244,8 @@ func run(args []string) int {
 		return runDaemonReload(rest)
 	case "status":
 		return runStatus(rest)
+	case "request":
+		return runRequest(rest, scope)
 	case "unlock":
 		return runUnlock(rest, scope)
 	case "lock":

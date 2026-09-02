@@ -74,6 +74,12 @@ const (
 	// gated by the master password (proof-of-presence).
 	OpApprovalList   Op = "approval.list"
 	OpApprovalDecide Op = "approval.decide"
+	// OpApprovalWatch blocks until the request a watch ticket speaks for is
+	// answered, so an asker learns the outcome the moment it happens instead of
+	// re-running its command every few seconds to find out.
+	OpApprovalWatch Op = "approval.watch"
+	// OpApprovalCancel withdraws a request the asker no longer needs.
+	OpApprovalCancel Op = "approval.cancel"
 	OpTrustList      Op = "trust.list"
 	OpTrustRemove    Op = "trust.remove"
 	OpTrustGrant     Op = "trust.grant"
@@ -156,7 +162,7 @@ var AllOps = []Op{
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
 	OpAuditTail, OpAuditVerify, OpAuditReseal, OpDoctor,
-	OpApprovalList, OpApprovalDecide,
+	OpApprovalList, OpApprovalDecide, OpApprovalWatch, OpApprovalCancel,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
 	OpConfigGet, OpConfigSet, OpConfigValidate,
 	OpExecFetch, OpExecPreflight, OpRunList, OpExecSpawn, OpExecAuthorize, OpExecRedeem,
@@ -1754,4 +1760,58 @@ type ApprovalDecideReq struct {
 // so this may describe a decision made earlier through another surface.
 type ApprovalDecideResp struct {
 	Entry ApprovalEntry `json:"entry"`
+}
+
+// ApprovalWatchReq asks to be told how one request was answered.
+//
+// The ticket is the only identifier accepted — not the request id. The id is
+// printed in error messages, listed by `byn approve`, and visible to anything
+// that can read the queue, so keying this on the id would let any local process
+// wait on, and learn the outcome of, a request it had nothing to do with. The
+// ticket was handed to exactly one caller.
+type ApprovalWatchReq struct {
+	Ticket string `json:"ticket"`
+	// TimeoutSeconds bounds the wait. Zero means the daemon's default. A watch
+	// never outlives the request's own expiry: once it lapses there is nothing
+	// further to learn, and the answer is "expired".
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+}
+
+// ApprovalWatchResp is the outcome, in the shape an agent can branch on.
+type ApprovalWatchResp struct {
+	ApprovalID string `json:"approval_id"`
+	// Status is one of pending (the wait timed out), approved, denied, expired,
+	// cancelled, revoked, used.
+	Status string `json:"status"`
+	// Reason is what the decider said, in their own words. It reaches the asker
+	// HERE and only here: a refusal without a reason leaves an agent guessing
+	// between "fix it and ask again" and "stop", and that guess is the
+	// difference between a useful retry and a pestering loop.
+	Reason string `json:"reason,omitempty"`
+	// DecidedVia names the surface that answered: terminal, portal, tui, phone.
+	DecidedVia string `json:"decided_via,omitempty"`
+	// Once reports that the grant is single-use, so an asker knows it has one
+	// run rather than a window.
+	Once bool `json:"once,omitempty"`
+	// GrantedUntil is when an approved command stops being runnable, as a Unix
+	// time. Zero when the decision does not carry a window.
+	GrantedUntil int64 `json:"granted_until,omitempty"`
+	// TimedOut distinguishes "still pending, you stopped waiting" from "still
+	// pending" as a decision — they are the same status and different events.
+	TimedOut bool `json:"timed_out,omitempty"`
+}
+
+// ApprovalCancelReq withdraws a pending request. Ticket-only, for the reason
+// ApprovalWatchReq is: cancelling by id would let any local process silently
+// remove another agent's question from the owner's list.
+type ApprovalCancelReq struct {
+	Ticket string `json:"ticket"`
+}
+
+// ApprovalCancelResp reports what the request ended up as. A cancel that raced
+// a decision reports the decision, not an error: the answer that exists is the
+// one that counts.
+type ApprovalCancelResp struct {
+	ApprovalID string `json:"approval_id"`
+	Status     string `json:"status"`
 }

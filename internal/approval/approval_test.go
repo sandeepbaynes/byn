@@ -26,7 +26,7 @@ func req(subject, fingerprint string) Request {
 
 func TestEnqueueAndDecide(t *testing.T) {
 	s, _ := newStore(t)
-	got, err := s.Enqueue(req("/p/.byn", "fp1"))
+	got, _, err := s.Enqueue(req("/p/.byn", "fp1"))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -46,12 +46,12 @@ func TestEnqueueAndDecide(t *testing.T) {
 // for the person deciding — that flood is how approval systems get beaten.
 func TestEnqueue_CoalescesIdenticalQuestion(t *testing.T) {
 	s, _ := newStore(t)
-	first, err := s.Enqueue(req("/p/.byn", "fp1"))
+	first, _, err := s.Enqueue(req("/p/.byn", "fp1"))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	for i := 0; i < 25; i++ {
-		again, err := s.Enqueue(req("/p/.byn", "fp1"))
+		again, _, err := s.Enqueue(req("/p/.byn", "fp1"))
 		if err != nil {
 			t.Fatalf("re-enqueue %d: %v", i, err)
 		}
@@ -76,15 +76,15 @@ func TestEnqueue_CoalescesIdenticalQuestion(t *testing.T) {
 func TestEnqueue_RateLimitsPerProject(t *testing.T) {
 	s, _ := newStore(t)
 	for i := 0; i < MaxPendingPerProject; i++ {
-		if _, err := s.Enqueue(req("/p/.byn", string(rune('a'+i)))); err != nil {
+		if _, _, err := s.Enqueue(req("/p/.byn", string(rune('a'+i)))); err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
 		}
 	}
-	if _, err := s.Enqueue(req("/p/.byn", "one-too-many")); !errors.Is(err, ErrRateLimited) {
+	if _, _, err := s.Enqueue(req("/p/.byn", "one-too-many")); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("err = %v, want ErrRateLimited", err)
 	}
 	// A different project is unaffected.
-	if _, err := s.Enqueue(req("/other/.byn", "fp1")); err != nil {
+	if _, _, err := s.Enqueue(req("/other/.byn", "fp1")); err != nil {
 		t.Fatalf("unrelated project was rate limited: %v", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestEnqueue_RateLimitsPerProject(t *testing.T) {
 func TestDecide_RepeatedDenialPutsQuestionOnHold(t *testing.T) {
 	s, _ := newStore(t)
 	for i := 0; i < MaxDenialsBeforeHold; i++ {
-		r, err := s.Enqueue(req("/p/.byn", "fp-nope"))
+		r, _, err := s.Enqueue(req("/p/.byn", "fp-nope"))
 		if err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
 		}
@@ -102,12 +102,12 @@ func TestDecide_RepeatedDenialPutsQuestionOnHold(t *testing.T) {
 			t.Fatalf("deny %d: %v", i, err)
 		}
 	}
-	_, err := s.Enqueue(req("/p/.byn", "fp-nope"))
+	_, _, err := s.Enqueue(req("/p/.byn", "fp-nope"))
 	if !errors.Is(err, ErrOnHold) {
 		t.Fatalf("err = %v, want ErrOnHold", err)
 	}
 	// A different question is unaffected by the hold.
-	if _, err := s.Enqueue(req("/p/.byn", "fp-other")); err != nil {
+	if _, _, err := s.Enqueue(req("/p/.byn", "fp-other")); err != nil {
 		t.Fatalf("unrelated question blocked by hold: %v", err)
 	}
 }
@@ -115,13 +115,13 @@ func TestDecide_RepeatedDenialPutsQuestionOnHold(t *testing.T) {
 func TestDecide_HoldLiftsAfterCooldown(t *testing.T) {
 	s, clock := newStore(t)
 	for i := 0; i < MaxDenialsBeforeHold; i++ {
-		r, _ := s.Enqueue(req("/p/.byn", "fp-nope"))
+		r, _, _ := s.Enqueue(req("/p/.byn", "fp-nope"))
 		if _, err := s.Decide(r.ID, false, "terminal", ""); err != nil {
 			t.Fatalf("deny: %v", err)
 		}
 	}
 	*clock = clock.Add(DenialHoldFor + time.Minute)
-	if _, err := s.Enqueue(req("/p/.byn", "fp-nope")); err != nil {
+	if _, _, err := s.Enqueue(req("/p/.byn", "fp-nope")); err != nil {
 		t.Fatalf("hold did not lift: %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestDecide_HoldLiftsAfterCooldown(t *testing.T) {
 // and the second must not be an error the caller has to interpret.
 func TestDecide_IsIdempotent(t *testing.T) {
 	s, _ := newStore(t)
-	r, _ := s.Enqueue(req("/p/.byn", "fp1"))
+	r, _, _ := s.Enqueue(req("/p/.byn", "fp1"))
 	first, err := s.Decide(r.ID, true, "phone", "")
 	if err != nil {
 		t.Fatalf("first decide: %v", err)
@@ -154,7 +154,7 @@ func TestDecide_IsIdempotent(t *testing.T) {
 // The first decision still stands; what changes is that byn says so.
 func TestDecide_DenyingAnApprovalIsRefusedNotIgnored(t *testing.T) {
 	s, _ := newStore(t)
-	r, _ := s.Enqueue(req("/p/.byn", "fp-deny-after-approve"))
+	r, _, _ := s.Enqueue(req("/p/.byn", "fp-deny-after-approve"))
 	if _, err := s.Decide(r.ID, true, "terminal", ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRevoke_TakesTheGrantBack(t *testing.T) {
 	s, clock := newStore(t)
 	r := req("/p/.byn", "fp-revoke")
 	r.Kind = KindActionUnpinned
-	pending, err := s.Enqueue(r)
+	pending, _, err := s.Enqueue(r)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRevoke_TakesTheGrantBack(t *testing.T) {
 // none to remove.
 func TestRevoke_RefusesWhatWasNeverApproved(t *testing.T) {
 	s, _ := newStore(t)
-	pending, err := s.Enqueue(req("/p/.byn", "fp-open"))
+	pending, _, err := s.Enqueue(req("/p/.byn", "fp-open"))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestRevoke_RefusesWhatWasNeverApproved(t *testing.T) {
 // caller can retry rather than treat expiry as refusal.
 func TestExpiry_IsItsOwnState(t *testing.T) {
 	s, clock := newStore(t)
-	r, _ := s.Enqueue(req("/p/.byn", "fp1"))
+	r, _, _ := s.Enqueue(req("/p/.byn", "fp1"))
 	*clock = clock.Add(DefaultTTL + time.Minute)
 
 	got, err := s.Get(r.ID)
@@ -246,7 +246,7 @@ func TestExpiry_IsItsOwnState(t *testing.T) {
 		t.Error("an expired request must not read as answered")
 	}
 	// The question can be asked again once it has lapsed.
-	again, err := s.Enqueue(req("/p/.byn", "fp1"))
+	again, _, err := s.Enqueue(req("/p/.byn", "fp1"))
 	if err != nil {
 		t.Fatalf("re-ask after expiry: %v", err)
 	}
@@ -269,8 +269,8 @@ func TestPrune_KeepsPendingForever(t *testing.T) {
 	s, clock := newStore(t)
 	longLived := req("/p/.byn", "fp-pending")
 	longLived.ExpiresAt = clock.Add(365 * 24 * time.Hour)
-	pending, _ := s.Enqueue(longLived)
-	answered, _ := s.Enqueue(req("/p/.byn", "fp-answered"))
+	pending, _, _ := s.Enqueue(longLived)
+	answered, _, _ := s.Enqueue(req("/p/.byn", "fp-answered"))
 	if _, err := s.Decide(answered.ID, true, "terminal", ""); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestGet_UnknownID(t *testing.T) {
 func TestStore_PersistsAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 	s1 := Open(dir)
-	r, err := s1.Enqueue(req("/p/.byn", "fp1"))
+	r, _, err := s1.Enqueue(req("/p/.byn", "fp1"))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestLastDenial_TakesTheMostRecentDecision(t *testing.T) {
 
 	raise := func() Request {
 		t.Helper()
-		r, err := s.Enqueue(Request{
+		r, _, err := s.Enqueue(Request{
 			Kind: KindActionUnpinned, Subject: "/p/.byn",
 			Fingerprint: "fp-1", Summary: []string{"runs cleanup"},
 		})
@@ -373,7 +373,7 @@ func TestLastDenial_TakesTheMostRecentDecision(t *testing.T) {
 func TestEnqueue_ReasonFilledOnceNeverRewritten(t *testing.T) {
 	s, _ := newStore(t)
 
-	first, err := s.Enqueue(Request{
+	first, _, err := s.Enqueue(Request{
 		Kind: KindActionUnpinned, Subject: "/p/.byn",
 		Fingerprint: "fp", Summary: []string{"runs make dev"},
 	})
@@ -385,7 +385,7 @@ func TestEnqueue_ReasonFilledOnceNeverRewritten(t *testing.T) {
 	}
 
 	// Same question, now explained: the blank gets filled.
-	second, err := s.Enqueue(Request{
+	second, _, err := s.Enqueue(Request{
 		Kind: KindActionUnpinned, Subject: "/p/.byn",
 		Fingerprint: "fp", Summary: []string{"runs make dev"},
 		Reason: "starting the api for the auth work",
@@ -402,7 +402,7 @@ func TestEnqueue_ReasonFilledOnceNeverRewritten(t *testing.T) {
 
 	// A third asking must not overwrite it: the stated purpose cannot drift
 	// while the person deciding is reading it.
-	third, err := s.Enqueue(Request{
+	third, _, err := s.Enqueue(Request{
 		Kind: KindActionUnpinned, Subject: "/p/.byn",
 		Fingerprint: "fp", Summary: []string{"runs make dev"},
 		Reason: "something else entirely",
@@ -440,7 +440,7 @@ func TestDecide_LateAnswerGrantsAndSaysSo(t *testing.T) {
 	r := req("/p/.byn", "fp-late")
 	r.Kind = KindActionUnpinned
 	r.NeededBy = clock.Add(2 * time.Minute)
-	pending, err := s.Enqueue(r)
+	pending, _, err := s.Enqueue(r)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestDecide_LateAnswerGrantsAndSaysSo(t *testing.T) {
 	r2 := req("/p/.byn", "fp-ontime")
 	r2.Kind = KindActionUnpinned
 	r2.NeededBy = clock2.Add(2 * time.Minute)
-	p2, err := s2.Enqueue(r2)
+	p2, _, err := s2.Enqueue(r2)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestDecide_LateAnswerGrantsAndSaysSo(t *testing.T) {
 // was waiting cannot have stopped.
 func TestDecide_NoDeadlineIsNeverLate(t *testing.T) {
 	s, clock := newStore(t)
-	pending, err := s.Enqueue(req("/p/.byn", "fp-none"))
+	pending, _, err := s.Enqueue(req("/p/.byn", "fp-none"))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestDecideFor_OwnerSetsTheGrantWindow(t *testing.T) {
 	s, clock := newStore(t)
 	r := req("/p/.byn", "fp-window")
 	r.Kind = KindActionUnpinned
-	pending, err := s.Enqueue(r)
+	pending, _, err := s.Enqueue(r)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestDecideFor_OwnerSetsTheGrantWindow(t *testing.T) {
 	s2, clock2 := newStore(t)
 	r2 := req("/p/.byn", "fp-default")
 	r2.Kind = KindActionUnpinned
-	p2, err := s2.Enqueue(r2)
+	p2, _, err := s2.Enqueue(r2)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

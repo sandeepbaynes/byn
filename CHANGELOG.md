@@ -99,6 +99,36 @@ instead of under every card, and durations are one unit for an age ("2d ago",
 not "46h9m15s ago") and two for a deadline, where the second unit is the half
 hour you were deciding whether you had.
 
+An asker can now watch its own approval and be told the outcome the moment it
+happens, and withdraw a request it no longer needs.
+
+`byn exec` hands back a `watch_ticket` with the `approval_pending` refusal.
+`byn request watch <ticket>` blocks until the request is answered and prints the
+outcome as JSON — approved, denied, expired, cancelled or revoked, with the
+decider's reason and whether the grant is single-use. `byn request cancel
+<ticket>` takes the question off the owner's list.
+
+Until now the only way to learn an outcome was to re-run the whole command every
+two seconds, which could observe success and nothing else: a poller cannot tell
+"denied" from "not yet", and that is the difference between an agent that stops
+and one that asks for ever. Decisions are broadcast in-process, so a watch wakes
+immediately rather than on a poll interval.
+
+The ticket is the capability, and it is issued exactly once — to the caller that
+actually raised the request. A retry, or a second agent asking the same thing,
+coalesces onto the existing card and gets no ticket; there is no operation that
+returns one for an existing request. That is what stops one agent from acquiring
+another's channel by guessing what it would ask for, and then answering for it
+or withdrawing its request. byn stores only a SHA-256 of the ticket.
+
+Cancelling is not denying. A denial is the owner's judgment and counts toward
+the cooldown that stops a fingerprint being re-asked; a cancellation is the
+asker changing its mind, and leaves no mark on the owner's answer history.
+
+The decider's `--reason` now reaches the asker, through the watch and nowhere
+else. A refusal without a reason leaves an agent guessing between "fix it and
+ask again" and "stop". Owners still see it in `byn approve --history`.
+
 byn now asks for the master password on the controlling terminal when stdin is
 carrying data. `echo "$V" | byn put NAME` used to answer "this action requires
 authorization (run `byn unlock` …)" to somebody sitting at a terminal: the value

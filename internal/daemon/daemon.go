@@ -187,6 +187,9 @@ type Daemon struct {
 	// locked — the whole point is that an agent blocked on consent does not have
 	// to stall until someone unlocks anything.
 	approvals *approval.Store
+	// decisions wakes anything waiting on an approval the moment it is answered.
+	// See approvalwatch.go.
+	decisions *decisionBroadcaster
 	// authored remembers which variables a caller created, so it can read and
 	// replace its own without a password. It lives in the daemon state dir
 	// because it must be writable while the vault is locked — see
@@ -329,6 +332,7 @@ func New(cfg Config) (*Daemon, error) {
 	// Trust-store machine-fingerprint MAC key, derived once. A failure here
 	// degrades only the fp-MAC layer (the vault-key MAC still protects records).
 	d.approvals = approval.Open(d.cfg.Dir)
+	d.decisions = newDecisionBroadcaster()
 	d.authored = newAuthoredStore(d.cfg.Dir)
 	if id, err := machineid.ID(); err == nil {
 		d.fpMACKey = id

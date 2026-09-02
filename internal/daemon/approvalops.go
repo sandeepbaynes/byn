@@ -122,6 +122,7 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 			Op: "approval.revoke", Outcome: audit.OutcomeOK, BynPath: revoked.Subject,
 			Command: "revoked " + revoked.ID + ": " + strings.Join(revoked.Summary, "; "),
 		})
+		d.decisions.publish(revoked.ID)
 		out, rerr2 := ipc.NewResponse(env.ID, ipc.ApprovalDecideResp{Entry: approvalEntry(revoked)})
 		if rerr2 != nil {
 			return internalErr(env.ID, rerr2)
@@ -192,6 +193,10 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 	if err != nil {
 		return internalErr(env.ID, err)
 	}
+	// Wake whoever is waiting on this, now. Without this line the whole watch
+	// path degrades to the polling it replaces: correct, but two seconds late
+	// for something the daemon knew the instant it happened.
+	d.decisions.publish(decided.ID)
 	// The decision is the moment authority changes hands, so it belongs in the
 	// log with WHERE it was made — terminal, portal, or phone. An approval
 	// nobody can audit is an approval nobody can review after the fact.

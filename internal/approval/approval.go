@@ -11,6 +11,9 @@ package approval
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -74,6 +77,11 @@ const (
 	// from denied, which is an answer to a question; this undoes an answer
 	// already given, and the record has to show that it was once granted.
 	StatusRevoked Status = "revoked"
+	// StatusCancelled means the ASKER withdrew the request before anyone
+	// answered it. Distinct from denied, which is the owner's answer: a
+	// cancelled request was never decided, and counting it as a refusal would
+	// put a fingerprint on the denial cooldown for a question nobody rejected.
+	StatusCancelled Status = "cancelled"
 	// StatusUsed means a single-use grant has been spent. Distinct from expired
 	// and revoked: nothing lapsed and nobody took it back — it did its job.
 	StatusUsed Status = "used"
@@ -221,6 +229,19 @@ type Request struct {
 	// deliberate exception — a shared build command, a grant meant to outlive
 	// the session that asked.
 	Anyone bool `json:"anyone,omitempty"`
+	// WatchHash is the SHA-256 of the watch ticket handed to whoever raised this
+	// request, and the only copy byn keeps.
+	//
+	// The ticket is the capability: holding it is what proves you are the asker,
+	// so it authorizes watching this request's outcome and withdrawing it. Only
+	// the hash is stored, for the same reason a password file holds hashes —
+	// approvals.db is readable by the owner, and a stored ticket would let
+	// anything that reads the file speak for the process that asked.
+	//
+	// Empty on a request raised before this existed, and on one re-attached to
+	// rather than created: a ticket is minted once, for the caller that raised
+	// the question.
+	WatchHash string `json:"watch_hash,omitempty"`
 	// Late records that the answer arrived after the asker had stopped waiting.
 	// The grant is real; the process that asked for it is gone.
 	Late bool `json:"late,omitempty"`
@@ -254,7 +275,8 @@ type Request struct {
 // Answered reports whether a decision has been recorded.
 func (r Request) Answered() bool {
 	return r.Status == StatusApproved || r.Status == StatusDenied ||
-		r.Status == StatusRevoked || r.Status == StatusUsed
+		r.Status == StatusRevoked || r.Status == StatusUsed ||
+		r.Status == StatusCancelled
 }
 
 // file is the on-disk shape.
@@ -330,20 +352,28 @@ func (s *Store) expire(f *file, now time.Time) {
 // fingerprint that is still pending is returned as-is with its repeat count
 // bumped. An agent that retries in a loop therefore cannot flood the approver,
 // and the person sees one decision to make rather than a hundred.
-func (s *Store) Enqueue(req Request) (Request, error) {
+// Enqueue files a request, or re-attaches to an identical one already waiting.
+//
+// The second return value reports whether a NEW record was created. It exists
+// for the watch ticket: a ticket is the capability to speak for the asker, so it
+// is minted once, for the caller that actually raised the question. A retry — or
+// a different process asking the same thing — coalesces onto the existing card
+// and gets no ticket, which is what stops one agent from acquiring another's
+// channel by guessing what it would have asked.
+func (s *Store) Enqueue(req Request) (Request, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	f, err := s.load()
 	if err != nil {
-		return Request{}, err
+		return Request{}, false, err
 	}
 	now := s.now()
 	s.expire(f, now)
 
 	if until, held := f.Holds[req.Fingerprint]; held {
 		if now.Before(until) {
-			return Request{}, fmt.Errorf("%w until %s", ErrOnHold, until.Format(time.RFC3339))
+			return Request{}, false, fmt.Errorf("%w until %s", ErrOnHold, until.Format(time.RFC3339))
 		}
 		delete(f.Holds, req.Fingerprint)
 		delete(f.Denials, req.Fingerprint) // cooldown served; start counting again
@@ -366,16 +396,16 @@ func (s *Store) Enqueue(req Request) (Request, error) {
 			}
 			out := *r
 			if err := s.save(f); err != nil {
-				return Request{}, err
+				return Request{}, false, err
 			}
-			return out, nil
+			return out, false, nil
 		}
 		if r.Subject == req.Subject {
 			pending++
 		}
 	}
 	if pending >= MaxPendingPerProject {
-		return Request{}, ErrRateLimited
+		return Request{}, false, ErrRateLimited
 	}
 
 	req.ID = newID()
@@ -386,9 +416,9 @@ func (s *Store) Enqueue(req Request) (Request, error) {
 	}
 	f.Requests = append(f.Requests, req)
 	if err := s.save(f); err != nil {
-		return Request{}, err
+		return Request{}, false, err
 	}
-	return req, nil
+	return req, true, nil
 }
 
 // Decide records an answer.
@@ -766,4 +796,99 @@ func newID() string {
 		return hex.EncodeToString([]byte(time.Now().Format("150405.000000")))
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// NewWatchTicket mints a watch ticket and returns it with the hash to store.
+//
+// 32 bytes from crypto/rand. The requirement it meets is that a second agent
+// must not be able to reach the first one's approval — so the ticket cannot be
+// derived from anything an attacker can see or guess: not the request id, not
+// the fingerprint, not the command. Only randomness has that property.
+//
+// The plaintext is returned to exactly one caller, once, and byn keeps only the
+// hash. There is deliberately no way to ask for it again.
+func NewWatchTicket() (ticket, hash string, err error) {
+	raw := make([]byte, 32)
+	if _, rerr := rand.Read(raw); rerr != nil {
+		return "", "", fmt.Errorf("approval: mint watch ticket: %w", rerr)
+	}
+	ticket = base64.RawURLEncoding.EncodeToString(raw)
+	return ticket, HashWatchTicket(ticket), nil
+}
+
+// HashWatchTicket is the one-way mapping from a presented ticket to the stored
+// form. A plain SHA-256 is right here where a password needs Argon2: this is a
+// 256-bit random string, so there is no dictionary to attack and nothing to
+// slow down.
+func HashWatchTicket(ticket string) string {
+	sum := sha256.Sum256([]byte(ticket))
+	return hex.EncodeToString(sum[:])
+}
+
+// ByWatchTicket finds the request a ticket speaks for.
+//
+// Comparison is constant-time. The window is small — an attacker would need the
+// timing of a hash comparison to recover a 256-bit random string — but the cost
+// of closing it is one function call, and a lookup keyed on a secret is exactly
+// where this habit belongs.
+func (s *Store) ByWatchTicket(ticket string) (Request, bool) {
+	if ticket == "" {
+		return Request{}, false
+	}
+	want := HashWatchTicket(ticket)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return Request{}, false
+	}
+	s.expire(f, s.now())
+	for i := range f.Requests {
+		r := &f.Requests[i]
+		if r.WatchHash != "" && subtle.ConstantTimeCompare([]byte(r.WatchHash), []byte(want)) == 1 {
+			return *r, true
+		}
+	}
+	return Request{}, false
+}
+
+// Cancel withdraws a request that nobody has answered yet.
+//
+// It is the asker's own verb: an agent that worked out it no longer needs a
+// command should be able to take the question off someone's list, rather than
+// leaving a card that will be read, thought about, and answered for nothing.
+//
+// Cancelling is NOT denying. A denial is the owner's judgment and counts toward
+// the cooldown that stops a fingerprint being re-asked; a cancellation is the
+// asker changing its mind and must leave no mark on the owner's answer history.
+//
+// Already-answered requests are returned unchanged rather than erroring: a
+// decision that arrived while the asker was giving up is a race with a correct
+// outcome, and the answer that exists is the one that counts.
+func (s *Store) Cancel(id string) (Request, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return Request{}, err
+	}
+	now := s.now()
+	s.expire(f, now)
+	for i := range f.Requests {
+		r := &f.Requests[i]
+		if r.ID != id {
+			continue
+		}
+		if r.Status != StatusPending {
+			return *r, nil
+		}
+		r.Status = StatusCancelled
+		r.DecidedAt = now
+		r.DecidedVia = "asker"
+		if serr := s.save(f); serr != nil {
+			return Request{}, serr
+		}
+		return *r, nil
+	}
+	return Request{}, ErrNotFound
 }

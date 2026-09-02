@@ -32,7 +32,12 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		summary = append(summary, w.Detail)
 	}
 
-	pending, err := d.approvals.Enqueue(approval.Request{
+	ticket, watchHash, terr := approval.NewWatchTicket()
+	if terr != nil {
+		return internalErr(id, terr)
+	}
+	pending, created, err := d.approvals.Enqueue(approval.Request{
+		WatchHash:   watchHash,
 		Kind:        approval.KindTrustWidening,
 		Vault:       vaultName,
 		Subject:     canon,
@@ -74,7 +79,7 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		fmt.Sprintf("%s asks for more than it was granted (%s) — approval %s is waiting",
 			canon, strings.Join(summary, "; "), pending.ID),
 		"approve it with: byn approve "+pending.ID+reasonHint(pending),
-		approvalDetails(pending, ""))
+		approvalDetails(pending, "", ticketIfCreated(ticket, created)))
 }
 
 // fingerprintOf identifies a question by what it asks for, so the same request
@@ -230,7 +235,12 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 			})
 	}
 
-	pending, err := d.approvals.Enqueue(approval.Request{
+	ticket, watchHash, terr := approval.NewWatchTicket()
+	if terr != nil {
+		return internalErr(id, terr)
+	}
+	pending, created, err := d.approvals.Enqueue(approval.Request{
+		WatchHash:   watchHash,
 		Kind:        approval.KindActionUnpinned,
 		Vault:       vaultName,
 		Subject:     canon,
@@ -263,13 +273,28 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 			cmd, canon, pending.ID),
 		"approve it with: byn approve "+pending.ID+
 			", or pin it in [exec] actions and re-trust"+reasonHint(pending),
-		approvalDetails(pending, cmd))
+		approvalDetails(pending, cmd, ticketIfCreated(ticket, created)))
 }
 
 // approvalDetails is the machine-readable half of a paused command: everything
 // a caller needs to hand the request to a person, or to wait for it, without
 // reading the English sentence next to it.
-func approvalDetails(pending approval.Request, command string) map[string]string {
+// ticketIfCreated returns the watch ticket only when this call actually raised
+// the request.
+//
+// A retry, or a second agent asking the same thing, coalesces onto the card
+// already waiting — and must not be handed the channel belonging to whoever
+// asked first. Without this, any process able to guess what another agent would
+// ask for could obtain its ticket by asking for the same thing, and then answer
+// for it or withdraw its request.
+func ticketIfCreated(ticket string, created bool) string {
+	if !created {
+		return ""
+	}
+	return ticket
+}
+
+func approvalDetails(pending approval.Request, command, watchTicket string) map[string]string {
 	d := map[string]string{
 		"approval_id": pending.ID,
 		"kind":        string(pending.Kind),
@@ -281,6 +306,13 @@ func approvalDetails(pending approval.Request, command string) map[string]string
 	}
 	if pending.Vault != "" {
 		d["vault"] = pending.Vault
+	}
+	// Handed over exactly here and nowhere else. There is no op that returns a
+	// ticket for an existing request, deliberately: an agent that dropped it
+	// cannot ask for it back, because a way to re-request one would be a way for
+	// anything else to request it too.
+	if watchTicket != "" {
+		d["watch_ticket"] = watchTicket
 	}
 	return d
 }
