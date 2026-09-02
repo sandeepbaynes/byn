@@ -79,10 +79,10 @@ work. No inheritance flags on the macOS ACE: this repairs a file that already
 exists and was locked down afterwards, which is the opposite case from the
 trust-time grant that sets inheritance on a directory.
 
-Verified on both platforms: the ACE now appears on a macOS file that was locked
-down after creation, and the Linux behaviour is unchanged. `byn request watch`,
-`byn put`'s prompt and the `/dev/tty` password fallback were confirmed on macOS
-in the same pass.
+Verified on Linux. On macOS the fix is reasoned and cross-compiled, not yet
+exercised against a locked-down file — the macOS test pass predates it and
+records the exec-ACL path as a no-op by construction, which is exactly what this
+changes. `byn request watch` and `byn request cancel` WERE confirmed on macOS.
 
 One honest limitation. On Linux the pass reads the ACL to skip files already
 granted, which is what makes running it before every exec affordable. Reading a
