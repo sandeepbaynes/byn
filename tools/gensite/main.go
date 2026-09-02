@@ -53,6 +53,21 @@ func run(args []string, out io.Writer) error {
 	}
 	site.Version = version
 
+	// Refuse to publish a site whose footer names a release its own notes do not
+	// describe. See site.ReleaseNotesCover for why this is a build failure rather
+	// than a checklist item.
+	notes, err := os.ReadFile(filepath.Join(*root, "docs", "releases.md")) //nolint:gosec // repo root from a flag
+	if err != nil {
+		return fmt.Errorf("read docs/releases.md (needed to check release coverage): %w", err)
+	}
+	if newest, ok := site.ReleaseNotesCover(notes, version); !ok {
+		return fmt.Errorf(
+			"docs/releases.md has no section for %s (newest is %s) — CHANGELOG.md dates %s, "+
+				"so every page would footer that version and link to notes that stop short of it.\n"+
+				"Add a \"## %s\" section with the headline changes and an \"Upgrade notes\" subsection.",
+			version, dashIfEmpty(newest), version, version)
+	}
+
 	pages := site.Manifest()
 	changed := 0
 	for _, p := range pages {
@@ -147,4 +162,13 @@ func relTo(root, path string) string {
 		return r
 	}
 	return path
+}
+
+// dashIfEmpty renders an absent value as a dash, so an empty release-notes file
+// reads as "newest is -" rather than "newest is ".
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

@@ -26,6 +26,11 @@ func stageDocs(t *testing.T) string {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
 		[]byte("# Changelog\n\n## v9.9.9 — 2026-01-01\n\nstuff\n"), 0o644))
+	// The curated notes must name the release the CHANGELOG dates, or run()
+	// refuses to publish a site whose footer points at notes that stop short of
+	// it. The generic body written above has no version headings.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "releases.md"),
+		[]byte("# Release notes\n\nIntro paragraph.\n\n## v9.9.9\n\nText.\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "index.html"),
 		[]byte(`<div class="hero-badge"><div class="badge-dot"></div>v0.0.1 — x</div>`+"\n"+
 			`<span>byn <a href="docs/releases/">v0.0.1</a></span>`+"\n"), 0o644))
@@ -86,6 +91,11 @@ func TestRun_MissingSourceFile(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
 		[]byte("## v9.9.9 — 2026-01-01\n"), 0o644))
+	// releases.md is a precondition for the same reason the CHANGELOG is: the
+	// release-coverage check runs before any page is rendered, so without it this
+	// test would report that failure instead of the missing source it is about.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "releases.md"),
+		[]byte("## v9.9.9\n"), 0o644))
 	err := run([]string{"-root", root}, &bytes.Buffer{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read source")

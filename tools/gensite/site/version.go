@@ -46,3 +46,34 @@ func VersionFromChangelog(changelog []byte) (string, error) {
 	}
 	return string(m[1]), nil
 }
+
+// releaseNotesHeading matches a version heading on the curated release-notes
+// page, which carries no date — the date lives in CHANGELOG.md.
+var releaseNotesHeading = regexp.MustCompile(`(?m)^## (v\d+\.\d+\.\d+)\s*$`)
+
+// ReleaseNotesCover reports whether the curated release-notes page has a section
+// for version, and names the newest one it does have.
+//
+// The site's version is DERIVED from CHANGELOG.md, and docs/releases.md is
+// written by hand. That asymmetry has now produced the same defect twice: the
+// footer of every page said v0.6.3 while the release-notes page it links to
+// stopped at v0.6.2, because dating the changelog heading is part of releasing
+// and adding the curated section is a separate step somebody has to remember.
+//
+// The fix for the version constant was to derive it so a stale value became a
+// failing build rather than a wrong number on the front page. This is the same
+// move for the page that constant links to: not deriving the prose, which has to
+// be written, but refusing to publish a site that names a release its own notes
+// do not describe.
+func ReleaseNotesCover(releaseNotes []byte, version string) (newest string, ok bool) {
+	matches := releaseNotesHeading.FindAllStringSubmatch(string(releaseNotes), -1)
+	if len(matches) > 0 {
+		newest = matches[0][1]
+	}
+	for _, m := range matches {
+		if m[1] == version {
+			return newest, true
+		}
+	}
+	return newest, false
+}

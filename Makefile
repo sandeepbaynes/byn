@@ -202,6 +202,9 @@ dist: clean-dist
 		helper=$(DIST_DIR)/byn-exec-helper-$$os-$$arch; \
 		echo "  building $$helper"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='-s -w' -o $$helper ./cmd/byn-exec-helper || exit 1; \
+		tui=$(DIST_DIR)/byn-tui-$$os-$$arch; \
+		echo "  building $$tui"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath -ldflags='$(LDFLAGS)' -o $$tui ./cmd/byn-tui || exit 1; \
 	done
 	@# sha256sum on Linux, shasum on macOS — `make dist` built every artifact and
 	@# then died on the checksum line for want of a command that only ships with
