@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## v0.6.4 — unreleased
+## v0.6.4 — 2026-09-03
 
 ### `make install` failed on macOS once byn was provisioned
 
@@ -96,8 +96,6 @@ token takes the VALUE of a preceding flag for the command. Where an explicit
 `--` exists it is the only unambiguous boundary, so it is now looked for first.
 The Linux `execCmdSummary` still has the original behaviour, and its own doc
 comment already documents the corrected one.
-
-## v0.6.4 — unreleased
 
 ### The editor is part of byn, not something to install
 
