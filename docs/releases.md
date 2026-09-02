@@ -69,7 +69,13 @@ This page is the curated changelog; the GitHub page is the artifacts.
 ### Upgrade notes
 
 - No action. If you are on macOS and hit a credential tool locking out your exec
-  children, this is the release that fixes it.
+  children, this is the release that fixes it — verified there against a file
+  stripped of its ACL and chmod'd `0600`: the next `byn exec` restores the
+  `_byn-exec` ACE, and re-running does not duplicate it.
+- **Expect the "restored access to N tool-state file(s)" note on every macOS
+  run.** Reading a macOS ACL means parsing `ls -le` per file, so the darwin path
+  re-issues the grant rather than checking first. The ACL ends up correct either
+  way; the count is of files re-granted, not of files that needed it.
 
 ---
 

@@ -79,10 +79,19 @@ work. No inheritance flags on the macOS ACE: this repairs a file that already
 exists and was locked down afterwards, which is the opposite case from the
 trust-time grant that sets inheritance on a directory.
 
-Verified on Linux. On macOS the fix is reasoned and cross-compiled, not yet
-exercised against a locked-down file — the macOS test pass predates it and
-records the exec-ACL path as a no-op by construction, which is exactly what this
-changes. `byn request watch` and `byn request cancel` WERE confirmed on macOS.
+Verified on Linux, and now on macOS too. Against a file stripped of its ACL and
+chmod'd 0600 — `_byn-exec` genuinely locked out — the next `byn exec` reported
+"restored _byn-exec access to 1 tool-state file(s)" and the ACE
+`user:_byn-exec allow read,write` appeared on the file. Re-running added no
+second entry, confirming `chmod +a` refuses a duplicate rather than
+accumulating. `byn request watch` and `byn request cancel` were confirmed on
+macOS in the earlier pass.
+
+One cosmetic consequence of the honest limitation below: because the darwin path
+cannot cheaply tell "already granted" from "needs granting", it re-issues the
+grant and reports "restored ... 1 file(s)" on every run, including runs where
+nothing had been locked down. The ACL is correct either way; the count is of
+files it re-granted, not of files that needed it.
 
 One honest limitation. On Linux the pass reads the ACL to skip files already
 granted, which is what makes running it before every exec affordable. Reading a
