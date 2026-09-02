@@ -162,7 +162,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/favicon.svg", s.handleFavicon)
 	sub, _ := fs.Sub(assetsFS, "assets")
 	fileSrv := http.FileServer(http.FS(sub))
-	s.mux.Handle("/static/", http.StripPrefix("/static/", fileSrv))
+	s.mux.Handle("/static/", http.StripPrefix("/static/", noStaleAssets(fileSrv)))
 
 	// POST /api/session/bootstrap: one-time bootstrap token exchange (UNGATED —
 	// callers don't have the persistent token yet; the bootstrap token IS the
@@ -413,4 +413,24 @@ func decodeJSON(r *http.Request, v any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+// noStaleAssets makes the browser revalidate the portal's own JS and CSS.
+//
+// The bundle is referenced as a bare /static/app.js with no version in the URL,
+// and nothing sent a cache header — so a browser was free to keep serving the
+// copy it fetched days ago, indefinitely and silently. That makes every portal
+// change a coin toss: the daemon serves the new file, the page runs the old one,
+// and the two disagree about what the API returns.
+//
+// no-cache does NOT mean "do not cache". It means "cache it, but ask me before
+// reusing it", so the normal case is a 304 with no body — cheap for a portal on
+// localhost, and always correct. must-revalidate closes the gap where a stale
+// copy is served because the daemon is briefly unreachable, which is exactly
+// when it is being restarted with new assets.
+func noStaleAssets(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		next.ServeHTTP(w, r)
+	})
 }
