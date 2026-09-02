@@ -106,13 +106,18 @@ func TestE2E_Watch_ReportsADenialWithItsReason(t *testing.T) {
 	if _, se, code := s.run("", "approve", "--deny", "--reason", "wrong target", id); code != 0 {
 		t.Fatalf("deny: code=%d stderr=%q", code, se)
 	}
-	stdout, _, code := s.run("", "request", "watch", "--timeout", "10", ticket)
+	stdout, stderr, code := s.run("", "request", "watch", "--timeout", "10", ticket)
 	var resp struct {
 		Status string `json:"status"`
 		Reason string `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(firstJSONLine(stdout)), &resp); err != nil {
-		t.Fatalf("watch output is not JSON: %v\n%s", err, stdout)
+		// stderr, not just stdout: watch prints its JSON to stdout and reports a
+		// failed call to stderr, so discarding stderr turns any IPC-level failure
+		// into "unexpected end of JSON input" with nothing to act on. That is
+		// exactly how this test failed once on a CI runner and said nothing about
+		// why.
+		t.Fatalf("watch output is not JSON: %v\nexit=%d\nstdout=%q\nstderr=%q", err, code, stdout, stderr)
 	}
 	if resp.Status != "denied" || resp.Reason != "wrong target" {
 		t.Fatalf("want denied with its reason, got %+v", resp)
