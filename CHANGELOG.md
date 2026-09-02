@@ -47,6 +47,12 @@ grant already carries the entry, and only what predates it needs the walk. Trust
 now checks whether the project directory already has the inheritable entry, one
 `getfacl` on one directory, and skips the walk when it does.
 
+Bulk trust also derives the vault key once for the batch rather than once per
+file. Deriving it is Argon2id — deliberately expensive, since it is what stands
+between a stolen vault file and its contents — so doing it per file turned a
+fixed ~50ms cost into a per-file one. Seventeen projects paid nearly a second
+for the same answer seventeen times.
+
 `byn repair` still forces it. Repair is called when a tree is known to be wrong,
 and the entry on the root proves nothing about what lies beneath it — which is
 exactly the situation repair exists to fix.

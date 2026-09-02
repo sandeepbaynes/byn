@@ -123,6 +123,13 @@ func withResolvedActionTargets(actions []string, baseDirs ...string) []string {
 // os.Stat failure after a successful ReadFile ⇒ the grant is also refused (no
 // mtime=0 v2 records; fail closed — the caller should retry).
 func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vaultName, path string, body, vkKey, password []byte) (canon, hash string, changed bool, policy trustGrantPolicy, err error) {
+	return d.putTrustRecord(ctx, st, vaultName, path, body, vkKey, password, nil)
+}
+
+// putTrustRecord is putTrustRecordWithKey with the vault key optionally already
+// derived — see handleTrustGrantBulk, which derives it once for the batch
+// instead of once per file.
+func (d *Daemon) putTrustRecord(ctx context.Context, st *vault.Store, vaultName, path string, body, vkKey, password, vaultKey []byte) (canon, hash string, changed bool, policy trustGrantPolicy, err error) {
 	// Parse and validate BEFORE writing anything to the trust store.
 	parsed, perr := bynfile.Parse(body)
 	if perr != nil {
@@ -193,7 +200,7 @@ func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vau
 		Project: defaultIfEmpty(parsed.Scope.Project, vault.DefaultProjectName),
 		Env:     defaultIfEmpty(parsed.Scope.Env, vault.DefaultEnvName),
 	}
-	capBlob, cerr := d.sealExecCapability(ctx, st, capScope, []string(parsed.Exec.Env), parsed.AllowsAll(), password)
+	capBlob, cerr := d.sealExecCapabilityWithKey(ctx, st, capScope, []string(parsed.Exec.Env), parsed.AllowsAll(), password, vaultKey)
 	if cerr != nil {
 		return "", "", false, trustGrantPolicy{}, fmt.Errorf("seal exec capability: %w", cerr)
 	}
@@ -218,6 +225,14 @@ func (d *Daemon) putTrustRecordWithKey(ctx context.Context, st *vault.Store, vau
 // every var currently in scope. Uses the password when supplied (locked grant),
 // else the in-memory key (passkey grant — vault unlocked).
 func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope vault.Scope, allow []string, wildcard bool, password []byte) ([]byte, error) {
+	return d.sealExecCapabilityWithKey(ctx, st, scope, allow, wildcard, password, nil)
+}
+
+// sealExecCapabilityWithKey is sealExecCapability for a caller that has already
+// derived the vault key. Deriving it is Argon2id and costs ~50ms; doing that per
+// file turned a fixed cost into a per-file one, which is most of what was left
+// of a bulk trust after the ACL walk was removed.
+func (d *Daemon) sealExecCapabilityWithKey(ctx context.Context, st *vault.Store, scope vault.Scope, allow []string, wildcard bool, password, vaultKey []byte) ([]byte, error) {
 	if d.fpMACKey == nil {
 		return nil, nil // no machine fingerprint → no cold capability
 	}
@@ -244,9 +259,12 @@ func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope 
 	var rowKeys map[string][]byte
 	var err error
 	if len(names) > 0 {
-		if !useVaultKey && len(password) > 0 {
+		switch {
+		case !useVaultKey && len(vaultKey) > 0:
+			rowKeys, err = st.CaptureRowKeysWithKey(ctx, vaultKey, scope, names)
+		case !useVaultKey && len(password) > 0:
 			rowKeys, err = st.CaptureRowKeysWithPassword(ctx, password, scope, names)
-		} else {
+		default:
 			rowKeys, err = st.CaptureRowKeys(ctx, scope, names)
 		}
 		if err != nil {

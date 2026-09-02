@@ -893,6 +893,20 @@ func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *i
 	defer zeroBytes(vkKey)
 
 	results := make([]ipc.TrustGrantResult, 0, len(req.Paths))
+	// Derive the vault key ONCE for the batch. It is Argon2id — deliberately
+	// expensive, since it is what stands between a stolen vault file and its
+	// contents — and deriving it per file turned a fixed cost into a per-file
+	// one: ~50ms each, so a seventeen-project monorepo paid nearly a second for
+	// the same answer seventeen times. Only needed while the vault is locked;
+	// an open vault already has the key in memory.
+	var batchVaultKey []byte
+	if st.IsLocked() && len(req.Password) > 0 {
+		if vk, verr := st.UnwrapVaultKey(req.Password); verr == nil {
+			batchVaultKey = vk
+			defer zeroBytes(batchVaultKey)
+		}
+	}
+
 	for _, p := range req.Paths {
 		body, _, rerr := readBynFile(p)
 		if rerr != nil {
@@ -903,7 +917,7 @@ func (d *Daemon) handleTrustGrantBulk(ctx context.Context, env *ipc.Envelope) *i
 			results = append(results, ipc.TrustGrantResult{Path: p, Error: rerr.Error()})
 			continue
 		}
-		canon, hash, changed, policy, perr := d.putTrustRecordWithKey(ctx, st, name, p, body, vkKey, req.Password)
+		canon, hash, changed, policy, perr := d.putTrustRecord(ctx, st, name, p, body, vkKey, req.Password, batchVaultKey)
 		if perr != nil {
 			// Parse/validate failure → per-file error, others continue.
 			d.auditEmit(ctx, name, audit.Event{

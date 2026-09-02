@@ -596,6 +596,27 @@ func (s *Store) CaptureRowKeys(ctx context.Context, scope Scope, names []string)
 	return s.captureRowKeys(ctx, vk, scope, names)
 }
 
+// UnwrapVaultKey derives the vault key from a password without unlocking.
+//
+// Exposed so a caller doing the same work repeatedly can pay for it once. The
+// derivation is Argon2id and deliberately expensive — it is the thing standing
+// between a stolen vault file and its contents — so a loop that unwraps per
+// item turns a fixed cost into a per-item one. The caller owns the returned key
+// and must zero it.
+func (s *Store) UnwrapVaultKey(password []byte) ([]byte, error) {
+	wrapped, err := os.ReadFile(filepath.Join(s.dir, wrappedFilename)) // #nosec G304 -- path is store-configured
+	if err != nil {
+		return nil, fmt.Errorf("vault: read wrapped key: %w", err)
+	}
+	return vcrypto.Unwrap(password, wrapped)
+}
+
+// CaptureRowKeysWithKey is CaptureRowKeysWithPassword for a caller that has
+// already derived the vault key — see UnwrapVaultKey.
+func (s *Store) CaptureRowKeysWithKey(ctx context.Context, vk []byte, scope Scope, names []string) (map[string][]byte, error) {
+	return s.captureRowKeys(ctx, vk, scope, names)
+}
+
 // CaptureRowKeysWithPassword is CaptureRowKeys for the locked path: it unwraps
 // the vault key with password (proof-of-presence, like trust grant), does the
 // capture+migration, and zeroes the key. See CaptureRowKeys.

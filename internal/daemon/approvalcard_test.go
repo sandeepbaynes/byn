@@ -455,3 +455,51 @@ func TestOnceGrant_OrdinaryGrantsStillRepeat(t *testing.T) {
 		}
 	}
 }
+
+// Bulk trust must derive the vault key once, not once per file.
+//
+// Deriving it is Argon2id — ~50ms, deliberately expensive — so doing it per file
+// turned a fixed cost into a per-file one. On a seventeen-project monorepo that
+// was most of what remained of a bulk trust after the recursive ACL walk was
+// removed. The observable property is that trusting N files costs about the
+// same as trusting one.
+func TestTrustBulk_DerivesTheVaultKeyOncePerBatch(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "SEED", []byte("v"))
+
+	content := "[scope]\n\n[exec]\nenv = [\"SEED\"]\nactions = [\"x\"]\n"
+	one := writeBynContent(t, content)
+	many := make([]string, 0, 12)
+	for i := 0; i < 12; i++ {
+		many = append(many, writeBynContent(t, content))
+	}
+
+	lockVaultStore(t, d, "default")
+	c.Session = nil
+
+	single := time.Now()
+	if err := c.Call(ipc.OpTrustGrantBulk,
+		ipc.TrustGrantBulkReq{Paths: []string{one}, Password: pw}, &ipc.TrustGrantBulkResp{}); err != nil {
+		t.Fatalf("single: %v", err)
+	}
+	singleDur := time.Since(single)
+
+	batch := time.Now()
+	if err := c.Call(ipc.OpTrustGrantBulk,
+		ipc.TrustGrantBulkReq{Paths: many, Password: pw}, &ipc.TrustGrantBulkResp{}); err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	batchDur := time.Since(batch)
+
+	// Twelve files deriving their own key would cost roughly twelve times one.
+	// The bound is loose on purpose — this is a timing test and CI is noisy —
+	// but it is far below the per-file behaviour it is guarding against.
+	if batchDur > 6*singleDur+time.Second {
+		t.Errorf("12 files took %v against %v for one — the key looks like it is being derived per file",
+			batchDur.Round(time.Millisecond), singleDur.Round(time.Millisecond))
+	}
+	t.Logf("one=%v twelve=%v", singleDur.Round(time.Millisecond), batchDur.Round(time.Millisecond))
+}
