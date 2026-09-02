@@ -23,6 +23,10 @@ HELPER      := $(BIN_DIR)/byn-exec-helper
 # one each find their own.
 TUI         := $(BIN_DIR)/byn-tui
 
+# Where byn keeps its own helpers. Not on PATH — these are byn's, not the
+# user's.
+LIBEXECDIR  ?= /usr/local/libexec
+
 # Cross-compile targets for release artifacts (pure-Go, CGO disabled).
 DIST_DIR  := dist
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
@@ -81,7 +85,10 @@ install: build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
 	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
-	install -m 0755 $(TUI) $(DESTDIR)$(BINDIR)/byn-tui
+	@# The editor goes to libexec, not bin: it is byn's own helper, not a command
+	@# anybody runs. On PATH it would only offer a way to invoke it wrongly.
+	install -d $(DESTDIR)$(LIBEXECDIR)
+	install -m 0755 $(TUI) $(DESTDIR)$(LIBEXECDIR)/byn-tui
 	@# The helper that actually RUNS lives in libexec with file capabilities,
 	@# put there by `byn setup`. Installing only to bindir left it untouched:
 	@# it drifted six weeks behind the CLI it shares an exec-token protocol

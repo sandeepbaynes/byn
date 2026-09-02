@@ -80,3 +80,56 @@ func TestTUIArgs_PassesTheResolvedScope(t *testing.T) {
 		t.Error("an empty scope must pass no flags, so the editor applies its own defaults")
 	}
 }
+
+// TestRunTUI_DoesNotExecWithoutATerminal is named after a failure that destroyed
+// the test binary running it.
+//
+// runTUI performs a real execve, so once byn-tui was actually installed on the
+// machine, a test that called runTUI had its own process replaced mid-run. The
+// package failed with no failing test named, and only on a machine where byn had
+// been installed — it passed everywhere byn-tui was absent, including where the
+// change was developed.
+//
+// byn now refuses before exec'ing when there is no terminal, which is also the
+// better behaviour: the editor takes over the terminal, so with none there is
+// nothing to take over, and replacing this process with one that will refuse
+// immediately makes the error arrive from a program the user never named.
+func TestRunTUI_DoesNotExecWithoutATerminal(t *testing.T) {
+	called := false
+	orig := execTUI
+	execTUI = func(string, []string, []string) error { called = true; return nil }
+	t.Cleanup(func() { execTUI = orig })
+
+	// go test gives the process pipes, not a terminal — the same condition as a
+	// script, a pipeline, or CI.
+	if got := runTUI(nil, cliScope{}); got != exitErr {
+		t.Fatalf("runTUI without a terminal returned %d, want %d", got, exitErr)
+	}
+	if called {
+		t.Fatal("runTUI exec'd the editor with no terminal to draw on; when this is a " +
+			"real execve rather than a stub, it replaces the calling process")
+	}
+}
+
+// The editor must be pinned to byn's own version, never @latest for a release.
+// An editor from a different release is a mismatch nobody asked for, and byn
+// already reports version skew between its own parts as a fault.
+func TestTUIModuleRef_PinsAReleaseVersion(t *testing.T) {
+	orig := version
+	t.Cleanup(func() { version = orig })
+
+	version = "0.6.4"
+	if got := tuiModuleRef(); got != "github.com/sandeepbaynes/byn/cmd/byn-tui@v0.6.4" {
+		t.Errorf("a release build must pin its own version, got %q", got)
+	}
+	version = "v0.6.4"
+	if got := tuiModuleRef(); !strings.HasSuffix(got, "@v0.6.4") {
+		t.Errorf("a leading v must not be doubled, got %q", got)
+	}
+	// A working-tree build names no published version; pinning it would fail
+	// with a confusing "unknown revision" instead of installing anything.
+	version = "0.6.4-2-gabc1234-dirty"
+	if got := tuiModuleRef(); !strings.HasSuffix(got, "@latest") {
+		t.Errorf("a development build must fall back to @latest, got %q", got)
+	}
+}

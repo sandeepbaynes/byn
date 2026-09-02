@@ -124,7 +124,13 @@ fi
 # the temp dir is what this script did on first contact with that release, which
 # turned `byn edit` into "editor not found" for everyone who installed this way.
 if [ -f "$work/byn-tui" ]; then
-  tui_dest="$dir/byn-tui"
+  # libexec, not the bin dir: the editor is byn's own helper rather than a
+  # command anyone runs directly, and a fixed path means an installed byn finds
+  # it whatever PATH says — including under sudo, whose secure_path is not the
+  # user's.
+  tui_libexec=/usr/local/libexec
+  $SUDO mkdir -p "$tui_libexec" 2>/dev/null || true
+  tui_dest="$tui_libexec/byn-tui"
   $SUDO mv "$work/byn-tui" "$tui_dest" || say "warning: could not install byn-tui to $tui_dest"
   $SUDO chmod 0755 "$tui_dest" 2>/dev/null || true
   $SUDO restorecon "$tui_dest" 2>/dev/null || true

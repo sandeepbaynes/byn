@@ -66,16 +66,18 @@ func ensureOnSystemPath(stdout, stderr io.Writer) (installedAt string) {
 	// copying byn alone into a system path would leave a byn whose editor is not
 	// there — working everywhere except the one command that needs a second
 	// binary.
-	for _, companion := range []string{"byn-exec-helper", tuiBinary} {
-		src := filepath.Join(filepath.Dir(exe), companion)
-		if !fileExists(src) {
-			continue
-		}
-		dst := filepath.Join(systemBinDir, companion)
+	if src := filepath.Join(filepath.Dir(exe), "byn-exec-helper"); fileExists(src) {
+		dst := filepath.Join(systemBinDir, "byn-exec-helper")
 		if cerr := copyExecutable(src, dst); cerr == nil {
 			restoreSELinuxContext(dst)
 		}
 	}
+	// The editor goes to libexec rather than the bin dir. It is byn's own
+	// helper, not a command anybody runs: it takes no useful arguments and does
+	// nothing without a daemon, so putting it on PATH only offers a way to
+	// invoke it wrongly. A fixed path also means an installed byn finds it
+	// whatever the caller's PATH says, including under sudo.
+	installTUIHelper(filepath.Dir(exe), stdout)
 	_, _ = fmt.Fprintf(stdout, "installed %s (so `byn` works from any shell, under sudo, and for the service)\n", dest)
 	return dest
 }
@@ -212,4 +214,26 @@ func serviceExecPath() (string, error) {
 	}
 	return "", fmt.Errorf("byn runs from %s, which the %s service user cannot read, "+
 		"and it could not be installed into %s", exe, privsepDaemonUserName, systemBinDir)
+}
+
+// installTUIHelper places the editor in byn's libexec directory.
+//
+// Sources it from beside the byn being installed, the same way the spawn helper
+// is sourced, so a `go install`-ed byn that has its editor alongside gets it put
+// somewhere an installed byn can find. Best-effort and quiet on failure: the
+// editor missing degrades `byn edit`, which says so plainly, and must not fail a
+// setup that has already provisioned everything else.
+func installTUIHelper(srcDir string, stdout io.Writer) {
+	src := filepath.Join(srcDir, tuiBinary)
+	if !fileExists(src) {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(tuiLibexecPath), 0o755); err != nil { //nolint:gosec // fixed system path, must be traversable
+		return
+	}
+	if err := copyExecutable(src, tuiLibexecPath); err != nil {
+		return
+	}
+	restoreSELinuxContext(tuiLibexecPath)
+	_, _ = fmt.Fprintf(stdout, "installed %s (the editor `byn edit` runs)\n", tuiLibexecPath)
 }

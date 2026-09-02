@@ -14,13 +14,23 @@ plaintext.
 brew install sandeepbaynes/tap/byn
 # or
 curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh | sh
-# or, with the Go toolchain (builds from source) — install ALL THREE binaries
-# somewhere already on your PATH, then provision:
+# or, with the Go toolchain (builds from source). `go install` takes one binary
+# at a time, so byn's two helpers come separately — or let byn fetch the editor
+# itself the first time you run `byn edit`:
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
-GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-tui@latest
 sudo byn setup
 ```
+
+**Homebrew, the install script and the system packages bundle everything.** byn
+ships three binaries — `byn`, the privileged spawn helper, and the editor
+`byn edit` runs — and every packaged install places all of them. There is no
+separate thing to install.
+
+Only `go install` is different, because it installs one main package per
+invocation. The spawn helper is listed above because privilege separation needs
+it at setup time; the editor is not, because the first `byn edit` offers to
+fetch it, pinned to your byn's own version, and asks before doing so.
 
 > **The install script and the packages provision for you.** They run
 > `byn setup` as part of installing, which is why they ask for your password:

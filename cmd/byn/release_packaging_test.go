@@ -41,8 +41,29 @@ func TestMakefile_BuildsAndInstallsTheEditor(t *testing.T) {
 	if !strings.Contains(s, "./cmd/byn-tui") {
 		t.Error("make build no longer builds the editor")
 	}
-	if !strings.Contains(s, "$(DESTDIR)$(BINDIR)/byn-tui") {
-		t.Error("make install no longer installs the editor — a source build would have " +
-			"a byn that cannot find it")
+	if !strings.Contains(s, "$(DESTDIR)$(LIBEXECDIR)/byn-tui") {
+		t.Error("make install no longer installs the editor into libexec — a source build " +
+			"would have a byn that cannot find it")
+	}
+}
+
+// The curl installer is a third way a binary reaches a machine, and the one that
+// already shipped a byn with no editor once: v0.6.3's archive carried byn-tui,
+// the installer unpacked it into a temp directory and deleted it with the rest,
+// and everyone who installed that way had `byn edit` fail. Nothing in the code
+// was wrong; only the installer was.
+func TestInstaller_PlacesTheEditorInLibexec(t *testing.T) {
+	sh, err := os.ReadFile("../../install.sh")
+	if err != nil {
+		t.Skipf("install.sh unavailable: %v", err)
+	}
+	s := string(sh)
+	if !strings.Contains(s, "byn-tui") {
+		t.Fatal("install.sh no longer installs the editor; a curl|sh install would have " +
+			"no `byn edit`")
+	}
+	if !strings.Contains(s, "/usr/local/libexec") {
+		t.Error("install.sh must place the editor in byn's libexec directory, which is " +
+			"where an installed byn looks for it first")
 	}
 }

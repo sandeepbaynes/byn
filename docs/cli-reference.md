@@ -540,9 +540,19 @@ How the child runs — and whether it needs a password — depends on the mode:
 
 ### `byn edit` / `byn view`
 
-Opens the modal editor, which lives in a **separate binary** (`byn-tui`) that
-byn launches. It ships in the same archive and package, and `byn setup` places
-it next to `byn`; you should never need to invoke it directly.
+Opens the modal editor, which lives in a second binary (`byn-tui`) that byn
+launches. It is not a separate install: every packaged install bundles it, and
+byn keeps it in its own `libexec` directory rather than on your `PATH`, because
+it is byn's helper and not a command anybody runs.
+
+byn looks for it in `/usr/local/libexec/byn-tui` first, then beside the running
+`byn` — so a source build finds the one it was built with, and an installed byn
+is not shadowed by a stray copy earlier on someone's `PATH`.
+
+The one path that cannot bundle it is `go install`, which installs a single main
+package per invocation. There, the first `byn edit` offers to fetch the editor
+pinned to your byn's own version, and asks before doing so — fetching and
+building code is a choice, not something a secrets manager should do quietly.
 
 It is separate for a measured reason. `bubbletea`'s package init asks the
 terminal for its background colour and waits up to five seconds for a reply —

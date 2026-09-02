@@ -639,15 +639,25 @@ using the same path forms as \fBtrust\fR (directories, \fB\-\-paths\fR,
 idempotent.
 .SS Visual editor
 .PP
-The editor ships as a separate binary,
+The editor is a second binary,
 .BR byn-tui ,
 which
 .B byn
-launches. It is in the same archive and package, and
+launches. It is not a separate install: every packaged install bundles it, and
 .B byn setup
-places it beside
-.BR byn ;
-it is not meant to be run directly.
+places it in
+.IR /usr/local/libexec ,
+byn's own helper directory, rather than on
+.BR PATH .
+byn looks there first, then beside the running
+.BR byn .
+.PP
+The one path that cannot bundle it is
+.BR "go install" ,
+which installs a single main package per invocation. There the first
+.B byn edit
+offers to fetch the editor, pinned to this byn's version, and asks before doing
+so.
 .PP
 It is separate because the terminal library it uses queries the terminal for its
 background colour during package initialisation and waits up to five seconds for

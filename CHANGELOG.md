@@ -97,6 +97,40 @@ token takes the VALUE of a preceding flag for the command. Where an explicit
 The Linux `execCmdSummary` still has the original behaviour, and its own doc
 comment already documents the corrected one.
 
+## v0.6.4 — unreleased
+
+### The editor is part of byn, not something to install
+
+v0.6.3 split the editor into `byn-tui` and left it looking like a separate
+thing: the install script dropped it, the Go-toolchain path listed a third
+command, and it sat on `PATH` as though anyone would run it.
+
+It is byn's helper, so it now lives in byn's own directory —
+`/usr/local/libexec/byn-tui`, beside the privileged spawn helper, which has
+always been kept there for the same reason. `byn` looks there first, then beside
+the running binary, so a source build finds the one it was built with and an
+installed byn cannot be shadowed by a stray copy earlier on someone's `PATH`.
+
+Every packaged install bundles it: Homebrew, the curl installer, deb, rpm, apk,
+and `make install`. The one path that cannot is `go install`, which installs a
+single main package per invocation — so the first `byn edit` now offers to fetch
+the editor for you, pinned to your byn's own version rather than `@latest`,
+after asking. Fetching and building code from the network is a supply-chain
+event, and a secrets manager should not do it quietly.
+
+### `byn edit` no longer replaces the process that ran it
+
+The launcher performs a real `execve`, which is right for a program that owns
+the terminal — but it did so before checking there was a terminal at all. A test
+that called it on a machine where the editor happened to be installed had its
+own test binary replaced mid-run, and the package failed with no failing test
+named. It passed everywhere the editor was absent, including where the change
+was written.
+
+byn now refuses before exec'ing when there is no terminal, which is also the
+better behaviour: replacing this process with one that will immediately refuse
+makes the error arrive from a program the user never named.
+
 ## v0.6.3 — 2026-09-02
 
 ### Every byn command was paying five seconds on some terminals

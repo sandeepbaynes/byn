@@ -21,12 +21,37 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
 // tuiBinary is the program that draws the editor.
 const tuiBinary = "byn-tui"
+
+// tuiLibexecPath is where an installed byn keeps its editor.
+//
+// libexec, not bin, because this is byn's own helper rather than a command
+// anybody runs: it takes no useful arguments, does nothing without a daemon, and
+// putting it on PATH only offers a way to invoke it wrongly. byn already keeps
+// its privileged spawn helper here for the same reason.
+//
+// A fixed path also means an installed byn always finds its editor, whatever the
+// caller's PATH happens to be — including under sudo, whose secure_path is not
+// the user's.
+const tuiLibexecPath = "/usr/local/libexec/" + tuiBinary
+
+// execTUI replaces this process with the editor.
+//
+// A variable so a test can observe the launch instead of being destroyed by it.
+// This is a real execve: a test that called runTUI on a machine where byn-tui
+// happened to be installed had its own test binary replaced mid-run, which
+// surfaced as a package failing with no failing test named — and only on a
+// machine that had installed byn.
+var execTUI = syscallExec
 
 func runTUI(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("byn", flag.ContinueOnError)
@@ -35,11 +60,36 @@ func runTUI(args []string, scope cliScope) int {
 		return exitErr
 	}
 
+	// Refuse before exec'ing, not after. The editor takes over the terminal;
+	// with no terminal there is nothing to take over, and byn already knows
+	// that. byn-tui checks again for its own sake — it can be run directly —
+	// but replacing this process with one that will immediately refuse buys
+	// nothing and makes the failure arrive from a program the user did not
+	// name.
+	if !term.IsTerminal(int(os.Stdout.Fd())) || !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintln(os.Stderr, "Error: byn TUI requires a terminal (stdout/stdin is piped or redirected)")
+		return exitErr
+	}
+
 	path, err := findTUIBinary()
 	if err != nil {
+		// Missing only happens on the `go install` path — every packaged install
+		// bundles the editor. So rather than print a command and stop, offer to
+		// run it: the Go toolchain that installed byn is right there, and the
+		// person is at a terminal by definition, since the editor needs one.
+		if dest, derr := tuiInstallDest(); derr == nil {
+			if got, ierr := offerTUIInstall(dest); ierr == nil {
+				path = got
+			} else if !strings.Contains(ierr.Error(), "declined") {
+				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), ierr)
+			}
+		}
+	}
+	if path == "" {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
-		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Fix:"),
-			dim("reinstall byn, or run "+cyan(sudoByn("setup"))+" to place it next to byn"))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Fix:"), dim("install it with ")+cyan("go install "+tuiModuleRef()))
+		fmt.Fprintf(os.Stderr, "%s %s\n", dim("     "),
+			dim("or reinstall byn — every packaged install bundles the editor"))
 		return exitErr
 	}
 
@@ -50,7 +100,7 @@ func runTUI(args []string, scope cliScope) int {
 	// is byn's without a hop.
 	argv := []string{path}
 	argv = append(argv, tuiArgs(scope)...)
-	if xerr := syscallExec(path, argv, os.Environ()); xerr != nil {
+	if xerr := execTUI(path, argv, os.Environ()); xerr != nil {
 		fmt.Fprintf(os.Stderr, "%s could not start %s: %v\n", boldRed("Error:"), tuiBinary, xerr)
 		return exitErr
 	}
@@ -92,12 +142,19 @@ func findTUIBinary() (string, error) {
 // findTUIBinaryNear is findTUIBinary with the byn path injected, so a test can
 // describe the machine it means rather than the one running it.
 func findTUIBinaryNear(exe string) (string, error) {
+	// byn's own directory first. An installed byn keeps the editor here, and
+	// preferring it means a second copy left on PATH by an older install cannot
+	// shadow the one that belongs to this byn.
+	if usable(tuiLibexecPath) {
+		return tuiLibexecPath, nil
+	}
 	if exe != "" {
 		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
 			exe = resolved
 		}
-		beside := filepath.Join(filepath.Dir(exe), tuiBinary)
-		if fi, serr := os.Stat(beside); serr == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
+		// Beside the running byn: the source build and `go install` case, where
+		// nothing has been placed in libexec yet.
+		if beside := filepath.Join(filepath.Dir(exe), tuiBinary); usable(beside) {
 			return beside, nil
 		}
 	}
@@ -122,4 +179,34 @@ func vaultStateByName(status ipc.StatusResp, name string) (locked, exists bool) 
 // defaultVaultState scans a StatusResp for the "default" vault.
 func defaultVaultState(status ipc.StatusResp) (locked, exists bool) {
 	return vaultStateByName(status, "default")
+}
+
+// usable reports whether path is an executable file we could actually run.
+// A directory or a non-executable file of the right name is not the editor, and
+// treating one as such trades a clear message for a permission error at exec.
+func usable(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0
+}
+
+// tuiInstallDest is where a freshly built editor should land: beside the running
+// byn, which is the second place findTUIBinaryNear looks.
+//
+// Beside byn rather than libexec because this path runs as the user, and libexec
+// needs root. `byn setup` moves it to libexec later; until then, beside byn is
+// found and works.
+func tuiInstallDest() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	dir := filepath.Dir(exe)
+	// Writable by us, or the install will fail after the download.
+	if err := unix.Access(dir, unix.W_OK); err != nil {
+		return "", fmt.Errorf("%s is not writable", dir)
+	}
+	return dir, nil
 }
