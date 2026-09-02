@@ -3,6 +3,35 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.6.1 — unreleased
+
+### The writable-path reconcile did nothing on macOS
+
+It shelled out to `setfacl` unconditionally. macOS has no `setfacl` — it has
+`chmod +a`, which byn already uses everywhere else on that platform — so every
+invocation failed with "command not found", the error was dropped because the
+pass is deliberately best-effort, and the credential lockout the whole thing
+exists to fix stayed unfixed.
+
+It compiled, it vetted, it passed every test, and it did nothing. A
+cross-compile catches a platform stub that will not build; nothing catches one
+that builds and is wrong except asserting what it produces, which there is now a
+test for.
+
+The per-file grant is a platform function now: `setfacl -m u:USER:rwX` on Linux,
+`chmod +a "USER allow read,write"` on macOS, and no command at all where byn has
+no privsep tier — so the caller skips instead of spawning something that cannot
+work. No inheritance flags on the macOS ACE: this repairs a file that already
+exists and was locked down afterwards, which is the opposite case from the
+trust-time grant that sets inheritance on a directory.
+
+One honest limitation. On Linux the pass reads the ACL to skip files already
+granted, which is what makes running it before every exec affordable. Reading a
+macOS ACL means parsing `ls -le` per file, so the darwin path re-issues the
+grant instead — `chmod +a` refuses a duplicate ACE rather than accumulating, and
+the pass is bounded to the paths a `.byn` explicitly declares, which is a handful
+of files.
+
 ## v0.6.0 — 2026-09-02
 
 ### Shared tool-state files stop locking one identity out

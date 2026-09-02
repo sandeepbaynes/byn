@@ -93,7 +93,11 @@ func ReconcileWritableACLs(run func(name string, args ...string) error, dirs []s
 			// Files owned by the service user cannot be changed from here and
 			// are not this direction's problem; setfacl simply refuses and the
 			// error is dropped.
-			if run("setfacl", "-m", "u:"+execUser+":rwX", path) == nil {
+			name, args := grantFileACLCommand(path, execUser)
+			if name == "" {
+				return filepath.SkipAll // no ACL tool on this platform
+			}
+			if run(name, args...) == nil {
 				fixed++
 			}
 			return nil
