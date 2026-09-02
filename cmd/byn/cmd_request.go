@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
@@ -59,9 +60,23 @@ func runRequestWatch(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
 		return exitErr
 	}
+	// Always send an explicit window, and hold the connection longer than it.
+	//
+	// A watch is one IPC round-trip that lasts as long as the wait, and the
+	// client caps a round-trip at 60 seconds. So the first real watch died at
+	// exactly 60s with "i/o timeout" while the decision it wanted was recorded
+	// correctly in the queue — the answer arrived and there was nobody left on
+	// the line. The integration test missed it because the decision came back in
+	// under a second and never approached the cap.
+	seconds := *timeout
+	if seconds <= 0 {
+		seconds = defaultWatchSeconds
+	}
+	c := newClient(dir, scope.Vault)
+	c.Timeout = watchClientTimeout(seconds)
 	var resp ipc.ApprovalWatchResp
-	if cerr := newClient(dir, scope.Vault).Call(ipc.OpApprovalWatch,
-		ipc.ApprovalWatchReq{Ticket: ticket, TimeoutSeconds: *timeout}, &resp); cerr != nil {
+	if cerr := c.Call(ipc.OpApprovalWatch,
+		ipc.ApprovalWatchReq{Ticket: ticket, TimeoutSeconds: seconds}, &resp); cerr != nil {
 		return handleCallError(cerr)
 	}
 	if !*human {
@@ -211,3 +226,31 @@ either. Only the caller that actually raised the question holds one.
 
 Pass the ticket on stdin instead of argv when you can — an argument is visible
 in "ps" to every process on the machine while the command runs.`
+
+// defaultWatchSeconds mirrors the daemon's default wait. The CLI sends it
+// explicitly rather than sending zero and letting the daemon choose, so the two
+// sides cannot disagree about how long the wait is — which is the disagreement
+// that broke the first live watch.
+const defaultWatchSeconds = 30 * 60
+
+// maxWatchSeconds mirrors the daemon's ceiling. Asking for longer is not an
+// error; the daemon clamps, and the client simply must not hang up first.
+const maxWatchSeconds = 6 * 60 * 60
+
+// watchClientTimeout is how long the CLI holds the connection open for a watch
+// of the given length.
+//
+// Strictly longer than the wait itself, always. The server returns a "still
+// pending, you stopped waiting" answer at the end of its window, and that answer
+// is useful — it tells an agent the request is alive and unanswered. If the
+// client hangs up first, that answer is replaced by a transport error, which
+// says nothing about the approval and looks like byn is broken.
+func watchClientTimeout(watchSeconds int) time.Duration {
+	if watchSeconds > maxWatchSeconds {
+		watchSeconds = maxWatchSeconds // the daemon clamps here too
+	}
+	return time.Duration(watchSeconds)*time.Second + watchTimeoutSlack
+}
+
+// watchTimeoutSlack covers the round-trip either side of the wait itself.
+const watchTimeoutSlack = 30 * time.Second

@@ -125,6 +125,13 @@ Cancelling is not denying. A denial is the owner's judgment and counts toward
 the cooldown that stops a fingerprint being re-asked; a cancellation is the
 asker changing its mind, and leaves no mark on the owner's answer history.
 
+A request that asked for a single use says so on its own line in `byn approve`,
+directly under the command, and is marked `[once]` in the history table. It was
+first written into the timing row between the retry count and the vault name —
+a list of bookkeeping, which is not what it is: it changes what a plain
+`byn approve <id>` does, and an approver should learn that before deciding
+rather than from the result.
+
 The decider's `--reason` now reaches the asker, through the watch and nowhere
 else. A refusal without a reason leaves an agent guessing between "fix it and
 ask again" and "stop". Owners still see it in `byn approve --history`.

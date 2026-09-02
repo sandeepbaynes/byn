@@ -32,6 +32,19 @@ func renderPendingEntry(w io.Writer, e ipc.ApprovalEntry, now time.Time, width i
 		_, _ = fmt.Fprint(w, fieldRowsWrapped(label, value, width, nil))
 	}
 
+	// What the asker asked for, on its own line and directly under what it wants
+	// to run.
+	//
+	// This started life appended to the timing row, between the retry count and
+	// the vault name — which is a list of bookkeeping, and it is not
+	// bookkeeping: it changes what a plain `byn approve <id>` DOES. An approver
+	// should learn that before deciding, not from the result afterwards, and
+	// certainly not by reading to the end of a line of five other facts.
+	if e.AskOnce {
+		_, _ = fmt.Fprint(w, fieldRow("wants", roleWarn("a single use")+
+			roleNote(" — approving grants one run, not a window")))
+	}
+
 	// Why, in the asker's words, marked as the claim it is. byn cannot check a
 	// stated purpose and does not pretend to.
 	switch {
@@ -79,12 +92,6 @@ func pendingTiming(e ipc.ApprovalEntry, now time.Time) string {
 	}
 	if e.Repeats > 0 {
 		parts = append(parts, fmt.Sprintf("retried %d×", e.Repeats))
-	}
-	// What the asker asked for, when it asked for less than the default. Worth
-	// a word on the card because it changes what plain `byn approve <id>` will
-	// do, and an approver should not have to learn that from the result.
-	if e.AskOnce {
-		parts = append(parts, "asked for a single use")
 	}
 	// Whether anything is still listening. Two requests an hour apart look
 	// identical on a list, and one may have a process sitting on it right now
@@ -149,6 +156,11 @@ func renderHistoryTable(w io.Writer, entries []ipc.ApprovalEntry, now time.Time,
 		}
 		if len(e.Summary) > 0 {
 			_, r.command = splitSummaryVerb(oneLine(e.Summary[0], 400))
+		}
+		// Marked in the rows too. A history is read to answer "what did it ask
+		// for, and what did I give it", and single-use is half of the answer.
+		if e.AskOnce {
+			r.command = "[once] " + r.command
 		}
 		if r.why == "" {
 			r.why = "—"
