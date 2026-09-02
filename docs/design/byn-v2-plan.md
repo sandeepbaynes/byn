@@ -183,10 +183,10 @@ grown the asker's side and reached all three surfaces.
 | 3 | trust v2 policy + diff | `01e39b3` |
 | 4 | approval queue + non-blocking exec | `0be4350`, `6391b91` |
 | 6a | portal approvals page | `498bdc6`, `6f8468d` (audit) |
-| 4b | asker-side approvals: watch ticket, instant callback, cancel, reason delivery | `585c1ac`, `1040332` |
+| 4b | asker-side approvals: watch ticket, instant callback, cancel, reason delivery | `3ce76b0`, `c36cf2a` |
 | 4c | agent-requested single use (`byn exec --once`), approver override (`--always`) | `345860a` |
-| 4d | approvals on every surface — portal decisions + history + revoke, TUI pane (`g p`) | `c8a200a`, `f879e3f`, `de26dc1` |
-| — | v1 fixes found by using it | `d95f8a1`, `4dd6914`, `eb869fc`, `1482b1e` |
+| 4d | approvals on every surface — portal decisions + history + revoke, TUI pane (`g p`) | `ccd466e`, `9068435`, `268844b` |
+| — | v1 fixes found by using it | `d95f8a1`, `4dd6914`, `e9fca64`, `7b7778e` |
 
 Some rows cite fewer commits than the work took. History has been rewritten
 twice — once to scrub external references, once to add a missing DCO sign-off —
@@ -207,8 +207,8 @@ in under a second.
 found by running byn, not by testing it. The pattern is consistent enough to be
 worth stating: a unit test proves a piece works, and the failures have all been
 in the joins between pieces. `/approvals` had a correct route parser, a correct
-renderer, and no branch connecting them (`de26dc1`). A watch had a correct daemon
-handler and a client that hung up first (`1040332`). An ACL reconcile did correct
+renderer, and no branch connecting them (`268844b`). A watch had a correct daemon
+handler and a client that hung up first (`c36cf2a`). An ACL reconcile did correct
 work and repeated it before every exec (`d95f8a1`). None of those is visible from
 inside the unit that owns it.
 
