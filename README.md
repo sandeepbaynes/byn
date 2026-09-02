@@ -28,10 +28,11 @@ curl -fsSL https://raw.githubusercontent.com/sandeepbaynes/byn/main/install.sh |
 # With the Go toolchain — works today, builds from source.
 # GOBIN puts byn somewhere already on your PATH; `go install` alone drops it in
 # ~/go/bin, which is on no default PATH and outside sudo's secure_path, so
-# `byn` would not be a command you can run. Install BOTH binaries: `byn setup`
-# installs the spawn helper from beside byn.
+# `byn` would not be a command you can run. Install all three binaries: `byn
+# setup` installs the spawn helper and the editor from beside byn.
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn@latest
 GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-exec-helper@latest
+GOBIN=$HOME/.local/bin go install github.com/sandeepbaynes/byn/cmd/byn-tui@latest
 sudo byn setup      # provisions privilege separation, and links byn into /usr/local/bin
 ```
 

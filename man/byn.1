@@ -636,6 +636,29 @@ using the same path forms as \fBtrust\fR (directories, \fB\-\-paths\fR,
 \fB\-\-recursive\fR). Needs no password \(em revoking is fail-safe \(em and is
 idempotent.
 .SS Visual editor
+.PP
+The editor ships as a separate binary,
+.BR byn-tui ,
+which
+.B byn
+launches. It is in the same archive and package, and
+.B byn setup
+places it beside
+.BR byn ;
+it is not meant to be run directly.
+.PP
+It is separate because the terminal library it uses queries the terminal for its
+background colour during package initialisation and waits up to five seconds for
+a reply \(em in any program that links it. That cost every
+.B byn
+command, including
+.BR "byn version" ,
+5.1 seconds on a controlling terminal that does not answer: a pty with no
+emulator behind it, as
+.BR script (1),
+serial consoles and some CI runners provide. Go initialises imported packages
+before the importing one, so the only way not to run it is not to link it.
+
 .TP
 .B edit, view, byn \fR(no args)
 Open the responsive bubbletea TUI. Left rail navigates

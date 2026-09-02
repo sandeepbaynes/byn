@@ -15,6 +15,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/paths"
 	"github.com/sandeepbaynes/byn/internal/secmem"
+	"github.com/sandeepbaynes/byn/internal/session"
 )
 
 // Exit codes.
@@ -110,8 +111,8 @@ func newClient(dir, vault string) *ipc.Client {
 		sock = filepath.Join(dir, daemon.SocketFilename)
 	}
 	c := ipc.NewClient(sock)
-	key := vaultSessionKey(vault)
-	if tok := loadSessionToken(sessionStoreDir(dir), key); len(tok) > 0 {
+	key := session.VaultKey(vault)
+	if tok := session.LoadToken(session.StoreDir(dir), key); len(tok) > 0 {
 		c.Session = tok
 	}
 	return c

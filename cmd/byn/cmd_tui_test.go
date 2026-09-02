@@ -2,10 +2,10 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/session"
 )
 
 func TestDefaultVaultState_NotPresent(t *testing.T) {
@@ -64,7 +64,7 @@ func TestRunTUI_BadFlag(t *testing.T) {
 // same fake daemon + session-file machinery that `byn unlock` tests use.
 //
 // When ttyRdev()==0 (no controlling terminal in CI) the session file is
-// NOT written (saveSessionToken is a no-op) — that branch is covered by
+// NOT written (session.SaveToken is a no-op) — that branch is covered by
 // TestRunUnlock_NoTTY_NoSessionFile.  This test validates the capture path
 // itself (client.Session is set + file written when ttyRdev()!=0).
 func TestTUI_UnlockSessionCapture(t *testing.T) {
@@ -74,7 +74,7 @@ func TestTUI_UnlockSessionCapture(t *testing.T) {
 	// is covered by TestRunUnlock_NoTTY_NoSessionFile and the interactive unlock
 	// integration tests. Running it with a TTY would require an actual daemon
 	// and is not appropriate for a unit test.
-	if ttyRdev() != 0 {
+	if session.HasTTY() {
 		t.Skip("skipping: controlling terminal present; test exercises no-TTY fallback only")
 	}
 	// In CI (no controlling terminal), verify that the session-body fallback
@@ -112,15 +112,13 @@ func TestTUI_UnlockSessionCapture(t *testing.T) {
 
 	// Simulate what cmd_tui.go does: set Session on the client and save to file.
 	c.Session = captured
-	if serr := saveSessionToken(dir, vaultSessionKey("default"), captured); serr != nil {
-		t.Fatalf("saveSessionToken: %v", serr)
+	if serr := session.SaveToken(dir, session.VaultKey("default"), captured); serr != nil {
+		t.Fatalf("session.SaveToken: %v", serr)
 	}
 
 	// When ttyRdev()==0 (CI), no file is written; when nonzero a file exists.
-	dev := ttyRdev()
-	if dev != 0 {
-		fname := sessionFileNameFor(dev, vaultSessionKey("default"))
-		data, rerr := os.ReadFile(filepath.Join(sessionDir(dir), fname))
+	if path, ok := session.TokenPathForThisTTY(session.StoreDir(dir), session.VaultKey("default")); ok {
+		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			t.Fatalf("read session file: %v", rerr)
 		}

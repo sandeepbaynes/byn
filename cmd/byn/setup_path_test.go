@@ -108,3 +108,18 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// TestEnsureOnSystemPath_TakesTheEditorAlong: `byn edit` resolves byn-tui beside
+// the running byn, so a setup that copies byn alone into /usr/local/bin leaves a
+// byn whose editor is not there — everything works except the one command that
+// needs a second binary, and only for people who installed with `go install`.
+func TestEnsureOnSystemPath_TakesTheEditorAlong(t *testing.T) {
+	src, err := os.ReadFile("setup_path.go")
+	if err != nil {
+		t.Fatalf("read setup_path.go: %v", err)
+	}
+	if !strings.Contains(string(src), "tuiBinary") {
+		t.Fatal("setup no longer copies the editor next to byn; a go install-ed byn " +
+			"would have no byn-tui in the system bin dir")
+	}
+}

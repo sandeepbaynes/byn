@@ -16,6 +16,13 @@ BIN         := $(BIN_DIR)/byn
 # so it ships next to byn and is built alongside it here.
 HELPER      := $(BIN_DIR)/byn-exec-helper
 
+# The modal editor, shipped as its own binary so that `byn` does not link
+# bubbletea — whose package init queries the terminal and waits up to five
+# seconds for a reply, on every command, in any program that links it. Resolved
+# BESIDE byn at runtime, like the helper, so a `go install`-ed byn and a packaged
+# one each find their own.
+TUI         := $(BIN_DIR)/byn-tui
+
 # Cross-compile targets for release artifacts (pure-Go, CGO disabled).
 DIST_DIR  := dist
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
@@ -33,6 +40,7 @@ build:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(BIN) ./cmd/byn
 	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(HELPER) ./cmd/byn-exec-helper
+	$(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $(TUI) ./cmd/byn-tui
 
 # Render the docs site: docs/*.md (the single source of truth) -> themed
 # docs/<name>/index.html via the committed generator. The generated HTML is a
@@ -73,6 +81,7 @@ install: build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
 	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
+	install -m 0755 $(TUI) $(DESTDIR)$(BINDIR)/byn-tui
 	@# The helper that actually RUNS lives in libexec with file capabilities,
 	@# put there by `byn setup`. Installing only to bindir left it untouched:
 	@# it drifted six weeks behind the CLI it shares an exec-token protocol

@@ -55,6 +55,23 @@ builds:
     goos: [darwin, linux]
     goarch: [amd64, arm64]
 
+  # The modal editor. Separate from byn so that byn does not link bubbletea,
+  # whose package init queries the terminal and waits up to five seconds for a
+  # reply — on every command, in any program that links it. byn resolves this
+  # binary beside itself at runtime, so it must ship in the same archive.
+  - id: byn-tui
+    main: ./cmd/byn-tui
+    binary: byn-tui
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
 archives:
   - id: byn
     formats: [tar.gz]

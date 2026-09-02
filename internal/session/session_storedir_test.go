@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"os"
@@ -16,7 +16,7 @@ import (
 func TestSessionStoreDir(t *testing.T) {
 	// Non-provisioned data dir → used as-is.
 	dir := t.TempDir()
-	if got := sessionStoreDir(dir); got != dir {
+	if got := StoreDir(dir); got != dir {
 		t.Errorf("non-provisioned: got %q, want %q (the data dir)", got, dir)
 	}
 
@@ -25,7 +25,7 @@ func TestSessionStoreDir(t *testing.T) {
 	if err := os.WriteFile(paths.OwnerRecordIn(prov), []byte("501"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := sessionStoreDir(prov)
+	got := StoreDir(prov)
 	if got == prov {
 		t.Fatalf("provisioned: got the data dir %q; must divert to an owner-writable dir", got)
 	}

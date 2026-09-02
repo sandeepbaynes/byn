@@ -61,9 +61,19 @@ func ensureOnSystemPath(stdout, stderr io.Writer) (installedAt string) {
 	restoreSELinuxContext(dest)
 	// The helper travels with it: the daemon execs it by absolute path, and it
 	// is no more readable by the service user in a home directory than byn is.
-	if src := filepath.Join(filepath.Dir(exe), "byn-exec-helper"); fileExists(src) {
-		if cerr := copyExecutable(src, filepath.Join(systemBinDir, "byn-exec-helper")); cerr == nil {
-			restoreSELinuxContext(filepath.Join(systemBinDir, "byn-exec-helper"))
+	//
+	// So does the editor. `byn edit` resolves byn-tui BESIDE the running byn, so
+	// copying byn alone into a system path would leave a byn whose editor is not
+	// there — working everywhere except the one command that needs a second
+	// binary.
+	for _, companion := range []string{"byn-exec-helper", tuiBinary} {
+		src := filepath.Join(filepath.Dir(exe), companion)
+		if !fileExists(src) {
+			continue
+		}
+		dst := filepath.Join(systemBinDir, companion)
+		if cerr := copyExecutable(src, dst); cerr == nil {
+			restoreSELinuxContext(dst)
 		}
 	}
 	_, _ = fmt.Fprintf(stdout, "installed %s (so `byn` works from any shell, under sudo, and for the service)\n", dest)

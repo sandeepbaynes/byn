@@ -15,6 +15,7 @@ import (
 
 	"github.com/sandeepbaynes/byn/internal/auth"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/session"
 )
 
 // runInit creates a fresh vault. Prompts for the password twice
@@ -121,10 +122,10 @@ func runUnlock(args []string, scope cliScope) int {
 		return rc
 	}
 	if len(tok) > 0 {
-		vaultKey := vaultSessionKey(scope.Vault)
-		dev := ttyRdev()
-		if dev != 0 {
-			if serr := saveSessionTokenWithDev(sessionStoreDir(dir), dev, vaultKey, tok); serr != nil {
+		vaultKey := session.VaultKey(scope.Vault)
+		saved, serr := session.SaveTokenForThisTTY(session.StoreDir(dir), vaultKey, tok)
+		if saved {
+			if serr != nil {
 				// Non-fatal: vault is already unlocked; session file is convenience only.
 				fmt.Fprintf(os.Stderr, "warning: could not save session token: %v\n", serr)
 			} else {
@@ -199,12 +200,12 @@ func runLock(args []string, scope cliScope) int {
 
 	if *sessionOnly {
 		// End only this terminal's session; leave the vault unlocked.
-		vaultKey := vaultSessionKey(scope.Vault)
+		vaultKey := session.VaultKey(scope.Vault)
 		if rc := handleCallError(newClient(dir, vaultKey).Call(
 			ipc.OpSessionEnd, ipc.SessionEndReq{}, &ipc.SessionEndResp{})); rc != exitOK {
 			return rc
 		}
-		deleteSessionToken(sessionStoreDir(dir), vaultKey)
+		session.DeleteToken(session.StoreDir(dir), vaultKey)
 		hintf("session ended for this terminal — vault remains unlocked")
 		return exitOK
 	}
@@ -219,11 +220,11 @@ func runLock(args []string, scope cliScope) int {
 		return rc
 	}
 	if *all {
-		deleteAllSessionTokens(sessionStoreDir(dir))
+		session.DeleteAllTokens(session.StoreDir(dir))
 		hintf("Locked %d vault(s).", resp.Locked)
 	} else {
-		vaultKey := vaultSessionKey(scope.Vault)
-		deleteSessionToken(sessionStoreDir(dir), vaultKey)
+		vaultKey := session.VaultKey(scope.Vault)
+		session.DeleteToken(session.StoreDir(dir), vaultKey)
 	}
 	return exitOK
 }
@@ -307,6 +308,35 @@ func runPut(args []string, scope cliScope) int {
 		return exitErr
 	}
 	defer zero(value)
+
+	// With --password-stdin the FIRST line is the password and the remainder is
+	// the value, so a caller who piped only the secret has just sent it as a
+	// password and is about to store nothing.
+	//
+	// It has to be refused rather than stored. Where the write needs no
+	// authorization — a new name, which is the common case for an agent — the
+	// daemon accepts it, byn exits 0, and `get` returns "". Nothing anywhere
+	// says the secret was not saved, and the caller believes it was. That is the
+	// worst shape a bug can take in a secrets manager: silent, successful, and
+	// wrong.
+	//
+	// An empty value stays legitimate; what is refused is this specific mistake,
+	// and the message names the form that works.
+	if *pwStdin && len(value) == 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldRed("Error:"),
+			red("--password-stdin consumed all of stdin as the password, leaving no value to store."))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, dim("With --password-stdin, the FIRST line of stdin is the master"))
+		fmt.Fprintln(os.Stderr, dim("password and everything after it is the value. Piping only the"))
+		fmt.Fprintln(os.Stderr, dim("secret sends it as the password and stores nothing."))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Both, in order:"),
+			cyan(`{ echo "$BYN_PW"; printf '%s' "$SECRET"; } | byn put `+name+` --password-stdin`))
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Or drop the flag:"),
+			cyan(`printf '%s' "$SECRET" | byn put `+name))
+		fmt.Fprintf(os.Stderr, "%s\n", dim("   (a new name needs no password; byn asks only when one is required)"))
+		return exitErr
+	}
 
 	dir, err := defaultDir()
 	if err != nil {

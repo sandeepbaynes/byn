@@ -538,7 +538,25 @@ How the child runs — and whether it needs a password — depends on the mode:
 - Shell builtins (`cd`, `source`) can't be exec'd — wrap via
   `bash -c '...'`
 
-### `byn edit` / `byn view` / `byn` (no args)
+### `byn edit` / `byn view`
+
+Opens the modal editor, which lives in a **separate binary** (`byn-tui`) that
+byn launches. It ships in the same archive and package, and `byn setup` places
+it next to `byn`; you should never need to invoke it directly.
+
+It is separate for a measured reason. `bubbletea`'s package init asks the
+terminal for its background colour and waits up to five seconds for a reply —
+unconditionally, in any program that links it. That made every byn command,
+including `byn version`, take 5.1 seconds on a controlling terminal that does
+not answer: a pty with no emulator behind it, which is what `script`, serial
+consoles, CI runners that allocate a tty and some agent harnesses provide. Go
+initialises imported packages before the importing one, so byn cannot pre-empt a
+dependency's init from its own code; not linking it is the only way not to run
+it.
+
+If `byn-tui` is missing, `byn edit` says so and names the fix rather than failing
+with a bare exec error.
+ / `byn` (no args)
 
 Open the modal vi-style TUI, with a left rail to navigate the
 vault → project → env tree.

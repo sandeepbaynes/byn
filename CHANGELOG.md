@@ -3,6 +3,53 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.6.3 — unreleased
+
+### Every byn command was paying five seconds on some terminals
+
+`bubbletea`'s package init calls `lipgloss.HasDarkBackground()`, which asks the
+terminal for its background colour and waits up to five seconds for a reply. It
+is unconditional in v1 — the library documents it as a workaround to be removed
+in v2, and there is no v2 — so every command in a binary that merely *links*
+bubbletea pays it.
+
+Measured on a pty with nothing answering: `byn version` 5.1s, `byn status` 5.1s,
+`byn list` 5.1s, against 0.1s for `/bin/true`. It is invisible on a normal
+terminal, which answers immediately, and that is why it went unnoticed. It bites
+where a controlling terminal does not answer — `script`, serial consoles, CI
+runners that allocate a tty, and some agent harnesses.
+
+The editor now ships as its own binary, `byn-tui`, and `byn` no longer links a
+TUI framework at all. The same commands now take 0.05 seconds. Go initialises
+imported packages before the importing one, so byn cannot pre-empt a
+dependency's init from its own code; not linking it is the only way not to run
+it.
+
+The rejected alternative was a `replace` directive onto a patched bubbletea —
+one line removed, no packaging change. A secrets manager should not carry a
+forked dependency to save packaging work.
+
+`byn edit`, `byn view` and `byn` with no arguments are unchanged. The editor is
+in the same archive and package, and `byn setup` places it beside `byn` exactly
+as it already does for the spawn helper. If it is missing, `byn edit` says so and
+names the fix instead of failing with a bare exec error.
+
+The guard is a dependency-graph assertion, not a timing test: a timing test
+passes on any developer's machine, because their terminal answers the query.
+
+### `byn put --password-stdin` no longer stores an empty value in silence
+
+With `--password-stdin` the first line of stdin is the password and the
+remainder is the value, so `printf 'secret' | byn put NAME --password-stdin`
+sends the secret as the password and leaves nothing to store. Where the write
+needs no authorization — a new name, the common case for an agent — the daemon
+accepted it, byn exited 0, and a later `get` returned `""`. Nothing said the
+secret had not been saved.
+
+It is now refused, with a message naming both working forms. An empty value
+stored deliberately still works; what is refused is the flag-ordering mistake.
+Reported from the macOS test pass, and not macOS-specific.
+
 ## v0.6.2 — 2026-09-02
 
 ### A relocate could lock you out of your own daemon
