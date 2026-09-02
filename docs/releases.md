@@ -12,6 +12,31 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.6.4
+
+**The editor is part of byn, not a separate install.** v0.6.3 split the modal
+editor into its own `byn-tui` binary so that `byn` would stop linking a
+terminal-querying framework — a change worth 5.1 seconds on every command in
+some environments. It left the editor looking like a separate thing: the install
+script dropped it, the Go-toolchain path listed a third command, and it sat on
+`PATH` as though anyone would run it.
+
+It now lives in byn's own directory, `/usr/local/libexec/byn-tui`, beside the
+privileged spawn helper kept there for the same reason. byn looks there first,
+then beside the running binary. Every packaged install bundles it — Homebrew, the
+curl script, deb, rpm, apk, `make install`.
+
+`go install` is the exception, because it installs one main package per
+invocation. The first `byn edit` now offers to fetch the editor, pinned to your
+byn's own version, and asks before doing so.
+
+**`byn edit` no longer replaces the process that ran it.** The launcher execs,
+which is right for a program that owns the terminal, but it did so before
+checking there was one.
+
+If you installed v0.6.3 with `curl | sh`, re-run the installer: that release
+shipped without the editor.
+
 ## v0.6.3
 
 **Headline:** every byn command was paying up to five seconds on terminals that
