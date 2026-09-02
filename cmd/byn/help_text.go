@@ -1856,6 +1856,10 @@ DESCRIPTION
          • daemon running          — the socket is reachable
          • data dir owned by _byn  — flags root-owned strays a "sudo byn
                                      start" left behind
+         • data dir traversable    — macOS only: the socket lives inside the
+                                     data dir, so a 0700 dir hides a RUNNING
+                                     daemon behind a door the owner cannot
+                                     open ("daemon is not running" while it is)
          • no stale socket         — a leftover socket with the daemon down
 
        When the daemon IS reachable it also runs the daemon-side checks:
@@ -1869,8 +1873,11 @@ DESCRIPTION
 OPTIONS
        --repair
            Apply the safe fixes for the failing LOCAL checks: chown the data
-           dir back to _byn, reload the launchd/systemd service (clearing a
-           stale socket and a broken registration). Requires root — run as
+           dir back to _byn, restore 0711 on a data dir the owner cannot
+           traverse, reload the launchd/systemd service (clearing a stale
+           socket and a broken registration). The mode is put back BEFORE the
+           service is touched, so a daemon that was only unreachable is left
+           running rather than bounced. Requires root — run as
            "sudo byn doctor --repair". This is the packaged form of the manual
            launchctl bootout/bootstrap + chown recovery.
 

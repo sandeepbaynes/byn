@@ -55,7 +55,17 @@ type healEnv struct {
 	// installs lists the byn binaries on this machine. Injected like every
 	// other probe so a test describes the machine it means, rather than
 	// reporting on whatever happens to be installed on the one running it.
-	installs   func() []bynInstall
+	installs func() []bynInstall
+	// fileMode is a path's permission bits, and whether they could be read. The
+	// data dir's mode decides whether the owner can reach the daemon at all on
+	// macOS, so it is a probe like any other rather than a direct os.Stat.
+	fileMode func(path string) (os.FileMode, bool)
+	// socketDir is the directory holding the socket the OWNER dials when
+	// provisioned. It is a seam because it is exactly what differs per OS: macOS
+	// keeps it inside the data dir, Linux in a separate /run/byn. The method
+	// socketPath() below is the legacy/unprovisioned location and is not a
+	// substitute — it always nests under dataDir, so it cannot tell them apart.
+	socketDir  func() string
 	dataDir    string
 	helperPath string // installed setuid spawn helper
 }
@@ -103,10 +113,47 @@ func diagnoseHeal(e healEnv) []healCheck {
 		cs = append(cs, healCheck{Name: "data dir owned by " + privsep.DaemonUser, OK: owned, Detail: detail, Fix: "run: " + sudoByn("doctor", "--repair")})
 	}
 
+	cs = append(cs, dataDirTraversableCheck(e)...)
+
 	if !up && e.exists(e.socketPath()) {
 		cs = append(cs, healCheck{Name: "no stale socket", OK: false, Detail: "socket present but the daemon is down", Fix: "run: " + sudoByn("doctor", "--repair")})
 	}
 	return cs
+}
+
+// dataDirTraversableCheck reports whether the owner can traverse the data dir to
+// reach the socket inside it.
+//
+// It exists because the symptom lies. A 0700 data dir leaves the daemon running
+// and bound while every owner command reports "daemon is not running" — so
+// "daemon running" FAILs, its fix says `sudo byn restart`, the restart genuinely
+// succeeds, and nothing changes. That loop is unbreakable from the output alone,
+// because the one thing that is wrong is the only thing not being checked.
+//
+// Only where the socket lives inside the data dir (macOS). Linux puts it in a
+// separate 0755 /run/byn, so the state dir's mode is nobody's business there and
+// a check would report a problem that cannot exist.
+func dataDirTraversableCheck(e healEnv) []healCheck {
+	if e.fileMode == nil || e.socketDir == nil || e.socketDir() != e.dataDir {
+		return nil
+	}
+	mode, ok := e.fileMode(e.dataDir)
+	if !ok {
+		return nil
+	}
+	const ownerTraverse = 0o001 // o+x: reach a known path inside, without listing it
+	if mode&ownerTraverse != 0 {
+		return nil
+	}
+	return []healCheck{{
+		Name: "data dir traversable by owner",
+		OK:   false,
+		Detail: fmt.Sprintf(
+			"%s is %#o — the daemon socket lives inside it, so the owner cannot reach the daemon "+
+				"(it reports as down while running). Expected 0711: traverse, not list.",
+			e.dataDir, mode),
+		Fix: "run: " + sudoByn("doctor", "--repair"),
+	}}
 }
 
 // healSleep is the poll delay while waiting for a reloaded daemon to come up; a
@@ -136,6 +183,22 @@ func repairHeal(e healEnv, run func(string, ...string) error) []string {
 	if failing["data dir owned by "+privsep.DaemonUser] {
 		if err := run("chown", "-R", privsep.DaemonUser+":"+privsep.DaemonUser, e.dataDir); err == nil {
 			done = append(done, "restored "+privsep.DaemonUser+" ownership of "+e.dataDir)
+		}
+	}
+	// The mode goes back BEFORE the service is touched, and the daemon is then
+	// re-probed. An unreachable socket makes "daemon running" fail too, so
+	// repairing in diagnosis order would bounce a daemon that was healthy all
+	// along and only looked dead through a door the owner could not open.
+	if failing["data dir traversable by owner"] {
+		if err := run("chmod", fmt.Sprintf("%#o", dataDirMode), e.dataDir); err == nil {
+			done = append(done, fmt.Sprintf("restored %#o (owner-traversable) on %s", dataDirMode, e.dataDir))
+			if e.daemonUp() {
+				// Both of these described the closed door, not the daemon: an
+				// unreachable socket reads as "down", and a live socket the owner
+				// could not stat reads as "stale". Neither survives the chmod.
+				delete(failing, "daemon running")
+				delete(failing, "no stale socket")
+			}
 		}
 	}
 	// A down daemon or a leftover socket → reload the service (which also clears a
@@ -177,9 +240,26 @@ func productionHealEnv(dir string) healEnv {
 			return resp.Version
 		},
 		installs:   func() []bynInstall { return findBynInstalls(bynVersionOf) },
+		fileMode:   fileMode,
+		socketDir:  func() string { return filepath.Dir(paths.SocketPath()) },
 		dataDir:    dir,
 		helperPath: privsep.HelperDestPath(),
 	}
+}
+
+// dataDirMode is the mode the system data dir must carry where the daemon socket
+// lives inside it: traverse for everyone, read/write for _byn alone. The vault
+// files inside stay 0600, so o+x lets the owner reach a socket it already knows
+// the path of and nothing else — it cannot enumerate or read the vault.
+const dataDirMode os.FileMode = 0o711
+
+// fileMode returns a path's permission bits.
+func fileMode(path string) (os.FileMode, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	return fi.Mode().Perm(), true
 }
 
 // fileUID returns the owning uid of path.

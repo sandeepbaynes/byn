@@ -246,3 +246,66 @@ func TestDropTrustAndPasskeysDirectly(t *testing.T) {
 	assert.Equal(t, 0, pk)
 	assert.Equal(t, 0, ul)
 }
+
+// TestRelocatePreservesProvisionedDestMode is the macOS daemon-lockout
+// regression.
+//
+// `byn setup` creates the system data dir 0711 on purpose: macOS puts
+// daemon.sock inside it, and the owner is a different UID than _byn, so the
+// owner needs o+x to traverse to the socket. The relocate that runs immediately
+// afterwards used to rename the staged 0700 tree straight over that dir. The
+// daemon then ran, bound its socket, and answered nobody — every owner command
+// reported "daemon is not running" while `launchctl` said it was up.
+func TestRelocatePreservesProvisionedDestMode(t *testing.T) {
+	legacy := buildRealVaultTree(t, "default", true)
+
+	// The destination as provisioning leaves it: present, empty, owner-traversable.
+	system := filepath.Join(t.TempDir(), "system")
+	require.NoError(t, os.MkdirAll(system, 0o711))
+	require.NoError(t, os.Chmod(system, 0o711)) // MkdirAll honors umask
+
+	require.NoError(t, Relocate(legacy, system, Options{UID: -1, GID: -1}))
+
+	fi, err := os.Stat(system)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o711), fi.Mode().Perm(),
+		"relocate must not take the data dir's mode down to the staged 0700 — "+
+			"on macOS that is what locks the owner out of the daemon socket")
+
+	// The vault still opens: preserving the mode must not cost the data.
+	st, err := vault.Open(context.Background(), system, "default")
+	require.NoError(t, err)
+	_ = st.Close()
+}
+
+// A destination that did not exist has no mode to preserve, so the staged 0700
+// stands — the private default, not a widened one.
+func TestRelocateAbsentDestKeepsStagedMode(t *testing.T) {
+	legacy := buildRealVaultTree(t, "default", true)
+	system := filepath.Join(t.TempDir(), "system") // deliberately not created
+
+	require.NoError(t, Relocate(legacy, system, Options{UID: -1, GID: -1}))
+
+	fi, err := os.Stat(system)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(stagedDirMode), fi.Mode().Perm(),
+		"an absent destination has no mode to carry over; the staged private mode stands")
+}
+
+// The force-replace branch swaps through a backup dir, so it has its own rename
+// and needs the same guarantee.
+func TestImportForcePreservesDestMode(t *testing.T) {
+	system := filepath.Join(t.TempDir(), "system")
+	require.NoError(t, os.MkdirAll(system, 0o711))
+	require.NoError(t, os.Chmod(system, 0o711))
+	// Make the destination non-empty so the force path is the one taken.
+	require.NoError(t, os.WriteFile(filepath.Join(system, "occupied"), []byte("x"), 0o600))
+
+	src := buildRealVaultTree(t, "default", true)
+	require.NoError(t, Import(NewLocalSource(src), system, Options{UID: -1, GID: -1, Force: true}))
+
+	fi, err := os.Stat(system)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o711), fi.Mode().Perm(),
+		"the force-replace branch must preserve the destination mode too")
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -132,5 +133,98 @@ func TestRepairHeal_NothingWhenHealthy(t *testing.T) {
 	}
 	if len(actions) != 0 {
 		t.Errorf("expected no actions for a healthy env, got %v", actions)
+	}
+}
+
+// macOSHealEnv is a provisioned macOS-shaped machine: the daemon socket lives
+// INSIDE the data dir, which is what makes the dir's mode load-bearing.
+func macOSHealEnv(mode os.FileMode) healEnv {
+	e := healthyHealEnv()
+	e.fileMode = func(string) (os.FileMode, bool) { return mode, true }
+	e.socketDir = func() string { return e.dataDir } // socket inside the data dir
+	return e
+}
+
+func TestDiagnoseHeal_DataDirNotTraversable(t *testing.T) {
+	// The regression this exists for: a relocate leaves the data dir 0700, the
+	// daemon is up and bound, and the owner cannot traverse to its socket. The
+	// daemon then reports as down, so the check that must fire is the one about
+	// the MODE — without it the only advice is "restart", which fixes nothing.
+	e := macOSHealEnv(0o700)
+	e.daemonUp = func() bool { return false } // unreachable, though the daemon runs
+
+	var found *healCheck
+	for i, c := range diagnoseHeal(e) {
+		if c.Name == "data dir traversable by owner" {
+			found = &diagnoseHeal(e)[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("0700 data dir with the socket inside it: want a traversability check, got none")
+	}
+	if found.OK {
+		t.Error("0700 data dir: check passed, but the owner cannot reach the socket")
+	}
+	if !strings.Contains(found.Detail, "0711") {
+		t.Errorf("detail should name the expected mode, got %q", found.Detail)
+	}
+}
+
+func TestDiagnoseHeal_DataDirTraversable(t *testing.T) {
+	// 0711 is the provisioned mode: traverse, no listing. It must not be reported.
+	for _, mode := range []os.FileMode{0o711, 0o755} {
+		for _, c := range diagnoseHeal(macOSHealEnv(mode)) {
+			if c.Name == "data dir traversable by owner" {
+				t.Errorf("mode %#o is traversable; want no check, got %+v", mode, c)
+			}
+		}
+	}
+}
+
+func TestDiagnoseHeal_DataDirModeNotCheckedWhenSocketElsewhere(t *testing.T) {
+	// Linux keeps the socket in a separate /run/byn, so a 0700 state dir locks
+	// nobody out. Reporting it there would be a fault the user cannot act on.
+	e := macOSHealEnv(0o700)
+	e.socketDir = func() string { return "/run/byn" }
+	for _, c := range diagnoseHeal(e) {
+		if c.Name == "data dir traversable by owner" {
+			t.Errorf("socket outside the data dir: mode is irrelevant, got %+v", c)
+		}
+	}
+}
+
+func TestRepairHeal_ChmodsDataDirAndSkipsRestart(t *testing.T) {
+	// Repair must put the mode back FIRST and then notice the daemon was healthy
+	// all along, rather than bouncing a service that was never the problem.
+	e := macOSHealEnv(0o700)
+	reachable := false
+	e.daemonUp = func() bool { return reachable }
+
+	var cmds []string
+	run := func(name string, args ...string) error {
+		cmds = append(cmds, name+" "+strings.Join(args, " "))
+		if name == "chmod" {
+			reachable = true // the door opens; the daemon was up the whole time
+		}
+		return nil
+	}
+	healSleep = func(time.Duration) {}
+
+	done := repairHeal(e, run)
+
+	var chmodded bool
+	for _, c := range cmds {
+		if strings.HasPrefix(c, "chmod 0711 /data") {
+			chmodded = true
+		}
+		if strings.Contains(c, "launchctl") || strings.Contains(c, "systemctl") {
+			t.Errorf("repair restarted the service after the mode fix made it reachable: %q", c)
+		}
+	}
+	if !chmodded {
+		t.Errorf("want a chmod 0711 on the data dir, got %v", cmds)
+	}
+	if !strings.Contains(strings.Join(done, "; "), "owner-traversable") {
+		t.Errorf("repair should report the mode fix, got %v", done)
 	}
 }

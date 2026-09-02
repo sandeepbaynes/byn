@@ -401,15 +401,20 @@ this materialises plaintext. Treat the destination as you would a
 Run two batteries of self\-checks. The LOCAL provisioning/health checks work
 even when the daemon is DOWN: privsep provisioned, spawn helper installed,
 daemon reachable, the data dir still owned by \fB_byn\fR (flags root\-owned
-strays a \fBsudo byn start\fR left behind), and no stale socket. When the daemon
+strays a \fBsudo byn start\fR left behind), the data dir still traversable by
+you (macOS keeps the socket inside it, so a 0700 dir hides a RUNNING daemon \(em
+every command reports \(lqnot running\(rq while it is up and bound), and no
+stale socket. When the daemon
 is reachable it also runs the daemon\-side checks: vault enumeration, schema +
 fingerprint match, audit\-chain HMAC integrity. Each check returns
 \fBok\fR / \fBwarn\fR / \fBfail\fR; exits non\-zero if any \fBfail\fR. Plain
 \fBbyn doctor\fR only diagnoses.
 .IP
 \fB\-\-repair\fR (root) applies the safe fixes for the failing local checks:
-chown the data dir back to \fB_byn\fR and reload the launchd/systemd service
-(clearing a stale socket and a broken registration). Run as
+chown the data dir back to \fB_byn\fR, restore mode \fB0711\fR on a data dir
+you cannot traverse, and reload the launchd/systemd service (clearing a stale
+socket and a broken registration). The mode is restored BEFORE the service is
+touched, so a daemon that was merely unreachable is left running. Run as
 \fBsudo byn doctor \-\-repair\fR \(em the packaged form of the manual
 launchctl bootout/bootstrap + chown recovery.
 .TP

@@ -342,6 +342,21 @@ func commitAdopt(staged, destDir string, force bool) error {
 		return fmt.Errorf("migrate: destination %s is not empty — refusing to overwrite an existing vault; pass --force to replace it", destDir)
 	}
 
+	// The destination's own mode is a decision somebody else already made, and
+	// the rename below would replace it with the staged tree's 0700.
+	//
+	// That cost a macOS install its daemon. `byn setup` creates the system data
+	// dir 0711 ON PURPOSE — macOS puts daemon.sock inside it, and the owner is a
+	// different UID than _byn, so the owner needs o+x to traverse to the socket
+	// (see privsep.ensureDataDir). A relocate ran straight afterwards, renamed a
+	// 0700 tree over it, and every owner command then failed with "daemon is not
+	// running" while the daemon was up and bound — unreachable, not down.
+	//
+	// stagedDirMode is right for the CONTENTS (it stops a hostile source
+	// smuggling in a group/other-readable artifact) and wrong for the ROOT, which
+	// is provisioning's to set. So carry the existing root mode across the swap.
+	destMode, haveDestMode := dirMode(destDir)
+
 	if !nonEmpty {
 		// destDir is absent or empty. Remove an empty-but-present dir so the
 		// rename target is clear, then commit in one rename.
@@ -351,7 +366,7 @@ func commitAdopt(staged, destDir string, force bool) error {
 		if err := os.Rename(staged, destDir); err != nil {
 			return fmt.Errorf("migrate: adopt into %s: %w", destDir, err)
 		}
-		return nil
+		return restoreDirMode(destDir, destMode, haveDestMode)
 	}
 
 	// Force replace: stage the old tree aside, swap in the new one, then drop
@@ -374,6 +389,29 @@ func commitAdopt(staged, destDir string, force bool) error {
 		// whole migrate for a leftover backup dir — surface it as a soft note by
 		// returning nil (the new vault is live). Best-effort retry once.
 		_ = os.RemoveAll(backup)
+	}
+	return restoreDirMode(destDir, destMode, haveDestMode)
+}
+
+// dirMode reports destDir's permission bits, and whether there was a directory
+// there to read them from. A missing destination has no mode to preserve.
+func dirMode(destDir string) (os.FileMode, bool) {
+	fi, err := os.Stat(destDir)
+	if err != nil || !fi.IsDir() {
+		return 0, false
+	}
+	return fi.Mode().Perm(), true
+}
+
+// restoreDirMode re-applies the destination's pre-adopt mode to the tree that
+// replaced it. It is a no-op when there was no destination beforehand (the
+// staged mode stands) or when the mode already matches.
+func restoreDirMode(destDir string, mode os.FileMode, have bool) error {
+	if !have || mode == stagedDirMode {
+		return nil
+	}
+	if err := os.Chmod(destDir, mode); err != nil {
+		return fmt.Errorf("migrate: restore mode %#o on %s: %w", mode, destDir, err)
 	}
 	return nil
 }
