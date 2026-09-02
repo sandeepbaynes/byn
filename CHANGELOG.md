@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## v0.6.3 — unreleased
+## v0.6.3 — 2026-09-02
 
 ### Every byn command was paying five seconds on some terminals
 
