@@ -118,6 +118,28 @@ func grantTrustACLs(canonBynPath, home string) error {
 // writable that is missing, escapes home, or names a credential dir is surfaced
 // to the user (the grant is password-gated, so it proceeds, but visibly).
 func execWritableDirs(canonBynPath, home string) []string {
+	return writableDirs(canonBynPath, home, true)
+}
+
+// execDeclaredWritableDirs is execWritableDirs without the curated defaults —
+// only what the .byn actually asked for.
+//
+// The distinction matters because the two lists are maintained by different
+// mechanisms. The curated defaults get a DEFAULT ACL once, at trust time, and
+// inheritance keeps them correct for everything created afterwards. The declared
+// list is where credential tools live, and those rewrite-then-chmod their own
+// files, discarding the inherited entry — which is the only case needing a
+// repeated pass.
+//
+// Walking the defaults per exec instead of just the declared paths cost 13.6s
+// per exec on a real monorepo: ~/.cache, ~/go and ~/.local hold tens of
+// thousands of 0600 files, none of them the credential file in ~/.aws that the
+// pass exists for. `byn repair` still sweeps everything, because it is asked to.
+func execDeclaredWritableDirs(canonBynPath, home string) []string {
+	return writableDirs(canonBynPath, home, false)
+}
+
+func writableDirs(canonBynPath, home string, includeDefaults bool) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(abs string, declared bool) {
@@ -134,8 +156,10 @@ func execWritableDirs(canonBynPath, home string) []string {
 		out = append(out, abs)
 	}
 	// Curated defaults (silently skip those that don't exist on this machine).
-	for _, rel := range privsep.ExecToolchainDefaults {
-		add(filepath.Join(home, rel), false)
+	if includeDefaults {
+		for _, rel := range privsep.ExecToolchainDefaults {
+			add(filepath.Join(home, rel), false)
+		}
 	}
 	// Declared [exec] writable from the .byn.
 	body, err := os.ReadFile(canonBynPath) //nolint:gosec // owner-owned .byn the owner just trusted

@@ -1225,7 +1225,7 @@ func reconcileWritableACLs(bynPath string) {
 	if err != nil {
 		return
 	}
-	dirs := privsep.WritableDirsExist(execWritableDirs(bynPath, home))
+	dirs := privsep.WritableDirsExist(execDeclaredWritableDirs(bynPath, home))
 	if len(dirs) == 0 {
 		return
 	}

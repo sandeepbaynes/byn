@@ -53,7 +53,28 @@ between a stolen vault file and its contents — so doing it per file turned a
 fixed ~50ms cost into a per-file one. Seventeen projects paid nearly a second
 for the same answer seventeen times.
 
-`byn repair` still forces it. Repair is called when a tree is known to be wrong,
+`byn repair` still forces it.
+
+The writable-path reconcile added the day before was doing the same thing to
+`byn exec` that the recursive walk did to trust: 13.6 seconds added to every
+exec on a real monorepo, repeating identical work. Two causes, both fixed.
+
+It walked the curated toolchain defaults — `~/.cache`, `~/go`, `~/.config`,
+`~/.local` — when the case it exists for is a credential tool rewriting its own
+file in a path the `.byn` explicitly declares. That is 21,642 files examined to
+serve 18. The exec-time pass now reads only the declared `[exec] writable`
+list; the defaults are maintained by an inherited default ACL set once at trust
+time, and `byn repair` still sweeps everything.
+
+And it was not idempotent. Work was selected by a mode test, but `setfacl`
+answers a 0600 file by setting the ACL mask, which lands in the GROUP bits and
+leaves other-read clear — so every file it fixed still matched, and the next
+exec granted the same set again. Mode cannot distinguish 0660 from a real group
+from 0660 from an ACL mask, so the pass now reads the ACL itself for candidates
+the mode test selects.
+
+Measured on the monorepo: 13.591s to 0.016s, and a file whose entry is stripped
+by hand is still healed on the next exec, in 27ms. Repair is called when a tree is known to be wrong,
 and the entry on the root proves nothing about what lies beneath it — which is
 exactly the situation repair exists to fix.
 
