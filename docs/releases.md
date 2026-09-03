@@ -12,6 +12,36 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.6.5
+
+**Fixes to the v0.6.3/v0.6.4 editor split, and to `byn setup`.**
+
+The copy of the editor that v0.6.3 left in `/usr/local/bin` is now genuinely
+removed on upgrade — v0.6.4 claimed to do this but the step sat behind an early
+return and never ran on packaged installs.
+
+`byn setup` says when a machine has more than one byn at different versions,
+marking the one about to provision. sudo resolves against `secure_path`, never
+your PATH, so `sudo byn setup` after a `go install` can silently provision an
+older copy and report success. The documented command is now
+`sudo "$(command -v byn)" setup`.
+
+Setup no longer describes your home directory as finished with after moving the
+vault. It keeps your per-terminal unlock sessions, which cannot live in the
+`_byn`-owned system root — so `rm -rf ~/.byn` on a provisioned machine logs every
+terminal out. `docs/file-layout.md` documents this and the three installed
+binaries.
+
+**A security claim in the docs was wrong.** Four files described
+`[security] privsep` as vestigial. It is the switch that engages privilege
+separation for `byn exec`: a fully provisioned machine with the flag unset still
+runs exec children at your UID. `byn setup` sets it and `byn doctor` reports the
+state in force. Corrected, and now held by a test.
+
+Also several corrections to the editor launcher found by review: errors compared
+by text, one failure reported twice, an install trusted without checking where it
+landed, and daemon errors reported without the guidance byn gives elsewhere.
+
 ## v0.6.4
 
 **The editor is part of byn, not a separate install.** v0.6.3 split the modal

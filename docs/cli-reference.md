@@ -140,10 +140,11 @@ Privilege separation is engaged by **provisioning**, not by a config flag: once
 for you — the daemon runs as `_byn` and trusted-pinned `byn exec` children run
 as `_byn-exec`.
 
-`[security] privsep` is vestigial. It gates only a server-side spawn path that
-the CLI no longer uses; the live exec path checks provisioning state alone. The
-flag is documented here because it exists in the config, not because setting it
-changes anything.
+`[security] privsep` is the switch. `byn exec` asks the daemon whether privsep
+is on and the daemon answers from that key, so a machine can be fully
+provisioned — service users, spawn helper, ACLs — and still run every exec child
+at the owner's UID because the flag is unset. `byn setup` sets it, and
+`byn doctor` reports the state actually in force.
 
 See the [migration guide](migration.md).
 

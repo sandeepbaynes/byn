@@ -3,6 +3,67 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.6.5 — 2026-09-03
+
+### The v0.6.3 editor left in the bin directory is now actually removed
+
+v0.6.4 said it cleaned this up, and did not. `byn setup` takes an early return
+when byn is already in a system bin directory — nothing to relocate — and the
+cleanup sat after it. So it ran only on the `go install` path, which is the one
+case with no superseded copy, and was skipped on every packaged install, which is
+where the leftover actually is.
+
+The test that existed asserted the ordering inside that step, and passed
+throughout, because the step was correct. It simply was never reached.
+
+### `sudo byn setup` no longer silently provisions a different byn
+
+sudo resolves commands against `secure_path` and never your own PATH. After
+installing to `~/.local/bin`, a plain `sudo byn setup` does not run the byn you
+just installed — it runs whatever older copy sits in `/usr/local/bin`, which
+provisions happily using its own helper and reports success.
+
+The documented command is now `sudo "$(command -v byn)" setup`, and `byn setup`
+says when the machine has several byns reporting different versions, marking the
+one about to provision. A warning rather than a refusal: provisioning an older
+byn deliberately is legitimate, and staying silent is the only unacceptable
+option.
+
+### Setup no longer implies your home directory is finished with
+
+It printed "relocated legacy `~/.byn` → …", which reads as: that directory is
+done. It is not. Once provisioned the system root is `_byn`-owned and not
+writable by you, so per-terminal unlock sessions go on living in
+`~/.byn/sessions/`.
+
+Alongside them sit a `portal.token` and `daemon.log` from before provisioning,
+both inert — the daemon re-mints its token in the system root. So the directory
+looks like abandoned credentials and is in fact a live session store, and
+"relocated legacy" invited exactly the tidy-up that destroys it. `docs/file-layout.md`
+now documents this, and the three installed binaries and where each lives.
+
+### The docs called a live security switch vestigial
+
+Four files said `[security] privsep` was vestigial — that it gated only a
+server-side path the CLI no longer used, and setting it changed nothing. It is
+the switch. `byn exec` asks the daemon whether privsep is on and the daemon
+answers from that key, so a machine can be fully provisioned — service users,
+spawn helper, ACLs — and still run every exec child at the owner's UID because
+the flag is unset.
+
+Telling somebody a security switch does nothing is an invitation to turn it off.
+The claim had been identified as wrong and reverted once already, and survived in
+README, `features.md`, `cli-reference.md` and a field note; it is now corrected
+and held by a test rather than by another careful reading.
+
+### Smaller fixes to the editor split
+
+The launcher compared errors by their message text, reported one failure as two
+messages, and took `go install`'s word for where it had written the binary
+without checking. The editor also reported daemon failures raw, having lost
+byn's own error handling when it moved out — a dead daemon said less than it used
+to, for the most common failure there is.
+
 ## v0.6.4 — 2026-09-03
 
 ### `make install` failed on macOS once byn was provisioned

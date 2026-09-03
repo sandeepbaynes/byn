@@ -246,9 +246,10 @@ clearly marked.
   children run at your UID and the same-UID env-sniff / daemon-ptrace holes
   remain open — `byn doctor` says which state you are in. Stated plainly so
   there is no false assurance in either direction.
-- `[security] privsep` is vestigial: it gates a server-side spawn path the CLI
-  no longer uses. It was documented as the switch, which meant a provisioned
-  user who left it unset believed they were unprotected when they were not.
+- `[security] privsep` **is** the switch. `byn exec` asks the daemon whether
+  privsep is on, and the daemon answers from that key — so a fully provisioned
+  machine still runs every exec child at the owner's UID if the flag is unset.
+  `byn setup` sets it; `byn doctor` reports the state in force.
 - **Honest ceiling:** privsep raises the bar to **root** — it does **not**
   defend against root, `CAP_SYS_PTRACE`, or a root `task_for_pid`. Linux
   adds `PR_SET_DUMPABLE=0`; macOS hardened-runtime only takes effect for a

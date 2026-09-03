@@ -20,6 +20,44 @@ The layout below is identical under both roots; only the location and owning UID
 differ. To keep work and personal credentials apart, use **multiple vaults** in
 the one daemon (`byn init <name>`), **not** multiple data dirs.
 
+### The binaries
+
+byn installs three programs. Only the first is a command you run:
+
+| path | what it is |
+|---|---|
+| `/usr/local/bin/byn` | the CLI |
+| `/usr/local/libexec/byn-exec-helper` | privileged spawn helper; the daemon execs it to drop an exec child to `_byn-exec` |
+| `/usr/local/libexec/byn-tui` | the editor `byn edit` and `byn view` launch |
+
+The two helpers live in `libexec` rather than on your `PATH` because neither is
+useful on its own: one needs a daemon and a redeemable token, the other needs a
+terminal and a daemon. Putting them on `PATH` would only offer ways to invoke
+them wrongly.
+
+Every packaged install — Homebrew, the curl script, deb, rpm, apk, `make
+install` — places all three. `go install` handles one main package per
+invocation, so it installs the CLI and the helper separately, and the first
+`byn edit` offers to fetch the editor.
+
+### `~/.byn` keeps a job after provisioning
+
+Provisioning moves the vault, trust records and passkeys to the system path — but
+**does not finish with your home directory**. Per-terminal unlock sessions go on
+living in `~/.byn/sessions/`, and they have to: the system root is owned by `_byn`
+and not writable by you, while a session is yours and belongs to one terminal.
+
+That directory also keeps two dead files from before provisioning — `portal.token`
+and `daemon.log`. The daemon re-mints its portal token in the system root and
+never reads the old one, so they are inert. They are left rather than deleted
+because a migration that removes files it did not write is a worse failure mode
+than one that leaves litter.
+
+The practical consequence: **do not `rm -rf ~/.byn` on a provisioned machine.**
+It looks like an abandoned directory holding stale credentials, and it is your
+live session store. Removing it logs every terminal out; nothing is lost beyond
+that, but nothing is gained either.
+
 ---
 
 ```
@@ -29,6 +67,9 @@ the one daemon (`byn init <name>`), **not** multiple data dirs.
 ├── daemon.log                     # Detached daemon's stdout+stderr
 ├── auth-state.json                # Persistent failed-unlock backoff
 ├── owner                          # Owner-UID record (provisioned only; the "privsep on" marker)
+├── portal.token                   # Portal owner-token (ephemeral; re-minted, never migrated)
+├── sessions/                      # Per-terminal unlock tokens — see note above:
+│   └── <tty-keyed name>           #   these stay in ~/.byn even when provisioned
 ├── trusted_byn.json            # TOFU records for .byn files
 ├── audit/
 │   └── <vault>/
@@ -255,6 +296,9 @@ open. Mismatch → vault refuses to open.
 | Path | Mode | Reason |
 |---|---|---|
 | `~/.byn/` | `0700` | Created with strict default-deny |
+| `/usr/local/bin/byn` | `0755` | The CLI; must be runnable by anyone, and findable by sudo |
+| `/usr/local/libexec/byn-exec-helper` | `0755` + caps (Linux) / `4755` root:wheel (macOS) | Privileged spawn helper; drops to `_byn-exec` |
+| `/usr/local/libexec/byn-tui` | `0755` | The editor `byn edit` launches |
 | `daemon.sock` | `0600` | Plus peer-UID check at connect |
 | `daemon.pid` | `0600` | Prevents another user from spoofing |
 | `daemon.log` | `0600` | May contain stack traces; treat as sensitive |

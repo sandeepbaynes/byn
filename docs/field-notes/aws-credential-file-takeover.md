@@ -129,7 +129,7 @@ depend on.**
   same-UID ceiling is real wherever privilege separation is not engaged.
   Since v0.5.5, `sudo byn setup` engages privsep itself: provisioning is
   what turns it on, the daemon runs as `_byn`, pinned exec children run
-  as `_byn-exec`, and the old `[security] privsep` key is vestigial. That
+  as `_byn-exec` once `[security] privsep` is set, which `byn setup` does. That
   raises the bar to root — it does not defend against root.
 - The on-box audit trail of a fully compromised machine can be tampered
   with by an attacker holding the vault file; **off-box anchoring** of
