@@ -32,6 +32,13 @@ func TestDocs_DoNotCallPrivsepVestigial(t *testing.T) {
 			if !strings.HasSuffix(path, ".md") {
 				return nil
 			}
+			// The changelog and the release notes RECORD the wrong claim in the
+			// course of correcting it, and must go on being able to. What this
+			// guards is documentation that describes the product as it is now.
+			base := filepath.Base(path)
+			if base == "CHANGELOG.md" || base == "releases.md" {
+				return nil
+			}
 			body, rerr := os.ReadFile(path) // #nosec G304 -- repo-relative doc paths
 			if rerr != nil {
 				return nil
