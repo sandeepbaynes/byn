@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,5 +153,44 @@ func TestInstallTUIHelper_RemovesTheStaleBinDirCopy(t *testing.T) {
 	if strings.Index(s, "os.Remove(stale)") < strings.Index(s, "copyExecutable(src, tuiLibexecPath)") {
 		t.Fatal("the stale copy is removed BEFORE the replacement is installed; a failure " +
 			"in between would leave the machine with no editor")
+	}
+}
+
+// TestEnsureOnSystemPath_InstallsTheEditorEvenWhenBynIsAlreadyInPlace.
+//
+// The wiring bug this catches: the editor step sat AFTER the early return taken
+// when byn is already in a system bin dir. So it ran only on the `go install`
+// path — the one case with no superseded copy to clean up — and was skipped on
+// every packaged install, which is where the leftover actually exists. Setup
+// reported success and left a stale v0.6.3 editor on PATH.
+//
+// The previous test asserted the ordering of operations INSIDE the step. It
+// passed throughout, because the step was correct; it simply was not reached.
+// A unit test of a function says nothing about whether anything calls it.
+func TestEnsureOnSystemPath_InstallsTheEditorEvenWhenBynIsAlreadyInPlace(t *testing.T) {
+	called := false
+	orig := installTUIHelperFn
+	installTUIHelperFn = func(string, io.Writer) { called = true }
+	t.Cleanup(func() { installTUIHelperFn = orig })
+
+	// The test binary is not in a system bin dir, so make one of its ancestors
+	// count: this exercises the early-return branch, which is the one that
+	// skipped the editor.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("cannot resolve test executable: %v", err)
+	}
+	origDirs := systemBinDirs
+	systemBinDirs = append([]string{filepath.Dir(exe)}, origDirs...)
+	t.Cleanup(func() { systemBinDirs = origDirs })
+
+	var out bytes.Buffer
+	got := ensureOnSystemPath(&out, &out)
+	if got == "" {
+		t.Fatal("byn already in a system bin dir should report its own path")
+	}
+	if !called {
+		t.Fatal("setup returned without installing the editor; on a packaged install " +
+			"that leaves the superseded copy on PATH for ever")
 	}
 }

@@ -47,6 +47,14 @@ func ensureOnSystemPath(stdout, stderr io.Writer) (installedAt string) {
 	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
 		exe = resolved
 	}
+	// The editor is installed and the superseded copy removed WHATEVER happens
+	// below. This used to sit after the early return, so it ran only when byn
+	// itself needed relocating — the `go install` path, which is the one case
+	// with no stale copy to clean up. On a packaged install, where byn is
+	// already in a system bin dir and the leftover actually exists, setup
+	// returned before reaching it.
+	defer installTUIHelperFn(filepath.Dir(exe), stdout)
+
 	if inSystemBinDir(exe) {
 		return exe // already somewhere the service user can read
 	}
@@ -77,7 +85,7 @@ func ensureOnSystemPath(stdout, stderr io.Writer) (installedAt string) {
 	// nothing without a daemon, so putting it on PATH only offers a way to
 	// invoke it wrongly. A fixed path also means an installed byn finds it
 	// whatever the caller's PATH says, including under sudo.
-	installTUIHelper(filepath.Dir(exe), stdout)
+
 	_, _ = fmt.Fprintf(stdout, "installed %s (so `byn` works from any shell, under sudo, and for the service)\n", dest)
 	return dest
 }
@@ -215,6 +223,11 @@ func serviceExecPath() (string, error) {
 	return "", fmt.Errorf("byn runs from %s, which the %s service user cannot read, "+
 		"and it could not be installed into %s", exe, privsepDaemonUserName, systemBinDir)
 }
+
+// installTUIHelperFn is the editor-install step, as a variable so a test can
+// observe that setup reaches it. The bug this guards against was not in the
+// step but in whether it ran at all.
+var installTUIHelperFn = installTUIHelper
 
 // installTUIHelper places the editor in byn's libexec directory.
 //
