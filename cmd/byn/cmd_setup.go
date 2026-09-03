@@ -110,8 +110,17 @@ func runProvision(stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintf(stdout, "byn provisioned: daemon runs as %s, owner UID %d allowlisted\n",
 		privsep.DaemonUser, res.OwnerUID)
 	if res.Migrated {
-		_, _ = fmt.Fprintf(stdout, "relocated legacy %s -> %s (trust + passkeys preserved)\n",
+		_, _ = fmt.Fprintf(stdout, "moved the vault, trust records and passkeys: %s -> %s\n",
 			res.LegacyDir, res.SystemDir)
+		// Saying "relocated legacy X -> Y" invited the reading that X is finished
+		// with. It is not: once provisioned, the system dir is _byn-owned and
+		// 0711, so the owner cannot write there, and per-terminal unlock sessions
+		// go on living in the home directory. Somebody who tidied up after that
+		// message would delete their own session store — and would find files
+		// named portal.token and sessions/ there while doing it, which look
+		// exactly like something that should not have been left behind.
+		_, _ = fmt.Fprintf(stdout, "%s still holds your per-terminal unlock sessions — keep it\n",
+			res.LegacyDir)
 	}
 	if res.HomeACLWarning != "" {
 		_, _ = fmt.Fprintf(stderr, "warning: %s\n", res.HomeACLWarning)
