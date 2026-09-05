@@ -374,5 +374,5 @@ func daemonDownRemedy(privsepProvisioned bool) (cmd, note string) {
 		return sudoByn("setup"),
 			"(this machine has a byn data directory but no service installed — setup reinstalls it)"
 	}
-	return sudoByn("restart"), "(it runs as the _byn service, so bringing it up needs root)"
+	return "byn restart", "(it runs as the _byn service, so byn will ask for your password)"
 }

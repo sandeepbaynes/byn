@@ -225,8 +225,16 @@ func run(args []string) int {
 	// rootpolicy.go. BYN_ALLOW_ROOT=1 is the escape hatch (like the daemon's
 	// --allow-root) for the rare legitimate root-only environment (a container
 	// with no non-root user) and for the integration tests.
-	if os.Getenv("BYN_ALLOW_ROOT") != "1" && enforceRootPolicy(cmd, os.Geteuid(), cliProvisioned, os.Stderr) {
-		return exitErr
+	if os.Getenv("BYN_ALLOW_ROOT") != "1" {
+		// A service command that needs root asks for the password itself
+		// rather than sending the caller off to retype it with sudo. Only when
+		// it can ask; otherwise the policy below says what to run.
+		if rc, took := elevateServiceCommand(cmd, rest, os.Geteuid(), cliProvisioned, os.Stdin, os.Stdout, os.Stderr); took {
+			return rc
+		}
+		if enforceRootPolicy(cmd, os.Geteuid(), cliProvisioned, os.Stderr) {
+			return exitErr
+		}
 	}
 
 	switch cmd {

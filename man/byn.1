@@ -35,9 +35,16 @@ runs as the dedicated \fB_byn\fR service user and its socket only accepts your
 UID, so data, vault and \fB.byn\fR commands (\fBstatus\fR, \fBget\fR, \fBput\fR,
 \fBexec\fR, \fBunlock\fR, \fBweb\fR, \&...) refuse to run under \fBsudo\fR and tell
 you to re\-run without it. Only the commands that manage the \fB_byn\fR system
-daemon need root: \fBsudo byn restart\fR / \fBreload\fR / \fBstop\fR,
-\fBsudo byn setup\fR, and \fBsudo byn doctor \-\-repair\fR. \fBbyn start\fR is run
+daemon need root: \fBbyn restart\fR / \fBreload\fR / \fBstop\fR,
+\fBbyn setup\fR, and \fBsudo byn doctor \-\-repair\fR. \fBbyn start\fR is run
 as yourself (it never starts the daemon as root).
+.PP
+\fBrestart\fR, \fBreload\fR, \fBstop\fR and \fBsetup\fR ask for your password
+themselves: run from a terminal without root, byn re\-runs the command under
+\fBsudo\fR, naming this same binary by path so it works after a \fBgo install\fR
+that left it outside sudo's \fIsecure_path\fR. With no terminal to prompt on, or
+no \fBsudo\fR, they print the \fBsudo\fR command to run instead. Running them
+under \fBsudo\fR yourself still works.
 .PP
 \fBrestart\fR, \fBreload\fR and \fBstop\fR need root only once byn is
 \fIprovisioned\fR. Before that there is no \fB_byn\fR service and they act on your

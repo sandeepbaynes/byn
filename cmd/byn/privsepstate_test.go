@@ -11,7 +11,7 @@ func stubInstallState(t *testing.T, s privsepInstall) {
 
 // A machine with a provisioned data directory and no service is neither
 // startable by you nor restartable as a service. Sending anyone to
-// `sudo byn restart` there is a dead end: the unit was removed, so the command
+// `byn restart` there is a dead end: the unit was removed, so the command
 // cannot succeed and byn cannot be started at all.
 //
 // It is the state `byn uninstall` leaves when it keeps the vault, which is the
@@ -24,7 +24,7 @@ func TestDaemonDownRemedy_NamesWhatWillActuallyWork(t *testing.T) {
 		wantCmd     string
 	}{
 		{"nothing installed", false, privsepNone, "byn start"},
-		{"service installed", true, privsepService, sudoByn("restart")},
+		{"service installed", true, privsepService, "byn restart"},
 		{"data but no service", true, privsepDataOnly, sudoByn("setup")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

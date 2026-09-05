@@ -23,10 +23,8 @@ func staleDaemonNote(daemonVersion, cliVersion string) string {
 }
 
 // restartDaemonCommand is the command that actually replaces the running
-// daemon, which differs by whether byn is privsep-provisioned.
+// daemon. Under privsep that needs root, and `byn restart` asks for the
+// password itself, so it is the same command either way.
 func restartDaemonCommand() string {
-	if daemonProvisioned() {
-		return sudoByn("restart")
-	}
 	return "byn restart"
 }

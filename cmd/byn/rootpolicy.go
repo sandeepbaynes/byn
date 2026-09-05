@@ -126,15 +126,17 @@ func enforceRootPolicy(cmd string, euid int, provisionedFn func() bool, w io.Wri
 	case classStart:
 		if euid == 0 {
 			_, _ = fmt.Fprintf(w, "%s don't start byn as root — the daemon runs as the _byn service.\n"+
-				"    Run \"byn start\" as yourself; if it's down, \""+sudoByn("restart")+"\".\n",
+				"    Run \"byn start\" as yourself; if it's down, \"byn restart\" (it asks for your password).\n",
 				boldRed("Error:"))
 			return true
 		}
 	case classRootWhenProvisioned:
 		provisioned := provisionedFn()
 		if euid != 0 && provisioned {
-			_, _ = fmt.Fprintf(w, "%s byn %s manages the _byn system daemon and needs root. Run:\n    sudo byn %s\n",
-				boldRed("Error:"), cmd, cmd)
+			// Reached only when byn could not ask for the password itself —
+			// no terminal, no sudo on PATH, or a sudo that did not elevate.
+			_, _ = fmt.Fprintf(w, "%s byn %s manages the _byn system daemon and needs root. Run:\n    %s\n",
+				boldRed("Error:"), cmd, sudoByn(cmd))
 			return true
 		}
 		// Root on an UNPROVISIONED machine: there is no _byn service to manage,

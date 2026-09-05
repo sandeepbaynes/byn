@@ -100,7 +100,7 @@ func diagnoseHeal(e healEnv) []healCheck {
 	cs = append(cs, healCheck{Name: "spawn helper installed", OK: e.exists(e.helperPath), Detail: e.helperPath, Fix: "run: " + sudoByn("setup")})
 
 	up := e.daemonUp()
-	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: " + sudoByn("restart") + "  (or " + sudoByn("doctor", "--repair") + ")"})
+	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: byn restart  (or " + sudoByn("doctor", "--repair") + ")"})
 	cs = append(cs, daemonIsInstalledBynCheck(up, e.daemonVersion, version)...)
 
 	if bynUID, ok := e.bynUID(); ok {

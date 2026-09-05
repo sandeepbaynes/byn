@@ -1549,10 +1549,15 @@ DESCRIPTION
 
        When privsep is provisioned (sudo byn setup), the daemon is the
        _byn launchd/systemd service: "byn start" (run as you) reports
-       its status and points you to "sudo byn restart" if it is down —
-       it never spawns a daemon as you; "sudo byn restart"/"stop" act on
-       the service (a SIGTERM is futile — KeepAlive respawns it); "sudo
-       byn reload" SIGHUPs it to re-read config.
+       its status and points you to "byn restart" if it is down — it
+       never spawns a daemon as you. "byn restart"/"stop" act on the
+       service (a SIGTERM is futile — KeepAlive respawns it) and "byn
+       reload" SIGHUPs it to re-read config. All three need root there,
+       and ask for your password themselves: run from a terminal, byn
+       re-runs the command under sudo (this same binary, by path, so it
+       works after a "go install" too). Without a terminal, or with no
+       sudo, they print the sudo command to run instead. "sudo byn
+       restart" still works as before.
 
 SUBCOMMANDS
        start [--foreground] [--allow-root]

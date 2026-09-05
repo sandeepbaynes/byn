@@ -17,10 +17,11 @@ import (
 // command but maps it to the same user, a broken wrapper — would have byn
 // re-exec itself for ever. One env var turns an infinite loop into a single
 // honest error.
-const elevationGuard = "BYN_SETUP_ELEVATED"
+const elevationGuard = "BYN_ELEVATED"
 
-// elevateWithSudo re-runs `byn setup` under sudo so the caller is prompted for
-// their password, rather than being told to retype the command themselves.
+// elevateWithSudo re-runs this byn under sudo with argv, so the caller is
+// prompted for their password rather than being told to retype the command
+// themselves. what names the command for the reader ("setup", "restart").
 //
 // Reports whether it took over: false means sudo is unavailable or we are
 // already the product of an elevation attempt, and the caller should fall back
@@ -29,7 +30,7 @@ const elevationGuard = "BYN_SETUP_ELEVATED"
 // The path re-executed is this process's own resolved executable, never a name
 // looked up on PATH — the whole point is to run *this* byn as root, and
 // resolving through PATH under sudo's secure_path could find a different one.
-func elevateWithSudo(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, bool) {
+func elevateWithSudo(what string, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, bool) {
 	if os.Getenv(elevationGuard) != "" {
 		return 0, false // we already tried; sudo did not get us to root
 	}
@@ -55,11 +56,11 @@ func elevateWithSudo(args []string, stdin io.Reader, stdout, stderr io.Writer) (
 
 	// Said before the prompt appears. An unexplained password prompt is alarming
 	// and teaches people to type their password at anything that asks.
-	_, _ = fmt.Fprintf(stderr, "%s %s\n", yellow("byn setup needs root."),
-		dim("re-running as "+"sudo "+exe+" setup — you may be asked for your password."))
+	_, _ = fmt.Fprintf(stderr, "%s %s\n", yellow("byn "+what+" needs root."),
+		dim("re-running as sudo "+exe+" "+what+" — you may be asked for your password."))
 
-	argv := append([]string{"--", exe, "setup"}, args...)
-	cmd := exec.Command(sudoPath, argv...) //nolint:gosec // sudo from PATH, then this process's own resolved path
+	sudoArgv := append([]string{"--", exe}, argv...)
+	cmd := exec.Command(sudoPath, sudoArgv...) //nolint:gosec // sudo from PATH, then this process's own resolved path
 	cmd.Env = append(os.Environ(), elevationGuard+"=1")
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
@@ -73,13 +74,47 @@ func elevateWithSudo(args []string, stdin io.Reader, stdout, stderr io.Writer) (
 			// do, and a caller left with only "a terminal is required" has
 			// nothing to act on. Passing the code through keeps a script's view
 			// of the failure accurate instead of flattening everything to 1.
-			_, _ = fmt.Fprintln(stderr, yellow("Run:")+" "+cyan(sudoByn("setup")))
+			_, _ = fmt.Fprintln(stderr, yellow("Run:")+" "+cyan(sudoByn(what)))
 			return exitErrType.ExitCode(), true
 		}
 		_, _ = fmt.Fprintf(stderr, "%s could not run sudo: %v\n", boldRed("Error:"), rerr)
 		return exitErr, true
 	}
 	return exitOK, true
+}
+
+// elevateServiceCommand re-runs a service-management command (restart, stop,
+// reload — or their `byn daemon …` spellings) under sudo when it needs root
+// here: byn is provisioned, so the daemon is the _byn service, and the caller
+// is not root.
+//
+// It runs BEFORE the root policy refuses the command, and takes over only when
+// it can actually ask — a terminal to prompt on, a sudo to prompt with. In
+// every other case it declines silently and the policy's message stands, which
+// still names the command to run. `byn restart` after installing a new byn is
+// the most common privileged thing anyone does, and "needs root, run it again
+// with sudo" was a round trip byn could make itself.
+func elevateServiceCommand(cmd string, rest []string, euid int, provisioned func() bool,
+	stdin io.Reader, stdout, stderr io.Writer) (int, bool) {
+	if euid == 0 {
+		return 0, false
+	}
+	what := cmd
+	if cmd == "daemon" && len(rest) > 0 {
+		what = rest[0]
+	}
+	if cmdRootClass(what) != classRootWhenProvisioned {
+		return 0, false
+	}
+	// Cheap checks first: the provisioning lookup hits passwd, and there is no
+	// point paying for it when a prompt could not be made anyway.
+	if os.Getenv(elevationGuard) != "" || !readerIsTTY(stdin) {
+		return 0, false
+	}
+	if !provisioned() {
+		return 0, false
+	}
+	return elevateWithSudo(what, append([]string{cmd}, rest...), stdin, stdout, stderr)
 }
 
 // readerIsTTY reports whether r is a terminal byn could prompt on. Anything

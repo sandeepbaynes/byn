@@ -66,7 +66,7 @@ func runSetupWith(args []string, euid func() int, stdin io.Reader, stdout, stder
 		// where it lives — and where it lives is the hard part, since a
 		// `go install` puts byn outside sudo's secure_path, so `sudo byn setup`
 		// answers "command not found" for the very command that fixes it.
-		if rc, took := elevateWithSudo(args, stdin, stdout, stderr); took {
+		if rc, took := elevateWithSudo("setup", append([]string{"setup"}, args...), stdin, stdout, stderr); took {
 			return rc
 		}
 		_, _ = fmt.Fprintln(stderr, boldRed("Error:")+" byn setup must run as root")
@@ -150,7 +150,7 @@ func runProvision(stdout, stderr io.Writer) int {
 		if rerr := privsep.RestartService(privilegedRunner()); rerr != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: privilege separation is set but the daemon "+
 				"has not reloaded: %v\n", rerr)
-			_, _ = fmt.Fprintln(stderr, "         run "+cyan(sudoByn("restart"))+" to engage it.")
+			_, _ = fmt.Fprintln(stderr, "         run "+cyan("byn restart")+" to engage it.")
 			break
 		}
 		_, _ = fmt.Fprintln(stdout, "Privilege separation enabled: exec children run as "+

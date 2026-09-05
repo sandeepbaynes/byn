@@ -5,6 +5,22 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### `byn restart` asks for your password instead of telling you to add sudo
+
+Under privilege separation the daemon is the `_byn` service, so restarting it
+needs root. `byn restart` used to refuse and print `sudo byn restart` for you to
+retype. It now re-runs itself under sudo, the way `byn setup` already did, and
+you are prompted once. `stop` and `reload` do the same, as do their
+`byn daemon …` spellings. Every hint that said `sudo byn restart` — `byn status`
+when the daemon is stale, `byn doctor`, `byn start` when the service is down —
+now says `byn restart`.
+
+The re-exec names this same binary by path, so it also works when byn was put
+somewhere sudo's `secure_path` does not look. It only takes over when it can
+actually ask: from a script, CI, or anywhere without a terminal, and where sudo
+is not installed, the refusal prints the `sudo` command to run as before, and
+`sudo byn restart` itself still works.
+
 ### Tab completion
 
 `byn <TAB>` lists commands; `byn <command> <TAB>` lists that command's

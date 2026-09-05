@@ -42,7 +42,7 @@ func TestIsNotInitErr(t *testing.T) {
 // to be the one that works.
 func TestDaemonDownRemedy(t *testing.T) {
 	cmd, note := daemonDownRemedy(true)
-	if cmd != sudoByn("restart") {
+	if cmd != "byn restart" {
 		t.Errorf("provisioned: cmd = %q, want the command that actually works", cmd)
 	}
 	if note == "" {
