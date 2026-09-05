@@ -583,6 +583,8 @@ Run a battery of self-checks against every vault on disk:
 | Check | What it verifies |
 |---|---|
 | `daemon` | Daemon responding to status |
+| `daemon.sees_caller` | The daemon can resolve the process on the other end; warn if not |
+| `daemon.fda` | macOS with privsep only: Full Disk Access. Fails when macOS (TCC) is refusing the daemon a `.byn` you have trusted — see [troubleshooting](troubleshooting.md) |
 | `vaults.list` | Vault directories enumerable; warn if none |
 | `vault[X].open` | Schema version current + meta.json fingerprint matches |
 | `vault[X].audit` | HMAC chain walk reports no broken links |

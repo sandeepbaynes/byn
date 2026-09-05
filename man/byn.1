@@ -411,10 +411,18 @@ strays a \fBsudo byn start\fR left behind), the data dir still traversable by
 you (macOS keeps the socket inside it, so a 0700 dir hides a RUNNING daemon \(em
 every command reports \(lqnot running\(rq while it is up and bound), and no
 stale socket. When the daemon
-is reachable it also runs the daemon\-side checks: vault enumeration, schema +
+is reachable it also runs the daemon\-side checks: that the daemon can resolve
+the process talking to it, macOS Full Disk Access, vault enumeration, schema +
 fingerprint match, audit\-chain HMAC integrity. Each check returns
 \fBok\fR / \fBwarn\fR / \fBfail\fR; exits non\-zero if any \fBfail\fR. Plain
 \fBbyn doctor\fR only diagnoses.
+.IP
+The Full Disk Access check (\fBdaemon.fda\fR) appears on macOS with privilege
+separation only \(em the daemon then runs as \fB_byn\fR under launchd, where
+macOS privacy protection (TCC) blocks it from reading \fB.byn\fR files under
+\fI~/Documents\fR, \fI~/Desktop\fR, \fI~/Downloads\fR and iCloud. It FAILs only
+when a \fItrusted\fR \fB.byn\fR is in fact being refused: a missing grant that
+nothing needs is reported and passes. See \fBmacOS Full Disk Access\fR below.
 .IP
 \fB\-\-repair\fR (root) applies the safe fixes for the failing local checks:
 chown the data dir back to \fB_byn\fR, restore mode \fB0711\fR on a data dir
@@ -892,7 +900,11 @@ is
 .B permission denied
 (EACCES). TCC overrides file ACLs, so
 .BR chmod / setfacl
-cannot fix it. Two resolutions:
+cannot fix it.
+.B byn doctor
+reports the grant state as \fBdaemon.fda\fR and FAILs when a trusted
+.I .byn
+is in fact being refused. Two resolutions:
 .TP
 .B Keep projects outside the protected folders (recommended)
 Put byn\-managed projects under e.g.

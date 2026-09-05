@@ -269,6 +269,9 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		}
 	}
 
+	// Full Disk Access (macOS + privsep only) — nil elsewhere.
+	checks = append(checks, d.fdaChecks()...)
+
 	// List vaults on disk.
 	names, lErr := d.allVaultsOnDisk()
 	switch {

@@ -3,6 +3,17 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## Unreleased
+
+### `byn doctor` checks macOS Full Disk Access
+
+On macOS with privilege separation, `doctor` now reports `daemon.fda`. Without
+that grant the daemon cannot read `.byn` files under `~/Documents`, `~/Desktop`,
+`~/Downloads` or iCloud. It FAILS only when a `.byn` you have already trusted is
+actually being refused, and otherwise reports the state and passes. Note that
+byn ships ad-hoc signed, so **an FDA grant does not survive a reinstall** — this
+check is how you find out.
+
 ## v0.6.5 — 2026-09-03
 
 ### The v0.6.3 editor left in the bin directory is now actually removed

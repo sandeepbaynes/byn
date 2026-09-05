@@ -343,6 +343,16 @@ file fine (it inherits Terminal's access); the daemon, a separate user, does
 not. The tell is the errno: **`operation not permitted`** (EPERM = TCC) versus
 **`permission denied`** (EACCES = ordinary permissions).
 
+**Check it before it bites.** `byn doctor` reports the grant as `daemon.fda`
+(macOS with privsep only). It FAILs, naming the file, when a `.byn` you have
+already trusted is in fact being refused; when nothing needs the grant it says
+so and passes:
+
+```
+[  OK   ] daemon.fda    not granted — nothing needs it (no trusted .byn is blocked; ...)
+[ FAIL  ] daemon.fda    NOT GRANTED — macOS privacy protection (TCC) is blocking ...
+```
+
 ### Option A — keep projects out of the protected folders (recommended, free)
 
 The simplest fix needs no Full Disk Access and no code signing: keep

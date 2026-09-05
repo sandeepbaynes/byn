@@ -1863,9 +1863,18 @@ DESCRIPTION
          • no stale socket         — a leftover socket with the daemon down
 
        When the daemon IS reachable it also runs the daemon-side checks:
-         • vaults.list     — vaults present on disk
-         • vault[X].open   — schema version + meta.json fingerprint
-         • vault[X].audit  — HMAC chain verifies end-to-end
+         • daemon.sees_caller — the daemon can resolve the process on the
+                                other end (when it cannot, audit records no
+                                caller and your own variables need approval)
+         • daemon.fda         — macOS with privsep only: Full Disk Access.
+                                Without it macOS (TCC) blocks the daemon from
+                                .byn files under ~/Documents, ~/Desktop,
+                                ~/Downloads and iCloud — FAILs when a trusted
+                                .byn is actually blocked, otherwise reports the
+                                state and passes
+         • vaults.list        — vaults present on disk
+         • vault[X].open      — schema version + meta.json fingerprint
+         • vault[X].audit     — HMAC chain verifies end-to-end
 
        Exit code is non-zero if any check fails. Plain "byn doctor" only
        diagnoses (dry-run).
