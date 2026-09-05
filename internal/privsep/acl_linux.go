@@ -4,6 +4,7 @@ package privsep
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -227,6 +228,21 @@ func GrantBynReadACL(run func(name string, args ...string) error, bynPath, homeD
 func RevokeBynReadACL(run func(name string, args ...string) error, bynPath, _ string) error {
 	for _, c := range bynReadRevokeCommands(bynPath, DaemonUser) {
 		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GrantTraverseACL grants the exec service user the ability to reach INTO dir
+// and its ancestors up to home. See the darwin twin for why an absent leaf still
+// needs its parents reachable. Non-existent directories are skipped.
+func GrantTraverseACL(run func(name string, args ...string) error, dir, home string) error {
+	for _, d := range traverseAncestors(dir, home) {
+		if _, err := os.Stat(d); err != nil {
+			continue
+		}
+		if err := run("setfacl", "-m", fmt.Sprintf("u:%s:rwX", ExecUser), d); err != nil {
 			return err
 		}
 	}

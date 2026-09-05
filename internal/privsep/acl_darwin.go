@@ -4,6 +4,7 @@ package privsep
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -183,6 +184,34 @@ func GrantBynReadACL(run func(name string, args ...string) error, bynPath, homeD
 func RevokeBynReadACL(run func(name string, args ...string) error, bynPath, _ string) error {
 	for _, c := range bynReadRevokeCommands(bynPath, DaemonUser) {
 		if err := run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GrantTraverseACL grants the exec service user the ability to reach INTO dir —
+// traverse on it and on every ancestor up to home — without granting anything
+// at the leaf. Directories that do not exist are skipped, so the chain is
+// granted as far as it actually goes.
+//
+// It exists for the tool-state directory that is ABSENT at trust time. byn skips
+// granting a path that is not there, and because the ancestor traversal was part
+// of that same grant, skipping the leaf silently left the parent unreachable
+// too. The visible cost is a tool asking about a config file it does not have
+// and being told EACCES instead of ENOENT: pnpm warns on every single
+// invocation about ~/Library/Preferences/pnpm/rc, a file that does not exist,
+// because the child cannot traverse the 0700 directory to find that out.
+//
+// Traverse is the whole grant. The child still cannot list the directory or
+// read anything in it, which is the correct authority for "let it discover that
+// its config is absent".
+func GrantTraverseACL(run func(name string, args ...string) error, dir, home string) error {
+	for _, d := range traverseAncestors(dir, home) {
+		if _, err := os.Stat(d); err != nil {
+			continue
+		}
+		if err := run("chmod", "+a", aceArg(ExecUser, homeACEPerms), d); err != nil {
 			return err
 		}
 	}

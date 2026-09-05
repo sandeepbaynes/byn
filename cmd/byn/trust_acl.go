@@ -104,10 +104,54 @@ func grantTrustACLs(canonBynPath, home string) error {
 	// Tool-state auto-grant (Hybrid): grant _byn-exec read/write on the curated
 	// multi-language toolchain dirs that exist + any [exec] writable the .byn
 	// declares. Best-effort — a tool-state hiccup must NOT fail trusting the .byn.
-	if dirs := execWritableDirs(canonBynPath, home); len(dirs) > 0 {
-		_ = privsep.GrantExecDirsACL(ownerACLRun, dirs, home)
-	}
+	grantToolStateACLs(writableTargetsFor(canonBynPath, home, true), home)
 	return nil
+}
+
+// grantToolStateACLs applies a resolved tool-state plan: create what the .byn
+// asked for, grant it, and make the absent curated defaults reachable.
+//
+// Every step is best-effort but none of them is SILENT any more. The grant used
+// to be `_ = GrantExecDirsACL(...)` — a discarded error on the one step whose
+// failure surfaces much later as an unexplained EACCES inside somebody's dev
+// server, with nothing connecting it back to trust.
+func grantToolStateACLs(t writableTargets, home string) {
+	for _, abs := range t.sensitive {
+		fmt.Fprintf(os.Stderr, "  %s granting %s access to a credential dir (%s) — declared in [exec] writable\n",
+			boldYellow("Warning:"), privsep.ExecUser, abs)
+	}
+	// A declared writable that does not exist yet is CREATED rather than
+	// skipped. Skipping it was silently inert in a way that looked correct:
+	// the .byn named the directory, trust printed a note nobody kept, and the
+	// tool then failed at runtime trying to create it itself — with no ACE on
+	// the parent, and nothing pointing back at the declaration. A tool asking
+	// for its own config directory (astro, and every telemetry-writing tool
+	// like it) cannot create one under a 0700 ~/Library/Preferences.
+	//
+	// 0700, not 0755: the ACE granted below is what lets the child in, so the
+	// mode does not need to open the directory to anybody else.
+	for _, abs := range t.create {
+		if err := os.MkdirAll(abs, 0o700); err != nil {
+			fmt.Fprintf(os.Stderr, "  %s [exec] writable %q does not exist and could not be created: %v\n",
+				yellow("!"), abs, err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  %s created %s for [exec] writable\n", cyan("+"), abs)
+		t.grant = append(t.grant, abs)
+	}
+	if len(t.grant) > 0 {
+		if err := privsep.GrantExecDirsACL(ownerACLRun, t.grant, home); err != nil {
+			fmt.Fprintf(os.Stderr, "  %s tool-state grant incomplete: %v\n", yellow("!"), err)
+			fmt.Fprintf(os.Stderr, "    %s\n", dim("a dev server may hit EACCES on its cache or config dir"))
+		}
+	}
+	// Absent curated defaults: grant traverse so a tool gets ENOENT rather than
+	// EACCES when it looks for config it does not have. See GrantTraverseACL.
+	for _, d := range t.traverse {
+		if err := privsep.GrantTraverseACL(ownerACLRun, d, home); err != nil {
+			fmt.Fprintf(os.Stderr, "  %s could not make %s reachable: %v\n", yellow("!"), d, err)
+		}
+	}
 }
 
 // execWritableDirs resolves the absolute tool-state directories to grant the
@@ -118,7 +162,7 @@ func grantTrustACLs(canonBynPath, home string) error {
 // writable that is missing, escapes home, or names a credential dir is surfaced
 // to the user (the grant is password-gated, so it proceeds, but visibly).
 func execWritableDirs(canonBynPath, home string) []string {
-	return writableDirs(canonBynPath, home, true)
+	return writableTargetsFor(canonBynPath, home, true).grant
 }
 
 // execDeclaredWritableDirs is execWritableDirs without the curated defaults —
@@ -136,26 +180,58 @@ func execWritableDirs(canonBynPath, home string) []string {
 // thousands of 0600 files, none of them the credential file in ~/.aws that the
 // pass exists for. `byn repair` still sweeps everything, because it is asked to.
 func execDeclaredWritableDirs(canonBynPath, home string) []string {
-	return writableDirs(canonBynPath, home, false)
+	return writableTargetsFor(canonBynPath, home, false).grant
 }
 
-func writableDirs(canonBynPath, home string, includeDefaults bool) []string {
+// writableTargets is what a .byn's tool-state declaration resolves to on THIS
+// machine, split by what each path needs rather than filtered down to one list.
+//
+// The old shape — a single slice of directories that exist — could not express
+// the two cases that were actually going wrong, so both were dropped on the
+// floor: a declared path that is absent (which should be created) and a curated
+// default that is absent (whose PARENT still has to be reachable).
+type writableTargets struct {
+	grant     []string // exists now: give it the full inheriting ACE
+	create    []string // declared but absent: trust creates it, then grants
+	traverse  []string // parent of an absent curated default: traverse only
+	sensitive []string // declared credential dirs, for the caller to warn about
+}
+
+// writableTargetsFor classifies the tool-state paths for a .byn. It is PURE —
+// it creates nothing and prints nothing — so the per-exec callers that only
+// want the existing dirs pay no side effects and emit no noise.
+func writableTargetsFor(canonBynPath, home string, includeDefaults bool) writableTargets {
+	var t writableTargets
 	seen := map[string]bool{}
-	var out []string
+	seenTraverse := map[string]bool{}
+
 	add := func(abs string, declared bool) {
 		if abs == "" || seen[abs] {
 			return
 		}
 		if _, err := os.Stat(abs); err != nil {
 			if declared {
-				fmt.Fprintf(os.Stderr, "  %s [exec] writable %q does not exist — skipping\n", yellow("!"), abs)
+				seen[abs] = true
+				t.create = append(t.create, abs)
+				return
+			}
+			// A curated default byn guessed at, which this machine does not
+			// have. Do not invent it — that would litter every home with the
+			// dot-directories of toolchains the owner never installed — but do
+			// make the path reachable, or the child cannot even discover the
+			// absence. Deduplicated: many defaults share a parent.
+			parent := filepath.Dir(abs)
+			if !seenTraverse[parent] {
+				seenTraverse[parent] = true
+				t.traverse = append(t.traverse, parent)
 			}
 			return
 		}
 		seen[abs] = true
-		out = append(out, abs)
+		t.grant = append(t.grant, abs)
 	}
-	// Curated defaults (silently skip those that don't exist on this machine).
+
+	// Curated defaults (this machine may have none of them).
 	if includeDefaults {
 		for _, rel := range privsep.ExecToolchainDefaults {
 			add(filepath.Join(home, rel), false)
@@ -164,11 +240,11 @@ func writableDirs(canonBynPath, home string, includeDefaults bool) []string {
 	// Declared [exec] writable from the .byn.
 	body, err := os.ReadFile(canonBynPath) //nolint:gosec // owner-owned .byn the owner just trusted
 	if err != nil {
-		return out
+		return t
 	}
 	f, perr := bynfile.Parse(body)
 	if perr != nil {
-		return out
+		return t
 	}
 	for _, w := range f.Exec.Writable {
 		abs, verr := privsep.ResolveWritableUnderHome(w, home)
@@ -177,11 +253,11 @@ func writableDirs(canonBynPath, home string, includeDefaults bool) []string {
 			continue
 		}
 		if privsep.IsSensitiveHomeDir(abs, home) {
-			fmt.Fprintf(os.Stderr, "  %s granting _byn-exec access to a credential dir (%s) — declared in [exec] writable\n", boldYellow("Warning:"), abs)
+			t.sensitive = append(t.sensitive, abs)
 		}
 		add(abs, true)
 	}
-	return out
+	return t
 }
 
 // revokeTrustACLs removes the daemon-read ACE AND the _byn-exec project ACE that

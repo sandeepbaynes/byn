@@ -24,6 +24,25 @@ cannot translate a numeric uid), fails once with a clear message when the ACL
 tool is absent instead of once per file, and no longer follows symlinks.
 
 
+### `[exec] writable` directories that do not exist are created
+
+A declared writable path that was absent at trust time was skipped with a note
+and no grant. The tool that wanted the directory then tried to create it
+itself, inside a parent it had no access to, and failed with EACCES at runtime
+with nothing pointing back at the declaration. Trust now creates the declared
+directory (mode 0700, under the owner's home as before) and grants it.
+
+Curated toolchain defaults are still never created — byn does not invent
+directories for toolchains you may not use — but their parent is now made
+traversable, so a tool looking for absent config gets ENOENT instead of EACCES.
+On macOS that removes a warning printed on every single invocation of some
+package managers.
+
+Failures of the tool-state grant are now reported. They were discarded
+entirely, which is why they surfaced much later as an unexplained permission
+error inside a dev server.
+
+
 ## v0.6.5 — 2026-09-03
 
 ### The v0.6.3 editor left in the bin directory is now actually removed

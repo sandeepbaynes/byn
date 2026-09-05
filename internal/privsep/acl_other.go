@@ -32,3 +32,6 @@ func RevokeBynReadACL(_ func(name string, args ...string) error, _, _ string) er
 
 // GrantDaemonHomeAccess is a no-op on unsupported platforms.
 func GrantDaemonHomeAccess(_ func(name string, args ...string) error, _ string) error { return nil }
+
+// GrantTraverseACL is a no-op on unsupported platforms. See GrantProjectACL.
+func GrantTraverseACL(_ func(name string, args ...string) error, _, _ string) error { return nil }
