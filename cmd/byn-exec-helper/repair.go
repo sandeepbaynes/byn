@@ -3,9 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 )
@@ -44,7 +42,21 @@ func repairOwnerMain(dir string) {
 	// helper grant access to a user of their choosing, which is a wider
 	// authority than the repair needs.
 	callerUID := os.Getuid()
-	owner := strconv.Itoa(callerUID)
+	// How this platform's ACL tool names the caller. macOS chmod cannot
+	// translate a numeric id, so darwin resolves it to a username here — still
+	// from the kernel's uid, never from argv. Resolved BEFORE privileges are
+	// dropped, while the process can still be sure of who it is.
+	owner, err := aclPrincipal(callerUID)
+	if err != nil {
+		fatal("resolving the calling user: %v", err)
+	}
+	// Fail once, loudly, when the ACL tool is missing. Discovering it per-file
+	// meant the walk printed the same failure for every path and then reported
+	// nothing repaired — which is how this stayed broken on macOS, where there
+	// is no setfacl at all, while `byn repair` said "nothing to repair".
+	if aerr := aclToolAvailable(); aerr != nil {
+		fatal("%v", aerr)
+	}
 	uid, gid, err := readTargetIDs()
 	if err != nil {
 		fatal("reading target ids: %v", err)
@@ -66,17 +78,21 @@ func repairOwnerMain(dir string) {
 	// #nosec G703 -- dir is an absolute path from the caller; the walk only ever
 	// ADDS an entry for that same caller on files the service user owns, so a
 	// caller naming an unrelated directory gains nothing they did not have.
-	err = filepath.WalkDir(dir, func(path string, _ os.DirEntry, werr error) error {
+	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			return nil // unreadable subtree: nothing here we can repair
+		}
+		// Never set an ACL through a symlink. Both tools follow one to its
+		// target, so a link the service user owns pointing outside the tree
+		// would hand the caller access to whatever it names — authority the
+		// repair has no reason to grant.
+		if d != nil && d.Type()&os.ModeSymlink != 0 {
+			return nil
 		}
 		if !ownedByUID(path, uid) {
 			return nil
 		}
-		// Numeric uid, so nothing from argv reaches the command line, and the
-		// path came from walking a directory this process just read.
-		// #nosec G204 G702 -- fixed binary; both arguments are locally derived
-		cmd := exec.Command("setfacl", "-m", "u:"+owner+":rwX", path)
+		cmd := aclOwnerCmd(path, owner, d != nil && d.IsDir())
 		if out, cerr := cmd.CombinedOutput(); cerr != nil {
 			fmt.Fprintf(os.Stderr, "byn-exec-helper: %s: %v: %s\n",
 				path, cerr, strings.TrimSpace(string(out)))

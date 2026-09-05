@@ -14,6 +14,16 @@ actually being refused, and otherwise reports the state and passes. Note that
 byn ships ad-hoc signed, so **an FDA grant does not survive a reinstall** — this
 check is how you find out.
 
+### `byn repair` never worked on macOS
+
+The helper shelled out to `setfacl` with no platform split. macOS has no
+`setfacl`, so the repair walked the tree, failed on every file, discarded the
+errors, and reported "nothing to repair". It now uses `chmod +a` on macOS and
+`setfacl` on Linux, resolves the calling user to a name there (macOS `chmod`
+cannot translate a numeric uid), fails once with a clear message when the ACL
+tool is absent instead of once per file, and no longer follows symlinks.
+
+
 ## v0.6.5 — 2026-09-03
 
 ### The v0.6.3 editor left in the bin directory is now actually removed
