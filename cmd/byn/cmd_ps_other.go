@@ -8,5 +8,3 @@ func findBynExecProcs() []bynExecProc {
 	fmt.Println("byn ps: process listing is not yet supported on this platform")
 	return nil
 }
-
-func findChildren(_ int) []int { return nil }

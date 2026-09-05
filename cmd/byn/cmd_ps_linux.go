@@ -83,42 +83,6 @@ func findBynExecProcs() []bynExecProc {
 	return out
 }
 
-// findChildren returns the direct child PIDs of parentPID by scanning /proc.
-func findChildren(parentPID int) []int {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil
-	}
-	var out []int
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
-		if err != nil {
-			continue
-		}
-		s := string(b)
-		i := strings.LastIndexByte(s, ')')
-		if i < 0 || i+1 >= len(s) {
-			continue
-		}
-		fields := strings.Fields(s[i+1:])
-		if len(fields) < 2 {
-			continue
-		}
-		ppid, _ := strconv.Atoi(fields[1])
-		if ppid == parentPID {
-			out = append(out, pid)
-		}
-	}
-	return out
-}
-
 // execCmdSummary extracts the human-readable command from the args that
 // follow "exec". It strips byn-level flags and the "--" separator so
 // only the child command and its arguments are shown.

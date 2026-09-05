@@ -56,8 +56,16 @@ func killPgrpMain(pgid int) {
 	// this call. Reporting it as an error made `byn kill` print a scary line
 	// about a process it had not even tried to signal yet, immediately above a
 	// success message. Nothing to signal is simply nothing to do.
+	//
+	// EPERM is the same non-event from the other side. kill(2) on a group only
+	// fails with EPERM when NO member could be signalled, and after the drop
+	// this process can signal exactly the service user's processes — so EPERM
+	// means the group holds none of them (a --no-privsep job, whose children
+	// are all the owner's). Those are byn kill's to signal directly, and it
+	// does, so the line this used to print sat above "stopped" for a job that
+	// was stopped fine.
 	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.EPERM) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "byn-exec-helper: kill(-pgrp %d, SIGTERM): %v\n", pgid, err)

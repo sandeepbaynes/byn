@@ -52,9 +52,9 @@ func runSkill(args []string, _ cliScope) int {
 }
 
 func skillUsage(w io.Writer) int {
-	fmt.Fprintln(w, "usage: byn skill install [--user | --repo | --dir DIR]")
-	fmt.Fprintln(w, "       byn skill show")
-	fmt.Fprintln(w, "       byn skill path [--user | --repo | --dir DIR]")
+	_, _ = fmt.Fprintln(w, "usage: byn skill install [--user | --repo | --dir DIR]")
+	_, _ = fmt.Fprintln(w, "       byn skill show")
+	_, _ = fmt.Fprintln(w, "       byn skill path [--user | --repo | --dir DIR]")
 	return exitErr
 }
 
@@ -124,10 +124,10 @@ func runSkillInstall(args []string) int {
 		return exitErr
 	}
 
-	switch {
-	case previous == "":
+	switch previous {
+	case "":
 		fmt.Printf("%s %s\n", cyan("Installed"), dest)
-	case previous == version:
+	case version:
 		fmt.Printf("%s %s (already %s)\n", cyan("Refreshed"), dest, version)
 	default:
 		fmt.Printf("%s %s (%s → %s)\n", cyan("Updated"), dest, previous, version)

@@ -329,17 +329,6 @@ func findBynExecProcs() []bynExecProc {
 	return procs
 }
 
-// findChildren returns the direct child pids of parentPID.
-func findChildren(parentPID int) []int {
-	var out []int
-	for _, r := range parsePSRows(psOutput(psListArgs, psListFmt)) {
-		if r.ppid == parentPID {
-			out = append(out, r.pid)
-		}
-	}
-	return out
-}
-
 // projectOfPID returns the directory of the .byn governing a running child.
 //
 // macOS keeps no readable link to another process's cwd, so this asks lsof.

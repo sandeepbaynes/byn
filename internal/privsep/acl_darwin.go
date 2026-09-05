@@ -85,10 +85,6 @@ func GrantProjectACL(run func(name string, args ...string) error, projectDir, ho
 	return GrantProjectACLFor(run, projectDir, homeDir, "")
 }
 
-// GrantProjectACLFor is GrantProjectACL with the owner named, so files the exec
-// child creates stay writable by the person who owns the project. Without it
-// every build artifact belongs to the service user and the owner cannot delete
-// it — removing a file needs write on its directory.
 // GrantProjectACLForce exists for parity with Linux, where trust skips a costly
 // recursive walk once the inheritable entry is present and `byn repair` forces
 // it. Darwin sets an inheriting ACE on the project directory and never walks the
@@ -98,6 +94,10 @@ func GrantProjectACLForce(run func(name string, args ...string) error, projectDi
 	return GrantProjectACLFor(run, projectDir, homeDir, owner)
 }
 
+// GrantProjectACLFor is GrantProjectACL with the owner named, so files the exec
+// child creates stay writable by the person who owns the project. Without it
+// every build artifact belongs to the service user and the owner cannot delete
+// it — removing a file needs write on its directory.
 func GrantProjectACLFor(run func(name string, args ...string) error, projectDir, homeDir, owner string) error {
 	for _, c := range aclGrantCommands(projectDir, homeDir, ExecUser) {
 		if err := run(c[0], c[1:]...); err != nil {

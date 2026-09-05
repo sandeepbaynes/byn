@@ -16,11 +16,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/sandeepbaynes/byn/internal/agentskill"
 	"github.com/sandeepbaynes/byn/tools/gensite/site"
-	"sort"
-	"strings"
 )
 
 func main() {
