@@ -101,7 +101,13 @@ func TestIdentitySeesThroughWrappers(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = plain.Process.Kill(); _, _ = plain.Process.Wait() })
 
-	wrapped := exec.Command("timeout", "30", "sh", "-c", "exec sleep 30")
+	// Two wrapper layers, spelled portably. This used to run `timeout`, which
+	// is GNU coreutils and simply absent on macOS — so the whole test skipped
+	// there, and the wrapper-transparency rule that decides who an action is
+	// ATTRIBUTED to had no coverage at all on that platform. Nested shells make
+	// the same shape out of a tool every POSIX system has, and `sh` is in
+	// transientWrappers exactly as `timeout` is.
+	wrapped := exec.Command("sh", "-c", "sh -c 'sleep 30'")
 	if err := wrapped.Start(); err != nil {
 		t.Skipf("cannot spawn wrapped: %v", err)
 	}

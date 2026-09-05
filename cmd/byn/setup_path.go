@@ -98,13 +98,29 @@ func fileExists(p string) bool {
 // inSystemBinDir reports whether path already lives somewhere on the PATH that
 // a fresh shell and sudo both search.
 func inSystemBinDir(path string) bool {
-	dir := filepath.Dir(path)
+	dir := resolveDir(filepath.Dir(path))
 	for _, d := range systemBinDirs {
-		if dir == d {
+		if resolveDir(d) == dir {
 			return true
 		}
 	}
 	return false
+}
+
+// resolveDir returns dir with symlinks resolved, or dir unchanged when it
+// cannot be resolved (it may not exist).
+//
+// Both sides of the comparison have to be resolved or the answer is wrong
+// whenever either side is reached through a link. The caller passes a path that
+// has ALREADY been through EvalSymlinks, so comparing it against a raw entry
+// asks whether two spellings of the same directory are the same string. On
+// macOS they routinely are not: /var is a symlink to /private/var, so anything
+// under it resolves to a path that no literal entry can equal.
+func resolveDir(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return dir
 }
 
 // copyExecutable installs src at dest as a real file, readable and executable

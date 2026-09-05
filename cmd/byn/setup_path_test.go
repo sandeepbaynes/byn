@@ -194,3 +194,41 @@ func TestEnsureOnSystemPath_InstallsTheEditorEvenWhenBynIsAlreadyInPlace(t *test
 			"that leaves the superseded copy on PATH for ever")
 	}
 }
+
+// TestInSystemBinDir_MatchesThroughASymlink.
+//
+// The comparison had a resolved path on one side and a raw configured entry on
+// the other. macOS makes that fail constantly — /var is a symlink to
+// /private/var — so a byn whose directory was reached through any link was
+// judged NOT to be in a system bin dir, and setup went on to copy it over
+// itself. This is the macOS half of a Linux-developed check.
+func TestInSystemBinDir_MatchesThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "realbin")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linkbin")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+
+	orig := systemBinDirs
+	t.Cleanup(func() { systemBinDirs = orig })
+
+	// Configured by its LINK path, asked about by its REAL path.
+	systemBinDirs = []string{link}
+	if !inSystemBinDir(filepath.Join(real, "byn")) {
+		t.Error("a real path must match a system bin dir configured via a symlink")
+	}
+	// And the reverse spelling.
+	systemBinDirs = []string{real}
+	if !inSystemBinDir(filepath.Join(link, "byn")) {
+		t.Error("a linked path must match a system bin dir configured by its real path")
+	}
+	// An unrelated directory must still not match.
+	systemBinDirs = []string{real}
+	if inSystemBinDir(filepath.Join(root, "elsewhere", "byn")) {
+		t.Error("an unrelated directory matched")
+	}
+}

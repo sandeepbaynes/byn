@@ -3,6 +3,7 @@ package ipc
 import (
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,14 +43,33 @@ func TestClient_Call_DaemonDown(t *testing.T) {
 	}
 }
 
+// shortTempDir returns a temporary directory whose path is short enough to hold
+// a unix socket.
+//
+// sun_path is 104 bytes on macOS and 108 on Linux — a limit on the PATH, not on
+// the directory, so it is easy to exceed by accident. t.TempDir() on macOS
+// hands back /var/folders/<32 chars>/T/<TestName>/001, which is already past it
+// once a filename is appended. The guard that used to sit here called itself
+// defensive and fired on every single macOS run instead, silently disabling
+// these tests on that platform rather than in the rare case it was written for.
+//
+// /tmp explicitly, NOT os.MkdirTemp's default: that default is $TMPDIR, which is
+// the long per-user path on macOS and would reintroduce exactly the problem.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "byn")
+	if err != nil {
+		return t.TempDir() // no /tmp: fall back and let the caller's guard decide
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // fakeServer is a one-shot stub answering with cb on the first conn.
 func fakeServer(t *testing.T, cb func(env *Envelope) *Envelope) string {
 	t.Helper()
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "s.sock")
+	sockPath := filepath.Join(shortTempDir(t), "s.sock")
 	if len(sockPath) > 100 {
-		// On macOS the limit is ~104; t.TempDir paths are usually well
-		// under but defensive nonetheless.
 		t.Skipf("socket path too long: %d", len(sockPath))
 	}
 	l, err := net.Listen("unix", sockPath)
