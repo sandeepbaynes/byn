@@ -401,6 +401,25 @@ Argon2id overhead on large exports.
 .B Caveat:
 this materialises plaintext. Treat the destination as you would a
 \fB.env\fR file \- never commit, never share.
+.SS Shell completion
+.TP
+.B completion bash|zsh|fish
+Print the tab\-completion script for a shell. \fBbyn <TAB>\fR then lists
+commands, and \fBbyn <command> <TAB>\fR lists that command's subcommands;
+typing a dash first lists its options instead.
+.IP
+\fBmake install\fR installs these, so this command is for a byn installed some
+other way, or a shell whose completion directory is elsewhere. zsh's is created
+under \fI$PREFIX/share/zsh/site\-functions\fR, which is already on the default
+fpath; bash and fish are installed only where their directory already exists,
+since creating one would put a file where nothing reads it.
+.IP
+The script asks byn for candidates as you type rather than carrying a baked\-in
+list, so it cannot go stale as byn gains commands. It never contacts the
+daemon \(em a TAB press must not block on a socket, or hang when the daemon is
+down. \fBbyn exec <TAB>\fR is the one directory\-dependent case: it offers the
+\fB[aliases]\fR the governing \fB.byn\fR declares, because that answer depends
+on where you are standing rather than on the binary.
 .SS Agent skills
 .TP
 .B skill install \fR[\fB\-\-user\fR | \fB\-\-repo\fR | \fB\-\-dir\fR \fIDIR\fR]

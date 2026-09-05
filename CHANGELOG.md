@@ -5,6 +5,28 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### Tab completion
+
+`byn <TAB>` lists commands; `byn <command> <TAB>` lists that command's
+subcommands, or its options once you type a dash. `make install` sets it up for
+zsh automatically, and for bash and fish where their completion directory
+already exists; `byn completion bash|zsh|fish` prints the script for anything
+else.
+
+The completions are derived rather than written down a second time. Flags come
+from each command's own SYNOPSIS — the text the repository already requires
+updating whenever a flag changes — and a test checks the command list against
+main.go's dispatch, so adding a command without completing it fails the build
+instead of leaving completion quietly describing an older CLI.
+
+`byn exec <TAB>` offers the `[aliases]` declared by the `.byn` that applies in
+the current directory. Completion never contacts the daemon, so a TAB press
+cannot block on a socket or hang when the daemon is down.
+
+Writing the test turned up that `byn vault passwd` — which dispatches, and which
+the man page documents — was missing from `byn vault help`. Now listed.
+
+
 ### `make install` no longer wants sudo for the whole build
 
 It is now run as yourself. The build happens as you, and only the steps that

@@ -60,6 +60,18 @@ func TestInstall_NeverTouchesHomeForAStagedBuild(t *testing.T) {
 	}
 }
 
+// Shell completions are written to system directories on the machine being
+// installed to. A staged package build must not touch them either.
+func TestInstall_GuardsCompletionsForAStagedBuild(t *testing.T) {
+	out := makeDryRun(t, "DESTDIR=/tmp/byn-staging-test")
+	if !strings.Contains(out, "completion zsh") {
+		t.Skip("completions not part of install in this revision")
+	}
+	if !strings.Contains(out, `if [ -z "/tmp/byn-staging-test" ]`) {
+		t.Error("the completion step must be guarded so a staged build skips it")
+	}
+}
+
 // The inverse: a normal install DOES elevate, and only after the build. If this
 // stops being true, `make install` starts failing with permission errors on the
 // first write to /usr/local instead of asking for a password.

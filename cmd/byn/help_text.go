@@ -388,6 +388,57 @@ EXIT STATUS
 SEE ALSO
        byn-ps(1), byn-exec(1)
 `,
+	"completion": `NAME
+       byn-completion - print the shell tab-completion script
+
+SYNOPSIS
+       byn completion bash
+       byn completion zsh
+       byn completion fish
+
+DESCRIPTION
+       Prints a completion script for your shell. "byn <TAB>" then
+       lists commands, and "byn <command> <TAB>" lists that command's
+       subcommands; typing a dash first lists its options instead.
+
+       "make install" installs these for you, so you normally do not
+       need this command. It is here for a byn installed some other
+       way, or a shell whose completion directory is somewhere else.
+
+       The script asks byn for candidates as you type rather than
+       carrying a baked-in list, so it does not go stale as byn gains
+       commands. It never contacts the daemon: a TAB press must not
+       block on a socket, or hang when the daemon is down.
+
+       "byn exec <TAB>" is the one directory-dependent case — it
+       offers the [aliases] declared by the .byn that applies here,
+       because the answer depends on where you are standing rather
+       than on the binary.
+
+EXAMPLES
+       zsh — the directory is already on the default fpath:
+         $ byn completion zsh | sudo tee \
+             /usr/local/share/zsh/site-functions/_byn
+
+       bash — needs the bash-completion package:
+         $ byn completion bash | sudo tee \
+             /usr/local/etc/bash_completion.d/byn
+
+       fish:
+         $ byn completion fish > \
+             ~/.config/fish/completions/byn.fish
+
+       Or for the current shell only, without installing:
+         $ source <(byn completion bash)
+
+EXIT STATUS
+       0   the script was printed
+       1   no shell given, or an unsupported one
+
+SEE ALSO
+       byn(1)
+`,
+
 	"skill": `NAME
        byn-skill - install the byn Agent Skill for an AI coding agent
 
@@ -1749,6 +1800,7 @@ SYNOPSIS
        byn vault list [--json]
        byn vault delete NAME [--password-stdin]
        byn vault rename OLD NEW [--password-stdin]
+       byn vault passwd [--password-stdin]
        byn vault init | unlock | lock
 
 DESCRIPTION

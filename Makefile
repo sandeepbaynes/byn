@@ -158,6 +158,34 @@ install: build
 		echo "  fixed $$_dir ownership → _byn:_byn (mode 0711)"; \
 	 fi
 	@$(MAKE) install-man 2>/dev/null || echo "  (man page skipped — $(MANDIR) not writable)"
+	@# Shell completions. zsh gets its directory CREATED because
+	@# $(PREFIX)/share/zsh/site-functions is already on the default fpath on
+	@# both macOS and Linux, so a file there works with no further setup.
+	@#
+	@# bash and fish are installed only where their directory ALREADY exists.
+	@# Creating one would put a file somewhere nothing reads: a bash without
+	@# the bash-completion package never sources bash_completion.d, and the
+	@# result is a completion that silently does not work plus a directory the
+	@# machine did not have before.
+	@if [ -z "$(DESTDIR)" ]; then \
+		$(SUDO) install -d $(PREFIX)/share/zsh/site-functions 2>/dev/null && \
+		$(BIN) completion zsh 2>/dev/null | $(SUDO) tee $(PREFIX)/share/zsh/site-functions/_byn >/dev/null && \
+		echo "  installed zsh completion → $(PREFIX)/share/zsh/site-functions/_byn" || true; \
+		for d in $(PREFIX)/etc/bash_completion.d /etc/bash_completion.d /usr/share/bash-completion/completions; do \
+			if [ -d "$$d" ]; then \
+				$(BIN) completion bash 2>/dev/null | $(SUDO) tee "$$d/byn" >/dev/null && \
+				echo "  installed bash completion → $$d/byn"; \
+				break; \
+			fi; \
+		done; \
+		for d in $(PREFIX)/share/fish/vendor_completions.d /usr/share/fish/vendor_completions.d; do \
+			if [ -d "$$d" ]; then \
+				$(BIN) completion fish 2>/dev/null | $(SUDO) tee "$$d/byn.fish" >/dev/null && \
+				echo "  installed fish completion → $$d/byn.fish"; \
+				break; \
+			fi; \
+		done; \
+	fi
 	@# The Agent Skill, so an AI coding agent knows how to use the byn that was
 	@# just installed. It goes in a USER's ~/.claude/skills -- never root's,
 	@# where no agent will ever look -- so when make is running under sudo it is

@@ -284,6 +284,12 @@ func run(args []string) int {
 		return runAudit(rest, scope)
 	case "skill":
 		return runSkill(rest, scope)
+	case "completion":
+		return runCompletion(rest, scope)
+	case "__complete":
+		// Hidden: the shell calls this on every keystroke. Not in the command
+		// list, and never in the help, because it is not for people to type.
+		return runCompleteHidden(rest)
 	case "ps":
 		return runPS(rest)
 	case "runs":
@@ -460,6 +466,9 @@ Agents:
   skill install              Install the byn Agent Skill so an AI coding agent
                              knows how to use byn (re-run after every upgrade)
   skill show                 Print the skill to stdout
+
+Shell:
+  completion bash|zsh|fish   Print the tab-completion script for your shell
 
 System (run with sudo — these manage the _byn service):
   setup                      Provision the _byn/_byn-exec service users

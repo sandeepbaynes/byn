@@ -574,6 +574,26 @@ vault → project → env tree.
 
 ---
 
+## Shell
+
+### `byn completion bash|zsh|fish`
+
+Print the tab-completion script. `byn <TAB>` lists commands; `byn <command>
+<TAB>` lists subcommands, or options once you type a dash.
+
+`make install` sets this up for zsh (its directory is already on the default
+fpath) and for bash/fish where their completion directory exists. Use this
+command for a byn installed another way:
+
+```sh
+byn completion zsh | sudo tee /usr/local/share/zsh/site-functions/_byn
+source <(byn completion bash)      # current shell only
+```
+
+Candidates are fetched from byn as you type, so the script cannot go stale.
+`byn exec <TAB>` offers the `[aliases]` from the `.byn` that applies here.
+Completion never contacts the daemon.
+
 ## Agents
 
 ### `byn skill install [--user | --repo | --dir DIR]`
