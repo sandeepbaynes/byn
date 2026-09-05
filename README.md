@@ -247,12 +247,21 @@ Requires Go 1.25+ (dependency floor). (Developed against 1.26.)
 
 ```sh
 make build              # → bin/byn
+make install            # build as you, then sudo only for /usr/local/bin
 make test               # unit tests, race detector on
 make test-integration   # builds the binary, drives it end-to-end
 make lint               # golangci-lint (v2 config in .golangci.yml)
 make cover              # coverage report → coverage.html
 make clean
 ```
+
+`make install` is run **as yourself, not with sudo**. It builds as you — so no
+root-owned artifacts land in `bin/` or the Go cache — then asks for a password
+once, for the steps that write to `/usr/local`. It also installs the Agent Skill
+into *your* `~/.claude/skills`, which is why it must not run as root: under sudo
+that is root's home, where no agent will look. `sudo make install` still works
+(elevation is skipped when already root), and `DESTDIR=…` staged package builds
+never elevate at all.
 
 Single test:
 

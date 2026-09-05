@@ -31,6 +31,21 @@ LIBEXECDIR  ?= /usr/local/libexec
 DIST_DIR  := dist
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
+# Elevation for the privileged half of `install`.
+#
+# EMPTY when sudo would be wrong or unnecessary: already root (so an old
+# `sudo make install` keeps working unchanged), or DESTDIR is set -- a package
+# build staging into a directory it already owns, where sudo would prompt in CI
+# and break an unattended build. Otherwise `sudo`, so a plain `make install`
+# BUILDS AS YOU and asks for a password only for the steps that need one.
+#
+# Building as yourself is not just tidiness. Under `sudo make install` the whole
+# build ran as root: root-owned artifacts in bin/ and in the Go build cache
+# (which `byn doctor` has a check for), and $HOME pointing at root's home --
+# which is why the Agent Skill below has to be installed as the INVOKING user
+# rather than whoever make happens to be running as.
+SUDO    ?= $(shell [ -n "$(DESTDIR)" ] || [ "$$(id -u)" = 0 ] || echo sudo)
+
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 MANDIR  ?= $(PREFIX)/share/man/man1
@@ -65,12 +80,12 @@ man: $(MANFILE)
 	@echo "Preview: man $(MANFILE)"
 
 install-man: $(MANFILE)
-	install -d $(DESTDIR)$(MANDIR)
-	install -m 0644 $(MANFILE) $(DESTDIR)$(MANDIR)/byn.1
+	$(SUDO) install -d $(DESTDIR)$(MANDIR)
+	$(SUDO) install -m 0644 $(MANFILE) $(DESTDIR)$(MANDIR)/byn.1
 	@echo "Installed $(MANDIR)/byn.1"
 
 uninstall-man:
-	rm -f $(DESTDIR)$(MANDIR)/byn.1
+	$(SUDO) rm -f $(DESTDIR)$(MANDIR)/byn.1
 
 # Build then install the binary (and man page) to $(PREFIX). Override the
 # location with PREFIX=... or BINDIR=... (e.g. `make install BINDIR=$HOME/bin`).
@@ -82,13 +97,20 @@ uninstall-man:
 # Find the identity with: security find-identity -v -p codesigning
 # See docs/troubleshooting.md "macOS Full Disk Access (TCC)".
 install: build
-	install -d $(DESTDIR)$(BINDIR)
-	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
-	install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
+	@# One password prompt, at a predictable moment: after the build (which runs
+	@# as you and may be slow) and before anything privileged. sudo caches the
+	@# timestamp, so the steps below do not each re-ask.
+	@if [ -n "$(SUDO)" ]; then \
+		echo "Installing to $(BINDIR) needs administrator rights."; \
+		$(SUDO) -v || exit 1; \
+	fi
+	$(SUDO) install -d $(DESTDIR)$(BINDIR)
+	$(SUDO) install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/byn
+	$(SUDO) install -m 0755 $(HELPER) $(DESTDIR)$(BINDIR)/byn-exec-helper
 	@# The editor goes to libexec, not bin: it is byn's own helper, not a command
 	@# anybody runs. On PATH it would only offer a way to invoke it wrongly.
-	install -d $(DESTDIR)$(LIBEXECDIR)
-	install -m 0755 $(TUI) $(DESTDIR)$(LIBEXECDIR)/byn-tui
+	$(SUDO) install -d $(DESTDIR)$(LIBEXECDIR)
+	$(SUDO) install -m 0755 $(TUI) $(DESTDIR)$(LIBEXECDIR)/byn-tui
 	@# The helper that actually RUNS lives in libexec with file capabilities,
 	@# put there by `byn setup`. Installing only to bindir left it untouched:
 	@# it drifted six weeks behind the CLI it shares an exec-token protocol
@@ -105,19 +127,19 @@ install: build
 	@# _byn-exec, which is a silent break rather than a loud one.
 	@if [ -x /usr/local/libexec/byn-exec-helper ]; then \
 		if [ "$$(uname -s)" = "Darwin" ]; then \
-			install -o root -g wheel -m 4755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
+			$(SUDO) install -o root -g wheel -m 4755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
 			echo "Refreshed /usr/local/libexec/byn-exec-helper (setuid-root privsep helper)"; \
 		else \
-			install -o root -g root -m 0755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
-			setcap cap_setuid,cap_setgid+ep /usr/local/libexec/byn-exec-helper && \
+			$(SUDO) install -o root -g root -m 0755 $(HELPER) /usr/local/libexec/byn-exec-helper && \
+			$(SUDO) setcap cap_setuid,cap_setgid+ep /usr/local/libexec/byn-exec-helper && \
 			echo "Refreshed /usr/local/libexec/byn-exec-helper (privsep helper)"; \
 		fi; \
 	fi
 	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
 		echo "Signing installed binaries with: $(CODESIGN_IDENTITY)"; \
-		codesign --force --identifier com.sandeepbaynes.byn \
+		$(SUDO) codesign --force --identifier com.sandeepbaynes.byn \
 			--sign "$(CODESIGN_IDENTITY)" $(DESTDIR)$(BINDIR)/byn; \
-		codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
+		$(SUDO) codesign --force --identifier com.sandeepbaynes.byn-exec-helper \
 			--sign "$(CODESIGN_IDENTITY)" $(DESTDIR)$(BINDIR)/byn-exec-helper; \
 		echo "Signed. Re-add /usr/local/bin/byn to Full Disk Access once; the grant then persists across reinstalls signed with this identity."; \
 	fi
@@ -132,10 +154,34 @@ install: build
 	 if [ "$$(uname -s)" = "Darwin" ]; then _dir="/Library/Application Support/byn"; \
 	 else _dir="/var/lib/byn"; fi; \
 	 if id _byn >/dev/null 2>&1 && [ -d "$$_dir" ]; then \
-		chown _byn:_byn "$$_dir" && chmod 0711 "$$_dir" && \
+		$(SUDO) chown _byn:_byn "$$_dir" && $(SUDO) chmod 0711 "$$_dir" && \
 		echo "  fixed $$_dir ownership → _byn:_byn (mode 0711)"; \
 	 fi
 	@$(MAKE) install-man 2>/dev/null || echo "  (man page skipped — $(MANDIR) not writable)"
+	@# The Agent Skill, so an AI coding agent knows how to use the byn that was
+	@# just installed. It goes in a USER's ~/.claude/skills -- never root's,
+	@# where no agent will ever look -- so when make is running under sudo it is
+	@# installed as SUDO_USER rather than as whoever make happens to be.
+	@#
+	@# Skipped entirely for a staged package build (DESTDIR set): that installs
+	@# into a directory, not onto a machine, and must not write into the build
+	@# user's home. The package's own postinstall is the right place, if ever.
+	@#
+	@# Never fatal. A missing skill is a worse agent, not a broken install.
+	@if [ -z "$(DESTDIR)" ]; then \
+		_u="$${SUDO_USER:-}"; \
+		if [ -n "$$_u" ]; then \
+			if sudo -u "$$_u" -H $(BINDIR)/byn skill install >/dev/null 2>&1; then \
+				echo "  installed the Agent Skill for $$_u (byn skill install)"; \
+			else \
+				echo "  (Agent Skill not installed — run: byn skill install)"; \
+			fi; \
+		elif $(BINDIR)/byn skill install >/dev/null 2>&1; then \
+			echo "  installed the Agent Skill → ~/.claude/skills/byn"; \
+		else \
+			echo "  (Agent Skill not installed — run: byn skill install)"; \
+		fi; \
+	fi
 
 # Remove byn binaries, man page, and (if provisioned) the system service +
 # privsep accounts. The vault and its secrets are LEFT INTACT.

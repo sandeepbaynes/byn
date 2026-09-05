@@ -5,6 +5,24 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### `make install` no longer wants sudo for the whole build
+
+It is now run as yourself. The build happens as you, and only the steps that
+write to `/usr/local` are elevated — one password prompt, after the build,
+before anything privileged.
+
+`sudo make install` ran the compiler as root, which left root-owned artifacts in
+`bin/` and the Go build cache (`byn doctor` has a check for exactly that), and
+pointed `$HOME` at root's home. That last one now matters: `make install` also
+installs the Agent Skill, and under sudo it would land in `/var/root/.claude`,
+where no agent will ever look. When make *is* running under sudo the skill is
+installed as `SUDO_USER` instead.
+
+`sudo make install` still works unchanged — elevation is skipped when already
+root — and a `DESTDIR=` staged package build never elevates and never writes to
+the build user's home.
+
+
 ### An Agent Skill, shipped inside the binary
 
 `byn skill install` writes an Agent Skill — the document an AI coding agent
