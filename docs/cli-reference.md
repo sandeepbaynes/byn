@@ -574,6 +574,36 @@ vault → project → env tree.
 
 ---
 
+## Agents
+
+### `byn skill install [--user | --repo | --dir DIR]`
+
+Install byn's **Agent Skill** — the document an AI coding agent reads to learn
+how to use byn: run commands through `byn exec` and never read a secret value,
+what a `.byn` declares, that granting trust is a human action the agent cannot
+perform, and how to answer an approval.
+
+The skill ships inside the binary, so this writes the skill for the byn you
+actually have. A skill and a binary that disagree are worse than no skill: the
+agent follows instructions for a CLI it is not talking to and cannot tell.
+**Re-run after every upgrade** — `byn doctor` reports an installed skill whose
+version no longer matches.
+
+| Flag | Destination |
+|---|---|
+| `--user` (default) | `~/.claude/skills/byn/SKILL.md` |
+| `--repo` | `./.claude/skills/byn/SKILL.md`, to commit alongside the code |
+| `--dir DIR` | `DIR/byn/SKILL.md` — DIR is the skills *root*; the spec requires the directory to carry the skill's name |
+
+Not `--project`: that is byn's global scope flag.
+
+`byn skill show` prints it to stdout; `byn skill path` prints where it would be
+written.
+
+The same skill is published at
+[`/skill.md`](https://sandeepbaynes.github.io/byn/skill.md) and discoverable
+under `/.well-known/agent-skills/`, for agents that install from a URL.
+
 ## Diagnostics
 
 ### `byn doctor [--json]`

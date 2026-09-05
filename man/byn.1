@@ -401,6 +401,39 @@ Argon2id overhead on large exports.
 .B Caveat:
 this materialises plaintext. Treat the destination as you would a
 \fB.env\fR file \- never commit, never share.
+.SS Agent skills
+.TP
+.B skill install \fR[\fB\-\-user\fR | \fB\-\-repo\fR | \fB\-\-dir\fR \fIDIR\fR]
+Install byn's Agent Skill \(em the document an AI coding agent reads to learn how
+to use byn: run commands through \fBbyn exec\fR and never read a secret value,
+what a \fB.byn\fR declares, that granting trust is a human action the agent
+cannot perform, and how to answer an approval.
+.IP
+The skill ships INSIDE the binary, so this writes the skill for the byn you
+actually have. A skill and a binary that disagree are worse than no skill: the
+agent follows instructions for a CLI it is not talking to and cannot tell. So
+re\-run it after every upgrade \(em \fBbyn doctor\fR reports an installed skill
+whose version no longer matches the binary.
+.IP
+\fB\-\-user\fR (default) writes \fI~/.claude/skills/byn/SKILL.md\fR; byn is
+installed machine\-wide, so its skill should not need reinstalling per
+repository. \fB\-\-repo\fR writes \fI./.claude/skills/byn/SKILL.md\fR to commit
+alongside the code. It is not spelled \fB\-\-project\fR because that is byn's
+global scope flag. \fB\-\-dir\fR names the skills ROOT: the file lands in
+\fIDIR/byn/SKILL.md\fR, since the specification requires the directory to carry
+the skill's name.
+.TP
+.B skill show
+Print the skill to stdout, with this binary's version substituted, for piping
+into an agent that reads skills from somewhere else.
+.TP
+.B skill path \fR[\fB\-\-user\fR | \fB\-\-repo\fR | \fB\-\-dir\fR \fIDIR\fR]
+Print where \fBskill install\fR would write, without writing.
+.IP
+The same skill is published at
+.I https://sandeepbaynes.github.io/byn/skill.md
+and is discoverable under \fI/.well\-known/agent\-skills/\fR for agents that
+install from a URL rather than from the binary.
 .SS Diagnostics and audit
 .TP
 .B doctor \fR[\fB\-\-json\fR] \fR[\fB\-\-repair\fR]

@@ -282,6 +282,8 @@ func run(args []string) int {
 		return runExport(rest, scope)
 	case "audit":
 		return runAudit(rest, scope)
+	case "skill":
+		return runSkill(rest, scope)
 	case "ps":
 		return runPS(rest)
 	case "runs":
@@ -453,6 +455,11 @@ Approvals (the asker's own side — for agents):
 Repair:
   repair [DIR]               Give yourself back access to build artifacts a
                              privsep exec child created (default: .)
+
+Agents:
+  skill install              Install the byn Agent Skill so an AI coding agent
+                             knows how to use byn (re-run after every upgrade)
+  skill show                 Print the skill to stdout
 
 System (run with sudo — these manage the _byn service):
   setup                      Provision the _byn/_byn-exec service users

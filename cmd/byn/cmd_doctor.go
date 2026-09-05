@@ -101,6 +101,11 @@ func runDoctor(args []string, _ cliScope) int {
 	if c, applies := checkHelperFresh(env); applies {
 		local = append(local, c)
 	}
+	// An agent reading a skill written for a different byn has no way to notice
+	// on its own, so the machine has to say it.
+	if c, applies := checkSkillFresh(); applies {
+		local = append(local, c)
+	}
 	// What a caller most wants to know before starting a service: will it
 	// actually receive what its .byn asks for. Answering it here means one
 	// command instead of an exact-match probe per name.

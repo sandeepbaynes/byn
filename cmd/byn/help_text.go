@@ -388,6 +388,78 @@ EXIT STATUS
 SEE ALSO
        byn-ps(1), byn-exec(1)
 `,
+	"skill": `NAME
+       byn-skill - install the byn Agent Skill for an AI coding agent
+
+SYNOPSIS
+       byn skill install [--user | --repo | --dir DIR]
+       byn skill show
+       byn skill path [--user | --repo | --dir DIR]
+
+DESCRIPTION
+       An Agent Skill is a document an AI coding agent reads to learn
+       how to use a tool correctly. byn's tells an agent to run
+       commands through "byn exec" and never to read a secret value,
+       what a .byn file declares, that trust is a human action it
+       cannot perform, and how to answer an approval.
+
+       The skill ships INSIDE the byn binary, so "byn skill install"
+       writes the skill for the byn you actually have. There is no
+       separate download to keep in step, and no way to end up with a
+       skill describing a version you are not running.
+
+       A skill and a binary that disagree are worse than no skill at
+       all: the agent follows instructions for a CLI it is not talking
+       to, and has no way to notice. So RE-RUN "byn skill install"
+       after every byn upgrade. "byn doctor" reports an installed
+       skill whose version no longer matches.
+
+OPTIONS
+       --user
+           Install for you, at ~/.claude/skills/byn/SKILL.md. The
+           default: byn is installed machine-wide, so a skill for it
+           should not need re-installing per repository.
+
+       --repo
+           Install into the current repository, at
+           ./.claude/skills/byn/SKILL.md, to commit alongside the code
+           so everyone working on it gets the same skill. (Not
+           --project: that is byn's global scope flag.)
+
+       --dir DIR
+           Install into DIR, which is the skills ROOT — the skill goes
+           to DIR/byn/SKILL.md, because the specification requires the
+           directory to be named after the skill. Use this for agents
+           that read somewhere else.
+
+EXAMPLES
+       Install for yourself, then confirm:
+         $ byn skill install
+         Installed /home/you/.claude/skills/byn/SKILL.md
+
+         $ byn doctor
+         [  OK  ] agent skill up to date  — 0.6.5
+
+       After upgrading byn:
+         $ byn skill install
+         Updated /home/you/.claude/skills/byn/SKILL.md (0.6.4 → 0.6.5)
+
+       Pipe it somewhere else:
+         $ byn skill show > /path/to/agent/skills/byn/SKILL.md
+
+       The same skill is published at
+       https://sandeepbaynes.github.io/byn/skill.md and discoverable
+       under /.well-known/agent-skills/, for agents that install from a
+       URL rather than from the binary.
+
+EXIT STATUS
+       0   the skill was written
+       1   bad usage, or the destination could not be written
+
+SEE ALSO
+       byn-exec(1), byn-trust(1), byn-doctor(1)
+`,
+
 	"ps": `NAME
        byn-ps - list running byn exec processes and their projects
 

@@ -17,7 +17,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sandeepbaynes/byn/internal/agentskill"
 	"github.com/sandeepbaynes/byn/tools/gensite/site"
+	"sort"
+	"strings"
 )
 
 func main() {
@@ -121,6 +124,30 @@ func run(args []string, out io.Writer) error {
 		}
 	}
 
+	// The Agent Skill, published so an agent can install it from the docs URL.
+	// Rendered from the SAME embedded template the binary ships, with the site's
+	// version substituted, so the published skill and an installed byn cannot
+	// describe different CLIs.
+	skillOuts, err := site.SkillOutputs(agentskill.Render(strings.TrimPrefix(version, "v")), agentskill.Name)
+	if err != nil {
+		return fmt.Errorf("agent skill: %w", err)
+	}
+	for _, rel := range sortedKeys(skillOuts) {
+		outPath := filepath.Join(*root, filepath.FromSlash(rel))
+		diff, werr := writeOrCheck(outPath, skillOuts[rel], *check)
+		if werr != nil {
+			return werr
+		}
+		if diff {
+			changed++
+			if *check {
+				_, _ = fmt.Fprintf(out, "stale: %s\n", relTo(*root, outPath))
+			} else {
+				_, _ = fmt.Fprintf(out, "wrote %s\n", relTo(*root, outPath))
+			}
+		}
+	}
+
 	if *check && changed > 0 {
 		return fmt.Errorf("%d generated page(s) are stale — run `make site`", changed)
 	}
@@ -171,4 +198,15 @@ func dashIfEmpty(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// sortedKeys returns a map's keys in a stable order, so generated output and
+// the log that describes it do not reshuffle between runs.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

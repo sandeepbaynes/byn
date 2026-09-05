@@ -5,6 +5,32 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### An Agent Skill, shipped inside the binary
+
+`byn skill install` writes an Agent Skill — the document an AI coding agent
+reads to learn how to use a tool. byn's tells an agent to run commands through
+`byn exec` and never to read a secret value, what a `.byn` declares, that
+granting trust is a human action it cannot perform, and how to answer an
+approval.
+
+The skill is **embedded in the binary**, so the installed skill is always the
+one for the byn you have. A skill and a binary that disagree are worse than no
+skill at all: the agent follows instructions for a CLI it is not talking to and
+cannot tell. For the same reason the version is substituted when the skill is
+written rather than stored in the file, so it cannot be left stale, and
+`byn doctor` reports an installed skill whose version no longer matches.
+
+Re-run `byn skill install` after every upgrade.
+
+    byn skill install            # ~/.claude/skills/byn/SKILL.md
+    byn skill install --repo     # ./.claude/skills/byn/SKILL.md, to commit
+    byn skill show               # to stdout, for agents that read elsewhere
+
+The same skill is published on the docs site at `/skill.md` and is discoverable
+under `/.well-known/agent-skills/`, following the Agent Skills discovery format,
+for agents that install from a URL rather than from the binary.
+
+
 ### `byn kill` no longer reports success when it killed nothing
 
 It printed "sent SIGTERM to <pid>" unconditionally. Three things underneath it

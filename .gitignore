@@ -30,5 +30,12 @@ internaldocs
 /docs/index.html
 /docs/*/index.html
 /docs/*/*/index.html
+
+# Generated Agent Skill endpoints (`make site`). The skill's source of truth is
+# internal/agentskill/byn/SKILL.md, which IS tracked and is embedded in the
+# binary; these are the published copies with the version substituted, and are
+# build artifacts exactly like the themed HTML above.
+/skill.md
+/.well-known/
 # local agent testbed: throwaway test-vault credentials, never commit
 /testbed/TEST-VAULT-PASSWORD
