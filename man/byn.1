@@ -481,17 +481,30 @@ One row per job. Under privilege separation that row is the wrapper: the child
 beneath it is the same job seen from the inside, and signalling the wrapper takes
 the group. An exec\-user process whose wrapper has died IS listed \(em an orphan
 still holding injected values is the thing you came here to find.
+.IP
+The per\-user daemons macOS starts for the service account itself \(em
+\fBdistnoted\fR, \fBlsd\fR and friends under \fI/usr/sbin\fR, \fI/usr/libexec\fR
+and \fI/System\fR \(em are excluded. They are launchd's, not byn's, and listing
+them put noise in the one place you look for a stuck server and would have let
+\fBkill \-\-all\fR signal them.
 .TP
 .B kill \fR[\fB\-\-all\fR] \fR[\fIPID\fR...]
-Send \fBSIGTERM\fR to one or every running \fBbyn exec\fR process. A privsep child
-runs as a different user, so \fBkill\fR(1) from your shell cannot signal it \(em
-this asks the daemon to.
+Stop one or every running \fBbyn exec\fR job, and everything beneath it. A privsep
+child runs as a different user, so \fBkill\fR(1) from your shell cannot signal it
+\(em byn routes the signal through the setuid helper, which drops to
+\fB_byn\-exec\fR and can.
+.IP
+The whole process TREE is signalled, not the named process alone: the listener is
+typically a grandchild (\fBpnpm\fR \(-> \fBnode\fR \(-> \fBtsx\fR), so stopping
+at direct children left the port held. \fBSIGTERM\fR first, so a dev server closes
+its listener cleanly; \fBSIGKILL\fR after 5s; and anything still alive 3s later is
+reported by PID with the reason. byn never reports having stopped a process it did
+not stop, and exits non\-zero when one survives.
 .IP
 A PID that is not a byn exec process is refused rather than signalled, so a typo
-cannot stop something unrelated. Under privilege separation the child belongs to
-\fB_byn\-exec\fR and your shell cannot signal it \(em the privileged helper sends
-the signal to the whole process group, which is what makes \fB\-\-all\fR mean what
-it says.
+cannot stop something unrelated. An ORPHAN \(em a child whose wrapper has died \(em
+is reachable too: its process group died with the wrapper that led it, so byn
+signals its members individually rather than relying on the group.
 .TP
 .B runs \fR[\fB\-n\fR \fIN\fR] \fR[\fB\-\-json\fR]
 What past executions were given: when, which \fB.byn\fR allowed it, the agent

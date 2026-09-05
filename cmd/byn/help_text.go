@@ -341,6 +341,20 @@ DESCRIPTION
        signal a PID that is not a known byn exec process, preventing
        accidental kills of unrelated processes.
 
+       It stops the WHOLE process tree, not just the named process: the
+       listener is usually a grandchild (pnpm -> node -> tsx), so
+       signalling only the direct children left the port held.
+
+       SIGTERM first, so a dev server can close its listener cleanly.
+       Anything still alive after 5s gets SIGKILL, and anything still
+       alive 3s after that is REPORTED — byn never claims to have
+       stopped a process it did not stop.
+
+       Under privilege separation the children belong to _byn-exec and
+       your shell cannot signal them; byn routes those through the
+       setuid helper, which can. If the helper is missing, that is
+       said, rather than the signal being silently dropped.
+
 OPTIONS
        --all
            Kill every running byn exec process found by "byn ps".
@@ -355,14 +369,21 @@ EXAMPLES
          33887  pnpm --filter @myorg/api dev
 
          $ byn kill 33887
-         sent SIGTERM to 33887 (children: 34022)
+         stopped 33887 (3 processes)
+
+       When something refuses to die, you are told which:
+         $ byn kill 33887
+         Error: byn kill: 1 process under 33887 survived
+           34022 - operation not permitted
+           run byn doctor to check the exec helper is installed and current
 
        Kill everything at once:
          $ byn kill --all
 
 EXIT STATUS
-       0   all targeted processes were signalled successfully
-       1   one or more PIDs were invalid or not byn exec processes
+       0   every targeted process is gone
+       1   a PID was invalid or not a byn exec process, or a process
+           survived both SIGTERM and SIGKILL
 
 SEE ALSO
        byn-ps(1), byn-exec(1)
@@ -382,11 +403,11 @@ DESCRIPTION
        no daemon connection required, and sudo is not needed.
 
 OUTPUT
-       PID      The process ID of the "byn exec" wrapper. Kill this
-                PID to stop the wrapper; its child (the actual
-                command) will be orphaned or receive SIGHUP depending
-                on the terminal setup. Kill the child PID separately
-                if it survives.
+       PID      The process ID of the "byn exec" wrapper. Pass it to
+                "byn kill", which stops the whole tree beneath it.
+                Killing this PID yourself stops the wrapper and
+                ORPHANS its children, which is how a dev server ends
+                up holding a port with nothing left to signal it by.
 
        COMMAND  The command that "byn exec" launched, extracted from
                 its argv (everything after the "--" separator or the
@@ -398,12 +419,20 @@ EXAMPLES
        33887  pnpm --filter @myorg/api dev
        34073  pnpm --filter @myorg/chat dev
 
-       To kill a specific exec and its child:
-         $ kill 33887
-         $ kill $(pgrep -P 33887)
+       To stop one exec and everything under it:
+         $ byn kill 33887
 
-       To kill all byn exec wrappers at once:
-         $ pkill -f "byn exec"
+       To stop all of them:
+         $ byn kill --all
+
+       Use byn kill rather than kill(1) or pkill(1). Under privilege
+       separation the children run as _byn-exec, so a signal from your
+       shell is refused with EPERM — silently, since kill(1) reports
+       nothing when it cannot signal. Killing or pkill-ing the wrapper
+       alone succeeds and leaves the children running with no parent,
+       which is the state that strands a port. byn kill signals the
+       whole tree through the privileged helper and tells you what
+       actually stopped.
 
 EXIT STATUS
        0   success (zero or more processes listed)

@@ -209,7 +209,8 @@ func classifyExecProcs(rows []psRow, execUID int, markers map[int]bool) []bynExe
 		if seen[r.pid] {
 			continue
 		}
-		if execUID >= 0 && r.uid == execUID && topmostExecProc(r, wrappers, uidOf, execUID) {
+		if execUID >= 0 && r.uid == execUID && !systemDaemonCommand(r.command) &&
+			topmostExecProc(r, wrappers, uidOf, execUID) {
 			seen[r.pid] = true
 			out = append(out, bynExecProc{pid: r.pid, command: r.command})
 			continue
@@ -220,6 +221,24 @@ func classifyExecProcs(rows []psRow, execUID int, markers map[int]bool) []bynExe
 		}
 	}
 	return out
+}
+
+// systemDaemonCommand reports whether a command line is one of the per-user
+// daemons launchd starts for ANY account, rather than something byn ran.
+//
+// Rule 2 identifies a job by its uid alone, and macOS gives the exec service
+// account the same treatment it gives a person: distnoted and lsd get spawned
+// for it whether or not byn is doing anything. They then appear in the one
+// listing someone consults to find a stuck dev server, and `byn kill --all`
+// would signal them — so they are excluded where the uid is the only evidence.
+// Rules 1 and 3 are unaffected: those identify a process by what it IS.
+func systemDaemonCommand(command string) bool {
+	for _, prefix := range []string{"/usr/sbin/", "/usr/libexec/", "/System/"} {
+		if strings.HasPrefix(command, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // topmostExecProc reports whether an exec-user process is the head of its job

@@ -236,3 +236,37 @@ func TestTopmostExecProc_OnlyTheHeadOfAJob(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyExecProcs_ExcludesSystemDaemons(t *testing.T) {
+	// launchd starts distnoted and lsd for ANY account, the exec service user
+	// included. Rule 2 identifies a job by uid alone, so without a filter these
+	// appear in the listing used to hunt for a stuck dev server — and would be
+	// signalled by `byn kill --all`.
+	rows := []psRow{
+		{pid: 100, ppid: 1, uid: 451, command: "/usr/sbin/distnoted agent"},
+		{pid: 101, ppid: 1, uid: 451, command: "/usr/libexec/lsd"},
+		{pid: 102, ppid: 1, uid: 451, command: "/System/Library/Foo/bar"},
+		{pid: 103, ppid: 1, uid: 451, command: "node /opt/homebrew/bin/pnpm dev"},
+	}
+	got := classifyExecProcs(rows, 451, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want only the real orphan: %+v", len(got), got)
+	}
+	if got[0].pid != 103 {
+		t.Errorf("kept pid %d, want the pnpm orphan 103", got[0].pid)
+	}
+}
+
+func TestSystemDaemonCommand(t *testing.T) {
+	for _, c := range []string{"/usr/sbin/distnoted agent", "/usr/libexec/lsd", "/System/Library/X"} {
+		if !systemDaemonCommand(c) {
+			t.Errorf("%q should be filtered", c)
+		}
+	}
+	// A real child must never be filtered, however it was launched.
+	for _, c := range []string{"node /opt/homebrew/bin/pnpm dev", "npm start", "/Users/me/bin/tool"} {
+		if systemDaemonCommand(c) {
+			t.Errorf("%q must not be filtered", c)
+		}
+	}
+}

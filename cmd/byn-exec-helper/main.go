@@ -105,6 +105,12 @@ func main() {
 		killPgrpMain(pgid)
 		return
 	}
+	// kill-pids mode: drop to _byn-exec and signal named pids individually —
+	// the only route to an orphan, whose process group died with its wrapper.
+	if pids, sig, ok := killPidsRequested(os.Args); ok {
+		killPidsMain(pids, sig)
+		return
+	}
 	// repair-owner mode: drop to _byn-exec and give the owner an ACL entry on
 	// the files it created, which only the file's owner or root can do.
 	if dir, ok := repairOwnerRequested(os.Args); ok {

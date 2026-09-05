@@ -5,14 +5,28 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
-### `byn doctor` checks macOS Full Disk Access
+### `byn kill` no longer reports success when it killed nothing
 
-On macOS with privilege separation, `doctor` now reports `daemon.fda`. Without
-that grant the daemon cannot read `.byn` files under `~/Documents`, `~/Desktop`,
-`~/Downloads` or iCloud. It FAILS only when a `.byn` you have already trusted is
-actually being refused, and otherwise reports the state and passes. Note that
-byn ships ad-hoc signed, so **an FDA grant does not survive a reinstall** — this
-check is how you find out.
+It printed "sent SIGTERM to <pid>" unconditionally. Three things underneath it
+could each fail silently, and on an orphaned job all three did:
+
+- It passed the wrapper's PID where a process GROUP id was required. A group
+  outlives its leader, so the group was there — byn was signalling one that
+  never existed, and the resulting "no such process" was printed as an error
+  immediately above the success message.
+- The direct `kill(2)` return value was discarded. A privsep child belongs to
+  `_byn-exec`, so an owner-issued signal is EPERM; that read as success.
+- It signalled only direct children, and the process holding the port is
+  usually a grandchild.
+
+`byn kill` now walks the whole descendant tree, routes signals for
+service-user processes through the setuid helper, checks every result,
+escalates SIGTERM → SIGKILL after a grace period, and reports surviving PIDs
+with the reason. It exits non-zero when anything survives.
+
+Practical consequence: a leftover dev server could hold its port with no
+byn-side recovery at all, leaving `sudo pkill` as the only way out — which is
+the outcome privilege separation exists to avoid.
 
 ### `byn repair` never worked on macOS
 
@@ -22,7 +36,6 @@ errors, and reported "nothing to repair". It now uses `chmod +a` on macOS and
 `setfacl` on Linux, resolves the calling user to a name there (macOS `chmod`
 cannot translate a numeric uid), fails once with a clear message when the ACL
 tool is absent instead of once per file, and no longer follows symlinks.
-
 
 ### `[exec] writable` directories that do not exist are created
 
@@ -42,6 +55,20 @@ Failures of the tool-state grant are now reported. They were discarded
 entirely, which is why they surfaced much later as an unexplained permission
 error inside a dev server.
 
+### `byn ps` no longer lists macOS system daemons
+
+macOS starts per-user daemons (`distnoted`, `lsd`) for the exec service account
+itself. They are launchd's, not byn's. They cluttered the listing you consult
+to find a stuck process, and `byn kill --all` would have signalled them.
+
+### `byn doctor` checks macOS Full Disk Access
+
+On macOS with privilege separation, `doctor` now reports `daemon.fda`. Without
+that grant the daemon cannot read `.byn` files under `~/Documents`, `~/Desktop`,
+`~/Downloads` or iCloud. It FAILS only when a `.byn` you have already trusted is
+actually being refused, and otherwise reports the state and passes. Note that
+byn ships ad-hoc signed, so **an FDA grant does not survive a reinstall** — this
+check is how you find out.
 
 ## v0.6.5 — 2026-09-03
 

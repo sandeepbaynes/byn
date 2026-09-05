@@ -58,3 +58,46 @@ func TestDocs_DoNotCallPrivsepVestigial(t *testing.T) {
 			strings.Join(offenders, "\n  "))
 	}
 }
+
+// TestDocs_DoNotTeachManualKillOfExecChildren guards against byn printing
+// advice that both fails and causes the failure it appears to solve.
+//
+// `byn ps` help used to end with:
+//
+//	$ kill 33887
+//	$ kill $(pgrep -P 33887)
+//	$ pkill -f "byn exec"
+//
+// Under privilege separation none of that works as written. The children run as
+// _byn-exec, so a signal from the owner's shell is refused with EPERM — and
+// kill(1) prints nothing when it cannot signal, so it looks like it worked. The
+// one command that DOES succeed, killing the wrapper, is worse than the ones
+// that fail: it leaves the children running with no parent. That is exactly how
+// a machine ends up with dev servers holding ports and no process group left to
+// signal them by, which is the state `byn kill` exists to prevent and which
+// cost a real debugging session.
+//
+// Held by a test because it is documentation teaching a habit, and a habit
+// outlives the paragraph that taught it.
+func TestDocs_DoNotTeachManualKillOfExecChildren(t *testing.T) {
+	help, ok := commandHelp["ps"]
+	if !ok {
+		t.Fatal("no help registered for `byn ps`")
+	}
+	// The advice must not be RECOMMENDED. It may still be named, because the
+	// text explains why not to use it — so this looks for the recipes, not the
+	// bare command names.
+	for _, recipe := range []string{
+		`pkill -f "byn exec"`,
+		"kill $(pgrep -P",
+	} {
+		if strings.Contains(help, recipe) {
+			t.Errorf("`byn ps` help recommends %q; under privsep it fails with EPERM "+
+				"or orphans the children — point at `byn kill` instead", recipe)
+		}
+	}
+	if !strings.Contains(help, "byn kill") {
+		t.Error("`byn ps` help must point at `byn kill` — it is the only thing that " +
+			"can signal a _byn-exec child, and the whole reason the command exists")
+	}
+}
