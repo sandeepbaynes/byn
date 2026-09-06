@@ -100,7 +100,7 @@ func diagnoseHeal(e healEnv) []healCheck {
 	cs = append(cs, healCheck{Name: "spawn helper installed", OK: e.exists(e.helperPath), Detail: e.helperPath, Fix: "run: " + sudoByn("setup")})
 
 	up := e.daemonUp()
-	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: byn restart  (or " + sudoByn("doctor", "--repair") + ")"})
+	cs = append(cs, healCheck{Name: "daemon running", OK: up, Fix: "run: byn restart  (or " + "byn doctor --repair" + ")"})
 	cs = append(cs, daemonIsInstalledBynCheck(up, e.daemonVersion, version)...)
 
 	if bynUID, ok := e.bynUID(); ok {
@@ -110,13 +110,13 @@ func diagnoseHeal(e healEnv) []healCheck {
 		if okD && !owned {
 			detail = fmt.Sprintf("owned by uid %d, expected %s (uid %d) — a sudo-run left root-owned files", dirUID, privsep.DaemonUser, bynUID)
 		}
-		cs = append(cs, healCheck{Name: "data dir owned by " + privsep.DaemonUser, OK: owned, Detail: detail, Fix: "run: " + sudoByn("doctor", "--repair")})
+		cs = append(cs, healCheck{Name: "data dir owned by " + privsep.DaemonUser, OK: owned, Detail: detail, Fix: "run: " + "byn doctor --repair"})
 	}
 
 	cs = append(cs, dataDirTraversableCheck(e)...)
 
 	if !up && e.exists(e.socketPath()) {
-		cs = append(cs, healCheck{Name: "no stale socket", OK: false, Detail: "socket present but the daemon is down", Fix: "run: " + sudoByn("doctor", "--repair")})
+		cs = append(cs, healCheck{Name: "no stale socket", OK: false, Detail: "socket present but the daemon is down", Fix: "run: " + "byn doctor --repair"})
 	}
 	return cs
 }
@@ -152,7 +152,7 @@ func dataDirTraversableCheck(e healEnv) []healCheck {
 			"%s is %#o — the daemon socket lives inside it, so the owner cannot reach the daemon "+
 				"(it reports as down while running). Expected 0711: traverse, not list.",
 			e.dataDir, mode),
-		Fix: "run: " + sudoByn("doctor", "--repair"),
+		Fix: "run: " + "byn doctor --repair",
 	}}
 }
 

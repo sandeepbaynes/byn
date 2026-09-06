@@ -115,7 +115,7 @@ func (g fdaGuide) ask(in *bufio.Reader) bool {
 func (g fdaGuide) printDeclined() {
 	_, _ = fmt.Fprintln(g.stdout, "Skipped. Until it is granted, "+cyan("byn trust")+" and "+cyan("byn exec")+
 		" are refused for projects under ~/Documents, ~/Desktop, ~/Downloads and iCloud Drive.")
-	_, _ = fmt.Fprintln(g.stdout, "To grant it later: "+cyan(sudoByn("doctor", "--repair")))
+	_, _ = fmt.Fprintln(g.stdout, "To grant it later: "+cyan("byn doctor --repair"))
 }
 
 func (g fdaGuide) printSteps() {
@@ -130,7 +130,7 @@ func (g fdaGuide) printStillMissing() {
 	_, _ = fmt.Fprintln(g.stdout, boldYellow("Full Disk Access is still not granted."))
 	_, _ = fmt.Fprintln(g.stdout, "  • Check the switch is on for the daemon's binary, "+cyan(g.binary)+
 		" — a grant to a different copy of byn does nothing.")
-	_, _ = fmt.Fprintln(g.stdout, "  • Then run "+cyan(sudoByn("doctor", "--repair"))+" to try again, or "+
+	_, _ = fmt.Fprintln(g.stdout, "  • Then run "+cyan("byn doctor --repair")+" to try again, or "+
 		cyan("byn status")+" to see the state.")
 }
 

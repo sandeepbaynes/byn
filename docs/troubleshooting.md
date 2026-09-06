@@ -378,7 +378,7 @@ process can trigger. Only a person at System Settings can grant it, and that
 switch is what asks for your password or Touch ID. byn walks you to it:
 
 ```sh
-sudo byn doctor --repair
+byn doctor --repair      # asks for your password
 ```
 
 It asks whether you want the grant at all (say no if your projects live outside

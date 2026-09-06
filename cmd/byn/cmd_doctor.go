@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -38,6 +39,12 @@ func runDoctor(args []string, _ cliScope) int {
 	// hand. It needs root; without --repair, doctor only diagnoses (dry-run).
 	if *repair {
 		if os.Geteuid() != 0 {
+			// Ask for the password rather than telling someone to retype the
+			// command with sudo in front of it — the same round trip byn
+			// already makes for itself in setup and restart.
+			if rc, took := elevateDoctorRepair(args, os.Geteuid(), os.Stdin, os.Stdout, os.Stderr); took {
+				return rc
+			}
 			fmt.Fprintf(os.Stderr, "%s byn doctor --repair needs root. Run:\n    %s\n", boldRed("Error:"), sudoByn("doctor", "--repair"))
 			return exitErr
 		}
@@ -127,6 +134,16 @@ func runDoctor(args []string, _ cliScope) int {
 		}
 	}
 	return healExitCode(local, daemonChecked, dResp)
+}
+
+// elevateDoctorRepair re-runs `byn doctor --repair` under sudo when the caller
+// is not root and there is a terminal to ask on. args is doctor's own argv
+// (flags included), so the elevated run sees exactly what was typed.
+func elevateDoctorRepair(args []string, euid int, stdin io.Reader, stdout, stderr io.Writer) (int, bool) {
+	if euid == 0 {
+		return 0, false
+	}
+	return elevateWithSudo("doctor --repair", append([]string{"doctor"}, args...), stdin, stdout, stderr)
 }
 
 // printHealCheck renders a local provisioning/health check with its fix hint.

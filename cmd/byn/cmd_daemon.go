@@ -465,7 +465,7 @@ func runDaemonStatus(args []string) int {
 		} else {
 			fmt.Println(boldYellow("fda:") + "     NOT GRANTED")
 			fmt.Println("         byn cannot read .byn files in ~/Documents, ~/Desktop, ~/Downloads or iCloud Drive.")
-			fmt.Println("         → Run " + sudoByn("doctor", "--repair") + " to be walked through granting Full Disk Access.")
+			fmt.Println("         → Run " + "byn doctor --repair" + " to be walked through granting Full Disk Access.")
 		}
 	}
 	if len(resp.Vaults) == 0 {

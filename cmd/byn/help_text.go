@@ -1666,7 +1666,7 @@ DESCRIPTION
        whether the daemon (running as _byn) has Full Disk Access.
        Without FDA the daemon cannot read .byn files stored under
        ~/Documents, ~/Desktop, ~/Downloads, or iCloud Drive.  Run
-       "sudo byn doctor --repair" to be walked through granting it: it
+       "byn doctor --repair" to be walked through granting it: it
        opens the right System Settings pane, names the binary to add,
        and restarts the daemon once the switch is on.  This line is absent
        when privsep is off (the daemon inherits your Terminal's TCC
@@ -2005,7 +2005,7 @@ SEE ALSO
 
 SYNOPSIS
        byn doctor [--json]
-       sudo byn doctor --repair
+       byn doctor --repair
 
 DESCRIPTION
        Runs two batteries. The LOCAL provisioning/health checks work even
@@ -2046,8 +2046,10 @@ OPTIONS
            traverse, reload the launchd/systemd service (clearing a stale
            socket and a broken registration). The mode is put back BEFORE the
            service is touched, so a daemon that was only unreachable is left
-           running rather than bounced. Requires root — run as
-           "sudo byn doctor --repair". This is the packaged form of the manual
+           running rather than bounced. Needs root: byn re-runs itself under
+           sudo and asks for your password (from a script or without a
+           terminal it prints the sudo command instead). This is the packaged
+           form of the manual
            launchctl bootout/bootstrap + chown recovery.
 
            On macOS with privilege separation, --repair then offers to walk
@@ -2255,7 +2257,7 @@ TROUBLESHOOTING
 
        Option B: grant the daemon Full Disk Access. macOS has no way for
        byn to request it, but byn can walk you to the switch:
-           sudo byn doctor --repair
+           byn doctor --repair
        asks whether you want it, opens System Settings at Full Disk
        Access, names the binary to add, and restarts the daemon once
        the switch is on. (byn setup offers the same at the end.) By hand:

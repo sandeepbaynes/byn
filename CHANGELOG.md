@@ -5,6 +5,14 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### `byn doctor --repair` asks for your password instead of telling you to add sudo
+
+Like `byn restart` and `byn setup` before it, `byn doctor --repair` now re-runs
+itself under sudo and prompts once, rather than refusing and printing the
+command for you to retype. Every hint that said `sudo byn doctor --repair`
+now says `byn doctor --repair`. From a script or anywhere without a terminal
+it still prints the sudo command, and `sudo byn doctor --repair` still works.
+
 ### `byn setup` and `byn doctor --repair` walk you to the Full Disk Access switch
 
 macOS has no API to request Full Disk Access, so byn cannot grant itself the

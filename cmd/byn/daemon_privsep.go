@@ -39,6 +39,6 @@ func startProvisionedDelegate(dir string) int {
 	}
 	fmt.Fprintln(os.Stderr, "The byn daemon runs as the _byn service (auto-starts on boot/crash); it appears down.")
 	fmt.Fprintln(os.Stderr, "Bring it up with (it asks for your password):")
-	fmt.Fprintf(os.Stderr, "    byn restart            (or: %s)\n", sudoByn("doctor", "--repair"))
+	fmt.Fprintf(os.Stderr, "    byn restart            (or: %s)\n", "byn doctor --repair")
 	return exitErr
 }

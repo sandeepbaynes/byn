@@ -36,7 +36,7 @@ UID, so data, vault and \fB.byn\fR commands (\fBstatus\fR, \fBget\fR, \fBput\fR,
 \fBexec\fR, \fBunlock\fR, \fBweb\fR, \&...) refuse to run under \fBsudo\fR and tell
 you to re\-run without it. Only the commands that manage the \fB_byn\fR system
 daemon need root: \fBbyn restart\fR / \fBreload\fR / \fBstop\fR,
-\fBbyn setup\fR, and \fBsudo byn doctor \-\-repair\fR. \fBbyn start\fR is run
+\fBbyn setup\fR, and \fBbyn doctor \-\-repair\fR. \fBbyn start\fR is run
 as yourself (it never starts the daemon as root).
 .PP
 \fBrestart\fR, \fBreload\fR, \fBstop\fR and \fBsetup\fR ask for your password
@@ -488,7 +488,7 @@ chown the data dir back to \fB_byn\fR, restore mode \fB0711\fR on a data dir
 you cannot traverse, and reload the launchd/systemd service (clearing a stale
 socket and a broken registration). The mode is restored BEFORE the service is
 touched, so a daemon that was merely unreachable is left running. Run as
-\fBsudo byn doctor \-\-repair\fR \(em the packaged form of the manual
+\fBbyn doctor \-\-repair\fR (it asks for your password) \(em the packaged form of the manual
 launchctl bootout/bootstrap + chown recovery.
 .TP
 .B audit view \fR[\fB\-\-lines\fR \fIN\fR] \fR[\fB\-\-json\fR]
@@ -990,7 +990,7 @@ not help; TCC checks the real path.
 macOS has no way for a program to request Full Disk Access; only a person at
 System Settings can grant it. byn walks you to the switch:
 .RS
-.B sudo byn doctor \-\-repair
+.B byn doctor \-\-repair
 .RE
 asks whether you want the grant (projects outside the protected folders need
 none), opens System Settings at Full Disk Access, names the binary to add, waits
