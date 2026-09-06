@@ -1,6 +1,6 @@
 # byn vs the other tools, honestly
 
-*Field note · coverage: v0.6.2 · updated with each release*
+*Field note · coverage: v0.7.0 · updated with each release*
 
 A strengths-**and**-weaknesses comparison of the tools developers
 actually use to handle secrets — including byn's own weaknesses, listed

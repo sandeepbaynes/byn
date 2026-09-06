@@ -12,6 +12,81 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.7.0
+
+**Headline:** byn now teaches your coding agent how to use it — an Agent Skill
+ships inside the binary — and the macOS privilege-separation path got a pass
+against a real monorepo: `byn kill` kills, `byn repair` repairs, and `byn doctor`
+tells you when Full Disk Access is missing.
+
+### What's new
+
+- **An Agent Skill, embedded in the binary.** `byn skill install` writes the
+  document an AI coding agent reads to learn byn: run commands through
+  `byn exec`, never read a secret value, trust is a human action, how to answer
+  an approval. The skill carries the version of the byn that wrote it, and
+  `byn doctor` reports one that has gone stale. Also published on the docs site
+  at `/skill.md` for agents that install from a URL.
+- **Tab completion for bash, zsh and fish.** `byn <TAB>` lists commands,
+  `byn <command> <TAB>` lists subcommands or, after a dash, flags;
+  `byn exec <TAB>` offers the aliases declared by the `.byn` in force.
+  Completion never contacts the daemon, so it cannot hang when the daemon is
+  down.
+- **`byn restart` asks for your password** instead of refusing and printing a
+  `sudo` command to retype. `stop` and `reload` do the same. Every hint that
+  used to say `sudo byn restart` now says `byn restart`.
+- **`make install` runs as you.** Only the steps that write to `/usr/local` are
+  elevated, after the build. `sudo make install` still works.
+- **`byn kill` actually kills.** It signalled a process group that no longer
+  existed, discarded the result, and printed success. It now walks the whole
+  descendant tree, routes signals for the exec service user through the helper,
+  escalates SIGTERM to SIGKILL after a grace period, and exits non-zero naming
+  any survivor.
+- **`byn repair` works on macOS** for the first time. It shelled out to
+  `setfacl`, which macOS does not have, and reported "nothing to repair".
+- **Declared `[exec] writable` directories are created at trust time** when
+  absent, and the tool-state grant no longer silently takes its parents'
+  traverse grant with it when it fails. This was the cause of a permission
+  warning some package managers printed on every invocation.
+- **`byn doctor` reports macOS Full Disk Access** (`daemon.fda`), failing only
+  when a `.byn` you have already trusted is actually being refused.
+- **`byn ps` no longer lists macOS system daemons** started for the exec
+  service account.
+- **One watch ticket in sixty-four could not be cancelled.** A ticket beginning
+  with `-` was read as a flag by `byn request cancel` and `byn request watch`.
+  Tickets now always begin with a letter or digit.
+
+### Upgrade notes
+
+- **Run `byn skill install` after upgrading**, and after every future upgrade.
+  `make install` does it for you; packaged installs (script, Homebrew) do not.
+  An agent following a skill written for an older byn is worse than one with
+  no skill, so `byn doctor` flags a version mismatch.
+- **Completion is installed by `make install` only.** For a packaged install:
+  ```sh
+  byn completion zsh | sudo tee /usr/local/share/zsh/site-functions/_byn
+  source <(byn completion bash)      # bash, current shell
+  byn completion fish > ~/.config/fish/completions/byn.fish
+  ```
+  fish support is untested by the author.
+- **macOS, privilege separation: re-grant Full Disk Access after upgrading.**
+  byn ships ad-hoc signed, so the grant does not survive a reinstall. `byn doctor`
+  now tells you when it is missing; `byn exec` in a project under `~/Documents`,
+  `~/Desktop`, `~/Downloads` or iCloud fails without it.
+- **`byn kill` now exits non-zero when a process survives.** A script that
+  treated its exit code as always zero should now check it.
+- **A `.byn` trusted while one of its `[exec] writable` paths did not exist**
+  never received the grant for that path. Re-run `byn trust` in that project
+  to create the directory and grant it.
+- **`byn restart` re-executes itself under `sudo`.** From a script, CI, or
+  anywhere without a terminal it still prints the `sudo` command instead;
+  `sudo byn restart` continues to work.
+- **Scripts that pass a watch ticket on the command line** need no change for
+  tickets issued after the upgrade. For one issued before that happens to
+  start with a dash, pipe it on stdin: `printf '%s\n' "$ticket" | byn request cancel`.
+
+---
+
 ## v0.6.5
 
 **Fixes to the v0.6.3/v0.6.4 editor split, and to `byn setup`.**

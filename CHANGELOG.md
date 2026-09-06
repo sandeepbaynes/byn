@@ -3,7 +3,20 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## Unreleased
+## v0.7.0 — 2026-09-06
+
+### One watch ticket in sixty-four could not be cancelled
+
+A watch ticket is 32 random bytes in base64url, an alphabet that includes `-`.
+When the first byte landed on it, `byn request cancel "$ticket"` and
+`byn request watch "$ticket"` failed with `flag provided but not defined`,
+because the parser read the ticket as an option. The daemon now mints tickets
+that begin with a letter or digit. Tickets issued before the upgrade are
+unaffected in every other way; if a script holds one that starts with a dash,
+pipe it on stdin, which has always worked:
+
+    printf '%s\n' "$ticket" | byn request cancel
+
 
 ### `byn restart` asks for your password instead of telling you to add sudo
 

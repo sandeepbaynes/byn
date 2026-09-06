@@ -532,3 +532,35 @@ func TestDecideFor_OwnerSetsTheGrantWindow(t *testing.T) {
 		t.Errorf("granted for %s, want the default %s", got, ActionGrantFor)
 	}
 }
+
+// A ticket is passed back on the command line, and a flag parser reads a
+// leading '-' as an option. Mint enough that the unguarded encoding would have
+// produced a dash-led ticket with overwhelming probability (1/64 each; the
+// chance of none in 2000 draws is ~2e-14).
+func TestNewWatchTicket_NeverLeadsWithASymbol(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 2000; i++ {
+		ticket, hash, err := NewWatchTicket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ticketLeadsWithAlnum(ticket) {
+			t.Fatalf("ticket %q begins with a symbol a flag parser would eat", ticket)
+		}
+		if len(ticket) != 43 {
+			t.Fatalf("ticket %q: len %d, want 43 (32 bytes base64url)", ticket, len(ticket))
+		}
+		if hash != HashWatchTicket(ticket) {
+			t.Fatalf("hash does not match the ticket")
+		}
+		if seen[ticket] {
+			t.Fatalf("duplicate ticket %q", ticket)
+		}
+		seen[ticket] = true
+	}
+	for _, bad := range []string{"", "-abc", "_abc"} {
+		if ticketLeadsWithAlnum(bad) {
+			t.Errorf("ticketLeadsWithAlnum(%q) = true, want false", bad)
+		}
+	}
+}

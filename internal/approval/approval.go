@@ -807,13 +807,34 @@ func newID() string {
 //
 // The plaintext is returned to exactly one caller, once, and byn keeps only the
 // hash. There is deliberately no way to ask for it again.
+//
+// A ticket never begins with '-' or '_'. It is handed back on the command line
+// — `byn request cancel "$ticket"` — and a flag parser reads a leading dash as
+// an option, so one ticket in sixty-four used to fail with "flag provided but
+// not defined". Re-drawing costs a fraction of a bit of entropy against a
+// 256-bit string; a ticket a script cannot pass back costs the whole request.
 func NewWatchTicket() (ticket, hash string, err error) {
 	raw := make([]byte, 32)
-	if _, rerr := rand.Read(raw); rerr != nil {
-		return "", "", fmt.Errorf("approval: mint watch ticket: %w", rerr)
+	for {
+		if _, rerr := rand.Read(raw); rerr != nil {
+			return "", "", fmt.Errorf("approval: mint watch ticket: %w", rerr)
+		}
+		ticket = base64.RawURLEncoding.EncodeToString(raw)
+		if ticketLeadsWithAlnum(ticket) {
+			return ticket, HashWatchTicket(ticket), nil
+		}
 	}
-	ticket = base64.RawURLEncoding.EncodeToString(raw)
-	return ticket, HashWatchTicket(ticket), nil
+}
+
+// ticketLeadsWithAlnum reports whether a ticket can be passed as a bare
+// command-line argument: the first character is a letter or digit, not one of
+// the two base64url symbols.
+func ticketLeadsWithAlnum(ticket string) bool {
+	if ticket == "" {
+		return false
+	}
+	c := ticket[0]
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 }
 
 // HashWatchTicket is the one-way mapping from a presented ticket to the stored
