@@ -74,8 +74,8 @@ func fdaCheck(granted bool, trusted []string, blocked func(string) bool) ipc.Doc
 		Detail: fmt.Sprintf("NOT GRANTED — macOS privacy protection (TCC) is blocking the daemon from %s (%s). "+
 			"Fix EITHER by moving the project outside ~/Documents, ~/Desktop, ~/Downloads and iCloud "+
 			"(e.g. ~/code — no setup needed), OR by granting the byn binary Full Disk Access "+
-			"(System Settings > Privacy & Security > Full Disk Access) and restarting the daemon "+
-			"(sudo launchctl kickstart -k system/com.sandeepbaynes.byn)",
+			"— run `sudo byn doctor --repair` to be walked through it (it opens the right pane, "+
+			"names the binary to add, and restarts the daemon once the switch is on)",
 			subject, denied[0]),
 	}
 }

@@ -84,11 +84,11 @@ func runSetupWith(args []string, euid func() int, stdin io.Reader, stdout, stder
 	if *uninstall {
 		return runTeardown(*purge, stdin, stdout, stderr)
 	}
-	return runProvision(stdout, stderr)
+	return runProvision(stdin, stdout, stderr)
 }
 
 // runProvision builds the production provisioning deps and runs the full setup.
-func runProvision(stdout, stderr io.Writer) int {
+func runProvision(stdin io.Reader, stdout, stderr io.Writer) int {
 	deps, err := defaultProvisionDeps()
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s %v\n", boldRed("Error:"), err)
@@ -162,7 +162,10 @@ func runProvision(stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stdout, "Privilege separation: left as your config sets it ("+
 			cyan("[security] privsep")+"). "+cyan("byn doctor")+" reports the state in force.")
 	}
-	printMacOSFDANote(stdout)
+	// Setup is the one moment byn has root, the daemon just restarted, and the
+	// owner's attention — so this is where to offer the grant, not where to
+	// print a paragraph about it.
+	fdaGuideFn(stdin, stdout, stderr)
 	return exitOK
 }
 

@@ -987,8 +987,17 @@ or iCloud Drive. No Full Disk Access and no code signing required. A symlink doe
 not help; TCC checks the real path.
 .TP
 .B Grant the daemon Full Disk Access
-Open System Settings \(-> Privacy & Security \(-> Full Disk Access, add the byn
-binary
+macOS has no way for a program to request Full Disk Access; only a person at
+System Settings can grant it. byn walks you to the switch:
+.RS
+.B sudo byn doctor \-\-repair
+.RE
+asks whether you want the grant (projects outside the protected folders need
+none), opens System Settings at Full Disk Access, names the binary to add, waits
+for the switch, and restarts the daemon so it takes effect.
+.B byn setup
+offers the same at the end of provisioning. By hand: open System Settings
+\(-> Privacy & Security \(-> Full Disk Access, add the byn binary
 .RI ( /usr/local/bin/byn ),
 enable it, then restart the daemon:
 .RS

@@ -3,6 +3,23 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## Unreleased
+
+### `byn setup` and `byn doctor --repair` walk you to the Full Disk Access switch
+
+macOS has no API to request Full Disk Access, so byn cannot grant itself the
+permission it needs to read `.byn` files under `~/Documents`, `~/Desktop`,
+`~/Downloads` or iCloud Drive. What it can do, it now does: at the end of
+`byn setup`, and from `byn doctor --repair`, it asks whether you want the grant,
+opens System Settings at the Full Disk Access list, names the exact binary to
+add (the one launchd runs, which is not always the one on your PATH), waits for
+the switch, and restarts the daemon so the grant takes effect. Saying no is a
+real answer: projects outside the protected folders need nothing, and the
+refusal says what will not work until it is granted and how to come back.
+
+The manual steps remain in the troubleshooting guide; `byn status` and the
+doctor's `daemon.fda` line now point at the guided path instead.
+
 ## v0.7.0 — 2026-09-06
 
 ### One watch ticket in sixty-four could not be cancelled

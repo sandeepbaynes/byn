@@ -1665,9 +1665,10 @@ DESCRIPTION
        On macOS with privilege separation active, a "fda:" line reports
        whether the daemon (running as _byn) has Full Disk Access.
        Without FDA the daemon cannot read .byn files stored under
-       ~/Documents, ~/Desktop, ~/Downloads, or iCloud Drive.  Grant
-       Full Disk Access in System Settings > Privacy & Security >
-       Full Disk Access, then restart the daemon.  This line is absent
+       ~/Documents, ~/Desktop, ~/Downloads, or iCloud Drive.  Run
+       "sudo byn doctor --repair" to be walked through granting it: it
+       opens the right System Settings pane, names the binary to add,
+       and restarts the daemon once the switch is on.  This line is absent
        when privsep is off (the daemon inherits your Terminal's TCC
        grant) or on non-macOS platforms.
 
@@ -2029,7 +2030,8 @@ DESCRIPTION
                                 .byn files under ~/Documents, ~/Desktop,
                                 ~/Downloads and iCloud — FAILs when a trusted
                                 .byn is actually blocked, otherwise reports the
-                                state and passes
+                                state and passes.  --repair offers to walk you
+                                through granting it (see below)
          • vaults.list        — vaults present on disk
          • vault[X].open      — schema version + meta.json fingerprint
          • vault[X].audit     — HMAC chain verifies end-to-end
@@ -2047,6 +2049,14 @@ OPTIONS
            running rather than bounced. Requires root — run as
            "sudo byn doctor --repair". This is the packaged form of the manual
            launchctl bootout/bootstrap + chown recovery.
+
+           On macOS with privilege separation, --repair then offers to walk
+           you through granting the daemon Full Disk Access when it lacks
+           it: it asks first (projects outside ~/Documents, ~/Desktop,
+           ~/Downloads and iCloud need nothing), opens System Settings at
+           the Full Disk Access list, names the binary launchd runs, waits
+           for the switch, and restarts the daemon so it takes effect. macOS
+           has no way for byn to make the grant itself; only you can.
 
        --json
            Emit the structured result instead of human output.
@@ -2243,8 +2253,14 @@ TROUBLESHOOTING
        Option A (recommended): keep byn projects outside those folders
        (e.g. ~/code) — no Full Disk Access or code signing needed.
 
-       Option B: grant the byn binary Full Disk Access in System Settings
-       > Privacy & Security > Full Disk Access, then restart the daemon:
+       Option B: grant the daemon Full Disk Access. macOS has no way for
+       byn to request it, but byn can walk you to the switch:
+           sudo byn doctor --repair
+       asks whether you want it, opens System Settings at Full Disk
+       Access, names the binary to add, and restarts the daemon once
+       the switch is on. (byn setup offers the same at the end.) By hand:
+       System Settings > Privacy & Security > Full Disk Access, add the
+       binary, then restart the daemon:
            sudo launchctl kickstart -k system/com.sandeepbaynes.byn
        The grant is tied to the build unless you sign with a (free) Apple
        ID identity so it persists across reinstalls:

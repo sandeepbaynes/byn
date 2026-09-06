@@ -60,8 +60,9 @@ func TestFDACheck_BlockedFails(t *testing.T) {
 	if !strings.Contains(c.Detail, "a trusted .byn") {
 		t.Errorf("single blocked file should read singular, got %q", c.Detail)
 	}
-	// Both remedies, because moving the project needs no privileges at all.
-	for _, want := range []string{"Full Disk Access", "~/Documents", "kickstart"} {
+	// Both remedies, because moving the project needs no privileges at all —
+	// and the grant is offered as the guided path, since only a person can make it.
+	for _, want := range []string{"Full Disk Access", "~/Documents", "doctor --repair"} {
 		if !strings.Contains(c.Detail, want) {
 			t.Errorf("detail missing %q: %q", want, c.Detail)
 		}

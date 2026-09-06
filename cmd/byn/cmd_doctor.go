@@ -48,6 +48,11 @@ func runDoctor(args []string, _ cliScope) int {
 		for _, a := range actions {
 			fmt.Printf("repair: %s\n", a)
 		}
+		// Full Disk Access is the one fault repair cannot apply by itself:
+		// only a person at System Settings can. Offer to walk them there.
+		if fdaGuideFn(os.Stdin, os.Stdout, os.Stderr) == fdaGrantedNow {
+			fmt.Println("repair: Full Disk Access granted")
+		}
 		fmt.Println()
 	}
 

@@ -373,6 +373,21 @@ A symlink does **not** help — TCC checks the real path. Move the real director
 
 Keep projects where they are and authorize the daemon once.
 
+macOS has no API to request Full Disk Access — nothing an installer or a root
+process can trigger. Only a person at System Settings can grant it, and that
+switch is what asks for your password or Touch ID. byn walks you to it:
+
+```sh
+sudo byn doctor --repair
+```
+
+It asks whether you want the grant at all (say no if your projects live outside
+the protected folders), opens System Settings at Full Disk Access, names the
+binary to add, waits for the switch, and restarts the daemon so it takes effect.
+`sudo byn setup` offers the same at the end of provisioning.
+
+The manual equivalent:
+
 1. Confirm the daemon binary path (the LaunchDaemon's program):
    ```sh
    grep -A1 ProgramArguments /Library/LaunchDaemons/com.sandeepbaynes.byn.plist
