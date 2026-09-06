@@ -219,7 +219,7 @@ func runFDAGuide(stdin io.Reader, stdout, stderr io.Writer) fdaOutcome {
 	}
 	return fdaGuide{
 		probe:       func() (bool, bool) { return probeFDAAs(owner, self) },
-		openPane:    func() error { return exec.Command("sudo", "-u", owner, "open", fdaPaneURL).Run() }, // #nosec G204 -- fixed URL, user from sudo
+		openPane:    func() error { return exec.Command("sudo", "-u", owner, "open", fdaPaneURL).Run() }, // #nosec G204 G702 -- fixed argv: sudo -u <SUDO_USER> open <constant URL>; the user name comes from sudo, not from input
 		restart:     func() error { return privsep.RestartService(privilegedRunner()) },
 		binary:      binary,
 		stdin:       stdin,
@@ -234,7 +234,7 @@ func runFDAGuide(stdin io.Reader, stdout, stderr io.Writer) fdaOutcome {
 
 // probeFDAAs asks the daemon, as the owner, whether it holds Full Disk Access.
 func probeFDAAs(owner, self string) (applies, granted bool) {
-	out, err := exec.Command("sudo", "-u", owner, self, "status", "--json").Output() // #nosec G204 -- own binary, user from sudo
+	out, err := exec.Command("sudo", "-u", owner, self, "status", "--json").Output() // #nosec G204 G702 -- own binary by os.Executable, user name from sudo; fixed args
 	if err != nil {
 		return false, false
 	}
