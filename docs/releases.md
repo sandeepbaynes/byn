@@ -12,7 +12,36 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
-## v0.7.0
+## v0.7.1
+
+**Headline:** on macOS, byn now walks you to the Full Disk Access switch
+instead of leaving you a paragraph about it, and `byn doctor --repair` asks for
+your password itself.
+
+### What's new
+
+- **A guided path to Full Disk Access.** macOS has no API to request the
+  permission the daemon needs to read `.byn` files under `~/Documents`,
+  `~/Desktop`, `~/Downloads` or iCloud Drive; only a person at System Settings
+  can grant it. At the end of `byn setup`, and from `byn doctor --repair`, byn
+  now asks whether you want the grant, opens System Settings at the Full Disk
+  Access list, names the exact binary to add (the one launchd runs, which is not
+  always the one on your PATH), waits for the switch, and restarts the daemon so
+  it takes effect. Saying no is a real answer: projects outside those folders
+  need nothing, and the refusal says what will not work and how to come back.
+- **`byn doctor --repair` asks for your password** rather than refusing and
+  printing a `sudo` command to retype, the way `byn restart` and `byn setup`
+  already do. Every hint that said `sudo byn doctor --repair` now says
+  `byn doctor --repair`.
+
+### Upgrade notes
+
+- **macOS, privilege separation: the grant still does not survive a reinstall**,
+  because byn ships ad-hoc signed. What changed is the cost of re-granting:
+  after upgrading, run `byn doctor --repair` and follow the two steps it shows.
+- **Scripts that run `sudo byn doctor --repair`** keep working. Without a
+  terminal, `byn doctor --repair` prints the sudo command instead of prompting.
+
 
 **Headline:** byn now teaches your coding agent how to use it — an Agent Skill
 ships inside the binary — and the macOS privilege-separation path got a pass

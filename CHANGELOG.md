@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## Unreleased
+## v0.7.1 — 2026-09-06
 
 ### `byn doctor --repair` asks for your password instead of telling you to add sudo
 
