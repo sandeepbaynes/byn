@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -205,6 +206,18 @@ type EntryInfo struct {
 	IsEmpty   bool // true when stored ciphertext encodes an empty value
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// InDefault is true when a SourceScope row in a non-default env shadows an
+	// entry of the same name in the default env. Always false for rows listed
+	// from the default env itself and for inherited (SourceDefault) rows.
+	InDefault bool
+	// SameAsDefault reports whether a shadowing value is byte-for-byte equal
+	// to default's. It is nil when there is nothing to compare against
+	// (InDefault is false) and when the vault is locked and the two
+	// ciphertexts are the same length, so equality cannot be decided without
+	// the key. A copy identical to default is not an override in any sense a
+	// person cares about — an imported .env re-stating default's values
+	// should not read as a wall of overrides — so the listing says so.
+	SameAsDefault *bool
 }
 
 // Source distinguishes a value that lives in the requested env from
@@ -1258,7 +1271,9 @@ func (s *Store) ListEnvVars(ctx context.Context, scope Scope) ([]EntryInfo, erro
 	}
 	// Combine env-specific entries (preferred) with default entries
 	// (fallback for unshadowed names). Include length(value) so callers
-	// can determine emptiness without decryption.
+	// can determine emptiness without decryption, and the shadowed default
+	// row's length so a shadowing value of a different size is known to
+	// differ from default without decryption either.
 	rows, err := s.db.QueryContext(ctx,
 		`WITH scope_entries AS (
 			SELECT name, kind, created_at, updated_at, 'scope' AS source, length(value) AS ct_len
@@ -1267,17 +1282,65 @@ func (s *Store) ListEnvVars(ctx context.Context, scope Scope) ([]EntryInfo, erro
 			SELECT name, kind, created_at, updated_at, 'default' AS source, length(value) AS ct_len
 			FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		)
-		SELECT name, kind, created_at, updated_at, source, ct_len FROM scope_entries
+		SELECT s.name, s.kind, s.created_at, s.updated_at, s.source, s.ct_len, d.ct_len
+		FROM scope_entries s LEFT JOIN default_entries d ON d.name = s.name
 		UNION ALL
-		SELECT name, kind, created_at, updated_at, source, ct_len FROM default_entries
+		SELECT name, kind, created_at, updated_at, source, ct_len, NULL FROM default_entries
 		WHERE name NOT IN (SELECT name FROM scope_entries)
-		ORDER BY name`,
+		ORDER BY 1`,
 		projectID, envID, projectID, defaultEnvID)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	return scanEntryInfos(rows)
+	infos, undecided, err := scanMergedEntryInfos(rows)
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(undecided) == 0 {
+		return infos, nil
+	}
+	// The remaining shadowing rows are the same size as default's. Only the
+	// key can tell them apart; without it they stay undecided (nil).
+	key := s.snapshotVaultKey()
+	if key == nil {
+		return infos, nil
+	}
+	defer zero(key)
+	for _, i := range undecided {
+		same, err := s.equalsDefault(ctx, key, projectID, envID, defaultEnvID, infos[i].Name)
+		if err != nil {
+			return nil, err
+		}
+		infos[i].SameAsDefault = &same
+	}
+	return infos, nil
+}
+
+// equalsDefault decrypts one name in both the scope env and the default env
+// and reports whether the plaintexts are equal. Neither value leaves this
+// function: both are zeroed before it returns, and the comparison is
+// constant-time so the listing's timing says nothing about where they differ.
+func (s *Store) equalsDefault(ctx context.Context, key []byte, projectID, envID, defaultEnvID int64, name string) (bool, error) {
+	own, ok, err := s.fetchEntry(ctx, projectID, envID, "env_var", name)
+	if err != nil || !ok {
+		return false, err
+	}
+	def, ok, err := s.fetchEntry(ctx, projectID, defaultEnvID, "env_var", name)
+	if err != nil || !ok {
+		return false, err
+	}
+	a, err := s.decryptEntry(key, own, SourceScope)
+	if err != nil {
+		return false, err
+	}
+	defer zero(a.Value)
+	b, err := s.decryptEntry(key, def, SourceDefault)
+	if err != nil {
+		return false, err
+	}
+	defer zero(b.Value)
+	return subtle.ConstantTimeCompare(a.Value, b.Value) == 1, nil
 }
 
 // HasEnvVar reports whether scope's own env holds this name. Exact, not merged
@@ -1730,25 +1793,46 @@ func (s *Store) listEntriesForEnv(ctx context.Context, projectID, envID int64, s
 	return out, rows.Err()
 }
 
-func scanEntryInfos(rows *sql.Rows) ([]EntryInfo, error) {
+// scanMergedEntryInfos reads the merged (scope ∪ default) listing. The second
+// result indexes the rows whose SameAsDefault cannot be settled from
+// ciphertext lengths alone — a shadowing row the same size as default's — so
+// the caller can decrypt those, and only those, when it holds the key.
+func scanMergedEntryInfos(rows *sql.Rows) ([]EntryInfo, []int, error) {
 	var out []EntryInfo
+	var undecided []int
 	for rows.Next() {
 		var info EntryInfo
 		var createdNs, updatedNs int64
 		var source string
 		var ctLen int
-		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &source, &ctLen); err != nil {
-			return nil, err
+		var defaultCtLen sql.NullInt64
+		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &source, &ctLen, &defaultCtLen); err != nil {
+			return nil, nil, err
 		}
 		info.CreatedAt = time.Unix(createdNs, 0).UTC()
 		info.UpdatedAt = time.Unix(updatedNs, 0).UTC()
 		info.IsEmpty = ctLen == emptyCiphertextLen
 		if source == "default" {
 			info.Source = SourceDefault
+		} else if defaultCtLen.Valid {
+			info.InDefault = true
+			// The AEAD adds a fixed overhead, so ciphertexts of different
+			// lengths hold plaintexts of different lengths: settled without
+			// the key. Two empty values are equal for the same reason.
+			switch {
+			case int64(ctLen) != defaultCtLen.Int64:
+				same := false
+				info.SameAsDefault = &same
+			case ctLen == emptyCiphertextLen:
+				same := true
+				info.SameAsDefault = &same
+			default:
+				undecided = append(undecided, len(out))
+			}
 		}
 		out = append(out, info)
 	}
-	return out, rows.Err()
+	return out, undecided, rows.Err()
 }
 
 // ---- name validation ----------------------------------------------------

@@ -50,6 +50,12 @@ func (m Model) renderDetail() string {
 		lines = append(lines, kv(m.styles, " Created", e.CreatedAt.Format("2006-01-02 15:04")))
 		lines = append(lines, kv(m.styles, " Updated", e.UpdatedAt.Format("2006-01-02 15:04")))
 		lines = append(lines, kv(m.styles, " Source ", e.Source))
+		switch m.entryStatus(*e) {
+		case StatusOverridden:
+			lines = append(lines, kv(m.styles, " Default", "overridden here"))
+		case StatusSameAsDefault:
+			lines = append(lines, kv(m.styles, " Default", "same value"))
+		}
 	}
 	lines = append(lines, "")
 

@@ -3,6 +3,25 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## Unreleased
+
+### A value that merely repeats default is no longer shown as an override
+
+In a non-default env, the TUI and the portal marked every variable that also
+existed in default as "overrides default", whether or not the value was any
+different. Importing a `.env` file into `staging` therefore lit up every shared
+variable in yellow, and retyping default's value by hand did the same. The
+daemon now compares the two values and the listing says which it is: `⤴` still
+means this env's value differs from default, and a new `=` badge means it is
+the same value stored twice. Editing a value re-checks it, so the badge follows
+what you typed. The comparison happens inside the daemon and no value is sent
+to either UI for it; while the vault is locked, a pair whose stored sizes match
+cannot be told apart and keeps the `⤴` badge.
+
+For `=` rows the portal offers only "revert", which drops the redundant copy so
+the env inherits default again; "persist" is left out because it would rewrite
+default with the value it already holds.
+
 ## v0.7.1 — 2026-09-06
 
 ### `byn doctor --repair` asks for your password instead of telling you to add sudo
@@ -41,7 +60,6 @@ unaffected in every other way; if a script holds one that starts with a dash,
 pipe it on stdin, which has always worked:
 
     printf '%s\n' "$ticket" | byn request cancel
-
 
 ### `byn restart` asks for your password instead of telling you to add sudo
 

@@ -624,6 +624,17 @@ type SecretMeta struct {
 	// otherwise distinguish, and which matters most for exactly the names where
 	// a wrong-but-present value does silent damage.
 	Unattended bool `json:"unattended,omitempty"`
+	// InDefault is true when this env's own value (Source "scope") shadows an
+	// entry of the same name in the default env. Never set for the default
+	// env itself or for inherited rows.
+	InDefault bool `json:"in_default,omitempty"`
+	// SameAsDefault says whether a shadowing value equals default's. A row
+	// that merely repeats default — an imported .env re-stating shared
+	// values, or an edit that typed the same thing back — is not an override
+	// in any sense a person cares about, and the UIs mark it as "same"
+	// instead. Omitted (nil) when InDefault is false, and when the vault is
+	// locked and the two stored sizes match so nothing can be decided.
+	SameAsDefault *bool `json:"same_as_default,omitempty"`
 }
 
 // ExecPreflightReq asks whether a command would run under a trusted .byn, and

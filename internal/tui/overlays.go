@@ -167,6 +167,7 @@ func (m Model) renderHelp() string {
 		m.styles.SectionHeader.Render("INHERITANCE BADGES (non-default envs)"),
 		"  " + m.styles.StatusInherited.Render("↓") + "       value comes from the default env",
 		"  " + m.styles.StatusOverridden.Render("⤴") + "       this env overrides default's value",
+		"  " + m.styles.StatusSame.Render("=") + "       this env repeats default's value unchanged",
 		"  " + m.styles.StatusNew.Render("✦") + "       created in this env, not in default",
 		"",
 		m.styles.SectionHeader.Render("OTHER"),

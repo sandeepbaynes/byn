@@ -2,10 +2,10 @@ default ▸ billing ▸ staging               unlocked
                                                                                                            
 ENV-VARS (3)                             + add (a)                                                         
 ──────────────────────────────────────────────────                                                         
-   ↓ inherited   ⤴ overrides default   ✦ new in env                                                        
+   ↓ inherited   ⤴ overrides default   = same as default   ✦ new in env                                    
   ⤴ API_KEY                                  06-02                                                         
-  ⤴ DB_URL                                   06-02                                                         
-  ⤴ STRIPE_SK                                06-02                                                         
+  = DB_URL                                   06-02                                                         
+  ✦ STRIPE_SK                                06-02                                                         
                                                                                                            
 FILES (0)                                + add (a)                                                         
 ──────────────────────────────────────────────────                                                         

@@ -118,6 +118,7 @@ func (m Model) renderEnvVarsSection(w, budget int) []string {
 	if envOrDefault(m.scope.Env) != "default" && len(es) > 0 {
 		legend := m.styles.StatusInherited.Render("↓ inherited") +
 			"   " + m.styles.StatusOverridden.Render("⤴ overrides default") +
+			"   " + m.styles.StatusSame.Render("= same as default") +
 			"   " + m.styles.StatusNew.Render("✦ new in env")
 		out = append(out, "   "+legend)
 	}
@@ -286,6 +287,8 @@ func (m Model) renderEntryRow(e ipc.SecretMeta, selected, expanded bool, w int) 
 		badge = m.styles.StatusInherited.Render("↓") + " "
 	case StatusOverridden:
 		badge = m.styles.StatusOverridden.Render("⤴") + " "
+	case StatusSameAsDefault:
+		badge = m.styles.StatusSame.Render("=") + " "
 	case StatusNew:
 		badge = m.styles.StatusNew.Render("✦") + " "
 	}

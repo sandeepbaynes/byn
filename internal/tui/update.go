@@ -105,22 +105,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.auditErr = msg.Err
 		return m, nil
 
-	case defaultEnvLoadedMsg:
-		// Only apply if it still matches our active (vault, project).
-		// Stale responses from prior scopes are ignored to avoid the
-		// renderer flickering against the wrong baseline.
-		if msg.Vault == vaultOrDefault(m.scope.Vault) &&
-			msg.Project == projectOrDefault(m.scope.Project) &&
-			envOrDefault(m.scope.Env) != "default" &&
-			msg.Err == nil {
-			set := make(map[string]bool, len(msg.Resp.Secrets))
-			for _, e := range msg.Resp.Secrets {
-				set[e.Name] = true
-			}
-			m.defaultEnvNames = set
-		}
-		return m, nil
-
 	case entryValueMsg:
 		if msg.Err != nil {
 			// auth_required: open the Authorize overlay for a get (reveal/edit).
@@ -575,26 +559,17 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 	return m.startEdit()
 }
 
-// loadCurrentScope kicks off a refresh after a scope change. Also
-// fetches the default-env names for the same (vault, project) when
-// the active env is non-default — that's what powers the inherited /
-// overridden / new markers on each entry row.
+// loadCurrentScope kicks off a refresh after a scope change. The
+// listing itself carries each row's relationship to the default env
+// (inherited / overrides / same as default / new), so one call is enough.
 func (m Model) loadCurrentScope() (tea.Model, tea.Cmd) {
 	m.flatten()
 	m.entries = nil
 	m.entryCursor = 0
-	m.defaultEnvNames = nil
-	cmds := []tea.Cmd{
+	return m, tea.Batch(
 		loadEntriesCmd(m.client, m.scope),
 		loadAuditCmd(m.client, m.scope.Vault, 10),
-	}
-	if envOrDefault(m.scope.Env) != "default" {
-		cmds = append(cmds,
-			loadDefaultEnvNamesCmd(m.client,
-				vaultOrDefault(m.scope.Vault),
-				projectOrDefault(m.scope.Project)))
-	}
-	return m, tea.Batch(cmds...)
+	)
 }
 
 // startEdit transitions to INSERT for the current entry. If a draft

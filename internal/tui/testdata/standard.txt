@@ -2,10 +2,10 @@ BYN                        default / billing / staging                          
 ▼ default                                                                                                  
   ▼ billing                ENV-VARS (3)                                                    + add (a)       
     ○ default              ─────────────────────────────────────────────────────────────────────────       
-    ● staging                 ↓ inherited   ⤴ overrides default   ✦ new in env                             
+    ● staging                 ↓ inherited   ⤴ overrides default   = same as default   ✦ new in env         
   ▶ default                  ⤴ API_KEY                                  ●●●●●●●●●●●●●●●●  2026-06-02       
-▶ work                       ⤴ DB_URL                                   ●●●●●●●●●●●●●●●●  2026-06-02       
-+ new vault                  ⤴ STRIPE_SK                                ●●●●●●●●●●●●●●●●  2026-06-02       
+▶ work                       = DB_URL                                   ●●●●●●●●●●●●●●●●  2026-06-02       
++ new vault                  ✦ STRIPE_SK                                ●●●●●●●●●●●●●●●●  2026-06-02       
                                                                                                            
                            FILES (0)                                                       + add (a)       
                            ─────────────────────────────────────────────────────────────────────────       

@@ -49,15 +49,6 @@ type entriesLoadedMsg struct {
 	Err   error
 }
 
-// defaultEnvLoadedMsg carries the entry list of the default env for a
-// given (vault, project). Used by the renderer to mark inherited /
-// overridden / new entries in non-default envs.
-type defaultEnvLoadedMsg struct {
-	Vault, Project string
-	Resp           ipc.ListResp
-	Err            error
-}
-
 type entryValueMsg struct {
 	Scope ipc.Scope
 	Name  string
@@ -131,19 +122,6 @@ func loadEntriesCmd(c Client, scope ipc.Scope) tea.Cmd {
 		var resp ipc.ListResp
 		err := c.Call(ipc.OpList, ipc.ListReq{Scope: scope}, &resp)
 		return entriesLoadedMsg{Scope: scope, Resp: resp, Err: err}
-	}
-}
-
-// loadDefaultEnvNamesCmd lists the entries that physically live in
-// the default env of (vault, project). Only the names are used; the
-// values stay encrypted in the daemon.
-func loadDefaultEnvNamesCmd(c Client, vault, project string) tea.Cmd {
-	return func() tea.Msg {
-		var resp ipc.ListResp
-		err := c.Call(ipc.OpList,
-			ipc.ListReq{Scope: ipc.Scope{Vault: vault, Project: project, Env: "default"}},
-			&resp)
-		return defaultEnvLoadedMsg{Vault: vault, Project: project, Resp: resp, Err: err}
 	}
 }
 

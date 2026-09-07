@@ -1537,10 +1537,12 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 	out := make([]ipc.SecretMeta, 0, len(infos))
 	for _, m := range infos {
 		meta := ipc.SecretMeta{
-			Name:      m.Name,
-			Source:    m.Source.String(),
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
+			Name:          m.Name,
+			Source:        m.Source.String(),
+			CreatedAt:     m.CreatedAt,
+			UpdatedAt:     m.UpdatedAt,
+			InDefault:     m.InDefault,
+			SameAsDefault: m.SameAsDefault,
 		}
 		if _, ok := unattended[m.Name]; ok {
 			meta.Unattended = true

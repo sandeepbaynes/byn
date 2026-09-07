@@ -2,11 +2,11 @@ BYN                        default / billing / staging                          
 ▼ default                                                                                                   ────────────────────────────────
   ▼ billing                ENV-VARS (3)                                                           + add (a)  Created  2026-06-02 08:41      
     ○ default              ────────────────────────────────────────────────────────────────────────────────  Updated  2026-06-02 08:41      
-    ● staging                 ↓ inherited   ⤴ overrides default   ✦ new in env                               Source   scope                 
-  ▶ default                  ⤴ API_KEY                                         ●●●●●●●●●●●●●●●●  2026-06-02                                 
-▶ work                       ⤴ DB_URL                                          ●●●●●●●●●●●●●●●●  2026-06-02                                 
-+ new vault                  ⤴ STRIPE_SK                                       ●●●●●●●●●●●●●●●●  2026-06-02  R reveal   y copy   e edit     
-                                                                                                                                            
+    ● staging                 ↓ inherited   ⤴ overrides default   = same as default   ✦ new in env           Source   scope                 
+  ▶ default                  ⤴ API_KEY                                         ●●●●●●●●●●●●●●●●  2026-06-02  Default  overridden here       
+▶ work                       = DB_URL                                          ●●●●●●●●●●●●●●●●  2026-06-02                                 
++ new vault                  ✦ STRIPE_SK                                       ●●●●●●●●●●●●●●●●  2026-06-02                                 
+                                                                                                             R reveal   y copy   e edit     
                            FILES (0)                                                              + add (a)                                 
                            ────────────────────────────────────────────────────────────────────────────────                                 
                              (none — Phase 5)                                                                                               

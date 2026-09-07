@@ -2665,10 +2665,10 @@ async function loadEntries() {
   try {
     const data = await api("GET", "/api/entries?" + scopeQuery());
     state.entries = data.secrets || [];
-    state.defaultNames = new Set();
-    if (state.scope.env && !defaultish(state.scope.env)) {
-      try { const def = await api("GET", "/api/entries?" + scopeQuery("default")); for (const s of def.secrets || []) state.defaultNames.add(s.name); } catch (_) {}
-    }
+    // Each row says whether it shadows a default entry (in_default) and
+    // whether the two values are equal (same_as_default), so the listing is
+    // the only call needed.
+    state.defaultNames = new Set((state.entries || []).filter((s) => s.in_default).map((s) => s.name));
     renderEntries();
   } catch (e) {
     const box = $("#content-body"); box.innerHTML = "";
@@ -2686,7 +2686,11 @@ async function loadEntries() {
 function badgeFor(s) {
   if (!state.scope.env || defaultish(state.scope.env)) return null;
   if (s.source === "default") return { glyph: "↓", cls: "bdg-inherit" };
-  if (state.defaultNames.has(s.name)) return { glyph: "⤴", cls: "bdg-override" };
+  // A copy that merely repeats default's value is not an override anyone
+  // meant: imported .env files re-state shared values, and an edit can type
+  // the same thing back. The daemon compares the two and says so.
+  if (s.in_default && s.same_as_default === true) return { glyph: "=", cls: "bdg-same" };
+  if (s.in_default) return { glyph: "⤴", cls: "bdg-override" };
   return { glyph: "✦", cls: "bdg-new" };
 }
 
@@ -2748,13 +2752,16 @@ function entryRow(s, i) {
   const bd = badgeFor(s);
   // state class colors the key to match the badge (amber override / green new)
   let cls = "trow" + (inherited ? " inherited" : "");
-  if (!inherited && bd) cls += bd.cls === "bdg-override" ? " s-override" : (bd.cls === "bdg-new" ? " s-new" : "");
+  if (!inherited && bd) cls += bd.cls === "bdg-override" ? " s-override" : (bd.cls === "bdg-new" ? " s-new" : (bd.cls === "bdg-same" ? " s-same" : ""));
   const row = el("div", cls);
   row.style.animationDelay = Math.min(i * 14, 280) + "ms";
 
   // Badge cell: inheritance badge + optional empty-value indicator.
   const bdgWrap = el("span", "bdg-wrap");
-  bdgWrap.appendChild(el("span", "bdg" + (bd ? " " + bd.cls : ""), bd ? bd.glyph : ""));
+  const bdgEl = el("span", "bdg" + (bd ? " " + bd.cls : ""), bd ? bd.glyph : "");
+  if (bd && bd.cls === "bdg-same") bdgEl.title = "same value as default";
+  else if (bd && bd.cls === "bdg-override") bdgEl.title = "overrides default's value";
+  bdgWrap.appendChild(bdgEl);
   // s.empty is true when the vault is unlocked and the value is the empty string.
   // Show the hollow badge alongside any inheritance badge (both can be present
   // when e.g. an override with an empty value exists in this env).
@@ -2787,12 +2794,16 @@ function entryRow(s, i) {
   // Action set depends on the row's inheritance state (bd is null in the
   // default env, where every row is just deletable; see badgeFor):
   //   override (⤴) → revert (drop override → default) + persist (set as default)
+  //   same (=)     → revert only: the copy adds nothing, and persisting it
+  //                  would rewrite default with the value it already holds
   //   new (✦)      → delete + persist (promote to default, available to all envs)
   //   inherited (↓)→ no destructive/promote action (edit overrides in place)
   //   default env  → delete (unchanged)
   if (bd && bd.cls === "bdg-override") {
     acts.appendChild(iconBtn("revert", "revert", "revert to the default value", () => revertOverride(s)));
     acts.appendChild(iconBtn("persist", "persist", "set this value as the default (all envs)", () => persistToDefault(s)));
+  } else if (bd && bd.cls === "bdg-same") {
+    acts.appendChild(iconBtn("revert", "revert", "drop this copy and inherit default (same value)", () => revertOverride(s)));
   } else if (bd && bd.cls === "bdg-new") {
     acts.appendChild(iconBtn("trash", "danger", "delete", () => doDelete(s)));
     acts.appendChild(iconBtn("persist", "persist", "save this value to default (all envs)", () => persistToDefault(s)));

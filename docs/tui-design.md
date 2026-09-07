@@ -429,19 +429,27 @@ row shows a 1-cell badge column:
 | Badge | Meaning | Style |
 |---|---|---|
 | `↓` | inherited from default env (Source=default) | dim cyan |
-| `⤴` | exists in both; this env overrides default | bold yellow |
+| `⤴` | exists in both with a different value; this env overrides default | bold yellow |
+| `=` | exists in both with the same value; a redundant copy of default | dim |
 | `✦` | created in this env only | bold green |
 
 Implementation:
-- When the scope changes to a non-default env, a second `OpList` is
-  fired with `Env: "default"` to fetch the default env's entry
-  names. Cached in `m.defaultEnvNames` for the lifetime of the scope.
+- The `OpList` response carries, per row, `in_default` (this env's own
+  value shadows a default entry of the same name) and `same_as_default`
+  (the daemon compared the two values). The comparison happens inside
+  the daemon: ciphertexts of different lengths differ without any
+  decryption, and equal-length pairs are decrypted and compared in
+  constant time only while the vault is unlocked. No second list call
+  and no value ever reaches the TUI.
 - `entryStatus(e)` classifies each row:
   - `e.Source == "default"` → `StatusInherited`
-  - `e.Source == "scope"` AND `e.Name in defaultEnvNames` →
+  - `e.Source == "scope"` AND NOT `e.InDefault` → `StatusNew`
+  - `e.InDefault` AND `*e.SameAsDefault == true` → `StatusSameAsDefault`
+  - `e.InDefault` otherwise (differs, or undecidable while locked) →
     `StatusOverridden`
-  - `e.Source == "scope"` AND name NOT in default's list →
-    `StatusNew`
+- Every edit, import and revert reloads the listing, so the badge
+  follows the value: typing default's value back turns `⤴` into `=`,
+  and changing it again turns `=` back into `⤴`.
 - A one-line legend renders under the ENV-VARS header whenever
   badges are showing.
 - When active env IS `default`, the badge column is hidden entirely

@@ -395,6 +395,7 @@ select.input { appearance: none; cursor: pointer; }
 .row .bdg { font-size: 13px; text-align: center; }
 .bdg-inherit { color: var(--slate); }
 .bdg-override { color: var(--amber); }
+.bdg-same { color: var(--text-dim); }
 .bdg-new { color: var(--signal); }
 .row .key { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .row .key .name { color: var(--text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -571,6 +572,7 @@ select.input { appearance: none; cursor: pointer; }
 .trow.inherited .cell.name { color: var(--text-dim); }
 /* key color mirrors the state badge: amber = overrides default, green = new */
 .trow.s-override .cell.name { color: var(--amber); }
+.trow.s-same .cell.name { color: var(--text-dim); }
 .trow.s-new .cell.name { color: var(--signal); }
 .cell.val { color: var(--text-faint); font-size: 12px; letter-spacing: .14em; cursor: pointer; }
 .trow:hover .cell.val .mask { color: var(--text-dim); }

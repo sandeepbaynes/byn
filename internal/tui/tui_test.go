@@ -53,10 +53,14 @@ func (fakeClient) Call(op ipc.Op, req any, resp any) error {
 	case ipc.OpList:
 		if r, ok := resp.(*ipc.ListResp); ok {
 			now := fakeNow
+			// One row per inheritance state so the snapshots show every
+			// badge: API_KEY overrides default, DB_URL repeats default's
+			// value, STRIPE_SK exists only in this env.
+			differs, same := false, true
 			*r = ipc.ListResp{
 				Secrets: []ipc.SecretMeta{
-					{Name: "API_KEY", Source: "scope", CreatedAt: now, UpdatedAt: now},
-					{Name: "DB_URL", Source: "scope", CreatedAt: now, UpdatedAt: now},
+					{Name: "API_KEY", Source: "scope", InDefault: true, SameAsDefault: &differs, CreatedAt: now, UpdatedAt: now},
+					{Name: "DB_URL", Source: "scope", InDefault: true, SameAsDefault: &same, CreatedAt: now, UpdatedAt: now},
 					{Name: "STRIPE_SK", Source: "scope", CreatedAt: now, UpdatedAt: now},
 				},
 			}

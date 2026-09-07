@@ -327,16 +327,6 @@ type Model struct {
 	// authorizing, and every future gated action would have to teach it again.
 	pendingApproval *pendingApproval
 
-	// defaultEnvNames is the set of entry names that live in the
-	// *default* env of the active project. Populated when the active
-	// scope's env is non-default so the renderer can tell:
-	//   - Source=default       → inherited from default        (↓ dim)
-	//   - Source=scope, in def  → overrides default            (⤴ yellow)
-	//   - Source=scope, NOT in  → new in this env              (✦ green)
-	// When the active env IS default, this map is empty and the
-	// renderer hides the column entirely.
-	defaultEnvNames map[string]bool
-
 	// Mode-specific state
 	edit        *editBuf
 	reveal      *revealState
@@ -382,11 +372,6 @@ func (m Model) Init() tea.Cmd {
 		loadEntriesCmd(m.client, m.scope),
 		loadAuditCmd(m.client, m.scope.Vault, 10),
 		tickCmd(time.Second),
-	}
-	if envOrDefault(m.scope.Env) != "default" {
-		cmds = append(cmds, loadDefaultEnvNamesCmd(m.client,
-			vaultOrDefault(m.scope.Vault),
-			projectOrDefault(m.scope.Project)))
 	}
 	return tea.Batch(cmds...)
 }
@@ -679,16 +664,18 @@ type EntryStatus int
 // Inheritance states for entries shown in a non-default env. See
 // docs/tui-design.md "Inheritance badges".
 const (
-	StatusNone       EntryStatus = iota // active env is default; no marker
-	StatusInherited                     // value comes from default env
-	StatusOverridden                    // exists in both; this env's value wins
-	StatusNew                           // created in this env, not in default
+	StatusNone          EntryStatus = iota // active env is default; no marker
+	StatusInherited                        // value comes from default env
+	StatusOverridden                       // exists in both with a different value; this env's wins
+	StatusSameAsDefault                    // exists in both with the same value; a redundant copy
+	StatusNew                              // created in this env, not in default
 )
 
-// entryStatus classifies a SecretMeta against the loaded default-env
-// names. Returns StatusNone when the active env is itself default,
-// when the default-env list hasn't loaded yet, or when the entry's
-// state can't be determined.
+// entryStatus classifies a SecretMeta by what the daemon reported about
+// the default env. Returns StatusNone when the active env is itself
+// default. A shadowing row whose value the daemon could not compare
+// (locked vault, same stored size) is shown as overridden: that is the
+// honest reading of "this env's copy wins" when nobody can see inside.
 func (m Model) entryStatus(e ipc.SecretMeta) EntryStatus {
 	if envOrDefault(m.scope.Env) == "default" {
 		return StatusNone
@@ -696,16 +683,13 @@ func (m Model) entryStatus(e ipc.SecretMeta) EntryStatus {
 	if e.Source == "default" {
 		return StatusInherited
 	}
-	// Source == "scope" — distinguish overridden (also in default) from
-	// new (not in default). If the default-env list hasn't arrived,
-	// don't guess.
-	if m.defaultEnvNames == nil {
-		return StatusNone
+	if !e.InDefault {
+		return StatusNew
 	}
-	if m.defaultEnvNames[e.Name] {
-		return StatusOverridden
+	if e.SameAsDefault != nil && *e.SameAsDefault {
+		return StatusSameAsDefault
 	}
-	return StatusNew
+	return StatusOverridden
 }
 
 // currentEntry returns the entry under the entry cursor, if any.
