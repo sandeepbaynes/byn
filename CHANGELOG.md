@@ -22,6 +22,17 @@ For `=` rows the portal offers only "revert", which drops the redundant copy so
 the env inherits default again; "persist" is left out because it would rewrite
 default with the value it already holds.
 
+### What to do if you forget your master password
+
+Troubleshooting has a new section,
+[Forgot your master password](docs/troubleshooting.md#forgot-your-master-password).
+There is still no reset. The section covers what you can do: get your values
+out while a terminal still has the vault unlocked or through a passkey unlock,
+remove a locked vault that `byn vault delete` won't touch without the password
+(including `default`, which it never deletes), and start again. It replaces an
+old one-line tip that pointed at `~/.byn`, which is the wrong folder on a
+provisioned install.
+
 ## v0.7.1 — 2026-09-06
 
 ### `byn doctor --repair` asks for your password instead of telling you to add sudo

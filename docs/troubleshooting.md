@@ -74,12 +74,96 @@ Either you mistyped, or your `wrapped.key` is corrupted/swapped.
 - Re-try the password.
 - If it persists, run `byn doctor`. If `vault[X].open` fails with a
   fingerprint mismatch, restore `wrapped.key` from backup.
-- If you've genuinely forgotten the password: there is **no
-  recovery**. The vault key is unrecoverable. `rm -rf ~/.byn/vaults/<name>`
-  and re-init.
+- If you've genuinely forgotten the password, see
+  [Forgot your master password](#forgot-your-master-password).
 
 This message is the same whether the password is wrong or the vault
 doesn't exist — by design (existence-oracle defense).
+
+---
+
+## Forgot your master password
+
+**There is no password reset.** The vault key is wrapped with your master
+password alone. byn keeps no copy and holds no escrow key, and there is no
+support backdoor, so nobody (including byn) can recover the values. `byn
+passwd` needs the current password too. A generated break-glass recovery key
+is planned (see [security.md](security.md#known-weaknesses--how-to-protect-yourself))
+but does not exist yet.
+
+What you can still do depends on your situation.
+
+### 1. Get the values out first, if you still can
+
+- **The vault is unlocked in a terminal right now.** Don't lock it and don't
+  stop the daemon. The key is only in the daemon's memory. Run `byn export
+  --output backup.env` in that terminal, then start over below and
+  `byn import backup.env` into the new vault. Delete `backup.env` when you're done.
+- **You enrolled a passkey with vault unlock (Touch ID).** A passkey unlock is
+  a second, independent wrap of the same vault key, so it opens the vault
+  without the password. Unlock in the portal with the passkey and copy your
+  values out.
+- **Neither.** The values are gone. Get them again from wherever they came
+  from (cloud console, API dashboard, your team) once you have a new vault.
+
+### 2. Remove the vault you can't open
+
+`byn vault delete` needs the password when the vault is locked. That's on
+purpose: it stops an agent or another process from wiping your vault through
+the daemon. As the machine's admin you can still remove it yourself, because a
+vault is just a folder.
+
+**Move it aside instead of deleting it.** Without the password the folder is
+useless to anyone, and if the password comes back to you, you can move it back.
+
+On a provisioned install (`byn setup`, the default), with the data root at
+`/Library/Application Support/byn` on macOS or `/var/lib/byn` on Linux:
+
+```sh
+ROOT="/Library/Application Support/byn"      # Linux: /var/lib/byn
+NAME=myvault                                 # the vault you can't open
+
+sudo byn stop                                # stop the _byn service
+sudo mv "$ROOT/vaults/$NAME" ~/byn-forgotten-$NAME
+sudo mv "$ROOT/audit/$NAME"  ~/byn-forgotten-$NAME-audit   # if present
+sudo byn restart
+byn vault list                               # the vault is gone
+```
+
+On a legacy install (data in `~/.byn`, no `byn setup`), you don't need sudo:
+
+```sh
+byn daemon stop
+mv ~/.byn/vaults/$NAME ~/byn-forgotten-$NAME
+mv ~/.byn/audit/$NAME  ~/byn-forgotten-$NAME-audit          # if present
+byn daemon start
+```
+
+Why the audit log moves too: each vault's audit log sits outside the vault
+folder, so `byn vault delete` can't erase the trail. The log's HMAC chain is
+tied to the old vault. If you recreate a vault **with the same name** and leave
+the old log where it is, `byn audit verify` will report the chain as broken.
+
+### 3. Start over
+
+```sh
+byn init                       # a new `default` vault
+byn --vault myvault init       # or recreate a named vault
+```
+
+- **`default`** can never be removed with `byn vault delete`, even with the
+  password. Moving its folder aside as above is the only way. After that it
+  lists as `uninitialized` and `byn init` recreates it.
+- **Passkeys** are stored inside the vault, so they left with it. Enroll again
+  from the portal.
+- **Trusted `.byn` files** that used the old vault need `byn trust` again.
+
+### Next time
+
+- Keep the master password in a password manager, or write it down and store
+  it somewhere safe.
+- Enroll a passkey with vault unlock. It's a second way in that doesn't depend
+  on remembering the password.
 
 ---
 
