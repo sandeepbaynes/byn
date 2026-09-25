@@ -1169,6 +1169,20 @@ func waitForApproval(client *ipc.Client, req ipc.ExecFetchReq, budget time.Durat
 // turns that into an immediate answer. It is a warning rather than a refusal
 // because byn cannot know whether the program treats the variable as optional.
 func renderMissingValues(missing, unattended []string, sourcePath string) {
+	// A name the daemon annotated ("NAME (value exists — …)") HAS a value this
+	// launch could not open. Lumping it in with "no value" sent people to set
+	// a value that was already there; each gets its own line with its own fix.
+	var absent []string
+	for _, m := range missing {
+		name, why, annotated := strings.Cut(m, " (")
+		if !annotated {
+			absent = append(absent, m)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
+			yellow(fmt.Sprintf("%s is in the vault but was not injected (%s", name, why)))
+	}
+	missing = absent
 	if len(missing) > 0 {
 		fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"),
 			yellow(fmt.Sprintf("%s allowlists %d variable(s) the vault has no value for: %s",

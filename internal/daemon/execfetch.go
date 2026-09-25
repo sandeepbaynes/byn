@@ -564,12 +564,21 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		for _, v := range values {
 			if _, ok := flagged[v.Name]; ok {
 				invented = append(invented, v.Name)
+				continue
+			}
+			// A value inherited from default was stored in default, so that is
+			// where its provenance lives.
+			if inh, unatt, found, oerr := st.EntryOrigin(ctx, scope, v.Name); oerr == nil && found && inh && unatt {
+				invented = append(invented, v.Name)
 			}
 		}
 		sort.Strings(invented)
 	}
 	d.recordExecRun(ctx, st, scope, req, resolvedArgv, values, invented)
 	notDelivered := missingAllowlisted(allow, optionalEnv, wildcard, values)
+	if wildcard && !noneDeclared {
+		notDelivered = d.wildcardNotDelivered(ctx, st, scope, optionalEnv, values)
+	}
 	return values, resolvedArgv, wildcard, noneDeclared, actionsWildcard,
 		d.splitUnreachable(ctx, st, scope, notDelivered), invented, nil
 }
@@ -591,6 +600,10 @@ func (d *Daemon) splitUnreachable(ctx context.Context, st *vault.Store, scope va
 	}
 	out := make([]string, 0, len(missing))
 	for _, name := range missing {
+		if inh, unatt, found, err := st.EntryOrigin(ctx, scope, name); err == nil && found && inh && unatt {
+			out = append(out, name+inheritedUnattendedSuffix)
+			continue
+		}
 		if has, err := st.HasEnvVar(ctx, scope, name); err == nil && has {
 			// Marked rather than dropped: the program still does not receive
 			// it, which is the fact the launch line exists to report.
@@ -606,6 +619,42 @@ func (d *Daemon) splitUnreachable(ctx context.Context, st *vault.Store, scope va
 // grant cannot derive. Carried on the name so every surface that already prints
 // missing values says the more precise thing without a new field to ignore.
 const unreachableSuffix = " (value exists — re-trust the .byn to reach it)"
+
+// inheritedUnattendedSuffix marks a name whose value lives in the default env
+// and was stored unattended, which a grant sealed before byn carried default's
+// keys cannot open. Importing it puts it under the master password; any owner
+// write in default re-seals this project's grants on the way.
+const inheritedUnattendedSuffix = " (stored unattended in default — run: byn import --unattended --env default)"
+
+// wildcardNotDelivered is missingAllowlisted for a "*" grant: every name the
+// scope lists — its own and the ones it inherits — is one the program was
+// promised. Returning nothing here is how an inherited value went missing with
+// no word from byn at all.
+func (d *Daemon) wildcardNotDelivered(ctx context.Context, st *vault.Store, scope vault.Scope, optional []string, values []ipc.ExecFetchValue) []string {
+	infos, err := st.ListEnvVars(ctx, scope)
+	if err != nil {
+		return nil
+	}
+	got := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		got[v.Name] = struct{}{}
+	}
+	skip := make(map[string]struct{}, len(optional))
+	for _, n := range optional {
+		skip[n] = struct{}{}
+	}
+	var missing []string
+	for _, info := range infos {
+		if _, ok := got[info.Name]; ok {
+			continue
+		}
+		if _, ok := skip[info.Name]; ok {
+			continue
+		}
+		missing = append(missing, info.Name)
+	}
+	return missing
+}
 
 // execValuesFromCapability decrypts a trusted .byn's allowlisted vars via its
 // sealed exec capability (rec.ExecCapability) — using ONLY the machine
@@ -652,6 +701,13 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// "*" meant only the variables that existed at grant time, so a variable
 	// another agent added was silently missing until someone re-trusted.
 	scopeKey, hasScopeKey := rowKeys[vault.CapScopeKeyName]
+	// Keys for the rows this env inherits from default, carried by grants
+	// sealed since byn learned to follow inheritance on the locked path. Older
+	// grants lack them; what they cannot open is reported, never dropped.
+	dflt := vault.InheritedKeys{
+		Scope:    rowKeys[vault.CapDefaultScopeKeyName],
+		Authored: rowKeys[vault.CapDefaultAuthoredKeyName],
+	}
 
 	values := make([]ipc.ExecFetchValue, 0, len(rowKeys))
 	seen := make(map[string]struct{}, len(rowKeys))
@@ -661,11 +717,20 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 			return nil, internalErr(id, fmt.Errorf("list scope for wildcard capability: %w", lerr))
 		}
 		for _, info := range infos {
-			val, verr := st.OpenEnvVarWithScopeKey(ctx, scope, info.Name, scopeKey)
+			val, verr := st.OpenEnvVarInherited(ctx, scope, info.Name, scopeKey, nil,
+				vault.InheritedKeys{Scope: dflt.Scope})
+			var u *vault.UnreachableDetail
+			if errors.As(verr, &u) && u.Inherited && !u.Unattended {
+				// An inherited row and a grant from before default's scope key
+				// rode along: the in-memory vault key still opens it while the
+				// vault is unlocked, as it always did.
+				val, verr = st.OpenEnvVarWithScopeKey(ctx, scope, info.Name, scopeKey)
+			}
 			if verr != nil {
-				// Entries still on an older scheme cannot be derived from a
-				// scope key; the per-row keys captured alongside cover them.
-				if vault.ErrScopeKeyUnsupported(verr) || errors.Is(verr, vault.ErrNotFound) {
+				// Entries on an older scheme are covered by the per-row keys
+				// captured alongside; authored ones by the loop below.
+				if vault.ErrScopeKeyUnsupported(verr) || errors.Is(verr, vault.ErrNotFound) ||
+					errors.Is(verr, vault.ErrInheritedUnreachable) {
 					continue
 				}
 				return nil, internalErr(id, fmt.Errorf("decrypt %q via scope key: %w", info.Name, verr))
@@ -680,8 +745,11 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// them and the scope key cannot derive them either. The authored key rides
 	// in every capability precisely so exec can still hand them to the process
 	// that needs them — otherwise an agent could store a credential and then
-	// watch its own service start without it.
-	if authKey, ok := rowKeys[vault.CapAuthoredKeyName]; ok {
+	// watch its own service start without it. A value stored that way in the
+	// default env is opened with default's authored key, which a grant for
+	// another env carries for exactly this.
+	authKey := rowKeys[vault.CapAuthoredKeyName]
+	if len(authKey) > 0 || len(dflt.Authored) > 0 {
 		// The allowlist this loop must obey comes from the record's SNAPSHOT,
 		// not from rec.EnvAllowlist().
 		//
@@ -712,9 +780,10 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 					continue // this .byn does not ask for it
 				}
 			}
-			val, verr := st.OpenEnvVarAuthored(ctx, scope, info.Name, authKey)
+			val, verr := st.OpenEnvVarInherited(ctx, scope, info.Name, nil, authKey,
+				vault.InheritedKeys{Authored: dflt.Authored})
 			if verr != nil {
-				continue // not an authored entry, or not this scope's — other paths cover it
+				continue // not an authored entry, or no key for it — other paths cover it
 			}
 			seen[info.Name] = struct{}{}
 			values = append(values, ipc.ExecFetchValue{Name: info.Name, Value: val})
@@ -730,7 +799,7 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// time), identical in kind.
 	capDeclared, capWildcard := snapshotEnvAllowlist(rec)
 	for name, rk := range rowKeys {
-		if name == vault.CapScopeKeyName || name == vault.CapAuthoredKeyName {
+		if isReservedCapName(name) {
 			continue
 		}
 		if _, done := seen[name]; done {
@@ -980,4 +1049,15 @@ func staleCapabilityText(name, bynPath string) (msg, hint string) {
 		"re-trust to refresh it: byn trust " + bynPath +
 			"  (the value is intact; a grant goes stale when a variable is overridden " +
 			"in this env, or re-sealed by another writer)"
+}
+
+// isReservedCapName reports whether a capability entry is a key byn carries for
+// its own use rather than the per-row key of a variable.
+func isReservedCapName(name string) bool {
+	switch name {
+	case vault.CapScopeKeyName, vault.CapAuthoredKeyName,
+		vault.CapDefaultScopeKeyName, vault.CapDefaultAuthoredKeyName:
+		return true
+	}
+	return false
 }

@@ -291,9 +291,12 @@ func (d *Daemon) sealExecCapabilityWithKey(ctx context.Context, st *vault.Store,
 	if wildcard {
 		var scopeKey []byte
 		var skerr error
-		if !useVaultKey && len(password) > 0 {
+		switch {
+		case !useVaultKey && len(vaultKey) > 0:
+			scopeKey, skerr = st.CaptureScopeKeyWithKey(ctx, vaultKey, scope)
+		case !useVaultKey && len(password) > 0:
 			scopeKey, skerr = st.CaptureScopeKeyWithPassword(ctx, password, scope)
-		} else {
+		default:
 			scopeKey, skerr = st.CaptureScopeKey(ctx, scope)
 		}
 		if skerr != nil {
@@ -315,9 +318,12 @@ func (d *Daemon) sealExecCapabilityWithKey(ctx context.Context, st *vault.Store,
 	// the entries that capability's own project wrote.
 	var authKey []byte
 	var akerr error
-	if !useVaultKey && len(password) > 0 {
+	switch {
+	case !useVaultKey && len(vaultKey) > 0:
+		authKey, akerr = st.CaptureAuthoredKeyWithKey(ctx, vaultKey, scope)
+	case !useVaultKey && len(password) > 0:
 		authKey, akerr = st.CaptureAuthoredKeyWithPassword(ctx, password, scope)
-	} else {
+	default:
 		authKey, akerr = st.CaptureAuthoredKey(ctx, scope)
 	}
 	if akerr != nil {
@@ -328,6 +334,13 @@ func (d *Daemon) sealExecCapabilityWithKey(ctx context.Context, st *vault.Store,
 			rowKeys = make(map[string][]byte, 1)
 		}
 		rowKeys[vault.CapAuthoredKeyName] = authKey
+	}
+
+	// A grant for a non-default env inherits from default, so it carries the
+	// default env's keys too — otherwise exec lists an inherited value and
+	// delivers nothing. See vault/inherited.go.
+	if err := captureDefaultKeysInto(ctx, st, scope, wildcard, useVaultKey, password, vaultKey, &rowKeys); err != nil {
+		return nil, scopeOptional(err)
 	}
 
 	if len(rowKeys) == 0 {
@@ -635,4 +648,44 @@ func (d *Daemon) handleBynWrite(ctx context.Context, env *ipc.Envelope) *ipc.Env
 		return internalErr(env.ID, err)
 	}
 	return out
+}
+
+// captureDefaultKeysInto adds the default env's keys to a capability being
+// built for scope (see vault.CaptureDefaultKeys), using the same vault-key
+// source the rest of the capture used. A default-env grant adds nothing.
+func captureDefaultKeysInto(ctx context.Context, st *vault.Store, scope vault.Scope, wildcard, useVaultKey bool, password, vaultKey []byte, rowKeys *map[string][]byte) error {
+	if scope.Env == "" || scope.Env == vault.DefaultEnvName {
+		return nil
+	}
+	var vk []byte
+	if !useVaultKey {
+		switch {
+		case len(vaultKey) > 0:
+			vk = vaultKey
+		case len(password) > 0:
+			k, err := st.UnwrapVaultKey(password)
+			if err != nil {
+				return err
+			}
+			defer zeroBytes(k)
+			vk = k
+		}
+	}
+	kenv, kauth, err := st.CaptureDefaultKeys(ctx, scope, wildcard, vk)
+	if err != nil {
+		return err
+	}
+	if kenv == nil && kauth == nil {
+		return nil
+	}
+	if *rowKeys == nil {
+		*rowKeys = make(map[string][]byte, 2)
+	}
+	if kauth != nil {
+		(*rowKeys)[vault.CapDefaultAuthoredKeyName] = kauth
+	}
+	if kenv != nil {
+		(*rowKeys)[vault.CapDefaultScopeKeyName] = kenv
+	}
+	return nil
 }

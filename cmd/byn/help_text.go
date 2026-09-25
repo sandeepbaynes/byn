@@ -325,8 +325,39 @@ STORING A VALUE UNATTENDED
        [exec] agent_put = false, or per name with [exec] agent_put_deny
        (shell-style globs, e.g. "*_SECRET").
 
+PUTTING THEM UNDER YOUR PASSWORD
+       byn import --unattended re-encrypts unattended values with the
+       vault key, so the master password protects them like everything
+       else. It reads nothing out of the vault. It needs a credential,
+       and the vault unlocked or --password-stdin. Afterwards the agent
+       that stored a value no longer counts as its author.
+
+         byn import --unattended              every one in this scope
+         byn import --unattended NAME...      just these
+         byn import --unattended --all        every one in the vault
+         byn import --unattended --dry-run    list, change nothing
+
+IF AN ENV IS MISSING A VALUE THAT IS PLAINLY THERE
+       Symptom: byn ls lists it and byn get returns it, but a byn exec in
+       a non-default env runs without it. Overriding it in that env with
+       the same value makes it appear; reverting the override makes it
+       vanish again.
+
+       Cause: the value is inherited from default and was stored there
+       unattended. A grant made by an earlier byn holds no key for
+       default's unattended values. Check, then fix:
+
+         byn ls --long --env default      look for "(unattended value)"
+         byn import --unattended --env default
+
+       Importing also re-seals the grants of every env that inherits
+       the value. Re-trusting the .byn is the other fix. byn exec now
+       names such a value on the launch line instead of dropping it
+       silently, and byn doctor warns about unattended values in every
+       vault.
+
 SEE ALSO
-       byn-exec(1), byn-put(1), byn-approve(1), byn-doctor(1)
+       byn-exec(1), byn-put(1), byn-import(1), byn-approve(1), byn-doctor(1)
 `,
 	"kill": `NAME
        byn-kill - stop running byn exec processes
@@ -2056,6 +2087,8 @@ SEE ALSO
 SYNOPSIS
        byn import [--format env|yaml|json] [--dry-run]
                      [--skip-existing | --replace [--yes]] [PATH | -]
+       byn import --unattended [--all] [--dry-run] [--password-stdin]
+                     [NAME...]
 
 DESCRIPTION
        Reads a flat key→value file and creates env-var entries in the
@@ -2073,6 +2106,15 @@ DESCRIPTION
                            scope, THEN import. Requires confirmation in
                            an interactive terminal; pass --yes to skip
                            the prompt (required in non-TTY/agent mode).
+
+       With --unattended it imports no file. It takes values already in
+       the vault that were stored UNATTENDED (by an agent, with the vault
+       locked, so this machine protects them rather than your password)
+       and re-encrypts them with the vault key. Nothing is read out.
+       With no NAME it imports every such value in the active scope.
+       Grants that inject them are re-sealed, including the grants of
+       every env that inherits them from default. See byn help
+       unattended.
 
 OPTIONS
        --format env|yaml|json
@@ -2094,6 +2136,19 @@ OPTIONS
            Skip the --replace confirmation prompt. Required when
            stdin is not a TTY (scripts, CI, agents).
 
+       --unattended
+           Put values stored unattended under the master password
+           instead of importing a file. Takes no file flags. Needs a
+           session or --password-stdin; a locked vault needs the
+           password.
+
+       --all
+           With --unattended: every scope in the vault, not just the
+           active one. Takes no NAME.
+
+       --password-stdin
+           Read the master password from stdin.
+
 EXAMPLES
        Pipe a dotenv file (merge — today's default):
            $ cat .env.local | byn --project myapp import
@@ -2110,8 +2165,16 @@ EXAMPLES
        Preview a replace operation (lists both deletions and adds):
            $ byn import --replace --dry-run config.env
 
+       A prod run is missing a value that default holds, stored
+       unattended — put it under your password:
+           $ byn import --unattended --env default --dry-run
+           $ byn import --unattended --env default
+
+       Every unattended value in the vault:
+           $ byn import --unattended --all
+
 SEE ALSO
-       byn-export(1)
+       byn-export(1), byn-unattended(1), byn-doctor(1)
 `,
 
 	"export": `NAME

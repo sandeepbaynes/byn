@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/ipc"
@@ -319,6 +320,9 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 				Name: "vault[" + name + "].audit", Severity: sev, Detail: detail,
 			})
 		}
+		if c, ok := unattendedCheck(ctx, name, entry.store); ok {
+			checks = append(checks, c)
+		}
 	}
 
 	resp, err := ipc.NewResponse(env.ID, ipc.DoctorResp{Checks: checks})
@@ -326,4 +330,36 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		return internalErr(env.ID, err)
 	}
 	return resp
+}
+
+// unattendedCheck names every value in a vault still stored unattended — sealed
+// under a key this machine holds rather than the master password.
+//
+// Loud on purpose. Such a value is on a weaker footing than everything around
+// it until the owner adopts it, nothing else ever asks them to, and a grant
+// sealed before byn carried default's keys cannot open one inherited from
+// default — which looks, from every other command, like a value that is plainly
+// there and a process that plainly did not get it.
+func unattendedCheck(ctx context.Context, vaultName string, st *vault.Store) (ipc.DoctorCheck, bool) {
+	if st == nil {
+		return ipc.DoctorCheck{}, false
+	}
+	items, err := st.ListUnattended(ctx)
+	if err != nil {
+		return ipc.DoctorCheck{}, false
+	}
+	c := ipc.DoctorCheck{Name: "vault[" + vaultName + "].unattended", Severity: "ok",
+		Detail: "every value is protected by the master password"}
+	if len(items) == 0 {
+		return c, true
+	}
+	labels := make([]string, 0, len(items))
+	for _, u := range items {
+		labels = append(labels, u.Project+"/"+u.Env+" "+u.Name)
+	}
+	c.Severity = "warn"
+	c.Detail = fmt.Sprintf("%d value(s) stored unattended, NOT yet protected by your password: %s"+
+		" — an env inheriting one from default may run without it. Fix: byn import --unattended --all --vault %s",
+		len(items), strings.Join(labels, ", "), vaultName)
+	return c, true
 }

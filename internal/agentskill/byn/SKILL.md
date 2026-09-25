@@ -217,6 +217,24 @@ If a dev server fails with `EACCES` on a cache or config directory, that is the
 exec child lacking access to a path outside the project. The fix is an
 `[exec] writable` entry in the `.byn` (which needs a re-trust), not a `chmod`.
 
+### A variable is listed, but the process does not get it
+
+If `byn list` shows a name, `byn get` would return it, and a `byn exec` in a
+**non-default env** still starts without it, don't go hunting. This is a known
+cause:
+
+1. `byn list --long --env default`. If the name shows `(unattended value)`,
+   the value is inherited from `default` and was stored there unattended
+   (by an agent, while the vault was locked). A grant for this env made by an
+   earlier byn cannot open it. The launch line now says so:
+   `NAME is in the vault but was not injected (stored unattended in default — …)`.
+2. Tell the user to run `byn import --unattended --env default`. It puts the
+   value under their master password and re-seals the grants that inject it.
+   It needs their credential, so it is theirs to run, not yours. Re-trusting
+   the `.byn` also works.
+
+`byn doctor` lists every unattended value per vault (`vault[NAME].unattended`).
+
 ## Things that look like solutions and are not
 
 - Reading a value "just to verify it is set" — use `byn exec --dry-run`, which
@@ -229,6 +247,10 @@ exec child lacking access to a path outside the project. The fix is an
   service commands (`setup`, `restart`), which you should not be running.
 - `byn exec --no-privsep` — it requires the master password on every run by
   design, and no trusted `.byn` authorizes it. It exists for human debugging.
+- Copying an inherited value into the env it is missing from, or storing it
+  again under the same name, so it gets injected. That hides the cause and
+  leaves a second copy to drift. See "A variable is listed, but the process
+  does not get it" above.
 
 ## Keeping this skill current
 

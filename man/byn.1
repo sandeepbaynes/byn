@@ -468,6 +468,21 @@ inline \fB# comment\fR stripping, and blank/comment lines. YAML/JSON
 scalars (string, bool, number, null) are coerced to strings; anything
 deeper than a flat map is rejected.
 .TP
+.B import \-\-unattended \fR[\fB\-\-all\fR] \fR[\fB\-\-dry\-run\fR] \fR[\fB\-\-password\-stdin\fR] \fR[\fINAME\fR...]
+Put values stored \fIunattended\fR (by an agent, while the vault was
+locked \(em protected by this machine rather than by the master password)
+under the master password. They are re\-encrypted with the vault key in
+place; nothing is read out. With no \fINAME\fR, every such value in the
+active scope; \fB\-\-all\fR, every one in the vault;
+\fB\-\-dry\-run\fR lists them and changes nothing (no credential
+needed). Takes no file flags. Needs a session or
+\fB\-\-password\-stdin\fR, and a locked vault needs the password. The
+agent that stored a value stops counting as its author, and every grant
+that injects it is re\-sealed \(em including the grants of each env that
+inherits it from default. Logged as \fBimport.unattended\fR. See
+.B UNATTENDED USE
+below.
+.TP
 .B export \fR[\fB\-\-format\fR \fIenv\fR|\fIyaml\fR|\fIjson\fR] \fR[\fB\-\-output\fR \fIPATH\fR] \fR[\fB\-\-password\-stdin\fR]
 Dump every entry in the active scope as a flat key/value document.
 Default format is \fBenv\fR. \fB\-\-output\fR writes to disk with
@@ -1574,6 +1589,7 @@ $ byn import .env.local                 # by extension
 $ cat config.json | byn import \-\-format json
 $ byn import secrets.yaml \-\-dry\-run   # preview
 $ byn import .env \-\-skip\-existing     # add\-only
+$ byn import \-\-unattended \-\-all      # adopt agent\-stored values
 .fi
 .RE
 .PP
@@ -1775,6 +1791,24 @@ inventing a value, and byn cannot tell an invented value from a
 provisioned one. A project that provisions its secrets by hand can refuse
 them with \fB[exec] agent_put = false\fR, or per name with
 \fB[exec] agent_put_deny\fR (shell\-style globs, e.g. \fB"*_SECRET"\fR).
+.PP
+\fBbyn import \-\-unattended\fR puts them under the master password when
+you are ready to adopt them, and \fBdoctor\fR warns, per vault, until you
+do.
+.SS If an env is missing a value that is plainly there
+Symptom: \fBbyn ls\fR lists it and \fBbyn get\fR returns it, but
+\fBbyn exec\fR in a non\-default env runs without it. Overriding it in
+that env with the same value makes it appear; reverting the override makes
+it vanish again.
+.PP
+Cause: the value is inherited from default and was stored there
+unattended. A grant made by an earlier byn holds no key for default's
+unattended values. Check with \fBbyn ls \-\-long \-\-env default\fR (look
+for "(unattended value)") and fix with
+\fBbyn import \-\-unattended \-\-env default\fR, which also re\-seals
+the grants of every env that inherits it; re\-trusting the \fB.byn\fR
+works too. \fBexec\fR now names such a value on the launch line instead
+of dropping it silently.
 .SH SESSIONS
 A session is a short\-lived credential that binds a vault unlock to the
 terminal that performed it.  When \fBbyn unlock\fR succeeds and the

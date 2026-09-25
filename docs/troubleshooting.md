@@ -217,6 +217,53 @@ match the expected chain. Could be:
 
 ---
 
+## A variable is in `byn ls` and `byn get`, but the process doesn't get it
+
+**Known issue, fixed in the next release. Grants made by an earlier byn are
+still affected until they are re-sealed.**
+
+Symptoms, all at once:
+
+- `byn exec` in a **non-default env** (say `prod`) starts without a variable.
+  It isn't empty. It's missing.
+- `byn ls --env prod` lists it, and `byn get NAME --env prod` returns it.
+- The same `.byn` pointed at `default` gets it.
+- Overriding it in `prod` with the **same value** makes it appear. Reverting
+  the override ("reset to default") makes it disappear again.
+
+**Cause.** The value is inherited from `default`, and it was stored there
+**unattended**: an agent wrote it while the vault was locked. That seals it
+under default's own agent key, not under your password. A grant for `prod`
+made by an earlier byn only carried prod's keys, so exec could see the value
+and not open it. It then skipped the value without saying anything. The
+override "fixes" it because your override is a normal prod row. The revert
+brings the default row back.
+
+**Check:**
+
+```sh
+byn ls --long --env default     # the name shows "(unattended value)"
+byn doctor                      # vault[NAME].unattended — WARN, names it
+```
+
+**Fix** (either one):
+
+```sh
+byn import --unattended --env default   # put it under your password; re-seals prod's grant
+byn trust path/to/.byn                  # re-trust: the new grant carries default's keys
+```
+
+`byn import --unattended` is the better fix. It also moves the value from
+machine-held protection to your password, and doctor stops warning.
+
+Current byn names such a value on the launch line instead of dropping it:
+
+```
+Warning: AUTH_COOKIE_ENCRYPTION_KEY is in the vault but was not injected (stored unattended in default — run: byn import --unattended --env default)
+```
+
+---
+
 ## "untrusted .byn"
 
 ```

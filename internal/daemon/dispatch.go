@@ -245,6 +245,10 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleDelete(ctx, env)
 	case ipc.OpRename:
 		return d.handleRename(ctx, env)
+	case ipc.OpUnattendedList:
+		return d.handleUnattendedList(ctx, env)
+	case ipc.OpUnattendedImport:
+		return d.handleUnattendedImport(ctx, env)
 
 	case ipc.OpExecFetch:
 		return d.handleExecFetch(ctx, env)
@@ -1568,6 +1572,16 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 			unattended[n] = struct{}{}
 		}
 	}
+	// An inherited value was stored in default, so its provenance is recorded
+	// there. Asking only this env's registry hid exactly the values a grant for
+	// this env could not open (see vault/inherited.go).
+	inheritedUnattended := make(map[string]struct{})
+	if d.authored != nil && defaultIfEmpty(scope.Env, vault.DefaultEnvName) != vault.DefaultEnvName {
+		k := authoredScopeKey(req.Scope.Vault, vault.Scope{Project: scope.Project, Env: vault.DefaultEnvName}, "")
+		for _, n := range d.authored.UnattendedNamesFor(k.Vault, k.Project, k.Env) {
+			inheritedUnattended[n] = struct{}{}
+		}
+	}
 	// What each variable is for. Descriptions need no key, so a locked listing
 	// still carries them — that is the whole point of the field. Note TEXT is
 	// never in a listing; only the count, so a person can see there is
@@ -1605,8 +1619,12 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 				meta.DescriptionSource = ".byn"
 			}
 		}
-		if _, ok := unattended[m.Name]; ok {
+		if _, ok := unattended[m.Name]; ok && m.Source == vault.SourceScope {
 			meta.Unattended = true
+		}
+		if _, ok := inheritedUnattended[m.Name]; ok && m.Source == vault.SourceDefault {
+			meta.Unattended = true
+			meta.UnattendedInherited = true
 		}
 		if unlocked {
 			empty := m.IsEmpty

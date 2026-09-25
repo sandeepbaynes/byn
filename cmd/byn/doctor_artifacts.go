@@ -223,7 +223,8 @@ func checkInjectableNames() (healCheck, bool) {
 			c.Warn = true
 			c.Detail += fmt.Sprintf("; %d stored with no password behind the call: %s",
 				len(unattended), strings.Join(unattended, ", "))
-			c.Fix = "check these are the values you meant: byn audit tail --json | grep put.unattended"
+			c.Fix = "check them (byn audit tail --json | grep put.unattended), then put them under your password: byn import --unattended" +
+				importEnvHint(resp.Secrets)
 		}
 		return c, true
 	}

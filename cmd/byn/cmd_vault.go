@@ -602,7 +602,10 @@ func runList(args []string, scope cliScope) int {
 			// `byn list NAME && …`; annotating it would break them, which is
 			// why this is a separate flag rather than a nicer default.
 			mark := ""
-			if s.Unattended {
+			switch {
+			case s.UnattendedInherited:
+				mark = "  " + yellow("(unattended value, inherited from default)")
+			case s.Unattended:
 				mark = "  " + yellow("(unattended value)")
 			}
 			if s.Notes > 0 {
@@ -639,8 +642,21 @@ func runList(args []string, scope cliScope) int {
 		fmt.Fprintf(os.Stderr, "%s %d value(s) here were stored with no password behind the call: %s\n",
 			yellow("note:"), len(unattended), strings.Join(unattended, ", "))
 		fmt.Fprintf(os.Stderr, "      byn cannot tell one an agent invented from one you provisioned.\n")
+		fmt.Fprintf(os.Stderr, "      To put them under your password: byn import --unattended%s\n", importEnvHint(secrets))
 	}
 	return exitOK
+}
+
+// importEnvHint adds "--env default" to the import hint when every unattended
+// value listed is inherited: those live in default, and importing in this env
+// would find nothing of its own to import.
+func importEnvHint(secrets []ipc.SecretMeta) string {
+	for _, s := range secrets {
+		if s.Unattended && !s.UnattendedInherited {
+			return ""
+		}
+	}
+	return " --env default"
 }
 
 func runDelete(args []string, scope cliScope) int {

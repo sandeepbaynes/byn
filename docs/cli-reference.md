@@ -498,6 +498,42 @@ byn import --replace --yes config.env        # wipe scope, then import
 byn import --replace --dry-run config.env    # preview deletions + adds
 ```
 
+### `byn import --unattended [--all] [--dry-run] [--password-stdin] [NAME...]`
+
+Put values stored **unattended** under the master password. An agent that
+stores a value while the vault is locked seals it under a key this machine
+holds, not under your password (see `byn help unattended`). This re-encrypts
+such values with the vault key, in place. Nothing is read out of the vault.
+
+| Form | Imports |
+|---|---|
+| `byn import --unattended` | every unattended value in the active scope |
+| `byn import --unattended NAME...` | just those, in the active scope |
+| `byn import --unattended --all` | every unattended value in the vault |
+| `--dry-run` | lists what would be imported and changes nothing (no credential needed) |
+
+- It needs a session or `--password-stdin`. A locked vault needs the password
+  and is not left unlocked.
+- It takes no file flags (`--format`, `--replace`, `--skip-existing`,
+  `--yes`).
+- The agent that stored a value stops counting as its author. Reading or
+  replacing the value then follows the ordinary rules.
+- It re-seals every trusted grant that injects the imported values,
+  including the grants of each env that inherits them from `default`.
+- A named value that is inherited is skipped, with a pointer to
+  `--env default`, because it lives there.
+- Each value imported is logged as `import.unattended`.
+
+```sh
+byn ls --long --env default                  # look for "(unattended value)"
+byn import --unattended --env default --dry-run
+byn import --unattended --env default
+byn import --unattended --all                # every scope in the vault
+```
+
+`byn doctor` warns about unattended values in every vault
+(`vault[NAME].unattended`) until they are imported.
+
 Dotenv parser understands:
 - `export PREFIX` strips the prefix
 - Double-quoted values with `\n`/`\t`/`\\`/`\"` escapes

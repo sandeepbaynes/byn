@@ -120,16 +120,30 @@ func (d *Daemon) authoredEntryFor(ctx context.Context, vaultName string, scope v
 }
 
 // refreshCapabilitiesFor re-seals the exec capability of every trusted .byn
-// governing a scope, so it carries a key for each name the project may inject.
+// governing a scope — or, for a write in a default env, inheriting from it — so
+// it carries a key for each name the project may inject.
 func (d *Daemon) refreshCapabilitiesFor(ctx context.Context, st *vault.Store, vaultName string, scope vault.Scope) {
-	if st == nil || st.IsLocked() {
+	d.refreshCapabilitiesWithKey(ctx, st, nil, vaultName, scope)
+}
+
+// refreshCapabilitiesWithKey is refreshCapabilitiesFor for a caller holding the
+// vault key while the vault is locked (a credentialed operation that unwrapped
+// it once). vaultKey nil means the in-memory key.
+func (d *Daemon) refreshCapabilitiesWithKey(ctx context.Context, st *vault.Store, vaultKey []byte, vaultName string, scope vault.Scope) {
+	if st == nil || (vaultKey == nil && st.IsLocked()) {
 		return // re-sealing captures row keys, which needs the vault key
 	}
 	store, err := trust.Load(d.cfg.Dir)
 	if err != nil || store == nil {
 		return
 	}
-	vkKey, derr := st.DeriveSubkey(trust.VKMACKeyInfo)
+	var vkKey []byte
+	var derr error
+	if vaultKey != nil {
+		vkKey, derr = vault.DeriveSubkeyWithKey(vaultKey, trust.VKMACKeyInfo)
+	} else {
+		vkKey, derr = st.DeriveSubkey(trust.VKMACKeyInfo)
+	}
 	if derr != nil {
 		return
 	}
@@ -143,20 +157,29 @@ func (d *Daemon) refreshCapabilitiesFor(ctx context.Context, st *vault.Store, va
 	}
 	defer zeroBytes(capKey)
 
-	key := authoredScopeKey(vaultName, scope, "")
-	authoredNames := d.authored.NamesFor(key.Vault, key.Project, key.Env)
-
 	for _, rec := range store.Records {
-		if !recordGoverns(rec, vaultName, scope) || len(rec.ExecCapability) == 0 {
+		if len(rec.ExecCapability) == 0 {
+			continue
+		}
+		recScope, ok := refreshScope(rec, vaultName, scope)
+		if !ok {
 			continue
 		}
 		parsed, perr := bynfile.Parse([]byte(rec.Snapshot))
-		if perr != nil || parsed.AllowsAll() {
-			continue // a wildcard grant already derives its own row keys
+		if perr != nil {
+			continue
 		}
+		wildcard := parsed.AllowsAll()
+		// A wildcard grant derives its own row keys from the scope key, so it
+		// needs re-sealing only to pick up the default env's keys — which a
+		// grant sealed before byn carried them lacks.
+		if wildcard && (capKey == nil || !needsDefaultKeys(capKey, rec.ExecCapability, recScope)) {
+			continue
+		}
+		key := authoredScopeKey(vaultName, recScope, "")
 		names := append([]string(nil), []string(parsed.Exec.Env)...)
-		names = append(names, authoredNames...)
-		blob, cerr := d.sealExecCapability(ctx, st, scope, names, false, nil)
+		names = append(names, d.authored.NamesFor(key.Vault, key.Project, key.Env)...)
+		blob, cerr := d.sealExecCapabilityWithKey(ctx, st, recScope, names, wildcard, nil, vaultKey)
 		if cerr != nil || len(blob) == 0 {
 			continue
 		}
@@ -176,11 +199,49 @@ func (d *Daemon) refreshCapabilitiesFor(ctx context.Context, st *vault.Store, va
 		}
 		if gained {
 			d.auditEmit(ctx, vaultName, audit.Event{
-				Project: scope.Project, Env: scope.Env, BynPath: rec.Path,
+				Project: recScope.Project, Env: recScope.Env, BynPath: rec.Path,
 				Op: "trust.authored_key", Outcome: audit.OutcomeOK,
 			})
 		}
 	}
+}
+
+// refreshScope reports whether a write in scope should re-seal rec, and the
+// scope rec's grant is for. A grant is refreshed by writes to its own scope and
+// — because it inherits from there — by writes to its project's default env.
+func refreshScope(rec trust.Record, vaultName string, scope vault.Scope) (vault.Scope, bool) {
+	if recordGoverns(rec, vaultName, scope) {
+		return scope, true
+	}
+	if defaultIfEmpty(scope.Env, vault.DefaultEnvName) != vault.DefaultEnvName {
+		return vault.Scope{}, false
+	}
+	child := vault.Scope{
+		Project: defaultIfEmpty(scope.Project, vault.DefaultProjectName),
+		Env:     defaultIfEmpty(rec.ScopeEnv, vault.DefaultEnvName),
+	}
+	if !recordGoverns(rec, vaultName, child) {
+		return vault.Scope{}, false
+	}
+	return child, true
+}
+
+// needsDefaultKeys reports whether a capability for a non-default env is
+// missing the default env's keys. An unopenable blob reads as needing them.
+func needsDefaultKeys(capKey, blob []byte, scope vault.Scope) bool {
+	if defaultIfEmpty(scope.Env, vault.DefaultEnvName) == vault.DefaultEnvName {
+		return false
+	}
+	keys, err := vcrypto.OpenCapability(capKey, blob)
+	if err != nil {
+		return true
+	}
+	defer func() {
+		for _, k := range keys {
+			zeroBytes(k)
+		}
+	}()
+	return len(keys[vault.CapDefaultAuthoredKeyName]) == 0
 }
 
 // capabilityHasAuthoredKey reports whether a sealed capability carries the key

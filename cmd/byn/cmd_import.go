@@ -42,7 +42,21 @@ func runImport(args []string, scope cliScope) int {
 	yes := fs.Bool("yes", false, "skip the confirmation prompt for --replace")
 	pwStdin := fs.Bool("password-stdin", false,
 		"read the master password from stdin for non-interactive authorization")
+	unattended := fs.Bool("unattended", false,
+		"put values stored unattended under the master password (NAME... or all in scope)")
+	all := fs.Bool("all", false, "with --unattended: every scope in the vault")
 	if err := parseFlags(fs, args); err != nil {
+		return exitErr
+	}
+	if *unattended {
+		if *format != "" || *skipExisting || *replace || *yes {
+			fmt.Fprintln(os.Stderr, "Error: --unattended imports values already in the vault; it takes no file flags")
+			return exitErr
+		}
+		return runImportUnattended(fs.Args(), scope, *all, *dryRun, *pwStdin)
+	}
+	if *all {
+		fmt.Fprintln(os.Stderr, "Error: --all goes with --unattended")
 		return exitErr
 	}
 	if *replace && *skipExisting {

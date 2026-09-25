@@ -59,6 +59,12 @@ const (
 	OpDelete Op = "delete"
 	OpRename Op = "rename"
 
+	// Values stored unattended — sealed under a key this machine holds rather
+	// than under the master password. The list works locked (names only); the
+	// import re-seals them under the vault key and is a credentialed act.
+	OpUnattendedList   Op = "unattended.list"
+	OpUnattendedImport Op = "unattended.import"
+
 	// Audit log (per-vault; reads the HMAC-chained log written by
 	// dispatch.auditEmit).
 	OpAuditTail   Op = "audit.tail"
@@ -171,6 +177,7 @@ var AllOps = []Op{
 	OpProjectCreate, OpProjectList, OpProjectDelete, OpProjectRename,
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
+	OpUnattendedList, OpUnattendedImport,
 	OpAuditTail, OpAuditVerify, OpAuditReseal, OpDoctor,
 	OpApprovalList, OpApprovalDecide, OpApprovalWatch, OpApprovalCancel,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
@@ -674,6 +681,11 @@ type SecretMeta struct {
 	// otherwise distinguish, and which matters most for exactly the names where
 	// a wrong-but-present value does silent damage.
 	Unattended bool `json:"unattended,omitempty"`
+	// UnattendedInherited qualifies Unattended: the value is inherited from the
+	// default env and was stored unattended THERE. A grant for this env sealed
+	// before byn carried default's keys cannot open it; `byn import
+	// --unattended --env default` puts it under the master password.
+	UnattendedInherited bool `json:"unattended_inherited,omitempty"`
 	// InDefault is true when this env's own value (Source "scope") shadows an
 	// entry of the same name in the default env. Never set for the default
 	// env itself or for inherited rows.
@@ -833,6 +845,53 @@ type DeleteReq struct {
 
 // DeleteResp is empty.
 type DeleteResp struct{}
+
+// UnattendedListReq asks for every value in a vault still stored unattended.
+// Only Scope.Vault is read: the answer spans the whole vault.
+type UnattendedListReq struct {
+	Scope Scope `json:"scope,omitempty"`
+}
+
+// UnattendedItem names one value stored unattended. Names only — never a value.
+type UnattendedItem struct {
+	Project string `json:"project"`
+	Env     string `json:"env"`
+	Name    string `json:"name"`
+}
+
+// UnattendedListResp lists the vault's unattended values, by scope then name.
+type UnattendedListResp struct {
+	Items []UnattendedItem `json:"items,omitempty"`
+}
+
+// UnattendedImportReq re-seals unattended values under the vault key.
+//
+// With All, every unattended value in the vault; otherwise the ones in Scope,
+// narrowed to Names when given. DryRun reports what would be imported and
+// needs no credential.
+type UnattendedImportReq struct {
+	Scope    Scope    `json:"scope,omitempty"`
+	Names    []string `json:"names,omitempty"`
+	All      bool     `json:"all,omitempty"`
+	DryRun   bool     `json:"dry_run,omitempty"`
+	Password []byte   `json:"password,omitempty"`
+	// PresenceToken is the portal's passkey alternative to Password.
+	PresenceToken []byte `json:"presence_token,omitempty"`
+}
+
+// UnattendedImportResp reports the outcome per value.
+type UnattendedImportResp struct {
+	// Imported are now protected by the master password (with DryRun: would be).
+	Imported []UnattendedItem `json:"imported,omitempty"`
+	// Skipped were asked for by name and are not unattended values in scope.
+	Skipped []UnattendedSkip `json:"skipped,omitempty"`
+}
+
+// UnattendedSkip says why a named value was not imported.
+type UnattendedSkip struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
 
 // EnvClearReq deletes ALL env-vars in Scope's env (the env itself is kept).
 // Password authorizes the mutation (proof-of-presence), like delete.

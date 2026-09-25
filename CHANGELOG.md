@@ -5,6 +5,45 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### An env no longer silently loses a value it inherits from default
+
+**Symptom:** `byn ls` lists a variable and `byn get` returns it, but `byn exec`
+in a non-default env such as `prod` starts without it. Overriding it in `prod`
+with the same value makes it appear, and reverting the override makes it
+vanish again.
+
+**Cause:** the value lived in `default` and had been stored **unattended**, by
+an agent while the vault was locked. A prod grant carried only prod's keys, so
+exec could list the value and not open it. For a wildcard `.byn` it also said
+nothing about it. The same gap hit inherited values that an owner added to
+`default` after the grant, whenever the vault was locked.
+
+**What changed:**
+
+- **Grants follow inheritance.** A grant for a non-default env now also
+  carries default's key for unattended values. A wildcard grant also carries
+  default's scope key. The `.byn`'s allowlist still decides what is injected.
+  Existing grants pick this up the next time anything re-seals them: any value
+  you store with the vault open, `byn import --unattended`, or a re-trust. An
+  owner write in `default` now re-seals the grants of every env that inherits
+  from it.
+- **Never silent.** A value the launch cannot open is named on the launch
+  line, with the fix, for wildcard grants too:
+  `NAME is in the vault but was not injected (stored unattended in default — run: byn import --unattended --env default)`.
+- **`byn import --unattended [--all] [--dry-run] [NAME...]`** puts unattended
+  values under your master password. It re-encrypts them with the vault key in
+  place, re-seals the grants that inject them, and ends the storing agent's
+  authorship. It needs your credential. See
+  [troubleshooting](docs/troubleshooting.md#a-variable-is-in-byn-ls-and-byn-get-but-the-process-doesnt-get-it).
+- **`byn doctor` warns** about every unattended value in every vault
+  (`vault[NAME].unattended`), and gives the import command.
+- **`byn ls --long`** in a non-default env marks an inherited unattended value
+  `(unattended value, inherited from default)`, and the note under the listing
+  gives the import command.
+
+The Agent Skill has a diagnostic for the symptom. Re-run `byn skill install`
+after upgrading.
+
 ### Notes and descriptions on everything in the vault
 
 byn could always tell a tool *which* variables exist. It could never tell it

@@ -643,6 +643,27 @@ scope via the in-memory vault key) requires the vault unlocked. An active
 unlock session never authorizes exec — so `byn unlock` governs
 `get`/`put`/`update`, not `exec`.
 
+**A grant for a non-default env also carries default's keys.** Such an env
+inherits every name it doesn't override from `default`. So the capability
+for, say, `prod` also carries two of default's keys:
+
+- default's *authored* key, always. It opens only values an agent stored
+  unattended in default.
+- default's *scope* key, for a wildcard grant only (`env = "*"`).
+
+An explicit-name grant already gets per-row keys for the inherited names it
+declares. Injection is still filtered by the `.byn`'s own allowlist. This
+matches the read rule `byn get` has always followed. Without it, exec listed
+an inherited value and delivered nothing. The cost, stated plainly: a stolen
+wildcard capability for `prod` also opens `default`'s rows, including
+default's values for names `prod` overrides. That is the same fp-sealed blob
+and the same machine-local threat model as the rest of the capability.
+
+Unattended values (stored by an agent while the vault is locked) are
+protected by this machine, not by the password. That lasts until the owner
+runs `byn import --unattended`, which re-seals them under the vault key.
+`byn doctor` names every one in every vault until then.
+
 ### [exec] actions: which commands may run free
 
 The env allowlist (`[exec] env`) controls *which variables* are injected.
