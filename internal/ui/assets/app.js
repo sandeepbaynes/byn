@@ -18,6 +18,7 @@ const ICONS = {
   eye:    "M1 8s2.6-5 7-5 7 5 7 5-2.6 5-7 5-7-5-7-5z|M8 5.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z",
   copy:   "M6 6h7v7H6z|M3.2 10.2V3.2H10",
   pencil: "M11.5 2.2l2.3 2.3-8.1 8.1L3 13.3l.7-2.7 7.8-8.4z",
+  note:   "M3 2.5h10v11H3z|M5.5 5.5h5|M5.5 8h5|M5.5 10.5h3",
   trash:  "M3 4.4h10|M6 4.4V3h4v1.4|M4.5 4.4l.6 9h5.8l.6-9",
   lock:   "M3.6 7.4h8.8v6H3.6z|M5.6 7.4V5a2.4 2.4 0 014.8 0v2.4",
   unlock: "M3.6 7.4h8.8v6H3.6z|M5.6 7.4V5a2.4 2.4 0 014.7-.6",
@@ -788,12 +789,20 @@ function openDialog(o) {
       inp.value = f.value || "";
       inp.autocomplete = f.type === "password" ? "new-password" : "off";
       inp.spellcheck = false; inp.autocapitalize = "off";
-      if (isArea) inp.rows = 8;
+      if (isArea) inp.rows = f.rows || 8;
       wrap.appendChild(inp); box.appendChild(wrap); inputs[f.key] = inp;
       inp.oninput = () => { err.textContent = ""; };
       // Enter submits single-line inputs; in a textarea Enter inserts a newline.
       if (!isArea) inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
     });
+
+    // extra lets a caller append its own controls below the fields — used by
+    // the annotations panel, whose notes are a list with their own actions
+    // rather than another value the dialog collects and returns.
+    if (typeof o.extra === "function") {
+      box.hidden = false;
+      o.extra(box);
+    }
 
     dlg.hidden = false;
     setTimeout(() => { const t = fields.length ? inputs[fields[0].key] : ok; t.focus(); if (fields.length && inputs[fields[0].key].select) inputs[fields[0].key].select(); }, 30);
@@ -1829,6 +1838,11 @@ const DEFAULT_CONFIG_TEMPLATE = `# byn global configuration
 # session_ttl  = "12h"  # absolute session lifetime; "0s" = no absolute cap (hot-apply)
 # session_idle = "0s"   # sliding idle window; "0s" = inherit [daemon] idle_timeout
 # privsep = true        # run trusted-.byn exec children as _byn-exec — needs \`sudo byn setup\` + a daemon restart
+
+[annotations]
+# max_description      = 4096   # bytes; a description is PLAINTEXT and readable without a credential
+# max_note             = 65536  # bytes; notes are encrypted
+# max_notes_per_object = 200    # how many notes one object may carry
 `;
 
 // cfgState holds the mutable state for the settings panel (analogous to
@@ -1881,6 +1895,9 @@ async function cfgReset() {
     cfgState.uiEnabled     = p.ui_enabled;
     cfgState.uiPort        = p.ui_port;
     cfgState.revealHideAfter = p.reveal_hide_after;
+    cfgState.maxDescription = p.max_description;
+    cfgState.maxNote = p.max_note;
+    cfgState.maxNotesPerObject = p.max_notes_per_object;
     cfgState.idleTimeout   = p.idle_timeout;
     cfgState.sessionTTL    = p.session_ttl;
     cfgState.sessionIdle   = p.session_idle;
@@ -1932,6 +1949,9 @@ async function renderSettingsView() {
     sessionTTL:    configParsed ? configParsed.session_ttl     : "12h0m0s",
     sessionIdle:   configParsed ? configParsed.session_idle    : "0s",
     privsep:       configParsed ? configParsed.privsep === true : false,
+    maxDescription:    configParsed ? configParsed.max_description     : 4096,
+    maxNote:           configParsed ? configParsed.max_note            : 65536,
+    maxNotesPerObject: configParsed ? configParsed.max_notes_per_object : 200,
     // Raw textarea content, seeded lazily when switching to raw mode.
     rawContent: configContent || DEFAULT_CONFIG_TEMPLATE,
     // DOM refs populated below.
@@ -2001,6 +2021,9 @@ async function renderSettingsView() {
     ["[security] session_ttl",  "needs daemon restart (not hot-applied)"],
     ["[security] session_idle", "needs daemon restart (not hot-applied)"],
     ["[security] privsep",      "needs `sudo byn setup` + daemon restart"],
+    ["[annotations] max_description",      "hot-apply on save"],
+    ["[annotations] max_note",             "hot-apply on save"],
+    ["[annotations] max_notes_per_object", "hot-apply on save"],
   ];
   for (const [k, v] of refRows) {
     const row = el("div", "cfg-ref-row");
@@ -2159,6 +2182,32 @@ async function renderSettingsView() {
   secCard.appendChild(psWarn);
 
   formPanel.appendChild(secCard);
+
+  // [annotations] — the caps on commentary. The description limit is the one
+  // worth thinking about: that text is stored in plaintext and is readable
+  // without a credential, so its size is the size of what anything reading the
+  // vault can be handed.
+  const annCard = cfgFormCard("annotations");
+  const annFields = [
+    ["maxDescription", "max description", 4096,
+      "bytes · plaintext, readable by agents — do not put secrets in a description"],
+    ["maxNote", "max note", 65536, "bytes · notes are encrypted"],
+    ["maxNotesPerObject", "max notes per object", 200, "how many notes one thing may carry"],
+  ];
+  for (const [key, label, def, hint] of annFields) {
+    const wrap = el("div", "cfg-form-row");
+    const lab = el("label", "cfg-field-label"); lab.textContent = label;
+    const inp = el("input", "input mono cfg-port-input");
+    inp.type = "number"; inp.min = "1"; inp.step = "1";
+    inp.value = String(cfgState[key] || def);
+    inp.autocomplete = "off";
+    inp.oninput = () => { cfgState[key] = Math.max(1, parseInt(inp.value, 10) || def); };
+    lab.appendChild(inp);
+    wrap.appendChild(lab);
+    wrap.appendChild(el("span", "cfg-field-hint", hint + " · hot-apply"));
+    annCard.appendChild(wrap);
+  }
+  formPanel.appendChild(annCard);
 
   formPanel.hidden = cfgState.rawMode;
   box.appendChild(formPanel);
@@ -2342,6 +2391,11 @@ function serializeCfg(st) {
   // default form stays clean. Enabling it needs `sudo byn setup` provisioning.
   if (st.privsep) lines.push("privsep = true");
   lines.push("");
+  lines.push("[annotations]");
+  lines.push("max_description      = " + String(st.maxDescription || 4096));
+  lines.push("max_note             = " + String(st.maxNote || 65536));
+  lines.push("max_notes_per_object = " + String(st.maxNotesPerObject || 200));
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -2394,6 +2448,9 @@ async function toggleCfgMode() {
       cfgState.uiEnabled       = p.ui_enabled;
       cfgState.uiPort          = p.ui_port;
       cfgState.revealHideAfter = p.reveal_hide_after;
+    cfgState.maxDescription = p.max_description;
+    cfgState.maxNote = p.max_note;
+    cfgState.maxNotesPerObject = p.max_notes_per_object;
       cfgState.idleTimeout     = p.idle_timeout;
       cfgState.sessionTTL      = p.session_ttl;
       cfgState.sessionIdle     = p.session_idle;
@@ -2810,9 +2867,46 @@ function entryRow(s, i) {
   } else if (!inherited) {
     acts.appendChild(iconBtn("trash", "danger", "delete", () => doDelete(s)));
   }
+  acts.appendChild(iconBtn("note", "note" + (s.notes ? " has-notes" : ""),
+    s.notes ? s.notes + " note" + (s.notes === 1 ? "" : "s") + " · describe" : "describe · notes",
+    () => openAnnotations(s)));
   row.appendChild(acts);
+
+  // What this variable is for, under its name. Plaintext, readable while the
+  // vault is locked — it is here for whoever has to use the value, including
+  // an agent, and hiding it behind a click would defeat that.
+  const desc = descriptionLine(s);
+  if (desc) {
+    const wrap = el("div", "trow-desc");
+    wrap.appendChild(desc);
+    const both = el("div", "trow-wrap");
+    both.appendChild(row);
+    both.appendChild(wrap);
+    return both;
+  }
   return row;
 }
+
+// descriptionLine renders an entry's description with the provenance a reader
+// needs. The owner's own words in the vault carry no badge; text an agent
+// wrote, or text a trusted .byn declares, says so — a description is an
+// instruction someone may act on, and who wrote it is half the information.
+function descriptionLine(s) {
+  if (!s.description) return null;
+  const line = el("span", "desc-text");
+  if (s.description_source === ".byn") {
+    const b = el("span", "desc-badge byn", ".byn");
+    b.title = "declared by a trusted .byn — approved when you trusted the file";
+    line.appendChild(b);
+  } else if (s.description_author === "agent") {
+    const b = el("span", "desc-badge agent", s.description_comm ? "agent: " + s.description_comm : "agent");
+    b.title = "written by a process, not by you";
+    line.appendChild(b);
+  }
+  line.appendChild(document.createTextNode(s.description));
+  return line;
+}
+
 function maskDots() { return el("span", "mask", "•••••••••"); }
 
 // ---- reveal auto-hide timeout (configurable: [ui] reveal_hide_after) ------
@@ -5786,4 +5880,128 @@ function describeAsk(entry) {
 
 function capitalizeFirst(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+// ---- annotations: descriptions and notes ---------------------------------
+
+// The portal's one place for both kinds, because they are two answers to the
+// same question — "what is this?" — with different audiences. The panel keeps
+// them visibly apart: the description says, on the page, that anything reaching
+// byn can read it, and the notes say they are encrypted. Someone typing an
+// account number into the wrong box is the failure this layout exists to
+// prevent.
+async function openAnnotations(s) {
+  const target = { type: "entry", name: s.name };
+  let data = { descriptions: [], notes: [], note_count: 0, notes_withheld: false };
+  try {
+    data = await api("GET", "/api/annotations?" + scopeQuery() +
+      "&type=entry&name=" + enc(s.name));
+  } catch (e) { toast(e.message, true); return; }
+
+  const cur = (data.descriptions || [])[0];
+  const r = await openDialog({
+    title: s.name,
+    okText: "save description",
+    fields: [{
+      key: "description",
+      label: "description — plaintext, readable by anything that reaches byn, including agents",
+      type: "textarea",
+      value: cur ? cur.body : "",
+      rows: 3,
+      placeholder: "what this is for, and how to use it",
+    }],
+    extra: (box) => renderNotesPanel(box, s, target, data),
+  });
+  if (!r) return;
+  const text = (r.description || "").trim();
+  const was = cur ? cur.body : "";
+  if (text === was) return;
+  try {
+    await apiWithAuth("POST", "/api/annotation/describe",
+      { scope: curScope(), target, text, clear: text === "" }, state.scope.vault);
+    toast(text === "" ? "description cleared" : "described " + s.name);
+    await loadEntries();
+  } catch (e) { toast(e.message, true); }
+}
+
+// renderNotesPanel draws the private half under the description field.
+//
+// When notes are withheld it says so rather than showing an empty list: "no
+// notes" and "not for you" are different answers, and a person looking at an
+// empty panel would reasonably conclude their notes were gone.
+function renderNotesPanel(box, s, target, data) {
+  const panel = el("div", "notes-panel");
+  const head = el("div", "notes-head");
+  head.appendChild(el("span", "notes-title", "notes"));
+  head.appendChild(el("span", "notes-sub", "encrypted · only you can read these"));
+  panel.appendChild(head);
+
+  if (data.notes_withheld) {
+    const w = el("div", "notes-withheld",
+      (data.note_count || 0) + " note(s) here. Unlock this vault to read them.");
+    panel.appendChild(w);
+    box.appendChild(panel);
+    return;
+  }
+
+  const list = el("div", "notes-list");
+  (data.notes || []).forEach((n) => list.appendChild(noteRow(s, target, n)));
+  if (!(data.notes || []).length) list.appendChild(el("div", "muted", "no notes yet"));
+  panel.appendChild(list);
+
+  const addWrap = el("div", "notes-add");
+  const ta = el("textarea", "notes-input");
+  ta.placeholder = "a note only you can read";
+  ta.rows = 2;
+  ta.oninput = () => autoGrow(ta);
+  const addBtn = el("button", "btn", "add note");
+  addBtn.onclick = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    try {
+      await apiWithAuth("POST", "/api/annotation/note",
+        { scope: curScope(), target, text }, state.scope.vault);
+      ta.value = "";
+      toast("noted");
+      await loadEntries();
+    } catch (e) { toast(e.message, true); }
+  };
+  addWrap.appendChild(ta);
+  addWrap.appendChild(addBtn);
+  panel.appendChild(addWrap);
+  box.appendChild(panel);
+}
+
+function noteRow(s, target, n) {
+  const row = el("div", "note-row");
+  const meta = el("div", "note-meta");
+  meta.appendChild(el("span", "note-when", (n.created_at || "").slice(0, 16).replace("T", " ")));
+  if (n.author === "agent") {
+    meta.appendChild(el("span", "desc-badge agent", n.author_comm ? "agent: " + n.author_comm : "agent"));
+  }
+  row.appendChild(meta);
+  row.appendChild(el("div", "note-body", n.body));
+
+  const acts = el("span", "acts");
+  acts.appendChild(iconBtn("trash", "danger", "remove this note (its text stays in history)", async () => {
+    // Say what removal actually does before doing it. A note is the one thing
+    // in byn a person writes expecting privacy, and "removed" here does not
+    // mean erased.
+    const ok = await openDialog({
+      title: "remove note",
+      danger: true,
+      okText: "remove",
+      message: "This takes the note out of the list. Its text stays in the annotation history, " +
+        "because a note or description changed to mislead a later reader has to stay traceable. " +
+        "It goes for good when " + s.name + " is deleted.",
+    });
+    if (!ok) return;
+    try {
+      await apiWithAuth("POST", "/api/annotation/note",
+        { scope: curScope(), target, id: n.id, remove: true }, state.scope.vault);
+      toast("note removed");
+      await loadEntries();
+    } catch (e) { toast(e.message, true); }
+  }));
+  row.appendChild(acts);
+  return row;
 }

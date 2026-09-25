@@ -401,3 +401,33 @@ func decideApprovalCmd(c Client, id string, approve, revoke, once, always bool, 
 		return approvalDecidedMsg{ID: id, Status: resp.Entry.Status, Err: err}
 	}
 }
+
+// describeEntryCmd sets the description on the entry under the cursor.
+//
+// No password-overlay retry: a description needs no key, and the TUI is
+// normally driven from a session that already satisfies the gate. When it does
+// not, the error surfaces as a flash naming the fix rather than opening the
+// password overlay, which exists for reads and writes of VALUES.
+func describeEntryCmd(c Client, scope ipc.Scope, name, text string) tea.Cmd {
+	return func() tea.Msg {
+		err := c.Call(ipc.OpAnnotationSet, ipc.AnnotationSetReq{
+			Scope:  scope,
+			Target: ipc.AnnotationTarget{Type: "entry", Name: name},
+			Text:   text,
+			Clear:  text == "",
+		}, &ipc.AnnotationSetResp{})
+		return opCompleteMsg{Op: "describe", Err: err, Note: name}
+	}
+}
+
+// noteEntryCmd appends a private note to the entry under the cursor.
+func noteEntryCmd(c Client, scope ipc.Scope, name, text string) tea.Cmd {
+	return func() tea.Msg {
+		err := c.Call(ipc.OpAnnotationAdd, ipc.AnnotationAddReq{
+			Scope:  scope,
+			Target: ipc.AnnotationTarget{Type: "entry", Name: name},
+			Text:   text,
+		}, &ipc.AnnotationAddResp{})
+		return opCompleteMsg{Op: "note", Err: err, Note: name}
+	}
+}

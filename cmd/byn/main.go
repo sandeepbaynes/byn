@@ -276,6 +276,10 @@ func run(args []string) int {
 		return runDelete(rest, scope)
 	case "rename", "mv":
 		return runRename(rest, scope)
+	case "describe", "desc":
+		return runDescribe(rest, scope)
+	case "note", "notes":
+		return runNote(rest, scope)
 	case "exec":
 		return runExec(rest, scope)
 	case "vault":
@@ -431,6 +435,13 @@ Env-vars (active scope):
                              existence check (exit 0 if matched, else 1)
   delete, rm <name>          Remove a secret
   rename, mv <old> <new>     Rename a secret
+
+Commentary (any object — a variable, project, env, vault, run, trust record):
+  describe <target> [text]   Set/show what something is for. PLAINTEXT, readable
+                             by agents. Set freely as a value is created;
+                             changing one afterwards needs authorization.
+  note add|ls|edit|rm|history <target> [...]
+                             Your own notes. ENCRYPTED, readable only by you.
 
 Bulk I/O:
   import [PATH | -]          Import .env / .yaml / .json into active scope

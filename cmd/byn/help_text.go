@@ -22,6 +22,10 @@ func helpFor(name string) string {
 		return commandHelp["delete"]
 	case "mv":
 		return commandHelp["rename"]
+	case "desc":
+		return commandHelp["describe"]
+	case "notes":
+		return commandHelp["note"]
 	case "view":
 		return commandHelp["edit"]
 	case "start", "stop", "restart", "reload":
@@ -885,9 +889,21 @@ DESCRIPTION
        Get requires the master password when no session is present. The
        CLI prompts interactively; scripts should use --password-stdin.
 
+       When the value has a description, it is printed to STDERR — and
+       only when stdout is a terminal. stdout stays byte-exact in every
+       other shape, so redirects and command substitution are unaffected,
+       including under 2>&1. Use --json or --description to read the text
+       from a script.
+
 OPTIONS
        --json
-           Emit {"name":"...","value":"..."} JSON instead of the raw value.
+           Emit {"name":"...","value":"...","descriptions":[...]} JSON
+           instead of the raw value.
+
+       --description
+           Print the DESCRIPTION instead of the value, on stdout, alone.
+           Needs no credential and works on a locked vault — a description
+           is plaintext by design.
 
        --password-stdin
            When no session is present, read the master password from stdin
@@ -1453,6 +1469,145 @@ EXIT STATUS
 
 SEE ALSO
        byn(1), byn-put(1)
+`,
+
+	"describe": `NAME
+       byn-describe - say what something is for, in plaintext anyone can read
+
+       NEEDS A CREDENTIAL to change one, but NOT an unlocked vault: a
+       description holds no secret and needs no key. Setting one as a value
+       is CREATED is free — that is how an agent labels what it invents.
+
+SYNOPSIS
+       byn describe TARGET [TEXT...]
+       byn describe TARGET --clear
+       byn describe TARGET --history
+
+DESCRIPTION
+       A description is public context ABOUT something: what a variable is
+       for, when to use it, what not to do with it. It is stored in
+       PLAINTEXT and is readable while the vault is LOCKED, by anything
+       that can reach byn — including an agent with no credential at all.
+       That is the point: it is how a tool learns what a value means.
+
+       DO NOT PUT A SECRET IN ONE. For anything you would mind an agent
+       reading, use byn note, which is encrypted.
+
+       With TEXT, sets the description (replacing any current one, whose
+       text stays in --history). With no TEXT, prints it.
+
+       TARGET is a variable name in the active scope, or TYPE:REF:
+           API_KEY          a variable in the active scope
+           entry:API_KEY    the same, spelled out
+           project:web      a project        (project: = the active one)
+           env:prod         an env           (env: = the active one)
+           vault:           the vault itself
+           trust:42         a trust record, by id from byn trust list
+           run:42           one exec run, by id from byn runs
+           passkey:3        an enrolled passkey
+
+       A trusted .byn can also declare descriptions, in its top-level
+       description key and its [describe] table. Those are shown alongside
+       these and labelled [.byn]; they take effect only from the trust
+       record, so editing the file does nothing until you re-trust it.
+
+OPTIONS
+       --clear
+           Remove the description. Its text stays in --history.
+
+       --history
+           Print every version, oldest first, with who wrote each and when.
+
+       --json
+           Emit JSON instead of prose.
+
+       --password-stdin
+           When no session is present, read the master password from stdin.
+
+EXAMPLES
+       Say what a variable is for:
+           $ byn describe API_KEY "staging Stripe key — read-only, rotates quarterly"
+
+       Read it back with no credential:
+           $ byn get API_KEY --description
+
+       Label a project:
+           $ byn describe project:web "the customer-facing app"
+
+       See who changed one, and to what:
+           $ byn describe API_KEY --history
+
+EXIT STATUS
+       0    Done.
+       1    Bad arguments, or an unknown target.
+       2    Daemon unreachable.
+       3    Daemon error: not found, authorization required.
+
+SEE ALSO
+       byn(1), byn-note(1), byn-get(1), byn-trust(1)
+`,
+
+	"note": `NAME
+       byn-note - keep your own notes, encrypted
+
+       NEEDS A CREDENTIAL AND THE KEY: a note is encrypted like a value,
+       so reading or writing one needs an unlocked vault or the master
+       password. See byn help unattended.
+
+SYNOPSIS
+       byn note add TARGET TEXT...
+       byn note ls TARGET
+       byn note edit TARGET ID TEXT...
+       byn note rm TARGET ID
+       byn note history TARGET ID
+
+DESCRIPTION
+       A note is YOUR writing about something — context, history, a
+       reminder, whatever you would put on a sticky. It is encrypted with
+       the same per-row scheme as a secret value, so an agent never sees
+       it, and a locked vault will not give it up.
+
+       Notes are a list, newest first, each with its author and time. The
+       one-line rule for choosing between the two kinds: if you would mind
+       an agent reading it, it is a note; if a tool needs it to use the
+       value correctly, it is a description.
+
+       TARGET takes the same forms as byn describe.
+
+       REMOVAL IS A TOMBSTONE. byn note rm takes a note out of the listing
+       and keeps every version of its text in byn note history. That is
+       deliberate: a note or description changed to mislead whoever reads
+       it next has to stay traceable, and a purge would be exactly the tool
+       that case needs. The text goes when the thing it describes goes.
+
+OPTIONS
+       --json
+           Emit JSON instead of prose.
+
+       --password-stdin
+           Read the master password from stdin instead of prompting.
+
+EXAMPLES
+       Leave a note on a variable:
+           $ byn note add API_KEY "acct 1234 — ask billing before rotating"
+
+       Read your notes:
+           $ byn note ls API_KEY
+
+       Reword one (the old text stays in history):
+           $ byn note edit API_KEY 3 "rotated 2026-09-17, new owner is platform"
+
+       See every version of a note:
+           $ byn note history API_KEY 3
+
+EXIT STATUS
+       0    Done.
+       1    Bad arguments, or an unknown target.
+       2    Daemon unreachable.
+       3    Daemon error: locked, not found, authorization required.
+
+SEE ALSO
+       byn(1), byn-describe(1), byn-unlock(1)
 `,
 
 	"edit": `NAME

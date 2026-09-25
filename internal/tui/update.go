@@ -1496,6 +1496,28 @@ func (m Model) runCommand(input string, fromEdit bool) (tea.Model, tea.Cmd) {
 			m.scope.Env = args[1]
 			return m.loadCurrentScope()
 		}
+	case "describe":
+		e := m.currentEntry()
+		if e == nil {
+			m.flash("select an entry first", false)
+			return m, nil
+		}
+		text := strings.TrimSpace(strings.TrimPrefix(input, args[0]))
+		// An empty :describe clears it, matching `byn describe --clear`. The
+		// text stays in the annotation history either way.
+		return m, describeEntryCmd(m.client, m.scope, e.Name, text)
+	case "note":
+		e := m.currentEntry()
+		if e == nil {
+			m.flash("select an entry first", false)
+			return m, nil
+		}
+		text := strings.TrimSpace(strings.TrimPrefix(input, args[0]))
+		if text == "" {
+			m.flash("usage: :note <text>  (encrypted — only you can read it)", false)
+			return m, nil
+		}
+		return m, noteEntryCmd(m.client, m.scope, e.Name, text)
 	case "audit":
 		m.Mode = ModeAudit
 		return m, loadAuditCmd(m.client, m.scope.Vault, 200)

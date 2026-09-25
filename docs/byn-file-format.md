@@ -12,6 +12,11 @@ someone plants in a project dir (its same-UID ceiling is noted below).
 `[auth]` tables, and an optional `[aliases]` table.
 
 ```toml
+description = "Nightly ETL worker. Staging Stripe account only."
+
+[describe]
+DATABASE_URL = "read replica; writes go through the API, not here"
+
 [scope]
 vault   = "default"
 project = "myapp"
@@ -34,6 +39,21 @@ test    = "cargo test"
 migrate = "python manage.py migrate"
 ```
 
+- **`description`** (top level) says what this project or directory is, and
+  **`[describe]`** maps a variable name to an instruction for whoever uses it.
+  Both are **plaintext** and are shown alongside whatever the vault holds,
+  labelled `.byn`, never merged into it. **Do not put a secret in one.**
+
+  They take effect from the **trust record**, not from the file on disk — the
+  same rule `[exec] actions` follows. So an agent that edits `.byn` to plant
+  instructions changes nothing until you re-approve the file and see the change
+  in `byn trust diff`. That makes a trusted `.byn` the right home for
+  instructions that matter: a description stored in the vault may have been
+  written by whatever created the value, and this one carries your approval.
+
+  Keys must be valid variable names (`A–Z`, `0–9`, `_`, no leading digit); each
+  description is capped at 4 KiB. An untrusted or changed `.byn` contributes no
+  descriptions at all.
 - `[scope]` fields are all optional. Omitted fields fall through to env
   vars and then daemon defaults.
 - `[exec] env` is the **env-var injection allowlist** for `byn exec`:

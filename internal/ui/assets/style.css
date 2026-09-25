@@ -1470,3 +1470,54 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
 .approval-status-expired,
 .approval-status-cancelled { opacity: .65; }
 .approval-id { font-family: var(--mono, monospace); color: var(--signal); margin-right: 8px; }
+
+/* ---- annotations: descriptions and notes ---------------------------------
+
+   A description sits under its variable, unmissable and unstyled-as-secret,
+   because it is the opposite of one: plaintext anything can read. A note lives
+   behind the panel and says so. The visual distance between the two is the
+   point — it is what stops an account number being typed into the public box. */
+
+.trow-wrap { animation: rise .3s var(--ease) both; }
+.trow-wrap .trow { animation: none; }
+.trow-desc { padding: 0 12px 8px 44px; margin-top: -4px; }
+.desc-text {
+  font-size: 12.5px; color: var(--text-dim); line-height: 1.45;
+  display: block; max-width: 72ch;
+}
+.desc-badge {
+  display: inline-block; margin-right: 6px; padding: 0 5px;
+  border-radius: 4px; font-size: 10px; letter-spacing: .04em;
+  border: 1px solid var(--border-2); color: var(--text-faint);
+  vertical-align: 1px;
+}
+.desc-badge.agent { color: var(--amber); border-color: var(--amber); }
+.desc-badge.byn { color: var(--signal-dim); border-color: var(--signal-dim); }
+
+.act-ico.note.has-notes { color: var(--signal); }
+
+.notes-panel { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+.notes-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.notes-title { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-faint); }
+.notes-sub { font-size: 11px; color: var(--text-faint); }
+.notes-withheld {
+  font-size: 12.5px; color: var(--amber);
+  border: 1px solid var(--border-2); border-radius: var(--r); padding: 8px 10px;
+}
+.notes-list { display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto; }
+.note-row {
+  border: 1px solid var(--border); border-radius: var(--r);
+  padding: 8px 10px; background: var(--surface);
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+}
+.note-meta { grid-column: 1; display: flex; gap: 8px; align-items: center; }
+.note-row .acts { grid-column: 2; grid-row: 1 / span 2; align-self: start; }
+.note-when { font-size: 11px; color: var(--text-faint); }
+.note-body { grid-column: 1; font-size: 13px; color: var(--text); white-space: pre-wrap; }
+.notes-add { display: flex; gap: 8px; margin-top: 10px; align-items: flex-start; }
+.notes-input {
+  flex: 1; background: var(--ink-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r);
+  padding: 8px 10px; font: inherit; font-size: 13px; resize: none;
+}
+.notes-input:focus { outline: none; border-color: var(--border-2); }

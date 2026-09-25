@@ -172,6 +172,30 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 			ID: "abc123", Kind: "trust_widening", Subject: "/proj/.byn",
 			Summary: []string{"injects PSQL_CREDENTIALS"}, HighRisk: true, Status: "pending",
 		}}})
+	case ipc.OpAnnotationList:
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationList)
+		return mk(ipc.AnnotationListResp{
+			Descriptions: []ipc.AnnotationView{{ID: 1, Kind: "description", Body: "staging Stripe key", Author: "owner"}},
+			Notes:        []ipc.AnnotationView{{ID: 2, Kind: "note", Body: "acct 1234", Author: "owner"}},
+			NoteCount:    1,
+		})
+	case ipc.OpAnnotationSet:
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationSet)
+		return mk(ipc.AnnotationSetResp{ID: 1})
+	case ipc.OpAnnotationAdd:
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationAdd)
+		return mk(ipc.AnnotationAddResp{ID: 2})
+	case ipc.OpAnnotationEdit:
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationEdit)
+		return mk(ipc.AnnotationEditResp{})
+	case ipc.OpAnnotationRemove:
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationRemove)
+		return mk(ipc.AnnotationRemoveResp{})
+	case ipc.OpAnnotationHistory:
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationHistory)
+		return mk(ipc.AnnotationHistoryResp{Versions: []ipc.AnnotationVersionView{
+			{VersionNo: 1, Op: "create", Body: "first", Author: "agent", AuthorComm: "node"},
+		}})
 	case ipc.OpApprovalDecide:
 		var req ipc.ApprovalDecideReq
 		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)

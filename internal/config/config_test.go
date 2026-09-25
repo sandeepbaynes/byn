@@ -385,7 +385,7 @@ func TestSerializeCfgDefaultForm(t *testing.T) {
 	//   uiEnabled:true, uiPort:2967, revealHideAfter:"15s", idleTimeout:"15m0s",
 	//   sessionTTL:"12h0m0s", sessionIdle:"0s", privsep:false
 	// }) as of the last sync with app.js. privsep is omitted when off (the default).
-	jsSerialized := "[ui]\nenabled = true\nport    = 2967\nreveal_hide_after = \"15s\"\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n[security]\nsession_ttl  = \"12h0m0s\"\nsession_idle = \"0s\"\n\n"
+	jsSerialized := "[ui]\nenabled = true\nport    = 2967\nreveal_hide_after = \"15s\"\n\n[daemon]\nidle_timeout = \"15m0s\"\n\n[security]\nsession_ttl  = \"12h0m0s\"\nsession_idle = \"0s\"\n\n[annotations]\nmax_description      = 4096\nmax_note             = 65536\nmax_notes_per_object = 200\n\n"
 
 	got, err := Parse([]byte(jsSerialized))
 	if err != nil {
@@ -411,6 +411,61 @@ func TestSerializeCfgDefaultForm(t *testing.T) {
 	}
 	if got.PrivsepEnabled() {
 		t.Errorf("PrivsepEnabled() = true, want false (privsep omitted from the default form)")
+	}
+	if got.DescriptionLimit() != DefaultMaxDescription {
+		t.Errorf("DescriptionLimit() = %d, want %d", got.DescriptionLimit(), DefaultMaxDescription)
+	}
+	if got.NoteLimit() != DefaultMaxNote {
+		t.Errorf("NoteLimit() = %d, want %d", got.NoteLimit(), DefaultMaxNote)
+	}
+	if got.NotesPerObjectLimit() != DefaultMaxNotesPerObject {
+		t.Errorf("NotesPerObjectLimit() = %d, want %d", got.NotesPerObjectLimit(), DefaultMaxNotesPerObject)
+	}
+}
+
+// The annotation caps are configurable, and an unset key resolves to the
+// built-in default rather than to zero — a cap of zero would refuse every
+// annotation, which is not what an absent key means anywhere else in this file.
+func TestAnnotationLimits(t *testing.T) {
+	path := writeConfig(t, "[annotations]\nmax_description = 512\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.DescriptionLimit() != 512 {
+		t.Errorf("DescriptionLimit() = %d, want 512", got.DescriptionLimit())
+	}
+	if got.NoteLimit() != DefaultMaxNote {
+		t.Errorf("an unset max_note = %d, want the default %d", got.NoteLimit(), DefaultMaxNote)
+	}
+	if got.NotesPerObjectLimit() != DefaultMaxNotesPerObject {
+		t.Errorf("an unset max_notes_per_object = %d, want the default %d",
+			got.NotesPerObjectLimit(), DefaultMaxNotesPerObject)
+	}
+}
+
+func TestAnnotationLimits_NegativeRejected(t *testing.T) {
+	for _, body := range []string{
+		"[annotations]\nmax_description = -1\n",
+		"[annotations]\nmax_note = -1\n",
+		"[annotations]\nmax_notes_per_object = -1\n",
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Errorf("Parse(%q) error = nil, want a validation error", body)
+		}
+	}
+}
+
+// Zero is "use the default", matching [security] session_idle, so a config
+// marshalled from a partially-filled struct still loads.
+func TestAnnotationLimits_ZeroMeansDefault(t *testing.T) {
+	got, err := Parse([]byte("[annotations]\nmax_description = 0\nmax_note = 0\nmax_notes_per_object = 0\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.DescriptionLimit() != DefaultMaxDescription || got.NoteLimit() != DefaultMaxNote ||
+		got.NotesPerObjectLimit() != DefaultMaxNotesPerObject {
+		t.Errorf("zero did not resolve to the defaults: %+v", got.Annotations)
 	}
 }
 

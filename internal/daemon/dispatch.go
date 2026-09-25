@@ -265,6 +265,19 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleAuditVerify(ctx, env)
 	case ipc.OpAuditReseal:
 		return d.handleAuditReseal(ctx, env)
+	case ipc.OpAnnotationSet:
+		return d.handleAnnotationSet(ctx, env)
+	case ipc.OpAnnotationAdd:
+		return d.handleAnnotationAdd(ctx, env)
+	case ipc.OpAnnotationEdit:
+		return d.handleAnnotationEdit(ctx, env)
+	case ipc.OpAnnotationRemove:
+		return d.handleAnnotationRemove(ctx, env)
+	case ipc.OpAnnotationList:
+		return d.handleAnnotationList(ctx, env)
+	case ipc.OpAnnotationHistory:
+		return d.handleAnnotationHistory(ctx, env)
+
 	case ipc.OpDoctor:
 		return d.handleDoctor(ctx, env)
 	case ipc.OpApprovalList:
@@ -1047,6 +1060,14 @@ func (d *Daemon) handleProjectCreate(ctx context.Context, env *ipc.Envelope) *ip
 	if err := st.CreateProject(ctx, req.Name); err != nil {
 		return mapVaultErr(env.ID, err)
 	}
+	// Annotating at creation is free, as it is for a value: the caller just
+	// made the thing, so saying what it is for discloses nothing.
+	if req.Description != "" {
+		if ref, rerr := st.ProjectObjectRef(ctx, req.Name); rerr == nil {
+			_ = st.SetDescription(ctx, ref, req.Description,
+				d.authorFor(ctx, defaultIfEmpty(req.Vault, vault.DefaultVaultName), nil, nil))
+		}
+	}
 	resp, err := ipc.NewResponse(env.ID, ipc.ProjectCreateResp{})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -1173,6 +1194,12 @@ func (d *Daemon) handleEnvCreate(ctx context.Context, env *ipc.Envelope) *ipc.En
 	project := defaultIfEmpty(req.Project, vault.DefaultProjectName)
 	if err := st.CreateEnv(ctx, project, req.Name); err != nil {
 		return mapVaultErr(env.ID, err)
+	}
+	if req.Description != "" {
+		if ref, rerr := st.EnvObjectRef(ctx, project, req.Name); rerr == nil {
+			_ = st.SetDescription(ctx, ref, req.Description,
+				d.authorFor(ctx, defaultIfEmpty(req.Vault, vault.DefaultVaultName), nil, nil))
+		}
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.EnvCreateResp{})
 	if err != nil {
@@ -1416,9 +1443,11 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		if created {
 			d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored, unattended)
 		}
+		annotated := d.applyPutAnnotations(ctx, st, scope, req, created, !unattended, authKey)
 		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{
 			Unattended: unattended && useAuthored,
 			Created:    created,
+			Annotated:  annotated,
 		})
 		if oerr != nil {
 			resp = internalErr(env.ID, oerr)
@@ -1496,6 +1525,11 @@ func (d *Daemon) handleGet(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 			Source:    got.Source.String(),
 			CreatedAt: got.CreatedAt,
 			UpdatedAt: got.UpdatedAt,
+			// Both layers, labelled. The CLI keeps them off stdout so the
+			// value stays byte-exact; what travels here is the material it
+			// needs to show them where they cannot be mistaken for the value.
+			Descriptions: d.describeEntry(ctx, st, scope,
+				defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), got.Name),
 		})
 		if err != nil {
 			resp = internalErr(env.ID, err)
@@ -1534,6 +1568,16 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 			unattended[n] = struct{}{}
 		}
 	}
+	// What each variable is for. Descriptions need no key, so a locked listing
+	// still carries them — that is the whole point of the field. Note TEXT is
+	// never in a listing; only the count, so a person can see there is
+	// something to read without the listing becoming a way to read it.
+	annotations, aerr := st.EntryAnnotations(ctx, scope)
+	if aerr != nil {
+		return mapVaultErr(env.ID, aerr)
+	}
+	manifest := d.manifestDescriptions(defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName), scope)
+
 	out := make([]ipc.SecretMeta, 0, len(infos))
 	for _, m := range infos {
 		meta := ipc.SecretMeta{
@@ -1543,6 +1587,23 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 			UpdatedAt:     m.UpdatedAt,
 			InDefault:     m.InDefault,
 			SameAsDefault: m.SameAsDefault,
+		}
+		if a, ok := annotations[m.Name]; ok {
+			meta.Description = a.Description
+			meta.DescriptionAuthor = a.Author
+			meta.DescriptionComm = a.AuthorComm
+			meta.Notes = a.Notes
+		}
+		// A .byn's description is shown when the vault holds none of its own,
+		// so a listing stays one line per variable. Both layers together are
+		// what `byn get` and the portal show, where there is room to label
+		// them.
+		if meta.Description == "" {
+			if text, ok := manifest[m.Name]; ok {
+				meta.Description = text
+				meta.DescriptionAuthor = vault.AuthorOwner
+				meta.DescriptionSource = ".byn"
+			}
 		}
 		if _, ok := unattended[m.Name]; ok {
 			meta.Unattended = true

@@ -276,7 +276,7 @@ Rename. Refuses `default`.
 
 ## Env-vars (active scope)
 
-### `byn put NAME [--create-only] [--password-stdin]`
+### `byn put NAME [--create-only] [--description TEXT] [--note TEXT] [--password-stdin]`
 
 Store an env-var entry under `(scope.Project, scope.Env)`.
 
@@ -292,6 +292,12 @@ Store an env-var entry under `(scope.Project, scope.Env)`.
   `printf "" | byn put NAME`.
 - `--create-only` fails with `already_exists` if the name is taken
   (used by `import --skip-existing`).
+- `--description TEXT` labels the value in plaintext for whoever uses it next;
+  `--note TEXT` attaches an encrypted note only you can read. Both apply **as
+  the value is created** — that is free, and is how an unattended caller says
+  what it just invented is for. On an overwrite they apply only for a caller
+  that authorized the write, and byn says so on stderr rather than reporting
+  success in silence. See [`byn describe`](#byn-describe-target-text).
 - Hint on success: `Stored "NAME" in vault/project/env.`
 - Overwriting an existing entry requires the master password when no session
   is present. New entries (first put of a name, or `--create-only`) do not.
@@ -311,7 +317,7 @@ echo 's3cr3t' | byn put DB_PASSWORD
 byn put TLS_CERT < server.crt
 ```
 
-### `byn get NAME [--json] [--password-stdin]` (alias: `byn cat NAME`)
+### `byn get NAME [--json] [--description] [--password-stdin]` (alias: `byn cat NAME`)
 
 Print the decrypted value to stdout.
 
@@ -319,8 +325,14 @@ Print the decrypted value to stdout.
   falls back to the project's `default` env.
 - TTY: appends a trailing newline so the next prompt doesn't run on.
 - Non-TTY: raw bytes, no trailing newline (safe for piping/redirection).
-- `--json` emits `{"name": ..., "value": ...}` — use only in trusted
-  harnesses; values land in your agent's context.
+- `--json` emits `{"name": ..., "value": ..., "descriptions": [...]}` — use only
+  in trusted harnesses; values land in your agent's context.
+- When the value has a description, it is printed to **stderr**, and only when
+  stdout is a terminal. **stdout stays byte-exact in every other shape**, so
+  `byn get tls-key > server.key` and `$(byn get aws-profile)` are unaffected —
+  including under `2>&1`, because the gate is on stdout, not stderr.
+- `--description` prints the description **instead of** the value, on stdout,
+  alone. It needs no credential and works on a locked vault.
 - The master password is required when no session is present.
   `--password-stdin` reads the entire stdin as the password (no newline
   split — contrast with `put`).
@@ -337,12 +349,22 @@ List entry names + per-entry metadata. JSON emits:
     "name": "DB_URL",
     "source": "scope",       // or "default" if inherited from default env
     "created_at": "...",
-    "updated_at": "..."
+    "updated_at": "...",
+    "description": "the read replica",   // plaintext; absent when there is none
+    "description_author": "agent",       // "owner" or "agent"
+    "description_comm": "node",          // the agent's process name
+    "description_source": ".byn",        // present when it came from the manifest
+    "notes": 2                           // how many private notes; never their text
   }
 ]
 ```
 
 Allowed while locked (names are not secret). Not gated by the session matrix.
+
+`--long` adds each entry's description under its name, with a badge when
+someone other than you wrote it, and its note **count**. The plain listing stays
+names-only: it is an existence probe callers pipe, and decorating it would break
+them.
 
 ### `byn delete NAME [--password-stdin]` (alias: `byn rm NAME`)
 
@@ -365,6 +387,81 @@ Requires unlock (re-encryption needs the vault key).
   `--password-stdin` reads entire stdin as the password.
 - Locked vault: hard fail ("byn unlock") — re-encryption requires the
   vault key.
+
+---
+
+## Commentary (descriptions and notes)
+
+Two kinds, for two readers.
+
+|  | **description** | **note** |
+|---|---|---|
+| Audience | agents, tools, anyone running `byn ls` | you |
+| Storage | **plaintext** in the vault DB | **encrypted**, like a value |
+| Readable while locked | yes, by anyone who can reach byn | no |
+| Shape | one per object, replaceable | an append log, newest first |
+| Writing it | free as an object is **created**; authorized afterwards | authorized, and needs the key |
+
+**If you would mind an agent reading it, it is a note.** Do not put a secret in
+a description — see [security.md](security.md#known-limitations-this-release).
+
+### Targets
+
+Both commands take the same `TARGET`: a variable name in the active scope, or
+`TYPE:REF`.
+
+| Target | Means |
+|---|---|
+| `API_KEY` | a variable in the active scope |
+| `entry:API_KEY` | the same, spelled out |
+| `project:web` / `project:` | a project; bare `project:` is the active one |
+| `env:prod` / `env:` | an env; bare `env:` is the active one |
+| `vault:` | the vault itself |
+| `trust:42` | a trust record, by id from `byn trust list` |
+| `run:42` | one exec run, by id from `byn runs` |
+| `passkey:3` | an enrolled passkey |
+
+### `byn describe TARGET [TEXT...]` (alias: `byn desc`)
+
+Set or show what something is for.
+
+```bash
+byn describe API_KEY "staging Stripe key — read-only, rotates quarterly"
+byn describe API_KEY                 # print it
+byn describe project:web "the customer-facing app"
+byn describe API_KEY --history       # every version, with who wrote each
+byn describe API_KEY --clear         # remove it (the text stays in history)
+```
+
+- Changing one needs the master password or an active session, but **not an
+  unlocked vault**: a description holds no secret and needs no key.
+- Words after the target join into one description, so quoting is optional.
+- Reading one needs nothing at all. That is the point of the field.
+- A trusted `.byn` can declare descriptions too, in its top-level `description`
+  and `[describe]` table — see [byn-file-format.md](byn-file-format.md). Those
+  are shown alongside and labelled `.byn`, and take effect only from the trust
+  record, so editing the file does nothing until you re-trust it.
+- Text someone other than you wrote is badged everywhere it appears.
+
+### `byn note <add|ls|edit|rm|history> TARGET [...]`
+
+Your own encrypted commentary.
+
+```bash
+byn note add API_KEY "acct 1234 — ask billing before rotating"
+byn note ls API_KEY
+byn note edit API_KEY 3 "rotated 2026-09-17; owner is platform now"
+byn note rm API_KEY 3
+byn note history API_KEY 3
+```
+
+- Needs the key: an unlocked vault, or `--password-stdin`.
+- A listing shows how many notes an object has, never their text — so the count
+  survives locking and the text does not.
+- **`rm` is a tombstone, not an erasure.** The note leaves the listing and every
+  version of its text stays in `byn note history`, because text changed to
+  mislead a later reader has to stay traceable. It goes for good when the thing
+  it describes is deleted; there is no per-note purge.
 
 ---
 

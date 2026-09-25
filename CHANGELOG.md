@@ -5,6 +5,54 @@ list; this file carries what you need to know before upgrading.
 
 ## Unreleased
 
+### Notes and descriptions on everything in the vault
+
+byn could always tell a tool *which* variables exist. It could never tell it
+what they are *for*, so an agent guessed or asked. Two new kinds of commentary
+close that, and they are deliberately different:
+
+- **`byn describe TARGET "text"`** — public context about something. Stored in
+  **plaintext**, readable **while the vault is locked**, by anything that can
+  reach byn including an agent with no credential. That is the point: it is how
+  a project says "this is the read-only staging key, do not point it at
+  production". **Do not put a secret in one.**
+- **`byn note add TARGET "text"`** — your own writing. Encrypted with the same
+  per-row scheme as a value, readable only with the key, never visible to an
+  agent. The rule for choosing: *if you would mind an agent reading it, it is a
+  note.*
+
+Both attach to anything byn stores — a variable, a project, an env, the vault,
+a trust record, an exec run, a passkey — addressed as a bare name or `TYPE:REF`
+(`project:web`, `run:42`, `vault:`).
+
+**An agent may say what a value is for at the moment it creates it, and never
+again.** `byn put NAME --description "..."` is free on a new name, because
+creating a value already is; changing a description afterwards needs your
+authorization, because changing a value does. No new permission model — the
+annotation inherits the authorization of the operation carrying it.
+
+A trusted `.byn` can declare descriptions too, in a top-level `description` key
+and a `[describe]` table. Those take effect from the **trust record**, not the
+file on disk, so an agent that edits `.byn` to plant instructions changes
+nothing until you re-approve it in `byn trust diff` — which makes the manifest
+the right home for instructions that matter.
+
+Where they show up: `byn ls --long` (description under each name, note count,
+and a badge when someone other than you wrote the text), `byn get` (on stderr,
+and only when stdout is a terminal — stdout stays byte-exact, so redirects and
+`$(…)` are unaffected), `byn get --description` and `--json` for scripts, the
+portal (inline editor plus a notes panel), and the TUI (`:describe`, `:note`).
+
+Two things to know before relying on it. A description is a channel from
+whoever wrote it to whoever reads it next, so byn records and always shows the
+author — treat one as information about a value, never as an instruction.
+And **every version is kept**: removing a note or a description takes it out of
+the listing and leaves its text in `byn note history` / `byn describe
+--history`, because text changed to mislead a later reader has to stay
+traceable. A note you delete is retained until the thing it describes is.
+
+Vault schema v9 (additive; existing vaults migrate on open).
+
 ### A value that merely repeats default is no longer shown as an override
 
 In a non-default env, the TUI and the portal marked every variable that also

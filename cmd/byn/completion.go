@@ -46,6 +46,7 @@ var completionSubcommands = map[string][]string{
 	"daemon":  {"install", "uninstall"},
 	"request": {"watch", "cancel"},
 	"skill":   {"install", "show", "path"},
+	"note":    {"add", "ls", "edit", "rm", "history"},
 	"approve": {},
 }
 
@@ -56,11 +57,11 @@ var completionSubcommands = map[string][]string{
 // nine commands doubles the list a person is reading to find out what byn can
 // do. The test that checks this against the dispatch switch knows about them.
 var completionCommands = []string{
-	"approve", "audit", "completion", "config-auth", "daemon", "delete", "doctor",
-	"edit", "env", "exec", "export", "get", "help", "import", "init", "kill",
-	"list", "lock", "migrate", "passwd", "project", "ps", "put", "reload",
-	"rename", "repair", "request", "restart", "runs", "setup", "skill", "start",
-	"status", "stop", "trust", "uninstall", "unlock", "untrust", "vault",
+	"approve", "audit", "completion", "config-auth", "daemon", "delete", "describe",
+	"doctor", "edit", "env", "exec", "export", "get", "help", "import", "init",
+	"kill", "list", "lock", "migrate", "note", "passwd", "project", "ps", "put",
+	"reload", "rename", "repair", "request", "restart", "runs", "setup", "skill",
+	"start", "status", "stop", "trust", "uninstall", "unlock", "untrust", "vault",
 	"version", "web",
 }
 

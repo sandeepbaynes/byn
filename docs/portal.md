@@ -291,9 +291,31 @@ Notable settings visible in the panel:
 | `[security] session_ttl` | `"12h0m0s"` | Absolute session lifetime; `"0s"` = no absolute cap (needs daemon restart) |
 | `[security] session_idle` | `"0s"` | Sliding session idle window; `"0s"` = inherit `[daemon] idle_timeout` (needs daemon restart) |
 | `[security] privsep` | _absent (off)_ | Run trusted-`.byn` exec children as `_byn-exec` — requires `sudo byn setup` provisioning + a daemon restart |
+| `[annotations] max_description` | `4096` | Largest description, in bytes. A description is **plaintext** and readable without a credential — this is the size of what anything reading the vault can be handed |
+| `[annotations] max_note` | `65536` | Largest single note, in bytes (notes are encrypted) |
+| `[annotations] max_notes_per_object` | `200` | How many notes one object may carry |
 
 The **Settings** view renders every key above as a form field (with a raw-TOML
 mode). Durations use Go syntax (`"15s"`, `"1m30s"`, `"0s"`).
+
+---
+
+## Descriptions and notes
+
+Every entry row carries a **describe · notes** action, and its description shows
+under its name.
+
+- A **description** is plaintext and is readable while the vault is locked, by
+  anything that can reach byn — including an agent with no credential. The
+  editor says so. **Do not put a secret in one.**
+- **Notes** are encrypted. The panel lists them with their author and time and
+  takes a new one; with the vault locked it shows the count and says that
+  reading them needs an unlock, rather than showing an empty list.
+
+Text you did not write is badged: `.byn` for a description a trusted manifest
+declares, and `agent: <name>` for one a process wrote when it created the value.
+Removing a note asks first and says what removal means — the note leaves the
+list and its text stays in the annotation history.
 
 ---
 
@@ -311,6 +333,10 @@ routes:
 | `GET`  | `/api/config` | none | Read global config TOML |
 | `POST` | `/api/config` | always (password/token) | Validate + write + reload config |
 | `GET`  | `/api/fs/listdir?path=` | none (sameOrigin) | List subdirectories for the dir picker |
+| `GET`  | `/api/annotations?type=&name=&id=&kind=` | none | Read annotations. Descriptions come back for any caller; notes need the session, and are reported as withheld rather than absent when they exist |
+| `POST` | `/api/annotation/describe` | password/token when no session | Set or clear a description |
+| `POST` | `/api/annotation/note` | password/token when no session | Add, edit (`id`) or remove (`id` + `remove`) a note |
+| `POST` | `/api/annotation/history` | password/token when no session | Every version of one annotation |
 
 `POST /api/byn/read` uses POST (not GET) with an sameOrigin check so
 cross-origin pages cannot use it as an arbitrary file-read oracle. The daemon

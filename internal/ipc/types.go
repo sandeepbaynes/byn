@@ -67,6 +67,16 @@ const (
 
 	// Diagnostics. OpDoctor returns a structured health report; the
 	// CLI renders it human-readable or as JSON.
+	// Annotations — commentary on any object in the vault. A description is
+	// plaintext and readable without a credential; a note is encrypted and is
+	// not. Which is which is the caller's choice of op, not a flag.
+	OpAnnotationSet     Op = "annotation.set"    // write/replace a description
+	OpAnnotationAdd     Op = "annotation.add"    // append a note
+	OpAnnotationEdit    Op = "annotation.edit"   // reword a note
+	OpAnnotationRemove  Op = "annotation.remove" // tombstone one annotation
+	OpAnnotationList    Op = "annotation.list"
+	OpAnnotationHistory Op = "annotation.history"
+
 	OpDoctor Op = "doctor"
 
 	// Trust store (global, not per-vault): the TOFU list of approved
@@ -430,6 +440,9 @@ type VaultDeleteResp struct{}
 type ProjectCreateReq struct {
 	Vault string `json:"vault,omitempty"`
 	Name  string `json:"name"`
+	// Description annotates the project as it is created. Same rule as
+	// PutReq.Description: free at creation, gated afterwards.
+	Description string `json:"description,omitempty"`
 }
 
 // ProjectCreateResp is empty.
@@ -487,6 +500,8 @@ type EnvCreateReq struct {
 	Vault   string `json:"vault,omitempty"`
 	Project string `json:"project"`
 	Name    string `json:"name"`
+	// Description annotates the env as it is created.
+	Description string `json:"description,omitempty"`
 }
 
 // EnvCreateResp is empty.
@@ -548,6 +563,17 @@ type PutReq struct {
 	Name       string `json:"name"`
 	Value      []byte `json:"value"`
 	CreateOnly bool   `json:"create_only,omitempty"`
+	// Description and Note annotate the value as it is stored. They are
+	// carried on the put rather than sent separately because that is what
+	// makes them writable by an unattended caller at all: creating a value is
+	// free, changing one is not, and an annotation inherits the authorization
+	// of the operation carrying it. An agent therefore says what a variable is
+	// for at the moment it invents it, and cannot reword it afterwards.
+	//
+	// They are ignored when the put turns out to be an overwrite that the
+	// caller was not authorized to annotate; see the daemon's put handler.
+	Description string `json:"description,omitempty"`
+	Note        string `json:"note,omitempty"`
 	// Password authorizes the write when no session is present
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
@@ -566,6 +592,13 @@ type PutResp struct {
 	Unattended bool `json:"unattended,omitempty"`
 	// Created distinguishes a new value from one that replaced an existing one.
 	Created bool `json:"created,omitempty"`
+	// Annotated says whether the description and note this put carried were
+	// applied. They are not, on an overwrite by an unattended caller replacing
+	// a value it authored: that path is free because it discloses nothing, and
+	// it must not become a way to reword instructions after the fact. Reported
+	// rather than dropped silently — a caller that passed a description
+	// deserves to know it did not take.
+	Annotated bool `json:"annotated,omitempty"`
 }
 
 // GetReq retrieves an env-var entry from Scope. Applies inheritance
@@ -588,6 +621,23 @@ type GetResp struct {
 	Source    string    `json:"source"` // "scope" or "default" — set on inheritance fallback
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Descriptions is every layer of context attached to this variable: the
+	// one stored in the vault, and the one a trusted .byn declares. Both are
+	// returned, labelled, never merged — they differ in who vouched for them.
+	Descriptions []DescriptionView `json:"descriptions,omitempty"`
+}
+
+// DescriptionView is one layer of description with the provenance a reader
+// needs to weigh it.
+type DescriptionView struct {
+	Text string `json:"text"`
+	// Source is "vault" for one stored against the object, or ".byn" for one
+	// declared by a trusted manifest. A .byn description takes effect only
+	// from the trust record, so it carries the owner's approval in a way a
+	// vault description written at creation time does not.
+	Source     string `json:"source"`
+	Author     string `json:"author,omitempty"`
+	AuthorComm string `json:"author_comm,omitempty"`
 }
 
 // ListReq lists env-var entries in Scope (with inheritance from the
@@ -628,6 +678,22 @@ type SecretMeta struct {
 	// entry of the same name in the default env. Never set for the default
 	// env itself or for inherited rows.
 	InDefault bool `json:"in_default,omitempty"`
+	// Description is the plaintext context attached to this variable, and
+	// DescriptionAuthor / DescriptionComm say who wrote it. The provenance
+	// travels with the text everywhere, because a description is an
+	// instruction a tool may act on and "the owner wrote this" and "some
+	// process wrote this" are not the same claim.
+	//
+	// Notes is how many private notes the variable carries. The listing never
+	// carries their text: it is readable without a credential and they are not.
+	Description       string `json:"description,omitempty"`
+	DescriptionAuthor string `json:"description_author,omitempty"`
+	DescriptionComm   string `json:"description_comm,omitempty"`
+	// DescriptionSource is ".byn" when the text came from a trusted manifest
+	// rather than from the vault. Empty means the vault's own.
+	DescriptionSource string `json:"description_source,omitempty"`
+	Notes             int    `json:"notes,omitempty"`
+
 	// SameAsDefault says whether a shadowing value equals default's. A row
 	// that merely repeats default — an imported .env re-stating shared
 	// values, or an edit that typed the same thing back — is not an override
@@ -1424,6 +1490,12 @@ type ConfigParsed struct {
 	// Privsep mirrors [security] privsep. Tri-state pointer: null = key absent
 	// (off, the default), else the explicit bool.
 	Privsep *bool `json:"privsep"`
+	// MaxDescription / MaxNote / MaxNotesPerObject mirror [annotations], as the
+	// EFFECTIVE limits: an unset key is reported as the built-in default rather
+	// than as 0, so the settings editor shows what is actually in force.
+	MaxDescription    int `json:"max_description"`
+	MaxNote           int `json:"max_note"`
+	MaxNotesPerObject int `json:"max_notes_per_object"`
 }
 
 // ConfigGetResp returns the raw config file bytes and the path.
@@ -1825,4 +1897,144 @@ type ApprovalCancelReq struct {
 type ApprovalCancelResp struct {
 	ApprovalID string `json:"approval_id"`
 	Status     string `json:"status"`
+}
+
+// --- annotations ---------------------------------------------------------
+
+// AnnotationTarget names the object an annotation is attached to, in the terms
+// the caller has rather than by database id.
+//
+// Type is one of vault, project, env, entry, trust, run, passkey. Name carries
+// an entry's or a project's or an env's name; ID carries the row id for the
+// objects a person refers to by number (a run, a trust record, a passkey). The
+// daemon resolves either into the surrogate id annotations actually hang on,
+// so a caller never has to know one.
+type AnnotationTarget struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	ID   int64  `json:"id,omitempty"`
+}
+
+// AnnotationSetReq writes or replaces an object's one description. Clear
+// removes it instead, keeping the text in history.
+//
+// This op needs auth but NOT unlock: a description holds no secret and needs no
+// key, and having to expose every value in the vault to reword a sentence would
+// be backwards.
+type AnnotationSetReq struct {
+	Scope         Scope            `json:"scope,omitempty"`
+	Target        AnnotationTarget `json:"target"`
+	Text          string           `json:"text,omitempty"`
+	Clear         bool             `json:"clear,omitempty"`
+	Password      []byte           `json:"password,omitempty"`
+	PresenceToken []byte           `json:"presence_token,omitempty"`
+}
+
+// AnnotationSetResp reports the annotation written.
+type AnnotationSetResp struct {
+	ID int64 `json:"id"`
+}
+
+// AnnotationAddReq appends a note. Notes are encrypted, so this needs the key.
+type AnnotationAddReq struct {
+	Scope         Scope            `json:"scope,omitempty"`
+	Target        AnnotationTarget `json:"target"`
+	Text          string           `json:"text"`
+	Password      []byte           `json:"password,omitempty"`
+	PresenceToken []byte           `json:"presence_token,omitempty"`
+}
+
+// AnnotationAddResp reports the note written.
+type AnnotationAddResp struct {
+	ID int64 `json:"id"`
+}
+
+// AnnotationEditReq rewords one note, keeping the old text in history.
+type AnnotationEditReq struct {
+	Scope         Scope            `json:"scope,omitempty"`
+	Target        AnnotationTarget `json:"target"`
+	ID            int64            `json:"id"`
+	Text          string           `json:"text"`
+	Password      []byte           `json:"password,omitempty"`
+	PresenceToken []byte           `json:"presence_token,omitempty"`
+}
+
+// AnnotationEditResp is empty.
+type AnnotationEditResp struct{}
+
+// AnnotationRemoveReq tombstones one annotation: the live text goes, every
+// version of it stays.
+type AnnotationRemoveReq struct {
+	Scope         Scope            `json:"scope,omitempty"`
+	Target        AnnotationTarget `json:"target"`
+	ID            int64            `json:"id"`
+	Password      []byte           `json:"password,omitempty"`
+	PresenceToken []byte           `json:"presence_token,omitempty"`
+}
+
+// AnnotationRemoveResp is empty.
+type AnnotationRemoveResp struct{}
+
+// AnnotationListReq reads an object's annotations. Kind selects "description",
+// "note", or both when empty.
+//
+// The two halves are gated differently and that is the point: descriptions come
+// back for any caller, notes only for one that can open them.
+type AnnotationListReq struct {
+	Scope         Scope            `json:"scope,omitempty"`
+	Target        AnnotationTarget `json:"target"`
+	Kind          string           `json:"kind,omitempty"`
+	Password      []byte           `json:"password,omitempty"`
+	PresenceToken []byte           `json:"presence_token,omitempty"`
+}
+
+// AnnotationListResp returns what the caller was allowed to see.
+type AnnotationListResp struct {
+	Descriptions []AnnotationView `json:"descriptions,omitempty"`
+	Notes        []AnnotationView `json:"notes,omitempty"`
+	// NoteCount is how many notes the object carries, whether or not their
+	// text is in Notes. It is what lets a locked listing say "there is
+	// something here" without saying what.
+	NoteCount int `json:"note_count,omitempty"`
+	// NotesWithheld is true when notes exist but no credential was supplied to
+	// open them — distinguishing "no notes" from "not for you", which a caller
+	// cannot otherwise tell apart.
+	NotesWithheld bool `json:"notes_withheld,omitempty"`
+}
+
+// AnnotationView is one annotation on the wire.
+type AnnotationView struct {
+	ID         int64     `json:"id"`
+	Kind       string    `json:"kind"`
+	Body       string    `json:"body"`
+	Author     string    `json:"author"`
+	AuthorComm string    `json:"author_comm,omitempty"`
+	Source     string    `json:"source,omitempty"` // "vault" or ".byn"
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// AnnotationHistoryReq reads every version of one annotation.
+type AnnotationHistoryReq struct {
+	Scope         Scope            `json:"scope,omitempty"`
+	Target        AnnotationTarget `json:"target"`
+	ID            int64            `json:"id"`
+	Password      []byte           `json:"password,omitempty"`
+	PresenceToken []byte           `json:"presence_token,omitempty"`
+}
+
+// AnnotationHistoryResp returns versions oldest first.
+type AnnotationHistoryResp struct {
+	Versions []AnnotationVersionView `json:"versions"`
+}
+
+// AnnotationVersionView is one point in an annotation's history. Body is empty
+// for a delete.
+type AnnotationVersionView struct {
+	VersionNo  int       `json:"version_no"`
+	Op         string    `json:"op"`
+	Body       string    `json:"body,omitempty"`
+	Author     string    `json:"author"`
+	AuthorComm string    `json:"author_comm,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }

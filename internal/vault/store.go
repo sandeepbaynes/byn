@@ -57,7 +57,7 @@ const (
 	// agent's name on a run record — the pid alone identifies nothing by
 	// the time anyone audits it. v8: which of a run's values byn had taken
 	// in with no credential behind them.
-	schemaVersion = 8
+	schemaVersion = 9
 
 	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
 	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of
@@ -268,6 +268,10 @@ type PutOpt struct {
 
 // Store is the encrypted secrets vault.
 type Store struct {
+	// annotationLimits are the configured annotation caps; a zero field
+	// falls back to the built-in default (see annotation.go).
+	annotationLimits AnnotationLimits
+
 	dir string
 	db  *sql.DB
 
@@ -870,11 +874,7 @@ func (s *Store) DeleteProject(ctx context.Context, name string) error {
 	if err := ValidateProjectName(name); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE name = ?`, name)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
+	n, err := s.deleteAndSweep(ctx, `DELETE FROM projects WHERE name = ?`, name)
 	if err != nil {
 		return err
 	}
@@ -998,13 +998,9 @@ func (s *Store) DeleteEnv(ctx context.Context, project, name string) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx,
+	n, err := s.deleteAndSweep(ctx,
 		`DELETE FROM envs WHERE project_id = ? AND name = ? AND is_default = 0`,
 		projectID, name)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
@@ -1386,13 +1382,9 @@ func (s *Store) DeleteEnvVar(ctx context.Context, scope Scope, name string) erro
 	if err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx,
+	n, err := s.deleteAndSweep(ctx,
 		`DELETE FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var' AND name = ?`,
 		projectID, envID, name)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
@@ -1414,13 +1406,9 @@ func (s *Store) ClearEnvVars(ctx context.Context, scope Scope) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.ExecContext(ctx,
+	n, err := s.deleteAndSweep(ctx,
 		`DELETE FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'`,
 		projectID, envID)
-	if err != nil {
-		return 0, err
-	}
-	n, err := res.RowsAffected()
 	if err != nil {
 		return 0, err
 	}

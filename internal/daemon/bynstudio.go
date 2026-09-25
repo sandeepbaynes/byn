@@ -77,6 +77,9 @@ func bynValidateContent(content []byte) (errs, warns []ipc.BynIssue) {
 	if verr := f.ValidateAliases(); verr != nil {
 		errs = append(errs, ipc.BynIssue{Section: "aliases", Message: verr.Error()})
 	}
+	if verr := f.ValidateDescriptions(); verr != nil {
+		errs = append(errs, ipc.BynIssue{Section: "describe", Message: verr.Error()})
+	}
 
 	// Warnings.
 	if f.AllowsAll() {
@@ -522,6 +525,11 @@ func configParsedFromConfig(c config.Config) *ipc.ConfigParsed {
 		SessionTTL:      time.Duration(c.Security.SessionTTL).String(),
 		SessionIdle:     time.Duration(c.Security.SessionIdle).String(),
 		Privsep:         c.Security.Privsep,
+		// Effective, not raw: an unset key is what the daemon will actually
+		// enforce, and showing 0 would read as "nothing may be stored".
+		MaxDescription:    c.DescriptionLimit(),
+		MaxNote:           c.NoteLimit(),
+		MaxNotesPerObject: c.NotesPerObjectLimit(),
 	}
 }
 

@@ -212,6 +212,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/entry/reveal", s.sameOrigin(s.only(http.MethodPost, s.handleReveal)))
 	s.mux.HandleFunc("/api/entry/delete", s.sameOrigin(s.only(http.MethodPost, s.handleDelete)))
 	s.mux.HandleFunc("/api/entry/rename", s.sameOrigin(s.only(http.MethodPost, s.handleRename)))
+	// Annotations. Reading is a GET because it changes nothing; the daemon
+	// decides which half comes back — descriptions for anyone, notes only for
+	// a caller that can open them.
+	s.mux.HandleFunc("/api/annotations", s.sameOrigin(s.only(http.MethodGet, s.handleAnnotationsGet)))
+	s.mux.HandleFunc("/api/annotation/describe", s.sameOrigin(s.only(http.MethodPost, s.handleAnnotationDescribe)))
+	s.mux.HandleFunc("/api/annotation/note", s.sameOrigin(s.only(http.MethodPost, s.handleAnnotationNote)))
+	s.mux.HandleFunc("/api/annotation/history", s.sameOrigin(s.only(http.MethodPost, s.handleAnnotationHistory)))
 	// Global config — GET reads are OPEN (settings, not secrets); POST writes are
 	// gated by a single-use sudo token (handleConfigRoute consumes it). This is the
 	// gate that stops a plain portal session from changing [security]/privsep.

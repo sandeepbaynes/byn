@@ -233,6 +233,8 @@ func runPut(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("put", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	createOnly := fs.Bool("create-only", false, "fail if name already exists")
+	description := fs.String("description", "", "what this value is for — plaintext, readable by agents (settable only as the value is created)")
+	note := fs.String("note", "", "a private note about this value — encrypted, readable only by you")
 	jsonOut := fs.Bool("json", false, "emit {stored,created,unattended} JSON instead of prose")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := parseFlags(fs, args); err != nil {
@@ -354,7 +356,10 @@ func runPut(args []string, scope cliScope) int {
 	putCall := func(pw []byte) error {
 		putResp = ipc.PutResp{}
 		putErr = newClient(dir, scope.Vault).Call(ipc.OpPut,
-			ipc.PutReq{Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly, Password: pw},
+			ipc.PutReq{
+				Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly,
+				Description: *description, Note: *note, Password: pw,
+			},
 			&putResp)
 		return putErr
 	}
@@ -396,6 +401,9 @@ func runPut(args []string, scope cliScope) int {
 				"stored": name, "scope": scope.String(),
 				"created": putResp.Created, "unattended": putResp.Unattended,
 			}
+			if *description != "" || *note != "" {
+				obj["annotated"] = putResp.Annotated
+			}
 			if putResp.Unattended {
 				// The prose says how long this stays readable; the JSON has to
 				// carry the same fact, or a caller reading only the JSON does
@@ -417,6 +425,15 @@ func runPut(args []string, scope cliScope) int {
 		default:
 			hintf("Stored %q in %s.", name, scope)
 		}
+		// A description that did not take is worth saying out loud. It happens
+		// when the put turned out to be an overwrite the caller was not
+		// authorized to annotate, and a caller that believes it labelled a
+		// value when it did not will not go back and check.
+		if (*description != "" || *note != "") && !putResp.Annotated && !*jsonOut {
+			fmt.Fprintf(os.Stderr, "%s the description/note was not applied: %s already existed.\n",
+				yellow("note:"), name)
+			fmt.Fprintf(os.Stderr, "      byn describe %s \"...\"   (needs authorization)\n", name)
+		}
 	}
 	return rc
 }
@@ -424,7 +441,8 @@ func runPut(args []string, scope cliScope) int {
 func runGet(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	jsonOut := fs.Bool("json", false, "emit {name,value} JSON instead of raw")
+	jsonOut := fs.Bool("json", false, "emit {name,value,descriptions} JSON instead of raw")
+	descOnly := fs.Bool("description", false, "print the description instead of the value (no credential needed)")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
@@ -439,6 +457,13 @@ func runGet(args []string, scope cliScope) int {
 		return exitErr
 	}
 	name := fs.Arg(0)
+	// --description asks for the instructions and nothing else. It needs no
+	// credential, because a description never did, and it puts the text on
+	// stdout alone so it can be captured the way a value can.
+	if *descOnly {
+		target := ipc.AnnotationTarget{Type: "entry", Name: name}
+		return showDescription(dir, scope, target, *jsonOut)
+	}
 	var resp ipc.GetResp
 	var lastErr error
 	rc := mutateWithAuthRetry(*pwStdin, *jsonOut, false, nil, func(pw []byte) error {
@@ -456,9 +481,10 @@ func runGet(args []string, scope cliScope) int {
 	}
 	if *jsonOut {
 		out, _ := json.Marshal(struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		}{Name: name, Value: string(resp.Value)})
+			Name         string                `json:"name"`
+			Value        string                `json:"value"`
+			Descriptions []ipc.DescriptionView `json:"descriptions,omitempty"`
+		}{Name: name, Value: string(resp.Value), Descriptions: resp.Descriptions})
 		fmt.Println(string(out))
 		return exitOK
 	}
@@ -477,6 +503,13 @@ func runGet(args []string, scope cliScope) int {
 		if len(resp.Value) == 0 || resp.Value[len(resp.Value)-1] != '\n' {
 			fmt.Println()
 		}
+		// What this value is for, for the person reading it — on stderr, and
+		// ONLY when stdout is a terminal. stdout's contract is byte-exact:
+		// `byn get tls-key > server.key` and `$(byn get aws-profile)` must
+		// carry the value and nothing else, and gating on stdout rather than
+		// stderr keeps that true under `2>&1` as well. A tool that wants both
+		// takes --json; one that wants only the text takes --description.
+		printGetDescriptions(resp.Descriptions)
 	}
 	return exitOK
 }
@@ -572,7 +605,21 @@ func runList(args []string, scope cliScope) int {
 			if s.Unattended {
 				mark = "  " + yellow("(unattended value)")
 			}
+			if s.Notes > 0 {
+				noteWord := "notes"
+				if s.Notes == 1 {
+					noteWord = "note"
+				}
+				mark += "  " + dim(fmt.Sprintf("(%d %s)", s.Notes, noteWord))
+			}
 			fmt.Println(s.Name + mark)
+			// What the variable is for, for whoever is reading — including an
+			// agent, which is who the field exists for. Indented under the
+			// name, and only in --long: the plain listing is an existence
+			// probe that callers pipe, and decorating it would break them.
+			if s.Description != "" {
+				fmt.Println("    " + describedBy(s) + s.Description)
+			}
 			continue
 		}
 		fmt.Println(s.Name)

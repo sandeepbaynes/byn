@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -30,7 +31,16 @@ const MaxSize = 64 * 1024
 //   - [aliases] — named entry points (alias name → command prefix)
 //   - [auth]    — per-operation auth override policy
 type File struct {
-	Scope struct {
+	// Description is what this project or directory is, in the author's words.
+	// It is shown alongside whatever the vault holds, never merged into it:
+	// this one arrives with the manifest and takes effect only from the trust
+	// record, so it carries the owner's approval in a way a description an
+	// agent wrote at creation time does not.
+	Description string `toml:"description,omitempty"`
+	// Describe maps a variable name to an instruction for whoever uses it.
+	// Same standing as Description above, one level down.
+	Describe map[string]string `toml:"describe,omitempty"`
+	Scope    struct {
 		Vault   string `toml:"vault,omitempty"`
 		Project string `toml:"project,omitempty"`
 		Env     string `toml:"env,omitempty"`
@@ -202,4 +212,60 @@ func (f File) ValidateAuth() error {
 	}
 
 	return nil
+}
+
+// MaxDescriptionLen caps one description. A manifest description is an
+// instruction, not documentation, and an unbounded string on a surface that is
+// readable without a credential is a place to put a payload.
+const MaxDescriptionLen = 4096
+
+// ValidateDescriptions checks the manifest's own description and its per-name
+// table: every key must name a variable the same way byn does, and no text may
+// be blank or oversized.
+//
+// A key that is not a valid variable name is refused rather than ignored,
+// because an instruction attached to a name that can never exist would sit in
+// the file looking effective forever.
+func (f File) ValidateDescriptions() error {
+	if len(f.Description) > MaxDescriptionLen {
+		return fmt.Errorf("description too long (%d > %d bytes)", len(f.Description), MaxDescriptionLen)
+	}
+	names := make([]string, 0, len(f.Describe))
+	for name := range f.Describe {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !validEnvVarName(name) {
+			return fmt.Errorf("[describe] %q is not a valid variable name", name)
+		}
+		text := f.Describe[name]
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("[describe] %q has no text", name)
+		}
+		if len(text) > MaxDescriptionLen {
+			return fmt.Errorf("[describe] %q is too long (%d > %d bytes)", name, len(text), MaxDescriptionLen)
+		}
+	}
+	return nil
+}
+
+// validEnvVarName mirrors the vault's entry-name rule: an uppercase
+// environment-variable name.
+func validEnvVarName(s string) bool {
+	if s == "" || len(s) > 256 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r == '_':
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -14,6 +14,7 @@ import (
 var dispatchAliases = map[string]string{
 	"cat": "get", "ls": "list", "rm": "delete", "mv": "rename",
 	"view": "edit", "ui": "web", "password": "passwd",
+	"desc": "describe", "notes": "note",
 }
 
 // dispatchNotCommands are case values that are not commands a person types as a

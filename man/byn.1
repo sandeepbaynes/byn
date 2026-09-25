@@ -168,7 +168,7 @@ and exits non\-zero. Password\-gated like a delete.
 Rename an env.
 .SS Secret CRUD
 .TP
-.B put \fINAME\fR \fR[\fB\-\-create\-only\fR] \fR[\fB\-\-password\-stdin\fR]
+.B put \fINAME\fR \fR[\fB\-\-create\-only\fR] \fR[\fB\-\-description\fR \fITEXT\fR] \fR[\fB\-\-note\fR \fITEXT\fR] \fR[\fB\-\-password\-stdin\fR]
 Store a secret. On a terminal byn asks for the value and hides what you
 type, the way a password prompt does; otherwise it is read from stdin.
 Either way the value never comes from the command line, so it never
@@ -178,21 +178,39 @@ or a pipe \(em and an empty entry is refused rather than stored, since
 at a prompt that is almost always a stray Enter.
 Overwriting an existing secret requires the master password (or an active
 session); use \fB\-\-password\-stdin\fR for scripts.
+.PP
+\fB\-\-description\fR labels the value in plaintext for whoever uses it
+next, and \fB\-\-note\fR attaches an encrypted note only you can read.
+Both apply as the value is \fIcreated\fR \(em that is free, and is how an
+unattended caller says what it just invented is for. On an overwrite they
+are applied only for a caller that authorized the write; when they are
+dropped byn says so rather than reporting success in silence.
 See
-.BR byn-put (1).
+.BR byn-put (1)
+and
+.BR byn-describe (1).
 .TP
-.B get \fINAME\fR \fR[\fB\-\-json\fR] \fR[\fB\-\-password\-stdin\fR]
+.B get \fINAME\fR \fR[\fB\-\-json\fR] \fR[\fB\-\-description\fR] \fR[\fB\-\-password\-stdin\fR]
 Print a secret's decrypted value to stdout. Alias:
 .BR cat .
 The master password (or active session) is required on every call;
 use \fB\-\-password\-stdin\fR for scripts.
+.PP
+When the value has a description, it is printed to \fBstderr\fR \(em and
+only when stdout is a terminal. stdout carries the value and nothing else
+in every other shape, so redirects and command substitution are
+unaffected, including under \fB2>&1\fR. \fB\-\-json\fR carries the
+descriptions as a field; \fB\-\-description\fR prints the text alone on
+stdout and needs no credential.
 See
 .BR byn-get (1).
 .TP
 .B list \fR[\fINAME\fR|\fIGLOB\fR]
 List secret names. Works while the vault is locked (the index is
 plaintext metadata; a value needs the vault key or the master
-password). With a
+password). With \fB\-\-long\fR each name is followed by its description
+and its note COUNT \(em never the note text, which a listing has no
+business carrying. \fB\-\-json\fR carries both as fields. With a
 .I NAME
 or
 .I GLOB
@@ -223,6 +241,64 @@ See
 .B exec \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS...\fR]\ |\ \fINAME\fR \fR[\fIARGS...\fR]
 Inject env\-vars into a child process. See COMMANDS \(-> "Run with
 env\-vars injected" below.
+.SS Commentary (descriptions and notes)
+Two kinds, for two readers. A \fBdescription\fR is public context about
+something \(em plaintext, readable while the vault is LOCKED, by anything
+that can reach byn including an agent with no credential. A \fBnote\fR is
+your own writing \(em encrypted like a value, readable only with the key.
+The rule for choosing: if you would mind an agent reading it, it is a note.
+.PP
+\fITARGET\fR is a variable name in the active scope, or \fITYPE\fB:\fIREF\fR \(em
+.BR entry: NAME,
+.BR project: NAME,
+.BR env: NAME,
+.BR vault: ,
+.BR trust: ID,
+.BR run: ID,
+.BR passkey: ID.
+A bare
+.B project:
+or
+.B env:
+means the active one.
+.TP
+.B describe \fITARGET\fR \fR[\fITEXT...\fR] [\fB\-\-clear\fR] [\fB\-\-history\fR] [\fB\-\-json\fR] [\fB\-\-password\-stdin\fR]
+Set or show what something is for. Alias:
+.BR desc .
+With \fITEXT\fR, replaces the current description (whose text stays in
+\fB\-\-history\fR); without it, prints the description.
+Changing one needs the master password or an active session, but does
+\fBnot\fR need an unlocked vault \(em a description holds no secret and
+needs no key. Setting one as a value is \fIcreated\fR is free, which is
+how an unattended caller labels what it invents; it cannot change one
+afterwards.
+\fBDo not put a secret in a description.\fR
+See
+.BR byn-describe (1).
+.TP
+.B note add \fITARGET\fR \fITEXT...\fR
+Append a private note. Encrypted; needs the key.
+.TP
+.B note ls \fITARGET\fR
+List your notes on something, newest first.
+.TP
+.B note edit \fITARGET\fR \fIID\fR \fITEXT...\fR
+Reword one note. The previous text stays in
+.BR "note history" .
+.TP
+.B note rm \fITARGET\fR \fIID\fR
+Take a note out of the listing. \fBThis is a tombstone, not an erasure:\fR
+every version of its text remains in
+.BR "note history" ,
+because a note or description changed to mislead a later reader has to
+stay traceable. The text goes when the object it describes goes.
+.TP
+.B note history \fITARGET\fR \fIID\fR
+Print every version of one annotation, oldest first, with who wrote each
+and when. Alias for the command:
+.BR notes .
+See
+.BR byn-note (1).
 .SS Run with env-vars injected
 .TP
 .B exec \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS...\fR]

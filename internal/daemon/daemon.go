@@ -58,6 +58,10 @@ type Config struct {
 	UIEnabled bool
 	UIPort    int
 
+	// AnnotationLimits caps the commentary attached to objects. Wired from
+	// config [annotations]; a zero field keeps the vault's built-in default.
+	AnnotationLimits vault.AnnotationLimits
+
 	// SessionTTL is the absolute lifetime of a minted session (from creation
 	// time). 0 disables the absolute-TTL check. Wired from config.Security.SessionTTL.
 	SessionTTL time.Duration
@@ -756,6 +760,26 @@ func (d *Daemon) Reload() ([]string, error) {
 		}
 	}
 
+	// Annotation caps, applied to every vault already open — a reload that
+	// only changed the limits must not need a restart to take effect.
+	newLimits := vault.AnnotationLimits{
+		Description:    cfg.DescriptionLimit(),
+		Note:           cfg.NoteLimit(),
+		NotesPerObject: cfg.NotesPerObjectLimit(),
+	}
+	// Both sides resolved, so a daemon started without explicit limits does
+	// not report a change on every reload.
+	if newLimits != vault.ResolveAnnotationLimits(d.cfg.AnnotationLimits) {
+		d.cfg.AnnotationLimits = newLimits
+		d.vaultsMu.Lock()
+		for _, e := range d.vaults {
+			e.store.SetAnnotationLimits(newLimits)
+		}
+		d.vaultsMu.Unlock()
+		changes = append(changes, fmt.Sprintf("annotation limits → description %d, note %d, %d per object",
+			newLimits.Description, newLimits.Note, newLimits.NotesPerObject))
+	}
+
 	// Browser portal.
 	changes = append(changes, d.reloadUI(cfg.UI.Enabled, cfg.UI.Port)...)
 	return changes, nil
@@ -840,6 +864,7 @@ func (d *Daemon) openVault(ctx context.Context, name string) (*vaultEntry, error
 	if err != nil {
 		return nil, err
 	}
+	st.SetAnnotationLimits(d.cfg.AnnotationLimits)
 	logger, err := audit.New(ctx, d.cfg.Dir, st.VaultID(), name, st)
 	if err != nil {
 		_ = st.Close()
@@ -854,6 +879,7 @@ func (d *Daemon) openVault(ctx context.Context, name string) (*vaultEntry, error
 // by vault.Init) under name. Replaces any existing entry, closing the
 // old Store first.
 func (d *Daemon) adoptVault(ctx context.Context, name string, st *vault.Store) (*vaultEntry, error) {
+	st.SetAnnotationLimits(d.cfg.AnnotationLimits)
 	d.vaultsMu.Lock()
 	defer d.vaultsMu.Unlock()
 	if old, ok := d.vaults[name]; ok {

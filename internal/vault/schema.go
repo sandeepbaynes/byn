@@ -127,8 +127,80 @@ var schemaStatements = []string{
 	execRunTablesDDL[3],
 	execRunTablesDDL[4],
 
+	annotationTablesDDL[0],
+	annotationTablesDDL[1],
+	annotationTablesDDL[2],
+	annotationTablesDDL[3],
+
 	passkeyTableDDL,
 	passkeyUnlockTableDDL,
+}
+
+// annotationTablesDDL carries the commentary attached to objects in the vault.
+//
+// Two kinds share one table because they are the same thing pointed at two
+// audiences. A DESCRIPTION is public context about an object — plaintext, so a
+// tool that has not authenticated can read it while the vault is locked and
+// learn what a variable is for. A NOTE is the owner's own writing, encrypted
+// with the same per-row scheme as a value and readable only with the key.
+// Whether text needs a key is the whole difference; everything else about them
+// is identical, and a second table would duplicate the history, the cascade and
+// the provenance columns to no end.
+//
+// The table is polymorphic (object_type, object_id) so every object in byn gets
+// both kinds without a column per table. That costs the foreign key: deletes
+// must reach annotations explicitly, which is why every delete path calls
+// DeleteAnnotationsFor and doctor sweeps for orphans. object_id must be a
+// surrogate id that is never reused — SQLite's AUTOINCREMENT guarantees that,
+// and a natural key (a .byn path, a project name) does not, so re-creating
+// something must never inherit the dead one's notes.
+//
+// Every version is kept. An annotation that can be changed is one that can be
+// abused, and the question afterwards is "who told it to do that" — so a change
+// writes the new text to annotation_versions with its author, and a delete is a
+// tombstone (deleted_at set, history intact) rather than an erasure. Only
+// deleting the described OBJECT removes the history with it.
+var annotationTablesDDL = []string{
+	`CREATE TABLE IF NOT EXISTS annotations (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		uid         BLOB    NOT NULL UNIQUE,
+		object_type TEXT    NOT NULL CHECK (object_type IN
+			('vault','project','env','entry','trust','run','passkey')),
+		object_id   TEXT    NOT NULL,
+		kind        TEXT    NOT NULL CHECK (kind IN ('description','note')),
+		body        TEXT,
+		body_enc    BLOB,
+		aad_version INTEGER NOT NULL DEFAULT 1,
+		key_domain  TEXT    NOT NULL CHECK (key_domain IN ('none','env','authored','vault')),
+		author      TEXT    NOT NULL CHECK (author IN ('owner','agent')),
+		author_comm TEXT,
+		created_at  INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL,
+		deleted_at  INTEGER,
+		CHECK ((kind = 'description' AND body_enc IS NULL)
+		    OR (kind = 'note'        AND body     IS NULL))
+	) STRICT`,
+
+	`CREATE UNIQUE INDEX IF NOT EXISTS annotations_one_description
+		ON annotations(object_type, object_id)
+		WHERE kind = 'description' AND deleted_at IS NULL`,
+
+	`CREATE INDEX IF NOT EXISTS annotations_by_object
+		ON annotations(object_type, object_id, kind, created_at DESC)`,
+
+	`CREATE TABLE IF NOT EXISTS annotation_versions (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		annotation_id INTEGER NOT NULL REFERENCES annotations(id) ON DELETE CASCADE,
+		version_no    INTEGER NOT NULL,
+		body          TEXT,
+		body_enc      BLOB,
+		aad_version   INTEGER NOT NULL DEFAULT 1,
+		op            TEXT NOT NULL CHECK (op IN ('create','edit','delete')),
+		author        TEXT NOT NULL CHECK (author IN ('owner','agent')),
+		author_comm   TEXT,
+		created_at    INTEGER NOT NULL,
+		UNIQUE(annotation_id, version_no)
+	) STRICT`,
 }
 
 // execRunTablesDDL records which values a run of `byn exec` was given.
@@ -440,6 +512,19 @@ var schemaMigrations = map[int]func(context.Context, *sql.DB) error{
 	5: migrateV5toV6,
 	6: migrateV6toV7,
 	7: migrateV7toV8,
+	8: migrateV8toV9,
+}
+
+// migrateV8toV9 adds the annotation tables. Purely additive: it creates empty
+// tables, so an existing vault simply gains the ability to carry descriptions
+// and notes from here on.
+func migrateV8toV9(ctx context.Context, db *sql.DB) error {
+	for _, stmt := range annotationTablesDDL {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("add annotation tables: %w", err)
+		}
+	}
+	return nil
 }
 
 // migrateV5toV6 adds the exec-run tables. Purely additive: it creates empty

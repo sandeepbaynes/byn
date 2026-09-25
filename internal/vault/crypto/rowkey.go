@@ -129,3 +129,26 @@ func DeriveRowKeyFromAuthoredKey(authoredKey, rowContext []byte) ([]byte, error)
 	}
 	return expand(authoredKey, rowFromAuthoredInfoPrefix, rowContext)
 }
+
+// annotationKeyInfoPrefix domain-separates an annotation's key from every other
+// subkey. The base it expands from is already domain-separated — K_env for an
+// object inside a scope, K_auth for one an unattended caller created, the vault
+// key for the rest — and the context repeats which of those was used, so the
+// same annotation can never derive the same key down two different paths.
+const annotationKeyInfoPrefix = "byn/annotation-key/v1\x00"
+
+// DeriveAnnotationKey derives the key that seals one note, from the base key
+// covering the object it is attached to.
+//
+// context is the annotation's stable identity — vaultID‖objectType‖objectID‖
+// kind‖domain‖uid — and is used as the AEAD AAD as well, so a ciphertext cannot
+// be moved to another object, another kind, or another annotation on the same
+// object without failing to open.
+//
+// Returns ErrBadKey if baseKey is not VaultKeySize bytes.
+func DeriveAnnotationKey(baseKey, context []byte) ([]byte, error) {
+	if len(baseKey) != VaultKeySize {
+		return nil, ErrBadKey
+	}
+	return expand(baseKey, annotationKeyInfoPrefix, context)
+}

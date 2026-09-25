@@ -1,6 +1,7 @@
 package bynfile
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,4 +174,61 @@ func TestValidateAuthDuplicateKeyParseError(t *testing.T) {
 	// go-toml v2 should reject duplicate keys at parse time
 	_, err := Parse([]byte("[auth]\nget = \"always\"\nget = \"none\"\n"))
 	require.Error(t, err)
+}
+
+func TestParse_Descriptions(t *testing.T) {
+	f, err := Parse([]byte(`
+description = "the nightly worker"
+
+[describe]
+DATABASE_URL = "read replica"
+API_KEY = "read-only"
+
+[scope]
+project = "web"
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.Description != "the nightly worker" {
+		t.Fatalf("description = %q", f.Description)
+	}
+	if f.Describe["DATABASE_URL"] != "read replica" || f.Describe["API_KEY"] != "read-only" {
+		t.Fatalf("describe = %+v", f.Describe)
+	}
+	if err := f.ValidateDescriptions(); err != nil {
+		t.Fatalf("ValidateDescriptions: %v", err)
+	}
+}
+
+func TestValidateDescriptions_Rejects(t *testing.T) {
+	long := strings.Repeat("x", MaxDescriptionLen+1)
+	for _, tc := range []struct {
+		name string
+		file File
+		want string
+	}{
+		{"oversized description", File{Description: long}, "description too long"},
+		{"lowercase key", File{Describe: map[string]string{"api_key": "x"}}, "not a valid variable name"},
+		{"leading digit", File{Describe: map[string]string{"1KEY": "x"}}, "not a valid variable name"},
+		{"empty key", File{Describe: map[string]string{"": "x"}}, "not a valid variable name"},
+		{"blank text", File{Describe: map[string]string{"API_KEY": "  "}}, "has no text"},
+		{"oversized text", File{Describe: map[string]string{"API_KEY": long}}, "is too long"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.file.ValidateDescriptions()
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateDescriptions_AcceptsAbsent(t *testing.T) {
+	if err := (File{}).ValidateDescriptions(); err != nil {
+		t.Fatalf("a manifest with no descriptions must validate: %v", err)
+	}
 }

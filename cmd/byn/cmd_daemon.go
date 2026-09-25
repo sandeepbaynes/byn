@@ -19,6 +19,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/daemon"
 	"github.com/sandeepbaynes/byn/internal/ipc"
+	"github.com/sandeepbaynes/byn/internal/vault"
 )
 
 // daemonConfigFor builds the daemon.Config for a data dir, folding in the
@@ -36,6 +37,11 @@ func daemonConfigFor(dir string) (daemon.Config, error) {
 		IdleTimeout: time.Duration(cfg.Daemon.IdleTimeout),
 		UIEnabled:   cfg.UI.Enabled,
 		UIPort:      cfg.UI.Port,
+		AnnotationLimits: vault.AnnotationLimits{
+			Description:    cfg.DescriptionLimit(),
+			Note:           cfg.NoteLimit(),
+			NotesPerObject: cfg.NotesPerObjectLimit(),
+		},
 		SessionTTL:  time.Duration(cfg.Security.SessionTTL),
 		SessionIdle: time.Duration(cfg.Security.SessionIdle),
 		Privsep:     cfg.PrivsepEnabled(),

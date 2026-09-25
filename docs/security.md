@@ -138,7 +138,7 @@ the workaround is an OS feature or an operating habit, not a byn promise.
 
 | Weakness (plain language) | The realistic risk | What YOU do about it |
 |---|---|---|
-| **A stolen `vault.db` + `wrapped.key` is offline-crackable. The master password is the only barrier.** The vault is *portable by design* (no machine binding) — anyone who copies the files can guess passwords on their own hardware, forever, with no rate limit and no lockout (the failed-unlock backoff only protects the *live daemon*, not an offline copy). Argon2id (default 64 MiB / time=2) slows each guess but is not a high wall against GPUs/ASICs. | A weak or reused master password = full vault compromise once the file is copied. The Argon2 cost buys time, not immunity. | **Use a long, high-entropy passphrase** (a 5+ word diceware phrase, not a word + numbers). **Enable host full-disk encryption** (FileVault / LUKS) so the file can't be copied off a powered-down or stolen machine in the first place. A generated break-glass recovery key that would replace the memorable password as the portability root is **planned (PH-1) but not yet available** — do not rely on it today. |
+| **A stolen `vault.db` + `wrapped.key` is offline-crackable. The master password is the only barrier.** The vault is *portable by design* (no machine binding) — anyone who copies the files can guess passwords on their own hardware, forever, with no rate limit and no lockout (the failed-unlock backoff only protects the *live daemon*, not an offline copy). Argon2id (default 64 MiB / time=2) slows each guess but is not a high wall against GPUs/ASICs. | A weak or reused master password = full vault compromise once the file is copied. The Argon2 cost buys time, not immunity. | **Use a long, high-entropy passphrase** (a 5+ word diceware phrase, not a word + numbers). **Enable host full-disk encryption** (FileVault / LUKS) so the file can't be copied off a powered-down or stolen machine in the first place. A generated break-glass recovery key that would replace the memorable password as the portability root is **planned (PH-1) but not yet available** — do not rely on it today. Forgot it? See [Forgot your master password](troubleshooting.md#forgot-your-master-password). |
 | **Entry, project, and env *names*, kinds, timestamps, version counts, and file metadata are plaintext at rest.** Only secret *values* are encrypted. A copy of `vault.db` is a readable map of *what* you keep and *when* you touched it, even though every value stays sealed. (This is a deliberate owner trade-off: names are listable while locked, and investigators see what was accessed without unlocking.) | Names can themselves leak intent or secrets (e.g. `STRIPE_LIVE_KEY_acct_1234`, customer names, internal hostnames). | **Don't encode anything sensitive in names** — keep the secret in the value, give it a boring name. Rely on **host full-disk encryption** to protect the metadata of a file at rest. |
 | **Same-UID processes (coding agents, IDE extensions, scripts) running as you can reach everything you can.** A process under your UID can: invoke `byn` itself; connect to the daemon socket directly (the peer-UID check passes — it's *you*); `ptrace` the unlocked daemon and read the vault key from memory; read injected env from a child it can see via `/proc/<pid>/environ` (mitigated for trusted-`.byn` pinned exec when `[security] privsep` is enabled — see below); and read a session file under the byn data dir (`sessions/`). This is **the core threat byn exists for, and the one it cannot fully close in user space.** | Any untrusted code you run as your primary user can, in principle, reach your unlocked secrets. byn makes this *smaller and louder* (every value access is audited, there's no plaintext `.env` to grab, sensitive ops demand fresh proof-of-presence) but does not make it *zero*. | **Run untrusted agents / tooling under a SEPARATE OS user, a sandbox, or a VM — never your primary UID.** This is the only complete fix. byn now ships **opt-in privilege separation** (`[security] privsep`, set up via `byn setup`): a trusted-`.byn` pinned `byn exec` runs its child as the `_byn-exec` service user, so a **non-root** same-(owner)-UID process can no longer read that child's injected env via `/proc/<pid>/environ` (root / `CAP_SYS_PTRACE` still can — the documented ceiling). It does **not** isolate the daemon itself or ad-hoc exec, and is off by default this release. Beyond that: **keep the vault locked when not in use** (`byn lock`), and **keep `idle_timeout` short** so a stolen session can't draw on an unlocked vault for long. |
 | **A stolen session token from a *different* terminal is rejected — but the bound is TTY+UID, not per-process.** A CLI session token is bound to the controlling-TTY device number *and* UID (server-resolved at unlock), so copying a session file into a different terminal context fails. **Honest limit:** a malicious same-UID process can acquire your *current* controlling terminal via `TIOCSCTTY` and then present a request that looks correctly TTY-bound; and portal sessions are **UID-only** (no TTY bind at all). | The TTY bind stops casual token reuse across windows, not a determined same-UID attacker on your actual terminal. | Same fix as the row above: **isolate untrusted code to another UID.** Don't treat the session bind as a same-UID boundary — it isn't one. |
@@ -187,6 +187,30 @@ them before you rely on byn for anything that matters.
   not your password. This applies **only** to the vars your trusted `.byn` files
   allowlist (a `env = "*"` `.byn` opts its whole scope in); everything else
   stays password-protected at rest.
+- **Descriptions are metadata, not secrets.** A description (`byn describe`,
+  and the `description` / `[describe]` keys in a `.byn`) is stored
+  **unencrypted** and is readable **while the vault is locked**, by anything
+  that can reach byn — including an unauthenticated agent. That is what makes
+  it useful: it is how a tool learns what a value is for without holding a
+  credential. **Do not put a secret in one.** Notes (`byn note`) are the
+  opposite: encrypted with the same per-row scheme as a value, and readable
+  only with the key. If you would mind an agent reading it, it is a note.
+- **A description is a channel between whoever wrote it and whoever reads it
+  next.** An unattended caller may set one *as it creates* a value — that is
+  deliberate, so an agent can say what it just invented is for — and it can
+  never change one afterwards. So a later reader can be shown text byn did not
+  get from you. Four things bound it: creation-time writes only, the author
+  (`owner` / `agent`, with the process name) shown on every surface, inert
+  rendering everywhere, and a 4 KiB cap. A description declared by a **trusted
+  `.byn`** is the stronger layer — it takes effect only from the trust record,
+  so planting one requires you to re-approve the file in `byn trust diff`.
+  Treat a description as information about a value, never as an instruction.
+- **Annotation history is kept, including for deleted notes.** Removing a note
+  or a description takes it out of the listing and keeps every version of its
+  text, readable with `byn note history` / `byn describe --history`. This is
+  deliberate: text changed to mislead a later reader has to stay traceable. It
+  means a private note you delete is retained until the object it describes is
+  deleted — there is no per-note purge.
 - **Physical and memory attacks are out of scope** — cold-boot, swap, and
   memory dumps can recover an unlocked key or injected secrets; byn does not
   defend against them.

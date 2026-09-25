@@ -40,6 +40,16 @@ const DefaultSessionTTL = 12 * time.Hour
 // the daemon stores and serves it but does not act on it.
 const DefaultRevealHideAfter = 15 * time.Second
 
+// Annotation size limits. Overridable via the [annotations] section.
+const (
+	// DefaultMaxDescription is the largest description byn stores (bytes).
+	DefaultMaxDescription = 4096
+	// DefaultMaxNote is the largest single note (bytes).
+	DefaultMaxNote = 65536
+	// DefaultMaxNotesPerObject caps notes on one object.
+	DefaultMaxNotesPerObject = 200
+)
+
 // Duration is a time.Duration that decodes from a TOML duration string
 // such as "15m" or "0s" (Go's time.ParseDuration syntax).
 type Duration time.Duration
@@ -62,9 +72,27 @@ func (d Duration) MarshalText() ([]byte, error) {
 // Config is the parsed ~/.byn/config. Use Default() for the baseline and
 // Load() to read from disk; the Go zero value is not a valid config.
 type Config struct {
-	UI       UI       `toml:"ui"`
-	Daemon   Daemon   `toml:"daemon"`
-	Security Security `toml:"security"`
+	UI          UI          `toml:"ui"`
+	Daemon      Daemon      `toml:"daemon"`
+	Security    Security    `toml:"security"`
+	Annotations Annotations `toml:"annotations"`
+}
+
+// Annotations bounds the commentary attached to objects in a vault.
+//
+// The caps matter more than they look. A description is stored in plaintext
+// and is readable without a credential, so an unbounded one is somewhere to
+// park a payload that every tool reading the vault will then be handed. These
+// are the limits at which byn refuses to store one.
+type Annotations struct {
+	// MaxDescription is the largest description byn will store, in bytes.
+	// A description longer than a paragraph is not an instruction any more.
+	MaxDescription int `toml:"max_description"`
+	// MaxNote is the largest single note, in bytes. Notes are encrypted and
+	// are the owner's own writing, so this is generous.
+	MaxNote int `toml:"max_note"`
+	// MaxNotesPerObject caps how many notes one object may carry.
+	MaxNotesPerObject int `toml:"max_notes_per_object"`
 }
 
 // UI configures the local browser admin portal (Phase 2). Port is read
@@ -120,6 +148,11 @@ func Default() Config {
 		Security: Security{
 			SessionTTL:  Duration(DefaultSessionTTL),
 			SessionIdle: 0, // 0 ⇒ inherit [daemon] idle_timeout at runtime
+		},
+		Annotations: Annotations{
+			MaxDescription:    DefaultMaxDescription,
+			MaxNote:           DefaultMaxNote,
+			MaxNotesPerObject: DefaultMaxNotesPerObject,
 		},
 	}
 }
@@ -189,5 +222,47 @@ func (c Config) validate() error {
 		return fmt.Errorf("ui.reveal_hide_after %v must not be negative (use \"0s\" to disable auto-hide)",
 			time.Duration(c.UI.RevealHideAfter))
 	}
+	// Zero means "use the built-in default", matching [security] session_idle.
+	// Only a negative limit is an error: it cannot mean anything, and reading
+	// it as "unlimited" would turn a typo into an unbounded plaintext column.
+	if c.Annotations.MaxDescription < 0 {
+		return fmt.Errorf("annotations.max_description %d must not be negative",
+			c.Annotations.MaxDescription)
+	}
+	if c.Annotations.MaxNote < 0 {
+		return fmt.Errorf("annotations.max_note %d must not be negative", c.Annotations.MaxNote)
+	}
+	if c.Annotations.MaxNotesPerObject < 0 {
+		return fmt.Errorf("annotations.max_notes_per_object %d must not be negative",
+			c.Annotations.MaxNotesPerObject)
+	}
 	return nil
+}
+
+// DescriptionLimit, NoteLimit and NotesPerObjectLimit resolve the configured
+// annotation caps, treating 0 (the key absent, or a config marshalled from a
+// partially-filled struct) as "use the built-in default". Consumers call these
+// rather than reading the fields, so an unset value can never be read as a cap
+// of zero — which would refuse every annotation.
+func (c Config) DescriptionLimit() int {
+	if c.Annotations.MaxDescription <= 0 {
+		return DefaultMaxDescription
+	}
+	return c.Annotations.MaxDescription
+}
+
+// NoteLimit is the largest single note byn will store, in bytes.
+func (c Config) NoteLimit() int {
+	if c.Annotations.MaxNote <= 0 {
+		return DefaultMaxNote
+	}
+	return c.Annotations.MaxNote
+}
+
+// NotesPerObjectLimit is how many notes one object may carry.
+func (c Config) NotesPerObjectLimit() int {
+	if c.Annotations.MaxNotesPerObject <= 0 {
+		return DefaultMaxNotesPerObject
+	}
+	return c.Annotations.MaxNotesPerObject
 }

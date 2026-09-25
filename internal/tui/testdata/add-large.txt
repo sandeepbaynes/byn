@@ -1,35 +1,35 @@
-BYN                        default / billing / staging                                             unlocked API_KEY                         
-▼ default                                                                                                   ────────────────────────────────
-  ▼ billing                ENV-VARS (3)                                                           + add (a)  Created  2026-06-02 08:41      
-    ○ default              ────────────────────────────────────────────────────────────────────────────────  Updated  2026-06-02 08:41      
-    ● staging                 ↓ inherited   ⤴ overrides default   = same as default   ✦ new in env           Source   scope                 
-  ▶ default                  ⤴ API_KEY                                         ●●●●●●●●●●●●●●●●  2026-06-02  Default  overridden here       
-▶ work                       = DB_URL                                          ●●●●●●●●●●●●●●●●  2026-06-02                                 
-+ new vault                  ✦ STRIPE_SK                                       ●●●●●●●●●●●●●●●●  2026-06-02                                 
-                           ▼ (new entry)                                                                     R reveal   y copy   e edit     
-                              ╭──────────────────────────────────────────────────────────────────────────╮                                  
-                              │NAME:  API_KEY█                                                           │                                  
-                              ╰──────────────────────────────────────────────────────────────────────────╯                                  
-                              ✘ name already exists in default/billing/staging                                                              
-                              ╭──────────────────────────────────────────────────────────────────────────╮                                  
-                              │VALUE:                                                                    │                                  
-                              ╰──────────────────────────────────────────────────────────────────────────╯                                  
-                              Tab next field   :w save   :q cancel                                                                          
-                                                                                                                                            
-                           FILES (0)                                                              + add (a)                                 
-                           ────────────────────────────────────────────────────────────────────────────────                                 
-                             (none — Phase 5)                                                                                               
-                                                                                                                                            
-                           RECENT AUDIT                                                       view all (ga)                                 
-                           ────────────────────────────────────────────────────────────────────────────────                                 
-                             #0     11:41  get          DB_URL            ok                                                                
-                             #0     11:41  put          STRIPE_SK         ok                                                                
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                      test                                                                                                                  
-INSERT  API_KEY  0/4096 B                                                                                     ESC normal  :w save  :q cancel
+BYN                        default / billing / staging                                             unlocked API_KEY                                        
+▼ default                                                                                                   ────────────────────────────────               
+  ▼ billing                ENV-VARS (3)                                                           + add (a)  Created  2026-06-02 08:41                     
+    ○ default              ────────────────────────────────────────────────────────────────────────────────  Updated  2026-06-02 08:41                     
+    ● staging                 ↓ inherited   ⤴ overrides default   = same as default   ✦ new in env           Source   scope                                
+  ▶ default                  ⤴ API_KEY                                         ●●●●●●●●●●●●●●●●  2026-06-02  Default  overridden here                      
+▶ work                       = DB_URL                                          ●●●●●●●●●●●●●●●●  2026-06-02                                                
++ new vault                  ✦ STRIPE_SK                                       ●●●●●●●●●●●●●●●●  2026-06-02                                                
+                           ▼ (new entry)                                                                     R reveal   y copy   e edit   :describe   :note
+                              ╭──────────────────────────────────────────────────────────────────────────╮                                                 
+                              │NAME:  API_KEY█                                                           │                                                 
+                              ╰──────────────────────────────────────────────────────────────────────────╯                                                 
+                              ✘ name already exists in default/billing/staging                                                                             
+                              ╭──────────────────────────────────────────────────────────────────────────╮                                                 
+                              │VALUE:                                                                    │                                                 
+                              ╰──────────────────────────────────────────────────────────────────────────╯                                                 
+                              Tab next field   :w save   :q cancel                                                                                         
+                                                                                                                                                           
+                           FILES (0)                                                              + add (a)                                                
+                           ────────────────────────────────────────────────────────────────────────────────                                                
+                             (none — Phase 5)                                                                                                              
+                                                                                                                                                           
+                           RECENT AUDIT                                                       view all (ga)                                                
+                           ────────────────────────────────────────────────────────────────────────────────                                                
+                             #0     11:41  get          DB_URL            ok                                                                               
+                             #0     11:41  put          STRIPE_SK         ok                                                                               
+                                                                                                                                                           
+                                                                                                                                                           
+                                                                                                                                                           
+                                                                                                                                                           
+                                                                                                                                                           
+                                                                                                                                                           
+                                                                                                                                                           
+                      test                                                                                                                                 
+INSERT  API_KEY  0/4096 B                                                                                     ESC normal  :w save  :q cancel               

@@ -148,6 +148,10 @@ func (d *Daemon) putTrustRecord(ctx context.Context, st *vault.Store, vaultName,
 		return "", "", false, trustGrantPolicy{},
 			fmt.Errorf("invalid [aliases] in .byn: %w", verr)
 	}
+	if verr := parsed.ValidateDescriptions(); verr != nil {
+		return "", "", false, trustGrantPolicy{},
+			fmt.Errorf("invalid [describe] in .byn: %w", verr)
+	}
 
 	canon = trust.Canonicalize(path)
 	hash = trust.Hash(body)
