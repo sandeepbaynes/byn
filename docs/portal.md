@@ -24,7 +24,11 @@ The portal binds loopback only (`127.0.0.1`), never the network.
 Values are masked by default. **Single-click** a value to reveal it (it re-masks
 after `[ui] reveal_hide_after`, default 15s); double-click to edit. **Reveal all**
 (toolbar) or **`Shift+R`** reveals/hides every value at once, authorizing once.
-**import** / **export** read and write `.env` files.
+**import** / **export** read and write `.env` files, carrying each value's
+description and notes as the comment block above it: `#` lines for the
+description, one `##` line per note. This is the same format `byn import` and
+`byn export` use (see the [CLI reference](cli-reference.md)). An export
+includes your notes in plaintext, so treat the file like any `.env`.
 
 For a non-default env (one that inherits `default`), **reset to default** removes
 every override and added var in that env — leaving it inheriting `default`
@@ -302,8 +306,14 @@ mode). Durations use Go syntax (`"15s"`, `"1m30s"`, `"0s"`).
 
 ## Descriptions and notes
 
-Every entry row carries a **describe · notes** action, and its description shows
-under its name.
+Every entry row carries a **describe · notes** action, and its description has
+its own column after the value. Long descriptions are clipped to two lines;
+hover for the whole text, or double-click the cell to edit it in place (Enter
+saves, Esc cancels). Editing a value, or adding a new one, shows a description
+box beside it, and the description is saved with the value if you changed it. Drag the right
+edge of the **KEY** or **VALUE** header to resize those columns (the description
+takes the rest); the widths are remembered in this browser, and double-clicking
+a header edge resets it.
 
 - A **description** is plaintext and is readable while the vault is locked, by
   anything that can reach byn — including an agent with no credential. The

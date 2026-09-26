@@ -80,7 +80,28 @@ Where they show up: `byn ls --long` (description under each name, note count,
 and a badge when someone other than you wrote the text), `byn get` (on stderr,
 and only when stdout is a terminal — stdout stays byte-exact, so redirects and
 `$(…)` are unaffected), `byn get --description` and `--json` for scripts, the
-portal (inline editor plus a notes panel), and the TUI (`:describe`, `:note`).
+portal (a description column in the entry table, whose columns now resize, a
+description box beside the value when you edit or add one, and a notes panel),
+and the TUI (`:describe`, `:note`).
+
+**They travel in `.env` files.** `byn export` and the portal's export write
+each value's description and notes as the comment block above it, and `byn
+import` and the portal's import read them back:
+
+```sh
+# The staging Stripe key — never point it at production.
+## account 1234
+## rotated 2026-09
+API_KEY=sk_test_...
+```
+
+`#` lines are the description (several make one); each `##` line is a note.
+After the first note, later `#` lines in the block are ignored, and a blank
+line ends the block. A commented-out assignment such as `# OLD_KEY=...` is never
+taken as a description, since a description is plaintext and an old secret
+often sits in exactly that kind of line. Re-importing a file doesn't duplicate
+anything. **An export now contains your notes in plaintext**, next to the
+values it always contained.
 
 Two things to know before relying on it. A description is a channel from
 whoever wrote it to whoever reads it next, so byn records and always shows the

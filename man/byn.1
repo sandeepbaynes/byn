@@ -467,6 +467,25 @@ with \\n / \\t / \\" / \\\\ escapes, single\-quoted literals,
 inline \fB# comment\fR stripping, and blank/comment lines. YAML/JSON
 scalars (string, bool, number, null) are coerced to strings; anything
 deeper than a flat map is rejected.
+.IP
+In a \fB.env\fR file, the comment block directly above a variable
+annotates it. \fB#\fR lines are its description (several lines make one
+description); each \fB##\fR line (or \fB###\fR) is a separate note. Once a
+note appears, later \fB#\fR lines in that block are ignored. A blank line
+ends the block, so a heading separated from the next variable by one
+annotates nothing. A commented\-out assignment (\fB# OLD_KEY=...\fR) is
+never taken as a description \(em descriptions are plaintext that agents
+can read \(em and it ends the block. The description is written only when
+it differs from the one stored; a note the value already carries is not
+added again, so importing the same file twice changes nothing.
+\fB\-\-dry\-run\fR says which entries carry a description or notes, never
+their text. YAML and JSON carry no annotations.
+.IP
+.nf
+# The staging Stripe key \(em never point it at production.
+## account 1234, rotated 2026\-09
+API_KEY=sk_test_...
+.fi
 .TP
 .B import \-\-unattended \fR[\fB\-\-all\fR] \fR[\fB\-\-dry\-run\fR] \fR[\fB\-\-password\-stdin\fR] \fR[\fINAME\fR...]
 Put values stored \fIunattended\fR (by an agent, while the vault was
@@ -489,6 +508,12 @@ Default format is \fBenv\fR. \fB\-\-output\fR writes to disk with
 mode 0600; otherwise output goes to stdout. Keys are sorted
 alphabetically. Dotenv values containing whitespace, "#", "=", or "
 are wrapped in double quotes with standard escapes.
+In the \fBenv\fR format each value's description and notes are written
+as the comment block above it, in the form \fBimport\fR reads: \fB#\fR
+lines for the description (one per line of it), one \fB##\fR line per
+note. An inherited value carries default's. A description declared by a
+trusted \fB.byn\fR is not exported; it lives in the trust record. YAML and
+JSON carry no annotations.
 With an active session, each entry is authorized by the session token —
 zero password prompts. Without a session, \fB\-\-password\-stdin\fR is the
 non\-interactive path (reads the password once from stdin); the CLI
@@ -497,8 +522,9 @@ for the rest. Running \fBbyn unlock\fR first avoids the per\-entry
 Argon2id overhead on large exports.
 .IP
 .B Caveat:
-this materialises plaintext. Treat the destination as you would a
-\fB.env\fR file \- never commit, never share.
+this materialises plaintext \(em the values, and in the \fBenv\fR format
+your notes, which are encrypted in the vault. Treat the destination as you
+would a \fB.env\fR file \- never commit, never share.
 .SS Shell completion
 .TP
 .B completion bash|zsh|fish

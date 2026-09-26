@@ -174,6 +174,7 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		}}})
 	case ipc.OpAnnotationList:
 		_ = ipc.DecodeBody(ipc.BodyReq, env, &lastAnnotationList)
+		lastAnnotationListSession = env.Session
 		return mk(ipc.AnnotationListResp{
 			Descriptions: []ipc.AnnotationView{{ID: 1, Kind: "description", Body: "staging Stripe key", Author: "owner"}},
 			Notes:        []ipc.AnnotationView{{ID: 2, Kind: "note", Body: "acct 1234", Author: "owner"}},

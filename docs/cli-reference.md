@@ -478,8 +478,30 @@ Bulk-load key→value entries.
 - Nested data is rejected with `key %q: nested or unsupported type
   %T — only flat string/scalar maps are accepted`.
 - `--dry-run` prints `Would import N entries into vault/project/env:`
-  + key + byte length (never values). With `--replace`, also shows
+  + key + byte length (never values), and which entries carry a
+  description or notes (never their text). With `--replace`, also shows
   deletions.
+- **Descriptions and notes (`.env` only).** The comment block directly
+  above a variable annotates it:
+
+  ```sh
+  # The staging Stripe key — never point it at production.
+  # Rotated by the payments team.
+  ## account 1234
+  ## rotated 2026-09
+  API_KEY=sk_test_...
+  ```
+
+  `#` lines are the description, and several of them make one
+  description. Each `##` line (or `###`) is its own note. Once a note
+  appears, later `#` lines in the block are ignored. A blank line ends
+  the block, so a heading set off from the next variable annotates
+  nothing. A commented-out assignment (`# OLD_KEY=...`) is never a
+  description, because descriptions are plaintext that agents can read;
+  it ends the block. A description is written only if it differs from
+  the stored one, and a note the value already has is not added again,
+  so re-importing a file changes nothing. YAML and JSON carry no
+  annotations.
 
 Three explicit modes (mutually exclusive):
 
@@ -555,6 +577,11 @@ Dump active scope as a flat key→value document.
 - Keys sorted alphabetically.
 - Dotenv quoting: values containing `\s\n#="` get wrapped in
   `"..."` with `\n`/`\\`/`\"` escapes.
+- In the `env` format, each value's description and notes are written as
+  the comment block above it, in the form `byn import` reads (`#` lines
+  for the description, one `##` line per note). An inherited value
+  carries default's. A description declared by a trusted `.byn` is not
+  exported; it lives in the trust record.
 - `--password-stdin`: read the master password once from stdin and
   reuse it for every get (non-interactive path). Without the flag, the
   CLI prompts once interactively on the first `auth_required` and reuses
@@ -562,8 +589,10 @@ Dump active scope as a flat key→value document.
   Each sessionless get re-verifies via Argon2id — run `byn unlock` first
   for large exports.
 
-**Caveat:** this materializes plaintext. Treat the output like a
-`.env` file — never commit, never share. Same warning as `byn get`.
+**Caveat:** this materializes plaintext: the values and, in the `env`
+format, your notes, which are encrypted in the vault. Treat the output
+like a `.env` file — never commit, never share. Same warning as
+`byn get`.
 
 ---
 

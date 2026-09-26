@@ -121,20 +121,28 @@ func runImport(args []string, scope cliScope) int {
 
 	// --replace: enumerate the existing entries in scope so we can
 	// preview them in --dry-run, confirm before wiping, and report
-	// counts. Non-replace runs skip this list call.
+	// counts. The same listing tells an annotated import which
+	// descriptions are already in place and which values already carry
+	// notes, so re-importing a file does not stack duplicates. Other runs
+	// skip this list call.
 	var toWipe []ipc.SecretMeta
-	if *replace {
+	existing := map[string]ipc.SecretMeta{}
+	if *replace || anyAnnotated(entries) {
 		var listResp ipc.ListResp
 		if err := client.Call(ipc.OpList, ipc.ListReq{Scope: scopeIPC}, &listResp); err != nil {
 			return handleCallError(err)
 		}
-		// Only delete entries that actually live in this exact scope
-		// (Source "scope"). Inherited entries from default come back
-		// in List but belong to a different env; deleting them would
-		// be surprising.
+		// Only entries that actually live in this exact scope (Source
+		// "scope") count. Inherited entries from default come back in List
+		// but belong to a different env; deleting them would be surprising,
+		// and their annotations are default's, not this env's.
 		for _, e := range listResp.Secrets {
 			if e.Source == "scope" {
-				toWipe = append(toWipe, e)
+				if *replace {
+					toWipe = append(toWipe, e)
+				} else {
+					existing[e.Name] = e
+				}
 			}
 		}
 	}
@@ -149,7 +157,7 @@ func runImport(args []string, scope cliScope) int {
 			fmt.Printf("  add/overwrite (%d entries from input):\n", len(entries))
 		}
 		for _, e := range entries {
-			fmt.Printf("    + %s = (%d bytes)\n", e.k, len(e.v))
+			fmt.Printf("    + %s = (%d bytes)%s\n", e.k, len(e.v), annotationSummary(e.ann))
 		}
 		return exitOK
 	}
@@ -230,7 +238,12 @@ func runImport(args []string, scope cliScope) int {
 	// Put loop: add/overwrite entries from the import file.
 	// Reuses sharedPw if already acquired by the wipe loop above; otherwise
 	// acquires it on the first auth_required encountered here.
+	//
+	// A description rides on the put itself, so it is written with the same
+	// authorization as the value. Notes follow as their own calls once the
+	// value exists.
 	created, updated, skipped := 0, 0, 0
+	described, noted := 0, 0
 	for _, e := range entries {
 		req := ipc.PutReq{
 			Scope:      scopeIPC,
@@ -238,6 +251,9 @@ func runImport(args []string, scope cliScope) int {
 			Value:      []byte(e.v),
 			CreateOnly: *skipExisting,
 			Password:   sharedPw,
+		}
+		if e.ann.desc != "" && e.ann.desc != vaultDescription(existing[e.k]) {
+			req.Description = e.ann.desc
 		}
 		err := client.Call(ipc.OpPut, req, &ipc.PutResp{})
 		if err != nil && isAuthRequiredErr(err) {
@@ -262,6 +278,18 @@ func runImport(args []string, scope cliScope) int {
 		} else {
 			updated++
 		}
+		if req.Description != "" {
+			described++
+		}
+		if len(e.ann.notes) > 0 {
+			n, nerr := importNotes(client, scopeIPC, e.k, e.ann.notes,
+				existing[e.k].Notes > 0, &sharedPw, acquireSharedPw)
+			noted += n
+			if nerr != nil {
+				fmt.Fprintf(os.Stderr, "Error adding notes to %q: %v\n", e.k, nerr)
+				return exitErr
+			}
+		}
 	}
 	if *replace {
 		hintf("Imported %d entries into %s (replaced %d existing).",
@@ -270,10 +298,107 @@ func runImport(args []string, scope cliScope) int {
 		hintf("Imported %d entries into %s (created/updated=%d, skipped=%d).",
 			created+updated, scope.String(), created+updated, skipped)
 	}
+	if described > 0 || noted > 0 {
+		hintf("Set %d description(s) and added %d note(s) from the file's comments.", described, noted)
+	}
 	return exitOK
 }
 
-type kv struct{ k, v string }
+// vaultDescription is the description stored in the vault for m. Text a
+// trusted .byn declares is listed in the same field but lives in the trust
+// record, so an import matching it still has to write the vault's own copy.
+func vaultDescription(m ipc.SecretMeta) string {
+	if m.DescriptionSource == ".byn" {
+		return ""
+	}
+	return m.Description
+}
+
+// anyAnnotated reports whether any entry carries a description or notes.
+func anyAnnotated(entries []kv) bool {
+	for _, e := range entries {
+		if !e.ann.empty() {
+			return true
+		}
+	}
+	return false
+}
+
+// annotationSummary is the dry-run suffix naming what the comments carry.
+// It never prints their text: a note is private even in a preview.
+func annotationSummary(a entryAnnotations) string {
+	var parts []string
+	if a.desc != "" {
+		parts = append(parts, "description")
+	}
+	if n := len(a.notes); n == 1 {
+		parts = append(parts, "1 note")
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("%d notes", n))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " + " + strings.Join(parts, ", ")
+}
+
+// importNotes adds each note to name that it does not already carry. When the
+// variable had notes before this import, they are read first so the same
+// file imported twice leaves one copy of each. Both calls are auth-gated like
+// the put: pw is the shared password slot, filled by acquire on the first
+// auth_required and reused after.
+func importNotes(client *ipc.Client, scope ipc.Scope, name string, notes []string,
+	hadNotes bool, pw *[]byte, acquire func() error) (int, error) {
+
+	target := ipc.AnnotationTarget{Type: "entry", Name: name}
+	call := func(op ipc.Op, build func(p []byte) any, resp any) error {
+		err := client.Call(op, build(*pw), resp)
+		if err != nil && isAuthRequiredErr(err) {
+			if aerr := acquire(); aerr != nil {
+				return aerr
+			}
+			err = client.Call(op, build(*pw), resp)
+		}
+		return err
+	}
+
+	have := map[string]bool{}
+	if hadNotes {
+		var lr ipc.AnnotationListResp
+		err := call(ipc.OpAnnotationList, func(p []byte) any {
+			return ipc.AnnotationListReq{Scope: scope, Target: target, Kind: "note", Password: p}
+		}, &lr)
+		if err != nil {
+			return 0, err
+		}
+		for _, n := range lr.Notes {
+			have[n.Body] = true
+		}
+	}
+
+	added := 0
+	for _, n := range notes {
+		if have[n] {
+			continue
+		}
+		err := call(ipc.OpAnnotationAdd, func(p []byte) any {
+			return ipc.AnnotationAddReq{Scope: scope, Target: target, Text: n, Password: p}
+		}, &ipc.AnnotationAddResp{})
+		if err != nil {
+			return added, err
+		}
+		have[n] = true
+		added++
+	}
+	return added, nil
+}
+
+// kv is one variable from an import file. ann is only ever set for a .env
+// file, the one format with comments to carry it (see dotenv_annotations.go).
+type kv struct {
+	k, v string
+	ann  entryAnnotations
+}
 
 func pickFormat(forced, ext string, body []byte) importFormat {
 	switch forced {
@@ -318,10 +443,16 @@ func parseDotenv(body []byte) ([]kv, error) {
 	sc := bufio.NewScanner(strings.NewReader(string(body)))
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	lineNo := 0
+	var block commentBlock
 	for sc.Scan() {
 		lineNo++
 		raw := strings.TrimSpace(sc.Text())
-		if raw == "" || strings.HasPrefix(raw, "#") {
+		if raw == "" {
+			block.reset()
+			continue
+		}
+		if strings.HasPrefix(raw, "#") {
+			block.add(raw)
 			continue
 		}
 		if strings.HasPrefix(raw, "export ") {
@@ -358,7 +489,7 @@ func parseDotenv(body []byte) ([]kv, error) {
 				v = strings.ReplaceAll(v, `\\`, `\`)
 			}
 		}
-		out = append(out, kv{k: k, v: v})
+		out = append(out, kv{k: k, v: v, ann: block.take()})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err

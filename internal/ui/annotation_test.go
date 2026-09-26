@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -19,6 +20,8 @@ var (
 	lastAnnotationEdit    ipc.AnnotationEditReq
 	lastAnnotationRemove  ipc.AnnotationRemoveReq
 	lastAnnotationHistory ipc.AnnotationHistoryReq
+
+	lastAnnotationListSession []byte
 )
 
 func portalPost(t *testing.T, path, body string) map[string]any {
@@ -68,6 +71,40 @@ func TestPortalAnnotations_Get(t *testing.T) {
 	}
 	if lastAnnotationList.Scope.Project != "web" || lastAnnotationList.Scope.Env != "prod" {
 		t.Fatalf("scope not relayed: %+v", lastAnnotationList.Scope)
+	}
+}
+
+// Notes are gated like a value read, so the listing must carry the portal's
+// session for the vault. Without it an unlocked vault's notes came back
+// withheld and the panel said "unlock this vault to read them".
+func TestPortalAnnotations_GetCarriesVaultSession(t *testing.T) {
+	lastAnnotationListSession = nil
+	srv := New(&fakeDisp{}, Config{Port: 0})
+	srv.storeVaultSession("work", []byte("tok-work"))
+	ts := httptest.NewServer(srv.mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/annotations?type=entry&name=API_KEY&vault=work&project=web&env=prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if string(lastAnnotationListSession) != "tok-work" {
+		t.Fatalf("session relayed = %q, want the portal's token for vault work", lastAnnotationListSession)
+	}
+
+	// Another vault's session is never lent to this one.
+	lastAnnotationListSession = nil
+	resp, err = http.Get(ts.URL + "/api/annotations?type=entry&name=API_KEY&vault=other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if len(lastAnnotationListSession) != 0 {
+		t.Fatalf("vault other got session %q", lastAnnotationListSession)
 	}
 }
 

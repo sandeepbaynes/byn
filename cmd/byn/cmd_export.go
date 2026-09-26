@@ -64,6 +64,12 @@ func runExport(args []string, scope cliScope) int {
 		}
 	}()
 
+	// A .env export carries each value's description and notes as the comment
+	// block above it (see dotenv_annotations.go); YAML and JSON have nowhere
+	// to put them.
+	withAnnotations := *format == "env" || *format == "dotenv"
+	annotations := map[string]entryAnnotations{}
+
 	entries := make(map[string]string, len(lresp.Secrets))
 	keys := make([]string, 0, len(lresp.Secrets))
 	for _, meta := range lresp.Secrets {
@@ -88,6 +94,43 @@ func runExport(args []string, scope cliScope) int {
 		entries[meta.Name] = string(got.Value)
 		keys = append(keys, meta.Name)
 		zero(got.Value)
+
+		if !withAnnotations {
+			continue
+		}
+		a := entryAnnotations{desc: vaultDescription(meta)}
+		if meta.Notes > 0 {
+			// An inherited row's notes are default's: ask default for them.
+			nscope := scopeIPC
+			if meta.Source == "default" {
+				nscope.Env = "default"
+			}
+			lreq := ipc.AnnotationListReq{Scope: nscope,
+				Target: ipc.AnnotationTarget{Type: "entry", Name: meta.Name}, Kind: "note", Password: pw}
+			var nresp ipc.AnnotationListResp
+			err := client.Call(ipc.OpAnnotationList, lreq, &nresp)
+			if err != nil && isAuthRequiredErr(err) && !pwAcquired {
+				leadIn := yellow("Authorization required.") + dim(" Enter the master password to authorize.")
+				var perr error
+				pw, wipePw, perr = authorizingPasswordWithLeadIn(*pwStdin, leadIn)
+				if perr != nil {
+					fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), perr)
+					return exitErr
+				}
+				pwAcquired = true
+				lreq.Password = pw
+				err = client.Call(ipc.OpAnnotationList, lreq, &nresp)
+			}
+			if err != nil {
+				return handleCallError(err)
+			}
+			for _, n := range nresp.Notes {
+				a.notes = append(a.notes, n.Body)
+			}
+		}
+		if !a.empty() {
+			annotations[meta.Name] = a
+		}
 	}
 
 	// Zero the password buffer once all entries are fetched.
@@ -101,7 +144,7 @@ func runExport(args []string, scope cliScope) int {
 	var rendered string
 	switch *format {
 	case "env", "dotenv":
-		rendered = renderDotenv(keys, entries)
+		rendered = renderDotenvAnnotated(keys, entries, annotations)
 	case "yaml", "yml":
 		bs, err := yaml.Marshal(entries)
 		if err != nil {
@@ -134,8 +177,22 @@ func runExport(args []string, scope cliScope) int {
 }
 
 func renderDotenv(keys []string, m map[string]string) string {
+	return renderDotenvAnnotated(keys, m, nil)
+}
+
+// renderDotenvAnnotated writes KEY=value lines, each preceded by its comment
+// block when ann has one. An annotated entry is set off by a blank line
+// before it, so its comments cannot run into the previous variable's line
+// and read as belonging to the wrong value.
+func renderDotenvAnnotated(keys []string, m map[string]string, ann map[string]entryAnnotations) string {
 	var b strings.Builder
-	for _, k := range keys {
+	for i, k := range keys {
+		if a, ok := ann[k]; ok && !a.empty() {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			renderAnnotationComments(&b, a)
+		}
 		v := m[k]
 		needsQuote := strings.ContainsAny(v, " \t\n\"#=")
 		fmt.Fprintf(&b, "%s=", k)

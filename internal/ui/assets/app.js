@@ -2584,17 +2584,32 @@ async function exportEnv() {
   if (vaultLocked(s.vault)) { toast("unlock the vault to export values", true); return; }
   if (!state.entries.length) { toast("nothing to export", true); return; }
   const lines = [];
+  const withheld = [];
+  let n = 0;
   for (const e of state.entries) {
     try {
       // Portal export: presence tokens are single-use, so each entry here re-triggers
       // the passkey/password step-up via apiWithAuth. Batch authorization (one step-up
       // covers all entries) lands with session tokens in NU-3.
       const r = await apiWithAuth("POST", "/api/entry/reveal", { scope: curScope(), name: e.name }, s.vault);
-      lines.push(dotenvLine(e.name, r.value));
+      // Each value's description and notes ride above it as comments (see
+      // parseDotenv). An inherited value's notes are default's.
+      const ann = { desc: vaultDescription(e), notes: [] };
+      if (e.notes > 0) {
+        const d = await api("GET", "/api/annotations?" + scopeQuery(e.source === "default" ? "default" : undefined) +
+          "&type=entry&name=" + enc(e.name));
+        if (d.notes_withheld) withheld.push(e.name);
+        else ann.notes = (d.notes || []).map((x) => x.body);
+      }
+      const comments = annotationComments(ann);
+      if (comments.length && n > 0) lines.push("");
+      lines.push(...comments, dotenvLine(e.name, r.value));
+      n++;
     } catch (err) { toast(`export failed at ${e.name}: ${err.message}`, true); return; }
   }
   downloadText(`${s.vault}.${s.project}.${s.env}.env`, lines.join("\n") + "\n");
-  toast(`exported ${lines.length} vars`);
+  toast(`exported ${n} vars`);
+  if (withheld.length) toast(`notes left out (not authorized to read them): ${withheld.join(", ")}`, true);
 }
 function dotenvLine(k, v) {
   v = v == null ? "" : String(v);
@@ -2687,21 +2702,111 @@ function openImportDialog(vault, project, env) {
 }
 async function applyImport(pairs) {
   if (!pairs.length) { toast("no KEY=value lines found", true); return; }
-  let ok = 0;
-  for (const [k, v] of pairs) {
-    try { await apiWithAuth("POST", "/api/entries", { scope: curScope(), name: k, value: v }, state.scope.vault); ok++; }
-    catch (err) { toast(`import failed at ${k}: ${err.message}`, true); break; }
+  // What this env already holds, so re-importing a file does not rewrite an
+  // unchanged description or stack a second copy of every note.
+  const existing = new Map((state.entries || []).filter((x) => x.source !== "default").map((x) => [x.name, x]));
+  const scope = curScope();
+  let ok = 0, described = 0, noted = 0;
+  const withheld = [];
+  for (const [k, v, ann] of pairs) {
+    try {
+      await apiWithAuth("POST", "/api/entries", { scope, name: k, value: v }, state.scope.vault);
+      ok++;
+      if (!ann) continue;
+      const target = { type: "entry", name: k };
+      if (ann.desc && ann.desc !== vaultDescription(existing.get(k))) {
+        await apiWithAuth("POST", "/api/annotation/describe", { scope, target, text: ann.desc }, state.scope.vault);
+        described++;
+      }
+      if (!ann.notes.length) continue;
+      let have = new Set();
+      const prior = existing.get(k);
+      if (prior && prior.notes > 0) {
+        const d = await api("GET", "/api/annotations?" + scopeQuery() + "&type=entry&name=" + enc(k));
+        // Unreadable existing notes cannot be compared, so adding would risk
+        // duplicates; say so instead.
+        if (d.notes_withheld) { withheld.push(k); continue; }
+        have = new Set((d.notes || []).map((x) => x.body));
+      }
+      for (const note of ann.notes) {
+        if (have.has(note)) continue;
+        await apiWithAuth("POST", "/api/annotation/note", { scope, target, text: note }, state.scope.vault);
+        have.add(note); noted++;
+      }
+    } catch (err) { toast(`import failed at ${k}: ${err.message}`, true); break; }
   }
-  toast(`imported ${ok}/${pairs.length} vars`);
+  let msg = `imported ${ok}/${pairs.length} vars`;
+  if (described || noted) msg += ` · ${described} description(s), ${noted} note(s)`;
+  toast(msg);
+  if (withheld.length) toast(`notes not imported (existing notes unreadable): ${withheld.join(", ")}`, true);
   await loadEntries();
 }
-// parseDotenv parses KEY=value lines: ignores blanks/#comments, strips an
-// optional `export ` prefix, and unquotes single/double-quoted values.
+
+// vaultDescription is the description stored in the vault for entry x. Text a
+// trusted .byn declares shows in the same field but lives in the trust record,
+// so it is neither exported nor counted as already stored.
+function vaultDescription(x) {
+  if (!x || x.description_source === ".byn") return "";
+  return x.description || "";
+}
+
+// ---- .env comments ↔ descriptions and notes ------------------------------
+//
+// Mirrors cmd/byn/dotenv_annotations.go — keep the two in step. A comment
+// block directly above a variable belongs to it: `#` lines are its
+// description, `##` (or more) lines are notes, one per line. After the first
+// note, later `#` lines in the block are dropped. A blank line ends the block.
+// A commented-out assignment (`# OLD_KEY=sk_live_...`) is never a description
+// — descriptions are plaintext any tool can read — and it ends the block.
+const COMMENTED_ASSIGNMENT = /^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=/;
+
+function newCommentBlock() { return { desc: [], notes: [], inNotes: false }; }
+function commentBlockAdd(b, line) {
+  const rest = line.replace(/^#+/, "");
+  const hashes = line.length - rest.length;
+  const body = rest.startsWith(" ") ? rest.slice(1) : rest;
+  if (hashes >= 2) {
+    b.inNotes = true;
+    const t = body.trim();
+    if (t) b.notes.push(t);
+    return;
+  }
+  if (b.inNotes) return;
+  if (COMMENTED_ASSIGNMENT.test(body)) { Object.assign(b, newCommentBlock()); return; }
+  b.desc.push(body.replace(/[ \t]+$/, ""));
+}
+function commentBlockTake(b) {
+  const out = { desc: b.desc.join("\n").replace(/^\n+|\n+$/g, ""), notes: b.notes.slice() };
+  Object.assign(b, newCommentBlock());
+  return out;
+}
+// annotationComments renders ann as comment lines: a description keeps its
+// line breaks, one `#` line each; a note is one `##` line.
+function annotationComments(ann) {
+  const out = [];
+  if (ann.desc) {
+    for (let ln of ann.desc.replace(/\r\n/g, "\n").split("\n")) {
+      ln = ln.replace(/[ \t]+$/, "");
+      out.push(ln ? "# " + ln : "#");
+    }
+  }
+  for (const n of ann.notes || []) {
+    const t = String(n).split(/\s+/).filter(Boolean).join(" ");
+    if (t) out.push("## " + t);
+  }
+  return out;
+}
+
+// parseDotenv parses KEY=value lines into [key, value, annotations]: skips
+// blanks, strips an optional `export ` prefix, unquotes single/double-quoted
+// values, and collects the comment block above each line (see above).
 function parseDotenv(text) {
   const out = [];
+  const block = newCommentBlock();
   for (let line of text.split("\n")) {
     line = line.trim();
-    if (!line || line.startsWith("#")) continue;
+    if (!line) { Object.assign(block, newCommentBlock()); continue; }
+    if (line.startsWith("#")) { commentBlockAdd(block, line); continue; }
     if (line.startsWith("export ")) line = line.slice(7).trim();
     const eq = line.indexOf("=");
     if (eq <= 0) continue;
@@ -2712,7 +2817,7 @@ function parseDotenv(text) {
       v = v.slice(1, -1);
       if (dq) v = v.replace(/\\n/g, "\n").replace(/\\(["\\$`])/g, "$1");
     }
-    out.push([k, v]);
+    out.push([k, v, commentBlockTake(block)]);
   }
   return out;
 }
@@ -2787,9 +2892,13 @@ function renderEntries() {
     box.appendChild(bar);
   }
   const tbl = el("div", "tbl");
+  applyColWidths(tbl);
   const head = el("div", "tbl-head");
-  head.appendChild(el("span", "", "")); head.appendChild(el("span", "", "KEY"));
-  head.appendChild(el("span", "", "VALUE")); head.appendChild(el("span", "", ""));
+  head.appendChild(el("span", "", ""));
+  head.appendChild(resizableHead(tbl, "KEY", "name"));
+  head.appendChild(resizableHead(tbl, "VALUE", "val"));
+  head.appendChild(el("span", "th", "DESCRIPTION"));
+  head.appendChild(el("span", "", ""));
   tbl.appendChild(head);
 
   let rows = state.entries;
@@ -2844,6 +2953,10 @@ function entryRow(s, i) {
   val.onclick = () => { if (ct) return; ct = setTimeout(() => { ct = null; toggleReveal(s, val); }, 200); };
   val.ondblclick = (e) => { e.stopPropagation(); if (ct) { clearTimeout(ct); ct = null; } editValue(s, val); };
   row.appendChild(val);
+  // What this variable is for. Plaintext, readable while the vault is locked —
+  // it is here for whoever has to use the value, including an agent, and
+  // hiding it behind a click would defeat that.
+  row.appendChild(descriptionCell(s));
   const acts = el("span", "acts");
   acts.appendChild(iconBtn("eye", "reveal", "reveal value", () => reveal(s, val)));
   acts.appendChild(iconBtn("copy", "copy", "copy value", () => copyValue(s)));
@@ -2871,40 +2984,98 @@ function entryRow(s, i) {
     s.notes ? s.notes + " note" + (s.notes === 1 ? "" : "s") + " · describe" : "describe · notes",
     () => openAnnotations(s)));
   row.appendChild(acts);
-
-  // What this variable is for, under its name. Plaintext, readable while the
-  // vault is locked — it is here for whoever has to use the value, including
-  // an agent, and hiding it behind a click would defeat that.
-  const desc = descriptionLine(s);
-  if (desc) {
-    const wrap = el("div", "trow-desc");
-    wrap.appendChild(desc);
-    const both = el("div", "trow-wrap");
-    both.appendChild(row);
-    both.appendChild(wrap);
-    return both;
-  }
   return row;
 }
 
-// descriptionLine renders an entry's description with the provenance a reader
-// needs. The owner's own words in the vault carry no badge; text an agent
-// wrote, or text a trusted .byn declares, says so — a description is an
+// descriptionCell renders an entry's description column with the provenance a
+// reader needs. The owner's own words in the vault carry no badge; text an
+// agent wrote, or text a trusted .byn declares, says so — a description is an
 // instruction someone may act on, and who wrote it is half the information.
-function descriptionLine(s) {
-  if (!s.description) return null;
-  const line = el("span", "desc-text");
+// Long text is clamped to two lines; the tooltip carries all of it.
+function descriptionCell(s) {
+  const cell = el("span", "cell desc");
+  cell.ondblclick = (e) => { e.stopPropagation(); editDescription(s, cell); };
+  if (!s.description) {
+    cell.title = "double-click to describe";
+    return cell;
+  }
+  cell.title = s.description + "\n\ndouble-click to edit";
   if (s.description_source === ".byn") {
     const b = el("span", "desc-badge byn", ".byn");
     b.title = "declared by a trusted .byn — approved when you trusted the file";
-    line.appendChild(b);
+    cell.appendChild(b);
   } else if (s.description_author === "agent") {
     const b = el("span", "desc-badge agent", s.description_comm ? "agent: " + s.description_comm : "agent");
     b.title = "written by a process, not by you";
-    line.appendChild(b);
+    cell.appendChild(b);
   }
-  line.appendChild(document.createTextNode(s.description));
-  return line;
+  cell.appendChild(document.createTextNode(s.description));
+  return cell;
+}
+
+// ---- resizable entry-table columns ------------------------------------------
+
+// The key and value columns can be dragged wider or narrower from their right
+// edge in the header; the description column takes whatever is left. Widths
+// are a per-browser convenience, so they live in localStorage — and every
+// access is guarded, because storage can be blocked and the table must still
+// render. Double-clicking a grip puts that column back to its default.
+const COL_WIDTHS_KEY = "byn.entryColWidths";
+const COL_MIN = { name: 90, val: 90 };
+const DESC_MIN = 120;
+
+function loadColWidths() {
+  try { return JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || "{}") || {}; }
+  catch (_) { return {}; }
+}
+function saveColWidths(w) {
+  try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(w)); } catch (_) { /* not persisted */ }
+}
+function applyColWidths(tbl) {
+  const w = loadColWidths();
+  for (const k of Object.keys(COL_MIN)) {
+    if (typeof w[k] === "number" && w[k] >= COL_MIN[k]) tbl.style.setProperty("--col-" + k, w[k] + "px");
+  }
+}
+
+// resizableHead returns a header cell for column key with a drag grip on its
+// right edge. Dragging never squeezes the description column below DESC_MIN.
+function resizableHead(tbl, label, key) {
+  const th = el("span", "th", label);
+  const grip = el("span", "col-grip");
+  grip.title = "drag to resize · double-click to reset";
+  grip.onpointerdown = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX;
+    const startW = th.getBoundingClientRect().width;
+    const descHead = tbl.querySelector(".tbl-head .th:nth-child(4)");
+    const slack = descHead ? Math.max(0, descHead.getBoundingClientRect().width - DESC_MIN) : 0;
+    const maxW = startW + slack;
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add("col-resizing");
+    let width = startW;
+    const move = (ev) => {
+      width = Math.round(Math.min(maxW, Math.max(COL_MIN[key], startW + ev.clientX - startX)));
+      tbl.style.setProperty("--col-" + key, width + "px");
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      document.body.classList.remove("col-resizing");
+      const w = loadColWidths(); w[key] = width; saveColWidths(w);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  };
+  grip.ondblclick = (e) => {
+    e.stopPropagation();
+    tbl.style.removeProperty("--col-" + key);
+    const w = loadColWidths(); delete w[key]; saveColWidths(w);
+  };
+  th.appendChild(grip);
+  return th;
 }
 
 function maskDots() { return el("span", "mask", "•••••••••"); }
@@ -3124,24 +3295,85 @@ function editName(s, cell) {
 }
 async function editValue(s, cell) {
   if (vaultLocked(state.scope.vault)) { toast("unlock the vault to edit values", true); return; }
+  const row = cell.parentElement;
   let current = "";
   try { current = await revealValue(s); } catch (e) { toast(e.message, true); return; }
   const ta = el("textarea", "inline-input mono"); ta.value = current; ta.rows = 1;
-  cell.replaceWith(ta); ta.focus(); ta.select(); autoGrow(ta);
+  cell.replaceWith(ta);
+  // The description sits beside the value it explains, so both are edited in
+  // one go. It is written only if it changed.
+  const descCell = row && row.querySelector(".cell.desc");
+  const desc = descCell ? mountDescInput(s, descCell) : null;
+  ta.focus(); ta.select(); autoGrow(ta);
+  let finished = false;
   const done = (commit) => async () => {
+    if (finished) return;
+    finished = true;
     if (!commit) { renderEntries(); return; }
     try {
       await apiWithAuth("POST", "/api/entries", { scope: curScope(), name: s.name, value: ta.value }, state.scope.vault);
+      // The put wrote this env's own row (an override, for an inherited
+      // value), so that is the row the description belongs to.
+      if (desc && desc.changed()) await saveDescription(s.name, desc.text(), curScope());
       toast((s.source === "default" ? "overrode " : "updated ") + s.name + (s.source === "default" ? " in " + state.scope.env : ""));
       await loadEntries();
     } catch (e) { toast(e.message, true); renderEntries(); }
   };
-  ta.onkeydown = (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); done(true)(); }
+  const keys = (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey || e.target !== ta)) { e.preventDefault(); done(true)(); }
     else if (e.key === "Escape") { e.preventDefault(); done(false)(); }
-    setTimeout(() => autoGrow(ta), 0);
+    if (e.target === ta) setTimeout(() => autoGrow(ta), 0);
   };
-  ta.onblur = done(false);
+  ta.onkeydown = keys;
+  // Leaving the row cancels, as before; moving between the value and the
+  // description does not.
+  const blur = () => setTimeout(() => { if (!row || !row.contains(document.activeElement)) done(false)(); }, 0);
+  ta.onblur = blur;
+  if (desc) { desc.inp.onkeydown = keys; desc.inp.onblur = blur; }
+}
+
+// mountDescInput puts a description editor in place of cell. It holds the
+// vault's own description: text a trusted .byn declares lives in the trust
+// record, and is changed by editing the .byn, not here.
+function mountDescInput(s, cell) {
+  const initial = vaultDescription(s);
+  const inp = el("input", "inline-input desc-input");
+  inp.value = initial;
+  inp.placeholder = "description — plaintext, agents can read it";
+  inp.title = "what this is for. Plaintext and readable while locked — never put a secret here.";
+  cell.replaceWith(inp);
+  return { inp, changed: () => inp.value.trim() !== initial.trim(), text: () => inp.value.trim() };
+}
+
+async function saveDescription(name, text, scope) {
+  await apiWithAuth("POST", "/api/annotation/describe",
+    { scope, target: { type: "entry", name }, text, clear: text === "" }, state.scope.vault);
+}
+
+// editDescription edits just the description, in place. It works while the
+// vault is locked (a description is plaintext; writing one is still
+// authorized). An inherited row's description is default's, so that is the
+// one it edits.
+function editDescription(s, cell) {
+  const d = mountDescInput(s, cell);
+  d.inp.focus(); d.inp.select();
+  const scope = s.source === "default" ? Object.assign(curScope(), { env: "default" }) : curScope();
+  let finished = false;
+  const done = async (commit) => {
+    if (finished) return;
+    finished = true;
+    if (!commit || !d.changed()) { renderEntries(); return; }
+    try {
+      await saveDescription(s.name, d.text(), scope);
+      toast((d.text() ? "described " : "description cleared: ") + s.name + (scope.env === "default" && state.scope.env !== "default" ? " (in default)" : ""));
+      await loadEntries();
+    } catch (e) { toast(e.message, true); renderEntries(); }
+  };
+  d.inp.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); done(true); }
+    else if (e.key === "Escape") { e.preventDefault(); done(false); }
+  };
+  d.inp.onblur = () => done(false);
 }
 function addNewRow() {
   if (state.view !== "entries") { toast("pick an env first", true); return; }
@@ -3156,13 +3388,25 @@ function addNewRow() {
   const nameIn = el("input", "inline-input"); nameIn.placeholder = "env var name";
   const valIn = el("textarea", "inline-input mono"); valIn.placeholder = "value (⌘↵ to save · multi-line ok)"; valIn.rows = 1;
   row.appendChild(nameIn); row.appendChild(valIn);
+  const descIn = el("input", "inline-input desc-input");
+  descIn.placeholder = "description (optional) — plaintext, agents can read it";
+  row.appendChild(descIn);
   const acts = el("span", "acts");
   const save = el("button", "act save", "save"); const cancel = el("button", "act", "cancel");
   acts.appendChild(save); acts.appendChild(cancel); row.appendChild(acts);
   tbl.appendChild(row); nameIn.focus();
   const commit = async () => {
     const name = nameIn.value.trim(); if (!name) { nameIn.focus(); return; }
-    try { await api("POST", "/api/entries", { scope: curScope(), name, value: valIn.value, create_only: true }); toast("added " + name); await loadEntries(); }
+    try {
+      await api("POST", "/api/entries", { scope: curScope(), name, value: valIn.value, create_only: true });
+      const d = descIn.value.trim();
+      if (d) {
+        // The value is stored either way; a description that fails to save
+        // is reported, not allowed to look like a failed add.
+        try { await saveDescription(name, d, curScope()); } catch (e) { toast("added " + name + ", but the description failed: " + e.message, true); await loadEntries(); return; }
+      }
+      toast("added " + name); await loadEntries();
+    }
     catch (e) { toast(e.message, true); nameIn.focus(); nameIn.select(); }
   };
   const cancelFn = () => renderEntries();
@@ -3173,6 +3417,7 @@ function addNewRow() {
     else if (e.key === "Escape") cancelFn();
     setTimeout(() => autoGrow(valIn), 0);
   };
+  descIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } if (e.key === "Escape") cancelFn(); };
 }
 // generateByn opens the .byn studio at /studio (create mode).
 function generateByn() {
@@ -5929,22 +6174,40 @@ async function openAnnotations(s) {
 // notes" and "not for you" are different answers, and a person looking at an
 // empty panel would reasonably conclude their notes were gone.
 function renderNotesPanel(box, s, target, data) {
+  box.appendChild(buildNotesPanel(s, target, data));
+}
+
+// buildNotesPanel returns the panel. Adding or removing a note re-reads the
+// notes and swaps in a fresh panel, so the list always shows what the vault
+// now holds rather than what it held when the dialog opened.
+function buildNotesPanel(s, target, data) {
   const panel = el("div", "notes-panel");
   const head = el("div", "notes-head");
   head.appendChild(el("span", "notes-title", "notes"));
   head.appendChild(el("span", "notes-sub", "encrypted · only you can read these"));
   panel.appendChild(head);
 
+  const refresh = async () => {
+    try {
+      const d = await api("GET", "/api/annotations?" + scopeQuery() + "&type=entry&name=" + enc(s.name));
+      panel.replaceWith(buildNotesPanel(s, target, d));
+    } catch (e) { toast(e.message, true); }
+    loadEntries(); // the row's note count
+  };
+
   if (data.notes_withheld) {
+    // Locked is the usual reason, but not the only one: an unlocked vault
+    // whose portal session has lapsed also withholds them.
     const w = el("div", "notes-withheld",
-      (data.note_count || 0) + " note(s) here. Unlock this vault to read them.");
+      (data.note_count || 0) + " note(s) here. " + (vaultLocked(state.scope.vault)
+        ? "Unlock this vault to read them."
+        : "This page is not authorized to read them — lock and unlock the vault here, then reopen."));
     panel.appendChild(w);
-    box.appendChild(panel);
-    return;
+    return panel;
   }
 
   const list = el("div", "notes-list");
-  (data.notes || []).forEach((n) => list.appendChild(noteRow(s, target, n)));
+  (data.notes || []).forEach((n) => list.appendChild(noteRow(s, target, n, refresh)));
   if (!(data.notes || []).length) list.appendChild(el("div", "muted", "no notes yet"));
   panel.appendChild(list);
 
@@ -5954,24 +6217,27 @@ function renderNotesPanel(box, s, target, data) {
   ta.rows = 2;
   ta.oninput = () => autoGrow(ta);
   const addBtn = el("button", "btn", "add note");
+  addBtn.type = "button";
   addBtn.onclick = async () => {
     const text = ta.value.trim();
     if (!text) return;
     try {
       await apiWithAuth("POST", "/api/annotation/note",
         { scope: curScope(), target, text }, state.scope.vault);
-      ta.value = "";
       toast("noted");
-      await loadEntries();
+      await refresh();
     } catch (e) { toast(e.message, true); }
   };
   addWrap.appendChild(ta);
   addWrap.appendChild(addBtn);
   panel.appendChild(addWrap);
-  box.appendChild(panel);
+  return panel;
 }
 
-function noteRow(s, target, n) {
+// noteRow is one note with a remove action. Removal is confirmed inside the
+// row: the panel already lives in the page's one dialog, and opening a second
+// confirm there would replace it.
+function noteRow(s, target, n, refresh) {
   const row = el("div", "note-row");
   const meta = el("div", "note-meta");
   meta.appendChild(el("span", "note-when", (n.created_at || "").slice(0, 16).replace("T", " ")));
@@ -5982,25 +6248,28 @@ function noteRow(s, target, n) {
   row.appendChild(el("div", "note-body", n.body));
 
   const acts = el("span", "acts");
-  acts.appendChild(iconBtn("trash", "danger", "remove this note (its text stays in history)", async () => {
+  acts.appendChild(iconBtn("trash", "danger", "remove this note (its text stays in history)", () => {
     // Say what removal actually does before doing it. A note is the one thing
     // in byn a person writes expecting privacy, and "removed" here does not
     // mean erased.
-    const ok = await openDialog({
-      title: "remove note",
-      danger: true,
-      okText: "remove",
-      message: "This takes the note out of the list. Its text stays in the annotation history, " +
-        "because a note or description changed to mislead a later reader has to stay traceable. " +
-        "It goes for good when " + s.name + " is deleted.",
-    });
-    if (!ok) return;
-    try {
-      await apiWithAuth("POST", "/api/annotation/note",
-        { scope: curScope(), target, id: n.id, remove: true }, state.scope.vault);
-      toast("note removed");
-      await loadEntries();
-    } catch (e) { toast(e.message, true); }
+    const confirm = el("div", "note-confirm");
+    confirm.appendChild(el("span", "note-confirm-msg",
+      "Remove from the list? Its text stays in the annotation history, so a note changed " +
+      "to mislead stays traceable. It goes for good when " + s.name + " is deleted."));
+    const yes = el("button", "btn btn-danger sm", "remove"); yes.type = "button";
+    const no = el("button", "btn btn-ghost sm", "keep"); no.type = "button";
+    no.onclick = () => { confirm.remove(); acts.hidden = false; };
+    yes.onclick = async () => {
+      try {
+        await apiWithAuth("POST", "/api/annotation/note",
+          { scope: curScope(), target, id: n.id, remove: true }, state.scope.vault);
+        toast("note removed");
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    };
+    confirm.appendChild(yes); confirm.appendChild(no);
+    acts.hidden = true;
+    row.appendChild(confirm);
   }));
   row.appendChild(acts);
   return row;

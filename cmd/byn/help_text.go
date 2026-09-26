@@ -2098,6 +2098,19 @@ DESCRIPTION
        Nested objects are rejected. Use --dry-run to preview key
        names and value sizes without writing.
 
+       In a .env file, the comment block directly above a variable
+       annotates it:
+         # lines          its description; several lines are one
+                          description.
+         ## lines         notes, one per line (### works too).
+       Once a note appears, later # lines in that block are ignored.
+       A blank line ends the block, so a heading set off by one
+       annotates nothing. A commented-out assignment (# OLD_KEY=...)
+       is never a description - descriptions are plaintext agents can
+       read - and it ends the block. A description is written only if
+       it differs from the stored one, and a note the value already
+       carries is not added again. YAML and JSON carry no annotations.
+
        Three modes (mutually exclusive):
          merge (default)   add new keys; overwrite matching ones;
                            leave other keys in the scope untouched.
@@ -2122,7 +2135,9 @@ OPTIONS
 
        --dry-run
            Print what would be imported (including deletions when
-           combined with --replace); nothing is written.
+           combined with --replace, and which entries carry a
+           description or notes - never their text); nothing is
+           written.
 
        --skip-existing
            Add-only mode. Existing keys count as "skipped".
@@ -2152,6 +2167,11 @@ OPTIONS
 EXAMPLES
        Pipe a dotenv file (merge — today's default):
            $ cat .env.local | byn --project myapp import
+
+       A .env whose comments describe and annotate a value:
+           # The staging Stripe key - never point it at production.
+           ## account 1234, rotated 2026-09
+           API_KEY=sk_test_...
 
        Dry-run preview from YAML:
            $ byn import --dry-run config.yaml
@@ -2198,6 +2218,13 @@ DESCRIPTION
        Argon2id, so large exports without a session are slow; run
        "byn unlock" first (or use --password-stdin) to avoid this.
 
+       In the env format, each value's description and notes are
+       written as the comment block above it - # lines for the
+       description, one ## line per note - which byn import reads
+       back. An inherited value carries default's. A description a
+       trusted .byn declares is not exported. YAML and JSON carry no
+       annotations.
+
 OPTIONS
        --format env|yaml|json
            Output format (default: env).
@@ -2211,8 +2238,10 @@ OPTIONS
            prompting at the terminal. Useful for scripts and CI.
 
 CAVEATS
-       This command MATERIALIZES PLAINTEXT. Treat the destination as
-       you would a .env file: never commit, never share.
+       This command MATERIALIZES PLAINTEXT - the values and, in the
+       env format, your notes, which are encrypted in the vault. Treat
+       the destination as you would a .env file: never commit, never
+       share.
 
 SEE ALSO
        byn-import(1)

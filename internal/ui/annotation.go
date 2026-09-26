@@ -27,7 +27,10 @@ func (b annotationTargetBody) toIPC() ipc.AnnotationTarget {
 // GET /api/annotations?type=&name=&id=&kind=&vault=&project=&env=
 //
 // Reads are a GET because they change nothing. Descriptions come back for any
-// caller; notes need the session the daemon checks.
+// caller; notes need the session the daemon checks — so this goes through
+// runInVault like reveal does. Without the portal's session for the vault the
+// daemon sees an unauthenticated caller and withholds the notes, which the
+// page then reports as a locked vault even though the vault is open.
 func (s *Server) handleAnnotationsGet(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	target := ipc.AnnotationTarget{Type: q.Get("type"), Name: q.Get("name")}
@@ -40,7 +43,7 @@ func (s *Server) handleAnnotationsGet(w http.ResponseWriter, r *http.Request) {
 		Kind:   q.Get("kind"),
 	}
 	var resp ipc.AnnotationListResp
-	if !s.run(w, r, ipc.OpAnnotationList, req, &resp) {
+	if !s.runInVault(w, r, req.Scope.Vault, ipc.OpAnnotationList, req, &resp) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
