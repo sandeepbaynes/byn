@@ -72,6 +72,18 @@ func TestPortalAnnotations_Get(t *testing.T) {
 	if lastAnnotationList.Scope.Project != "web" || lastAnnotationList.Scope.Env != "prod" {
 		t.Fatalf("scope not relayed: %+v", lastAnnotationList.Scope)
 	}
+	if lastAnnotationList.IncludeRemoved {
+		t.Fatal("removed notes asked for without removed=1")
+	}
+
+	resp2, err := c.Get(ts.URL + "/api/annotations?type=entry&name=API_KEY&removed=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp2.Body.Close()
+	if !lastAnnotationList.IncludeRemoved {
+		t.Fatal("removed=1 not relayed as IncludeRemoved")
+	}
 }
 
 // Notes are gated like a value read, so the listing must carry the portal's

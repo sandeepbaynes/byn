@@ -535,6 +535,55 @@ func TestRemoveAnnotation_IsATombstone(t *testing.T) {
 	}
 }
 
+// A removed note stays findable: the including-removed listing returns it
+// with DeletedAt set and the text it had, so its history can be read again.
+func TestListNotesIncludingRemoved(t *testing.T) {
+	st, _ := newOpenedVault(t)
+	ctx := context.Background()
+	ref := putVar(t, st, "API_KEY", "v")
+
+	keep, err := st.AddNote(ctx, ref, "kept", OwnerAuthor())
+	if err != nil {
+		t.Fatalf("AddNote: %v", err)
+	}
+	gone, err := st.AddNote(ctx, ref, "removed text", OwnerAuthor())
+	if err != nil {
+		t.Fatalf("AddNote: %v", err)
+	}
+	if err := st.RemoveAnnotation(ctx, ref, gone, OwnerAuthor()); err != nil {
+		t.Fatalf("RemoveAnnotation: %v", err)
+	}
+
+	all, err := st.ListNotesIncludingRemoved(ctx, ref)
+	if err != nil {
+		t.Fatalf("ListNotesIncludingRemoved: %v", err)
+	}
+	byID := map[int64]Annotation{}
+	for _, a := range all {
+		byID[a.ID] = a
+	}
+	if len(all) != 2 || byID[keep].DeletedAt != 0 || byID[gone].DeletedAt == 0 || byID[gone].Body != "removed text" {
+		t.Fatalf("got %+v", all)
+	}
+
+	live, err := st.ListNotes(ctx, ref)
+	if err != nil || len(live) != 1 || live[0].ID != keep || live[0].DeletedAt != 0 {
+		t.Fatalf("ListNotes = %+v, %v", live, err)
+	}
+
+	st.Lock()
+	if _, err := st.ListNotesIncludingRemoved(ctx, ref); !errors.Is(err, ErrLocked) {
+		t.Fatalf("locked: %v, want ErrLocked", err)
+	}
+	withPW, err := st.ListNotesIncludingRemovedWithPassword(ctx, []byte(testPassword), ref)
+	if err != nil || len(withPW) != 2 {
+		t.Fatalf("with password = %+v, %v", withPW, err)
+	}
+	if _, err := st.ListNotesIncludingRemovedWithPassword(ctx, []byte("wrong"), ref); err == nil {
+		t.Fatal("want error for a wrong password")
+	}
+}
+
 // Removing a description frees the slot: the partial unique index must not
 // count a tombstone.
 func TestRemoveDescription_AllowsANewOne(t *testing.T) {

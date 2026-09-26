@@ -202,6 +202,9 @@ type Annotation struct {
 	AuthorComm string
 	CreatedAt  int64
 	UpdatedAt  int64
+	// DeletedAt is when the annotation was removed, 0 while it is live. Only
+	// the *IncludingRemoved listings return removed ones.
+	DeletedAt int64
 }
 
 // AnnotationVersion is one point in an annotation's history. Body is empty for
@@ -471,7 +474,7 @@ func (s *Store) ListNotes(ctx context.Context, ref ObjectRef) ([]Annotation, err
 		return nil, ErrLocked
 	}
 	defer zero(vk)
-	return s.listNotesWithVaultKey(ctx, vk, ref)
+	return s.listNotesWithVaultKey(ctx, vk, ref, false)
 }
 
 // ListNotesWithPassword is ListNotes for a locked vault.
@@ -481,17 +484,46 @@ func (s *Store) ListNotesWithPassword(ctx context.Context, password []byte, ref 
 		return nil, err
 	}
 	defer zero(vk)
-	return s.listNotesWithVaultKey(ctx, vk, ref)
+	return s.listNotesWithVaultKey(ctx, vk, ref, false)
 }
 
-func (s *Store) listNotesWithVaultKey(ctx context.Context, vaultKey []byte, ref ObjectRef) ([]Annotation, error) {
+// ListNotesIncludingRemoved is ListNotes plus the notes that were removed,
+// each with DeletedAt set and the text it had when it was removed. Removal is
+// a tombstone precisely so this trail survives; without a listing, a removed
+// note's id — and so its history — could not be found again.
+func (s *Store) ListNotesIncludingRemoved(ctx context.Context, ref ObjectRef) ([]Annotation, error) {
+	vk := s.snapshotVaultKey()
+	if vk == nil {
+		return nil, ErrLocked
+	}
+	defer zero(vk)
+	return s.listNotesWithVaultKey(ctx, vk, ref, true)
+}
+
+// ListNotesIncludingRemovedWithPassword is ListNotesIncludingRemoved for a
+// locked vault.
+func (s *Store) ListNotesIncludingRemovedWithPassword(ctx context.Context, password []byte, ref ObjectRef) ([]Annotation, error) {
+	vk, err := s.unwrapForAnnotation(password)
+	if err != nil {
+		return nil, err
+	}
+	defer zero(vk)
+	return s.listNotesWithVaultKey(ctx, vk, ref, true)
+}
+
+func (s *Store) listNotesWithVaultKey(ctx context.Context, vaultKey []byte, ref ObjectRef, includeRemoved bool) ([]Annotation, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
+	live := " AND deleted_at IS NULL"
+	if includeRemoved {
+		live = ""
+	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, uid, body_enc, key_domain, author, COALESCE(author_comm, ''), created_at, updated_at
+		`SELECT id, uid, body_enc, key_domain, author, COALESCE(author_comm, ''), created_at, updated_at,
+		        COALESCE(deleted_at, 0)
 		   FROM annotations
-		  WHERE object_type = ? AND object_id = ? AND kind = 'note' AND deleted_at IS NULL
+		  WHERE object_type = ? AND object_id = ? AND kind = 'note'`+live+`
 		  ORDER BY created_at DESC, id DESC`,
 		string(ref.Type), ref.ID)
 	if err != nil {
@@ -507,7 +539,7 @@ func (s *Store) listNotesWithVaultKey(ctx context.Context, vaultKey []byte, ref 
 			ct     []byte
 			domain string
 		)
-		if err := rows.Scan(&a.ID, &uid, &ct, &domain, &a.Author, &a.AuthorComm, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &uid, &ct, &domain, &a.Author, &a.AuthorComm, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt); err != nil {
 			return nil, err
 		}
 		text, err := s.openNote(vaultKey, ref, domain, uid, ct)

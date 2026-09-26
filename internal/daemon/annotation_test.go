@@ -396,6 +396,45 @@ func TestAnnotationEditRemoveHistory(t *testing.T) {
 	if len(hist.Versions) != 3 || hist.Versions[2].Op != "delete" {
 		t.Fatalf("versions = %+v", hist.Versions)
 	}
+
+	// Asked for, the removed note comes back marked, so its trail is reachable.
+	if err := c.Call(ipc.OpAnnotationList, ipc.AnnotationListReq{
+		Target: entryTarget("API_KEY"), IncludeRemoved: true,
+	}, &list); err != nil {
+		t.Fatalf("list including removed: %v", err)
+	}
+	if len(list.Notes) != 1 || list.Notes[0].ID != added.ID || list.Notes[0].RemovedAt == nil || list.Notes[0].Body != "second" {
+		t.Fatalf("notes = %+v", list.Notes)
+	}
+}
+
+// A locked vault lists removed notes with the password, like live ones.
+func TestAnnotationList_IncludeRemovedWithPassword(t *testing.T) {
+	_, c := startTestDaemon(t)
+	pw := []byte(annPW)
+	initUnlocked(t, c, pw)
+	if err := c.Call(ipc.OpPut, ipc.PutReq{Name: "API_KEY", Value: []byte("v")}, &ipc.PutResp{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	var added ipc.AnnotationAddResp
+	if err := c.Call(ipc.OpAnnotationAdd, ipc.AnnotationAddReq{Target: entryTarget("API_KEY"), Text: "n"}, &added); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := c.Call(ipc.OpAnnotationRemove, ipc.AnnotationRemoveReq{Target: entryTarget("API_KEY"), ID: added.ID}, &ipc.AnnotationRemoveResp{}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if err := c.Call(ipc.OpVaultLock, ipc.VaultLockReq{}, &ipc.VaultLockResp{}); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	var list ipc.AnnotationListResp
+	if err := c.Call(ipc.OpAnnotationList, ipc.AnnotationListReq{
+		Target: entryTarget("API_KEY"), Kind: "note", IncludeRemoved: true, Password: pw,
+	}, &list); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list.Notes) != 1 || list.Notes[0].RemovedAt == nil {
+		t.Fatalf("notes = %+v", list.Notes)
+	}
 }
 
 // History can carry every previous version of a private note, so reading it is

@@ -81,7 +81,9 @@ and a badge when someone other than you wrote the text), `byn get` (on stderr,
 and only when stdout is a terminal — stdout stays byte-exact, so redirects and
 `$(…)` are unaffected), `byn get --description` and `--json` for scripts, the
 portal (a description column in the entry table, whose columns now resize, a
-description box beside the value when you edit or add one, and a notes panel),
+description box beside the value when you edit or add one, and a notes panel
+where each note can be edited or removed and its history shows who added,
+changed or removed it and when — removed notes included),
 and the TUI (`:describe`, `:note`).
 
 **They travel in `.env` files.** `byn export` and the portal's export write

@@ -24,7 +24,7 @@ func (b annotationTargetBody) toIPC() ipc.AnnotationTarget {
 	return ipc.AnnotationTarget{Type: b.Type, Name: b.Name, ID: b.ID}
 }
 
-// GET /api/annotations?type=&name=&id=&kind=&vault=&project=&env=
+// GET /api/annotations?type=&name=&id=&kind=&removed=1&vault=&project=&env=
 //
 // Reads are a GET because they change nothing. Descriptions come back for any
 // caller; notes need the session the daemon checks — so this goes through
@@ -38,9 +38,10 @@ func (s *Server) handleAnnotationsGet(w http.ResponseWriter, r *http.Request) {
 		target.ID = parseInt64(id)
 	}
 	req := ipc.AnnotationListReq{
-		Scope:  scopeFromQuery(r),
-		Target: target,
-		Kind:   q.Get("kind"),
+		Scope:          scopeFromQuery(r),
+		Target:         target,
+		Kind:           q.Get("kind"),
+		IncludeRemoved: q.Get("removed") == "1",
 	}
 	var resp ipc.AnnotationListResp
 	if !s.runInVault(w, r, req.Scope.Vault, ipc.OpAnnotationList, req, &resp) {

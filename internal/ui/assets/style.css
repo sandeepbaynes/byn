@@ -1528,7 +1528,26 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
 }
 .note-meta { grid-column: 1; display: flex; gap: 8px; align-items: center; }
-.note-row .acts { grid-column: 2; grid-row: 1 / span 2; align-self: start; }
+/* Always visible, unlike the table's hover-only .acts: a note's actions are
+   the point of the panel, and a hidden button reads as a missing feature. */
+.note-acts { grid-column: 2; grid-row: 1 / span 2; align-self: start; display: flex; gap: 2px; }
+.note-row.removed { opacity: .7; border-style: dashed; }
+.note-row.removed .note-body { text-decoration: line-through; color: var(--text-dim); }
+.note-edit { grid-column: 1; display: flex; flex-direction: column; gap: 6px; }
+.note-edit-btns { display: flex; gap: 6px; }
+.note-history {
+  grid-column: 1 / span 2; margin-top: 6px; padding-top: 6px;
+  border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px;
+}
+.note-version-meta { font-size: 11px; color: var(--text-faint); }
+.note-version-body { font-size: 12.5px; color: var(--text-dim); white-space: pre-wrap; }
+.note-version.del .note-version-meta { color: var(--danger); }
+.notes-removed-head { font-size: 11px; color: var(--text-faint); margin-top: 6px; letter-spacing: .04em; }
+.notes-toggle {
+  margin-top: 8px; background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--text-faint); text-decoration: underline;
+}
+.notes-toggle:hover { color: var(--text); }
 .note-when { font-size: 11px; color: var(--text-faint); }
 .note-confirm {
   grid-column: 1 / span 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;

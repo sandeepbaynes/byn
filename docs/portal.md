@@ -320,7 +320,14 @@ a header edge resets it.
   editor says so. **Do not put a secret in one.**
 - **Notes** are encrypted. The panel lists them with their author and time and
   takes a new one; with the vault locked it shows the count and says that
-  reading them needs an unlock, rather than showing an empty list.
+  reading them needs an unlock, rather than showing an empty list. Each note
+  can be **edited** in place (⌘/Ctrl+Enter saves, Esc cancels) or **removed**
+  (confirmed in the row). Its **history** icon lists every version: what it
+  said, whether it was added, edited or removed, who did it (you, or the
+  agent and its process name) and when. Removal is a tombstone, so **show
+  removed notes** lists removed notes with their history; they are gone for
+  good only when the variable is deleted. Every add, edit, removal and
+  history read is also in the audit log.
 
 Text you did not write is badged: `.byn` for a description a trusted manifest
 declares, and `agent: <name>` for one a process wrote when it created the value.

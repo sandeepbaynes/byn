@@ -213,8 +213,12 @@ func TestAssets_AnnotationEditingWired(t *testing.T) {
 		"const desc = descCell ? mountDescInput(s, descCell) : null;",
 		"desc.changed()) await saveDescription(",
 		"editDescription(s, cell)",
-		"panel.replaceWith(buildNotesPanel(s, target, d));",
+		"panel.replaceWith(buildNotesPanel(s, target, d, want));",
 		"note-confirm",
+		`"/api/annotation/history"`, "function renderNoteHistory", // history per note
+		`id: n.id, text }`,                   // edit
+		`"&removed=1"`, "show removed notes", // removed notes stay reachable
+		`closest(".note-edit")`, // Esc cancels the editor, not the dialog
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("app.js missing %q", want)
@@ -230,5 +234,15 @@ func TestAssets_AnnotationEditingWired(t *testing.T) {
 	}
 	if strings.Contains(body, "openDialog(") {
 		t.Error("noteRow opens a dialog — it would replace the notes panel's own dialog")
+	}
+
+	// The note actions must be visible without hovering a table row: they
+	// once reused .acts, which is opacity 0 outside .trow:hover.
+	css, err := assetsFS.ReadFile("assets/style.css")
+	if err != nil {
+		t.Fatalf("read style.css: %v", err)
+	}
+	if !strings.Contains(string(css), ".note-acts {") || strings.Contains(body, `el("span", "acts")`) {
+		t.Error("note actions must use .note-acts, not the hover-only .acts")
 	}
 }

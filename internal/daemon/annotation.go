@@ -338,9 +338,14 @@ func (d *Daemon) handleAnnotationList(ctx context.Context, env *ipc.Envelope) *i
 		notes []vault.Annotation
 		nerr  error
 	)
-	if st.IsLocked() && len(req.Password) > 0 {
+	switch locked := st.IsLocked() && len(req.Password) > 0; {
+	case locked && req.IncludeRemoved:
+		notes, nerr = st.ListNotesIncludingRemovedWithPassword(ctx, req.Password, ref)
+	case locked:
 		notes, nerr = st.ListNotesWithPassword(ctx, req.Password, ref)
-	} else {
+	case req.IncludeRemoved:
+		notes, nerr = st.ListNotesIncludingRemoved(ctx, ref)
+	default:
 		notes, nerr = st.ListNotes(ctx, ref)
 	}
 	if nerr != nil {
@@ -407,7 +412,7 @@ func (d *Daemon) handleAnnotationHistory(ctx context.Context, env *ipc.Envelope)
 // --- helpers ---
 
 func annotationView(a vault.Annotation, source string) ipc.AnnotationView {
-	return ipc.AnnotationView{
+	v := ipc.AnnotationView{
 		ID:         a.ID,
 		Kind:       a.Kind,
 		Body:       a.Body,
@@ -417,6 +422,11 @@ func annotationView(a vault.Annotation, source string) ipc.AnnotationView {
 		CreatedAt:  time.Unix(a.CreatedAt, 0),
 		UpdatedAt:  time.Unix(a.UpdatedAt, 0),
 	}
+	if a.DeletedAt != 0 {
+		t := time.Unix(a.DeletedAt, 0)
+		v.RemovedAt = &t
+	}
+	return v
 }
 
 // auditAnnotation records that an annotation changed — the object, the kind of

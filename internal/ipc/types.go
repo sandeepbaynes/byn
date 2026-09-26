@@ -2043,6 +2043,9 @@ type AnnotationListReq struct {
 	Scope         Scope            `json:"scope,omitempty"`
 	Target        AnnotationTarget `json:"target"`
 	Kind          string           `json:"kind,omitempty"`
+	// IncludeRemoved also returns removed notes, with RemovedAt set, so their
+	// history can be looked up. Gated exactly like reading live notes.
+	IncludeRemoved bool `json:"include_removed,omitempty"`
 	Password      []byte           `json:"password,omitempty"`
 	PresenceToken []byte           `json:"presence_token,omitempty"`
 }
@@ -2071,6 +2074,9 @@ type AnnotationView struct {
 	Source     string    `json:"source,omitempty"` // "vault" or ".byn"
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// RemovedAt is set on a removed note, returned only when the listing
+	// asked for IncludeRemoved.
+	RemovedAt *time.Time `json:"removed_at,omitempty"`
 }
 
 // AnnotationHistoryReq reads every version of one annotation.

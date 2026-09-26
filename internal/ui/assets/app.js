@@ -15,6 +15,7 @@ const enc = encodeURIComponent;
 // ---- inline SVG icons (static paths) ----
 const SVGNS = "http://www.w3.org/2000/svg";
 const ICONS = {
+  history: "M8 2.5a5.5 5.5 0 11-5.2 3.7|M2.5 2.8v3.1h3.1|M8 5v3.2l2.2 1.4",
   eye:    "M1 8s2.6-5 7-5 7 5 7 5-2.6 5-7 5-7-5-7-5z|M8 5.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z",
   copy:   "M6 6h7v7H6z|M3.2 10.2V3.2H10",
   pencil: "M11.5 2.2l2.3 2.3-8.1 8.1L3 13.3l.7-2.7 7.8-8.4z",
@@ -829,7 +830,13 @@ function openDialog(o) {
       finish(vals);
     }
     function dismiss() { finish(fields.length ? null : false); }
-    function onKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }
+    function onKey(e) {
+      if (e.key !== "Escape") return;
+      // Esc inside an inline editor in the dialog (a note being edited)
+      // cancels that editor, not the whole dialog.
+      if (e.target && e.target.closest && e.target.closest(".note-edit")) return;
+      e.preventDefault(); e.stopPropagation(); dismiss();
+    }
     ok.onclick = submit; cancel.onclick = dismiss;
     document.addEventListener("keydown", onKey, true);
   });
@@ -2695,7 +2702,13 @@ function openImportDialog(vault, project, env) {
     function finish(v) { if (done) return; done = true; cleanup(); resolve(v); }
     function submit() { finish(ta.value); }
     function dismiss() { finish(null); }
-    function onKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }
+    function onKey(e) {
+      if (e.key !== "Escape") return;
+      // Esc inside an inline editor in the dialog (a note being edited)
+      // cancels that editor, not the whole dialog.
+      if (e.target && e.target.closest && e.target.closest(".note-edit")) return;
+      e.preventDefault(); e.stopPropagation(); dismiss();
+    }
     ok.onclick = submit; cancel.onclick = dismiss;
     document.addEventListener("keydown", onKey, true);
   });
@@ -6174,23 +6187,29 @@ async function openAnnotations(s) {
 // notes" and "not for you" are different answers, and a person looking at an
 // empty panel would reasonably conclude their notes were gone.
 function renderNotesPanel(box, s, target, data) {
-  box.appendChild(buildNotesPanel(s, target, data));
+  box.appendChild(buildNotesPanel(s, target, data, false));
 }
 
-// buildNotesPanel returns the panel. Adding or removing a note re-reads the
-// notes and swaps in a fresh panel, so the list always shows what the vault
-// now holds rather than what it held when the dialog opened.
-function buildNotesPanel(s, target, data) {
+// buildNotesPanel returns the panel. Adding, editing or removing a note
+// re-reads the notes and swaps in a fresh panel, so the list always shows what
+// the vault now holds rather than what it held when the dialog opened.
+//
+// Removed notes are kept (removal is a tombstone), and "show removed" lists
+// them so their history — who added, changed and removed each one, and when —
+// stays reachable.
+function buildNotesPanel(s, target, data, showRemoved) {
   const panel = el("div", "notes-panel");
   const head = el("div", "notes-head");
   head.appendChild(el("span", "notes-title", "notes"));
   head.appendChild(el("span", "notes-sub", "encrypted · only you can read these"));
   panel.appendChild(head);
 
-  const refresh = async () => {
+  const refresh = async (removed) => {
+    const want = removed === undefined ? !!showRemoved : removed;
     try {
-      const d = await api("GET", "/api/annotations?" + scopeQuery() + "&type=entry&name=" + enc(s.name));
-      panel.replaceWith(buildNotesPanel(s, target, d));
+      const d = await api("GET", "/api/annotations?" + scopeQuery() + "&type=entry&name=" + enc(s.name) +
+        (want ? "&removed=1" : ""));
+      panel.replaceWith(buildNotesPanel(s, target, d, want));
     } catch (e) { toast(e.message, true); }
     loadEntries(); // the row's note count
   };
@@ -6206,9 +6225,19 @@ function buildNotesPanel(s, target, data) {
     return panel;
   }
 
+  const all = data.notes || [];
+  const live = all.filter((n) => !n.removed_at);
+  const removed = all.filter((n) => n.removed_at);
+
   const list = el("div", "notes-list");
-  (data.notes || []).forEach((n) => list.appendChild(noteRow(s, target, n, refresh)));
-  if (!(data.notes || []).length) list.appendChild(el("div", "muted", "no notes yet"));
+  live.forEach((n) => list.appendChild(noteRow(s, target, n, refresh)));
+  if (!live.length) list.appendChild(el("div", "muted", "no notes yet"));
+  if (showRemoved) {
+    list.appendChild(el("div", "notes-removed-head", removed.length
+      ? "removed — kept in history, gone for good when " + s.name + " is deleted"
+      : "no removed notes"));
+    removed.forEach((n) => list.appendChild(noteRow(s, target, n, refresh)));
+  }
   panel.appendChild(list);
 
   const addWrap = el("div", "notes-add");
@@ -6231,46 +6260,123 @@ function buildNotesPanel(s, target, data) {
   addWrap.appendChild(ta);
   addWrap.appendChild(addBtn);
   panel.appendChild(addWrap);
+
+  const toggle = el("button", "linkish notes-toggle", showRemoved ? "hide removed notes" : "show removed notes");
+  toggle.type = "button";
+  toggle.onclick = () => refresh(!showRemoved);
+  panel.appendChild(toggle);
   return panel;
 }
 
-// noteRow is one note with a remove action. Removal is confirmed inside the
-// row: the panel already lives in the page's one dialog, and opening a second
-// confirm there would replace it.
+// whoLabel names who wrote a version: you, or the process that did.
+function whoLabel(author, comm) {
+  if (author === "agent") return comm ? "agent: " + comm : "an agent";
+  return "you";
+}
+function whenLabel(t) { return (t || "").slice(0, 16).replace("T", " "); }
+
+// noteRow is one note with edit, history and remove actions (a removed note
+// has only history). Every change is confirmed or edited inside the row: the
+// panel already lives in the page's one dialog, and opening a second dialog
+// there would replace it.
 function noteRow(s, target, n, refresh) {
-  const row = el("div", "note-row");
+  const isRemoved = !!n.removed_at;
+  const row = el("div", "note-row" + (isRemoved ? " removed" : ""));
   const meta = el("div", "note-meta");
-  meta.appendChild(el("span", "note-when", (n.created_at || "").slice(0, 16).replace("T", " ")));
+  meta.appendChild(el("span", "note-when", "added " + whenLabel(n.created_at)));
   if (n.author === "agent") {
     meta.appendChild(el("span", "desc-badge agent", n.author_comm ? "agent: " + n.author_comm : "agent"));
   }
+  if (isRemoved) meta.appendChild(el("span", "note-when", "· removed " + whenLabel(n.removed_at)));
+  else if (n.updated_at && n.updated_at !== n.created_at) meta.appendChild(el("span", "note-when", "· edited " + whenLabel(n.updated_at)));
   row.appendChild(meta);
-  row.appendChild(el("div", "note-body", n.body));
+  const body = el("div", "note-body", n.body);
+  row.appendChild(body);
 
-  const acts = el("span", "acts");
-  acts.appendChild(iconBtn("trash", "danger", "remove this note (its text stays in history)", () => {
-    // Say what removal actually does before doing it. A note is the one thing
-    // in byn a person writes expecting privacy, and "removed" here does not
-    // mean erased.
-    const confirm = el("div", "note-confirm");
-    confirm.appendChild(el("span", "note-confirm-msg",
-      "Remove from the list? Its text stays in the annotation history, so a note changed " +
-      "to mislead stays traceable. It goes for good when " + s.name + " is deleted."));
-    const yes = el("button", "btn btn-danger sm", "remove"); yes.type = "button";
-    const no = el("button", "btn btn-ghost sm", "keep"); no.type = "button";
-    no.onclick = () => { confirm.remove(); acts.hidden = false; };
-    yes.onclick = async () => {
-      try {
-        await apiWithAuth("POST", "/api/annotation/note",
-          { scope: curScope(), target, id: n.id, remove: true }, state.scope.vault);
-        toast("note removed");
-        await refresh();
-      } catch (e) { toast(e.message, true); }
-    };
-    confirm.appendChild(yes); confirm.appendChild(no);
-    acts.hidden = true;
-    row.appendChild(confirm);
+  const acts = el("span", "note-acts");
+  const hist = el("div", "note-history");
+  hist.hidden = true;
+  acts.appendChild(iconBtn("history", "", "history — who added, changed or removed it, and when", async () => {
+    if (!hist.hidden) { hist.hidden = true; return; }
+    try {
+      const d = await apiWithAuth("POST", "/api/annotation/history",
+        { scope: curScope(), target, id: n.id }, state.scope.vault);
+      renderNoteHistory(hist, d.versions || []);
+      hist.hidden = false;
+    } catch (e) { toast(e.message, true); }
   }));
+  if (!isRemoved) {
+    acts.appendChild(iconBtn("pencil", "edit", "edit this note (the old text stays in history)", () => {
+      if (row.querySelector(".note-edit")) return;
+      const ed = el("div", "note-edit");
+      const ta = el("textarea", "notes-input");
+      ta.value = n.body; ta.rows = 2;
+      ta.oninput = () => autoGrow(ta);
+      const save = el("button", "btn sm", "save"); save.type = "button";
+      const cancel = el("button", "btn btn-ghost sm", "cancel"); cancel.type = "button";
+      const close = () => { ed.remove(); body.hidden = false; };
+      cancel.onclick = close;
+      save.onclick = async () => {
+        const text = ta.value.trim();
+        if (!text || text === n.body) { close(); return; }
+        try {
+          await apiWithAuth("POST", "/api/annotation/note",
+            { scope: curScope(), target, id: n.id, text }, state.scope.vault);
+          toast("note updated");
+          await refresh();
+        } catch (e) { toast(e.message, true); }
+      };
+      ta.onkeydown = (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save.onclick(); }
+        else if (e.key === "Escape") { e.preventDefault(); close(); }
+      };
+      const btns = el("div", "note-edit-btns"); btns.appendChild(save); btns.appendChild(cancel);
+      ed.appendChild(ta); ed.appendChild(btns);
+      body.hidden = true;
+      row.insertBefore(ed, hist);
+      ta.focus(); autoGrow(ta);
+    }));
+    acts.appendChild(iconBtn("trash", "danger", "remove this note (its text stays in history)", () => {
+      if (row.querySelector(".note-confirm")) return;
+      // Say what removal actually does before doing it. A note is the one
+      // thing in byn a person writes expecting privacy, and "removed" here
+      // does not mean erased.
+      const confirm = el("div", "note-confirm");
+      confirm.appendChild(el("span", "note-confirm-msg",
+        "Remove from the list? Its text stays in the annotation history, so a note changed " +
+        "to mislead stays traceable. It goes for good when " + s.name + " is deleted."));
+      const yes = el("button", "btn btn-danger sm", "remove"); yes.type = "button";
+      const no = el("button", "btn btn-ghost sm", "keep"); no.type = "button";
+      no.onclick = () => confirm.remove();
+      yes.onclick = async () => {
+        try {
+          await apiWithAuth("POST", "/api/annotation/note",
+            { scope: curScope(), target, id: n.id, remove: true }, state.scope.vault);
+          toast("note removed");
+          await refresh();
+        } catch (e) { toast(e.message, true); }
+      };
+      confirm.appendChild(yes); confirm.appendChild(no);
+      row.appendChild(confirm);
+    }));
+  }
   row.appendChild(acts);
+  row.appendChild(hist);
   return row;
+}
+
+// renderNoteHistory fills box with a note's versions, oldest first: what it
+// said, what happened (added / edited / removed), who did it, and when.
+function renderNoteHistory(box, versions) {
+  box.innerHTML = "";
+  const verb = { create: "added", add: "added", set: "set", edit: "edited", delete: "removed" };
+  if (!versions.length) { box.appendChild(el("div", "muted", "no history")); return; }
+  versions.forEach((v) => {
+    const line = el("div", "note-version" + (v.op === "delete" ? " del" : ""));
+    line.appendChild(el("span", "note-version-meta",
+      "v" + v.version_no + " · " + (verb[v.op] || v.op) + " by " + whoLabel(v.author, v.author_comm) +
+      " · " + whenLabel(v.created_at)));
+    if (v.body) line.appendChild(el("div", "note-version-body", v.body));
+    box.appendChild(line);
+  });
 }
