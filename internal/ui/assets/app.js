@@ -2916,8 +2916,14 @@ function renderEntries() {
 
   let rows = state.entries;
   if (state.filter) { const f = state.filter.toLowerCase(); rows = rows.filter((s) => s.name.toLowerCase().includes(f)); }
-  rows.forEach((s, i) => tbl.appendChild(entryRow(s, i)));
+  state.rowIndex = [];
+  rows.forEach((s, i) => {
+    const row = entryRow(s, i);
+    state.rowIndex.push({ s, row });
+    tbl.appendChild(row);
+  });
   box.appendChild(tbl);
+  applyRowSelection(false);
 
   if (!rows.length) {
     const e = el("div", "empty");
@@ -2934,6 +2940,8 @@ function entryRow(s, i) {
   if (!inherited && bd) cls += bd.cls === "bdg-override" ? " s-override" : (bd.cls === "bdg-new" ? " s-new" : (bd.cls === "bdg-same" ? " s-same" : ""));
   const row = el("div", cls);
   row.style.animationDelay = Math.min(i * 14, 280) + "ms";
+  // A click selects the row for the keyboard (j/k, e, d, Shift+N, Space, y).
+  row.addEventListener("mousedown", () => { state.selName = s.name; applyRowSelection(false); });
 
   // Badge cell: inheritance badge + optional empty-value indicator.
   const bdgWrap = el("span", "bdg-wrap");
@@ -2998,6 +3006,48 @@ function entryRow(s, i) {
     () => openAnnotations(s)));
   row.appendChild(acts);
   return row;
+}
+
+// ---- keyboard row selection -------------------------------------------------
+//
+// The entry table's own hotkeys act on a selected row, the way the TUI's act
+// on its cursor. Selection is by name, so it survives a re-render (a save, a
+// reload) and simply clears when that name is gone.
+function selectedRow() {
+  const idx = (state.rowIndex || []).findIndex((r) => r.s.name === state.selName);
+  return idx < 0 ? null : Object.assign({ idx }, state.rowIndex[idx]);
+}
+function applyRowSelection(scroll) {
+  const cur = selectedRow();
+  if (!cur) state.selName = null;
+  (state.rowIndex || []).forEach((r) => r.row.classList.toggle("sel", !!cur && r === state.rowIndex[cur.idx]));
+  if (cur && scroll) cur.row.scrollIntoView({ block: "nearest" });
+}
+function moveRowSelection(delta) {
+  const rows = state.rowIndex || [];
+  if (!rows.length) return;
+  const cur = selectedRow();
+  let i = cur ? cur.idx + delta : (delta > 0 ? 0 : rows.length - 1);
+  i = Math.max(0, Math.min(rows.length - 1, i));
+  state.selName = rows[i].s.name;
+  applyRowSelection(true);
+}
+// rowKey runs a selected-row hotkey. Returns true when it handled the key.
+function rowKey(e) {
+  if (state.view !== "entries") return false;
+  const k = e.key;
+  if (k === "j" || k === "ArrowDown") { moveRowSelection(1); return true; }
+  if (k === "k" || k === "ArrowUp") { moveRowSelection(-1); return true; }
+  const cur = selectedRow();
+  if (!cur) return false;
+  const val = cur.row.querySelector(".cell.val");
+  const desc = cur.row.querySelector(".cell.desc");
+  if ((k === "e" || k === "Enter") && val) { editValue(cur.s, val); return true; }
+  if (k === "d" && desc) { editDescription(cur.s, desc); return true; }
+  if (k === "N") { openAnnotations(cur.s); return true; }
+  if (k === " " && val) { toggleReveal(cur.s, val); return true; }
+  if (k === "y") { copyValue(cur.s); return true; }
+  return false;
 }
 
 // descriptionCell renders an entry's description column with the provenance a
@@ -6054,6 +6104,8 @@ function wire() {
   document.addEventListener("keydown", (e) => {
     if (paletteOpen()) return; // palette owns the keyboard while open
     if (isTyping() || dialogOpen()) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (rowKey(e)) { e.preventDefault(); return; }
     if (e.key === "n" && state.view === "entries") { e.preventDefault(); addNewRow(); }
     // Lock/unlock ALWAYS hit the daemon (the source of truth) — never gated
     // on the browser's possibly-stale belief. `l` is an emergency lock: it

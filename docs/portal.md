@@ -24,6 +24,10 @@ The portal binds loopback only (`127.0.0.1`), never the network.
 Values are masked by default. **Single-click** a value to reveal it (it re-masks
 after `[ui] reveal_hide_after`, default 15s); double-click to edit. **Reveal all**
 (toolbar) or **`Shift+R`** reveals/hides every value at once, authorizing once.
+From the keyboard, **`j`/`k`** (or the arrow keys) select a row, and then
+**`e`**/**`Enter`** edits its value and description, **`d`** edits just the
+description, **`Shift+N`** opens its notes and history, **`Space`** reveals it
+and **`y`** copies it. **`?`** lists every shortcut.
 **import** / **export** read and write `.env` files, carrying each value's
 description and notes as the comment block above it: `#` lines for the
 description, one `##` line per note. This is the same format `byn import` and

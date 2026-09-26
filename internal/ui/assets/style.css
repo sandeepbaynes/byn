@@ -584,6 +584,9 @@ body.col-resizing { cursor: col-resize; user-select: none; }
   transition: background .12s, border-color .12s; animation: rise .3s var(--ease) both;
 }
 .trow:hover { background: var(--surface); border-color: var(--border); }
+/* keyboard selection (j/k) — the row the entry hotkeys act on */
+.trow.sel { background: var(--surface); border-color: var(--signal-dim); }
+.trow.sel .acts { opacity: 1; }
 .trow.editing { background: none; border-color: transparent; }
 .trow .bdg { font-size: 13px; text-align: center; }
 .cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

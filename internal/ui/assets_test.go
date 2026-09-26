@@ -246,3 +246,33 @@ func TestAssets_AnnotationEditingWired(t *testing.T) {
 		t.Error("note actions must use .note-acts, not the hover-only .acts")
 	}
 }
+
+// TestAssets_RowHotkeysWired guards the entry table's keyboard: j/k select a
+// row, and e/Enter, d, Shift+N, Space and y act on it — each listed in the
+// help popover so a key that works is a key someone can find.
+func TestAssets_RowHotkeysWired(t *testing.T) {
+	js, err := assetsFS.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	s := string(js)
+	for _, want := range []string{
+		"function rowKey(e)", "if (rowKey(e)) { e.preventDefault(); return; }",
+		`k === "j" || k === "ArrowDown"`, `k === "e" || k === "Enter"`,
+		`k === "d" && desc`, `k === "N"`, `k === " " && val`, `k === "y"`,
+		"applyRowSelection(false);",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("app.js missing %q", want)
+		}
+	}
+	html, err := assetsFS.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	for _, want := range []string{"select a row", "edit value + description", "edit description", "notes &amp; history", "reveal / hide value", "copy value"} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("help popover missing %q", want)
+		}
+	}
+}
