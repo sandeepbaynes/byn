@@ -189,6 +189,49 @@ Keep it factual and short: what the value is, which account or environment it
 belongs to, anything a later reader would get wrong. Never put the value itself,
 or any part of it, in a description — it is plaintext.
 
+### Describing in bulk: `byn import`
+
+`byn import` reads descriptions and notes from a `.env`-shaped stream. The
+comment block directly above a variable annotates it:
+
+```bash
+# The staging Stripe key - never point it at production.   <- description
+## account 1234, rotated 2026-09                            <- note (## or ###)
+API_KEY=sk_test_...
+```
+
+Several `#` lines are one description; a blank line ends the block, so a
+section heading set off by one annotates nothing; a commented-out assignment
+(`# OLD_KEY=...`) is never a description and ends the block. Once a `##` note
+appears, later `#` lines in that block are ignored. A description is written
+only when it differs from the stored one, and a note the value already carries
+is not added again, so re-running the same import is safe. YAML and JSON carry
+no annotations.
+
+A project that keeps an example env file (`.env.example`) usually already
+documents every variable in comments. The way to give its vault the same
+documentation is to **generate** that stream from the example and pipe it in —
+never to save it as a `.env`:
+
+```bash
+./gen-annotated-env | byn import --skip-existing --dry-run -   # preview
+./gen-annotated-env | byn import --skip-existing -
+```
+
+`--dry-run` lists each entry with `+ description, N notes` — never their text.
+Use `--skip-existing` (add-only) unless the user asked to replace values.
+Notes are encrypted, so writing them needs the vault open: that import is the
+user's to run, not yours.
+
+Descriptions are not only for variables. The same command labels the scope
+itself, and the same create-time rule applies — set it as you create it:
+
+```bash
+byn describe project: "the customer-facing app"   # the active project
+byn describe env:prod "production — deploys only"
+byn describe vault: "work credentials"
+```
+
 ### Notes are not yours
 
 `byn note` is the owner's private, encrypted commentary. You cannot read it,

@@ -221,21 +221,16 @@ func (d *Daemon) putTrustRecord(ctx context.Context, st *vault.Store, vaultName,
 	return canon, hash, changed, policy, err
 }
 
-// sealExecCapability captures the per-row keys for a .byn's allowlisted vars and
-// seals them under the machine-fingerprint K_cap, producing the blob stored in
-// the trust record for autonomous trusted exec. Returns nil (no capability —
-// exec will require a password) when there are no allowlisted vars or the
-// machine fingerprint is unavailable. A wildcard (env="*") allowlist captures
-// every var currently in scope. Uses the password when supplied (locked grant),
-// else the in-memory key (passkey grant — vault unlocked).
-func (d *Daemon) sealExecCapability(ctx context.Context, st *vault.Store, scope vault.Scope, allow []string, wildcard bool, password []byte) ([]byte, error) {
-	return d.sealExecCapabilityWithKey(ctx, st, scope, allow, wildcard, password, nil)
-}
-
-// sealExecCapabilityWithKey is sealExecCapability for a caller that has already
-// derived the vault key. Deriving it is Argon2id and costs ~50ms; doing that per
-// file turned a fixed cost into a per-file one, which is most of what was left
-// of a bulk trust after the ACL walk was removed.
+// sealExecCapabilityWithKey captures the per-row keys for a .byn's allowlisted
+// vars and seals them under the machine-fingerprint K_cap, producing the blob
+// stored in the trust record for autonomous trusted exec. Returns nil (no
+// capability — exec will require a password) when there are no allowlisted
+// vars or the machine fingerprint is unavailable. A wildcard (env="*")
+// allowlist captures every var currently in scope. Uses vaultKey when the
+// caller has already derived it, else the password when supplied (locked
+// grant), else the in-memory key (passkey grant — vault unlocked). Deriving
+// the key is Argon2id and costs ~50ms; taking it pre-derived keeps a bulk
+// trust from paying that per file.
 func (d *Daemon) sealExecCapabilityWithKey(ctx context.Context, st *vault.Store, scope vault.Scope, allow []string, wildcard bool, password, vaultKey []byte) ([]byte, error) {
 	if d.fpMACKey == nil {
 		return nil, nil // no machine fingerprint → no cold capability

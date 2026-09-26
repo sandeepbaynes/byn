@@ -214,8 +214,7 @@ func TestRunNote_ListWithheld(t *testing.T) {
 func TestRunNote_RemoveSaysItIsATombstone(t *testing.T) {
 	fd := startFakeDaemon(t)
 	fd.onOK(ipc.OpAnnotationRemove, ipc.AnnotationRemoveResp{})
-	var out string
-	out = captureStderr(t, func() {
+	out := captureStderr(t, func() {
 		if rc := runNote([]string{"rm", "API_KEY", "3"}, cliScope{}); rc != exitOK {
 			t.Errorf("rc = %d", rc)
 		}

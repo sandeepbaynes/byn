@@ -67,7 +67,7 @@ func targetLabel(t ipc.AnnotationTarget) string {
 func runDescribe(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	clear := fs.Bool("clear", false, "remove the description (its text stays in history)")
+	clearFlag := fs.Bool("clear", false, "remove the description (its text stays in history)")
 	history := fs.Bool("history", false, "show every version of the description, oldest first")
 	jsonOut := fs.Bool("json", false, "emit JSON instead of prose")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin")
@@ -92,7 +92,7 @@ func runDescribe(args []string, scope cliScope) int {
 	switch {
 	case *history:
 		return showDescriptionHistory(dir, scope, target, *jsonOut, *pwStdin)
-	case *clear:
+	case *clearFlag:
 		rc := mutateWithAuthRetry(*pwStdin, *jsonOut, true, nil, func(pw []byte) error {
 			return newClient(dir, scope.Vault).Call(ipc.OpAnnotationSet, ipc.AnnotationSetReq{
 				Scope: scope.ToIPC(), Target: target, Clear: true, Password: pw,

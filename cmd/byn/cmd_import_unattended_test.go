@@ -115,7 +115,7 @@ func TestImportEnvHint(t *testing.T) {
 	if got := importEnvHint(inherited); got != " --env default" {
 		t.Fatalf("all inherited: %q", got)
 	}
-	mixed := append(inherited, ipc.SecretMeta{Name: "C", Unattended: true})
+	mixed := append(append([]ipc.SecretMeta{}, inherited...), ipc.SecretMeta{Name: "C", Unattended: true})
 	if got := importEnvHint(mixed); got != "" {
 		t.Fatalf("own value present: %q", got)
 	}

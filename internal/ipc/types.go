@@ -2040,14 +2040,14 @@ type AnnotationRemoveResp struct{}
 // The two halves are gated differently and that is the point: descriptions come
 // back for any caller, notes only for one that can open them.
 type AnnotationListReq struct {
-	Scope         Scope            `json:"scope,omitempty"`
-	Target        AnnotationTarget `json:"target"`
-	Kind          string           `json:"kind,omitempty"`
+	Scope  Scope            `json:"scope,omitempty"`
+	Target AnnotationTarget `json:"target"`
+	Kind   string           `json:"kind,omitempty"`
 	// IncludeRemoved also returns removed notes, with RemovedAt set, so their
 	// history can be looked up. Gated exactly like reading live notes.
-	IncludeRemoved bool `json:"include_removed,omitempty"`
-	Password      []byte           `json:"password,omitempty"`
-	PresenceToken []byte           `json:"presence_token,omitempty"`
+	IncludeRemoved bool   `json:"include_removed,omitempty"`
+	Password       []byte `json:"password,omitempty"`
+	PresenceToken  []byte `json:"presence_token,omitempty"`
 }
 
 // AnnotationListResp returns what the caller was allowed to see.

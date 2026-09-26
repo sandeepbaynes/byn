@@ -239,6 +239,8 @@ func (c Config) validate() error {
 	return nil
 }
 
+// DescriptionLimit is the largest description allowed, in bytes.
+//
 // DescriptionLimit, NoteLimit and NotesPerObjectLimit resolve the configured
 // annotation caps, treating 0 (the key absent, or a config marshalled from a
 // partially-filled struct) as "use the built-in default". Consumers call these

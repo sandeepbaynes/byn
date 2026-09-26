@@ -127,7 +127,7 @@ func TestDotenvAnnotations_RoundTrip(t *testing.T) {
 		t.Fatalf("got %d entries", len(got))
 	}
 	for _, e := range got {
-		if !reflect.DeepEqual(e.ann, ann[e.k]) && !(e.ann.empty() && ann[e.k].empty()) {
+		if !reflect.DeepEqual(e.ann, ann[e.k]) && (!e.ann.empty() || !ann[e.k].empty()) {
 			t.Errorf("%s: ann = %+v, want %+v", e.k, e.ann, ann[e.k])
 		}
 		if e.v != vals[e.k] {
