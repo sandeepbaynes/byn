@@ -1673,7 +1673,24 @@ KEYS - normal mode
        :q!                      discard drafts and quit
        :wq, :x                  commit and quit
        q                        same as :q
+       n                        description and notes of the selected
+                                entry (see below)
        Ctrl-C                   always exit (drafts lost)
+
+KEYS - notes view (n)
+       j/k                      move over the description and notes
+       e / Enter                edit the description or selected note
+       a                        add a note (encrypted)
+       d                        remove the note, or clear the
+                                description (y to confirm; kept in
+                                history)
+       h                        history: every version, who, when
+       r                        show / hide removed notes
+       p                        master password, when notes are withheld
+       Esc / q                  back to the list
+
+       The list shows each description after its name and a note
+       count (never the text) as ✎N.
 
 KEYS - insert mode
        printable characters, backspace, arrow keys, Home, End

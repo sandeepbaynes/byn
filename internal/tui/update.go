@@ -170,6 +170,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadApprovalsCmd(m.client, m.approvalHistory)
 	case authRetryMsg:
 		return m.handleAuthRetry(msg)
+	case annLoadedMsg:
+		return m.handleAnnLoaded(msg)
+	case annHistoryMsg:
+		return m.handleAnnHistory(msg)
+	case annOpMsg:
+		return m.handleAnnOp(msg)
 
 	case opCompleteMsg:
 		if msg.Err != nil {
@@ -269,6 +275,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keyAudit(msg)
 	case ModeApprovals:
 		return m.keyApprovals(msg)
+	case ModeAnnotations:
+		return m.keyAnnotations(msg)
 	case ModeHelp:
 		return m.keyHelp(msg)
 	case ModeAuthRequired:
@@ -416,6 +424,13 @@ func (m Model) keyNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startRename()
 	case "R":
 		return m.startReveal()
+	case "n":
+		// n for notes: the variable's description and notes, full screen.
+		if m.Focus == FocusRail {
+			m.flash("select an entry (Tab to the list) to see its notes", false)
+			return m, nil
+		}
+		return m.openAnnotations()
 	case "u":
 		// vi undo on the pending draft. Only meaningful if a buffer
 		// exists; otherwise no-op.
@@ -1650,6 +1665,10 @@ func (m Model) keyAuthRequired(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		ar.value = ar.value[:0]
 		m.Mode = ModeNormal
+		if ar.kind == authRetryAnnotation && m.ann != nil {
+			m.Mode = ModeAnnotations
+			m.ann.pending = nil
+		}
 		m.authReq = nil
 		m.flash("auth_required: "+ar.Cause, false)
 		return m, nil
@@ -1693,6 +1712,11 @@ func (m Model) keyAuthRequired(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case authRetryApprove:
 			if p := m.pendingApproval; p != nil {
 				cmd = decideApprovalCmd(m.client, p.ID, true, false, p.Once, false, p.Reason, pw)
+			}
+		case authRetryAnnotation:
+			cmd = m.annRetryWithPassword(pw)
+			for i := range pw {
+				pw[i] = 0
 			}
 		}
 		return m, cmd

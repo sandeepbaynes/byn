@@ -329,6 +329,33 @@ a denial.
 keystroke, `byn approve <id>` and a tap in the portal cannot come to mean
 different things.
 
+### NOTES (`n`)
+
+Replaces the screen with the selected variable's description and notes — the
+TUI's half of the portal's notes panel. Before it the TUI could set a
+description and add a note but never show a note again, and the description
+lived only in the Detail pane, which a terminal under 120 columns never draws.
+The entry list now also shows each description in a column after the name,
+cut to fit, and `✎N` for how many notes a variable has (never their text).
+
+- `j`/`k` move over the description and then each note.
+- `e` (or `Enter`) edits the selected description or note on an input line
+  that owns the keyboard until `Enter` saves or `ESC` cancels.
+- `a` adds a note. `d` removes the selected note, or clears the description,
+  after a `y` confirm — both are tombstones, kept in history.
+- `h` toggles the selected item's history: every version, what it said,
+  whether it was added, edited or removed, by whom (you, or the agent and its
+  process name) and when.
+- `r` shows removed notes, so their history stays reachable.
+- `p` asks for the master password when notes are withheld (no session for
+  this terminal). The password is kept for the life of the view — reading,
+  editing and history do not ask again — and zeroed when it closes.
+- `ESC`/`q` returns to NORMAL and reloads the list.
+
+An inherited row's annotations belong to default's variable, so the view reads
+and writes those and says so. Writes that need a password reuse the AUTHORIZE
+overlay, drawn over this view, and are replayed once it is given.
+
 ### HELP (`?`)
 
 Full-screen modal listing all keybindings grouped by section

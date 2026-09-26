@@ -79,7 +79,7 @@ func TestDetail_ShowsNoteCountNotText(t *testing.T) {
 	if !strings.Contains(out, "3") {
 		t.Fatalf("detail = %q, want the note count", out)
 	}
-	if !strings.Contains(out, "byn note ls") {
+	if !strings.Contains(out, "n to read") {
 		t.Fatalf("detail = %q, want it to say how to read them", out)
 	}
 }

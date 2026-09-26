@@ -84,7 +84,9 @@ portal (a description column in the entry table, whose columns now resize, a
 description box beside the value when you edit or add one, and a notes panel
 where each note can be edited or removed and its history shows who added,
 changed or removed it and when — removed notes included),
-and the TUI (`:describe`, `:note`).
+and the TUI (a description column in the entry list, a note count, and `n` to
+open a full-screen view that reads, adds, edits and removes notes, edits the
+description, and shows each one's history).
 
 **They travel in `.env` files.** `byn export` and the portal's export write
 each value's description and notes as the comment block above it, and `byn

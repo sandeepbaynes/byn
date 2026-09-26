@@ -297,6 +297,9 @@ const (
 	// Approving hands out authority, so it is gated exactly as a put is; denying
 	// and revoking are not, because they only ever remove it.
 	authRetryApprove
+	// authRetryAnnotation replays whatever the annotations view parked
+	// (annState.pending) with the password — a read, a history or a write.
+	authRetryAnnotation
 )
 
 // authRetryGetCmd re-issues OpGet with the supplied password.

@@ -303,11 +303,15 @@ func (m Model) renderEntryRow(e ipc.SecretMeta, selected, expanded bool, w int) 
 	}
 	date := e.UpdatedAt.Format(m.Layout.DateFmt)
 	mask := maskBar(maskWidth)
-	cols := []string{
-		marker + badge + dirtyMark + name,
+	left := marker + badge + dirtyMark + name
+	var right []string
+	if e.Notes > 0 {
+		// The count only: a note is encrypted and this list is drawn whether
+		// or not the vault is open. `n` opens them.
+		right = append(right, m.styles.EntryMeta.Render(fmt.Sprintf("✎%d", e.Notes)))
 	}
 	if maskWidth > 0 {
-		cols = append(cols, m.styles.EntryMasked.Render(mask))
+		right = append(right, m.styles.EntryMasked.Render(mask))
 	}
 	if sizeWidth > 0 {
 		// size unknown without get; we elide for now.
@@ -315,13 +319,47 @@ func (m Model) renderEntryRow(e ipc.SecretMeta, selected, expanded bool, w int) 
 		_ = size
 	}
 	if dateWidth > 0 {
-		cols = append(cols, m.styles.EntryMeta.Render(date))
+		right = append(right, m.styles.EntryMeta.Render(date))
 	}
+	// What the variable is for, in its own column after the name. Plaintext,
+	// so it is shown whether or not the vault is open — the detail pane that
+	// used to be its only home is drawn on wide terminals alone. Names are
+	// padded to a shared width so descriptions line up; a row too narrow for
+	// a useful excerpt shows none rather than a stub.
+	if e.Description != "" {
+		nameCol := m.entryNameColumn()
+		pad := nameCol - lipgloss.Width(left)
+		if pad < 0 {
+			pad = 0
+		}
+		rightW := lipgloss.Width(strings.Join(right, "  "))
+		avail := w - lipgloss.Width(left) - pad - 2 - rightW - 2
+		if avail >= 12 {
+			left += strings.Repeat(" ", pad) + "  " + m.styles.EntryMeta.Render(oneLineTUI(e.Description, avail))
+		}
+	}
+	cols := append([]string{left}, right...)
 	line := alignColumns(cols, w)
 	if selected {
 		return m.styles.EntrySelected.Render(line)
 	}
 	return line
+}
+
+// entryNameColumn is the width the name column is padded to so descriptions
+// line up: the widest visible name plus its marker and badge, capped so one
+// long name cannot push every description off the row.
+func (m Model) entryNameColumn() int {
+	longest := 0
+	for _, e := range m.filteredEntries() {
+		if n := lipgloss.Width(e.Name); n > longest {
+			longest = n
+		}
+	}
+	if longest > 28 {
+		longest = 28
+	}
+	return 4 + longest // "▸ " + badge
 }
 
 func maskBar(width int) string {

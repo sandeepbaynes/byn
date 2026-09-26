@@ -47,6 +47,8 @@ const (
 	// ModeApprovals is the decision queue: what an agent is blocked on and
 	// waiting for a person to answer.
 	ModeApprovals
+	// ModeAnnotations is one variable's description and notes (annotations.go).
+	ModeAnnotations
 )
 
 func (m Mode) String() string {
@@ -79,6 +81,8 @@ func (m Mode) String() string {
 		return "AUTHORIZE"
 	case ModeApprovals:
 		return "APPROVALS"
+	case ModeAnnotations:
+		return "NOTES"
 	}
 	return "?"
 }
@@ -335,6 +339,7 @@ type Model struct {
 	picker      *scopePickerState
 	scopeRename *scopeRenameState
 	authReq     *authReqState
+	ann         *annState
 
 	// Pending key sequence (for 'dd', 'ga', 'gd', etc.)
 	pendingKey string

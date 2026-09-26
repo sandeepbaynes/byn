@@ -29,6 +29,10 @@ func (m Model) View() string {
 		return m.composeOverlay(m.renderAudit())
 	case ModeApprovals:
 		return m.composeOverlay(m.renderApprovals(m.Width, m.Layout.Content.H+m.Layout.TopBar.H))
+	case ModeAnnotations:
+		if m.ann != nil {
+			return m.composeOverlay(m.renderAnnotations(m.Width, m.Layout.Content.H+m.Layout.TopBar.H))
+		}
 	}
 
 	// Compose rail | content | detail with status line at the bottom.
@@ -45,6 +49,11 @@ func (m Model) View() string {
 		body = overlayCenter(body, m.renderConfirm(), m.Width, m.Layout.Content.H+m.Layout.TopBar.H)
 	}
 	if m.Mode == ModeAuthRequired {
+		// Asked from inside the notes view, the prompt sits over that view,
+		// not over the entry list it was opened from.
+		if m.authReq != nil && m.authReq.kind == authRetryAnnotation && m.ann != nil {
+			body = m.renderAnnotations(m.Width, m.Layout.Content.H+m.Layout.TopBar.H)
+		}
 		body = overlayCenter(body, m.renderAuthRequired(), m.Width, m.Layout.Content.H+m.Layout.TopBar.H)
 	}
 
@@ -210,6 +219,8 @@ func (m Model) modeBadge() string {
 		return m.styles.ModeAudit.Render("AUDIT")
 	case ModeApprovals:
 		return m.styles.ModeAudit.Render("APPROVALS")
+	case ModeAnnotations:
+		return m.styles.ModeAudit.Render("NOTES")
 	case ModeHelp:
 		return m.styles.ModeHelp.Render("HELP")
 	case ModeAuthRequired:
@@ -266,7 +277,7 @@ func (m Model) statusHints() string {
 			focus = "entries"
 		}
 		return m.styles.StatusHint.Render(
-			"[" + focus + "]  j/k nav  Tab swap  i edit  a add  : cmd  / search  ? help")
+			"[" + focus + "]  j/k nav  Tab swap  i edit  a add  n notes  : cmd  / search  ? help")
 	case ModeInsert, ModeAdd, ModeRename:
 		return m.styles.StatusHint.Render("ESC normal  :w save  :q cancel")
 	case ModeScopeRename:
@@ -281,6 +292,8 @@ func (m Model) statusHints() string {
 		return m.styles.StatusHint.Render("q back  r refresh  / filter")
 	case ModeApprovals:
 		return m.styles.StatusHint.Render("j/k move  a approve  o once  d deny  v revoke  r reason  h history  ESC close")
+	case ModeAnnotations:
+		return m.styles.StatusHint.Render("e edit  a add  d remove  h history  r removed  ESC close")
 	case ModeHelp:
 		return m.styles.StatusHint.Render("ESC close")
 	case ModeAuthRequired:

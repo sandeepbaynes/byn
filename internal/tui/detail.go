@@ -62,7 +62,7 @@ func (m Model) renderDetail() string {
 			// The count, never the text. A note is encrypted and the detail
 			// pane is drawn whether or not the vault is open; saying how many
 			// there are is the most a listing may say.
-			lines = append(lines, kv(m.styles, " Notes  ", fmt.Sprintf("%d (byn note ls %s)", e.Notes, e.Name)))
+			lines = append(lines, kv(m.styles, " Notes  ", fmt.Sprintf("%d  (n to read)", e.Notes)))
 		}
 	}
 	lines = append(lines, "")
@@ -97,7 +97,7 @@ func (m Model) renderDetail() string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, m.styles.DetailLabel.Render(" R reveal   y copy   e edit   :describe   :note"))
+	lines = append(lines, m.styles.DetailLabel.Render(" R reveal   y copy   i edit   n notes"))
 
 	return joinAndPad(lines, w, h)
 }
