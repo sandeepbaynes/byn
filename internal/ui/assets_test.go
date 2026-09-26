@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -145,6 +146,12 @@ func TestAssets_EntryTableColumns(t *testing.T) {
 	}
 	if !strings.HasPrefix(tracks[1], "var(--col-name") || !strings.HasPrefix(tracks[2], "var(--col-val") {
 		t.Errorf("name/value tracks must read the resize widths: %q", tracks)
+	}
+	// The actions track holds up to six 27px icons with 4px gaps; any less and
+	// they overlap the description column.
+	var actsPx int
+	if _, err := fmt.Sscanf(tracks[4], "%dpx", &actsPx); err != nil || actsPx < 6*27+5*4 {
+		t.Errorf("actions track = %q, want at least %dpx for six icons", tracks[4], 6*27+5*4)
 	}
 	for _, want := range []string{".col-grip", ".cell.desc", "body.col-resizing"} {
 		if !strings.Contains(string(css), want) {

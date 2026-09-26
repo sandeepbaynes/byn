@@ -551,9 +551,13 @@ select.input { appearance: none; cursor: pointer; }
 .tbl { display: flex; flex-direction: column; }
 .tbl-head, .trow {
   display: grid;
-  grid-template-columns: 22px var(--col-name, minmax(130px, 1fr)) var(--col-val, 1.6fr) minmax(120px, 1.4fr) 120px;
+  grid-template-columns: 22px var(--col-name, minmax(130px, 1fr)) var(--col-val, 1.6fr) minmax(120px, 1.4fr) 184px;
   align-items: center; gap: 14px;
 }
+/* The actions track must hold the most icons a row can show — reveal, copy,
+   edit, revert, persist, notes: 6 × 27px (.act-ico: 15px icon + 10px padding
+   + 2px border) + 5 × 4px gaps = 182px. Narrower, and the right-aligned icons
+   spill left over the description column (and its editor). */
 /* --col-name / --col-val are set on .tbl when the user drags a header grip
    (app.js resizableHead); the description column takes what is left. */
 .tbl-head .th { position: relative; min-width: 0; }
