@@ -191,45 +191,44 @@ or any part of it, in a description — it is plaintext.
 
 ### Describing in bulk: `byn import`
 
-`byn import` reads descriptions and notes from a `.env`-shaped stream. The
-comment block directly above a variable annotates it:
+When you create several variables at once, `byn import` takes the description
+from the comment directly above each one:
 
 ```bash
-# The staging Stripe key - never point it at production.   <- description
-## account 1234, rotated 2026-09                            <- note (## or ###)
+generate-values | byn import --skip-existing --dry-run -   # preview
+generate-values | byn import --skip-existing -
+```
+
+where the stream looks like:
+
+```bash
+# The staging Stripe key - never point it at production.
 API_KEY=sk_test_...
 ```
 
-Several `#` lines are one description; a blank line ends the block, so a
-section heading set off by one annotates nothing; a commented-out assignment
-(`# OLD_KEY=...`) is never a description and ends the block. Once a `##` note
-appears, later `#` lines in that block are ignored. A description is written
-only when it differs from the stored one, and a note the value already carries
-is not added again, so re-running the same import is safe. YAML and JSON carry
-no annotations.
+- Several `#` lines make one description. A blank line between the comment and
+  the variable detaches it. A commented-out assignment (`# OLD_KEY=...`) is
+  never taken as a description.
+- Pipe the stream in. Never write it to a file: it holds the values.
+- Always pass `--skip-existing`. A name that already exists is skipped whole —
+  value and description — which is right: you may not change either.
+- Leave `##` lines out. They are **notes**, the owner's encrypted commentary;
+  writing one needs the owner's authorization, and the import will stop at it.
+- `--dry-run` lists each entry as `+ NAME = (N bytes) + description`, never the
+  text.
 
-A project that keeps an example env file (`.env.example`) usually already
-documents every variable in comments. The way to give its vault the same
-documentation is to **generate** that stream from the example and pipe it in —
-never to save it as a `.env`:
+### Describing what already exists
 
-```bash
-./gen-annotated-env | byn import --skip-existing --dry-run -   # preview
-./gen-annotated-env | byn import --skip-existing -
-```
-
-`--dry-run` lists each entry with `+ description, N notes` — never their text.
-Use `--skip-existing` (add-only) unless the user asked to replace values.
-Notes are encrypted, so writing them needs the vault open: that import is the
-user's to run, not yours.
-
-Descriptions are not only for variables. The same command labels the scope
-itself, and the same create-time rule applies — set it as you create it:
+A variable, project, env or vault that already exists can only be described by
+the owner — that is the create-time rule again, and `byn describe` will refuse
+you. If something you rely on has no description (for example, the comments in
+a project's `.env.example` explain variables the vault already holds), give the
+user the commands to run instead of trying:
 
 ```bash
-byn describe project: "the customer-facing app"   # the active project
-byn describe env:prod "production — deploys only"
-byn describe vault: "work credentials"
+byn describe API_KEY "the staging Stripe key - never point it at production"
+byn describe project: "the customer-facing app"     # the active project
+byn describe env:prod "production - deploys only"
 ```
 
 ### Notes are not yours
