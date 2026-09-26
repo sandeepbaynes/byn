@@ -12,6 +12,69 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.8.0
+
+**Headline:** every value can now say what it is for. A plaintext
+**description** tells people and agents how to use a value without showing it,
+and encrypted **notes** keep your own remarks next to it, with a full history
+of who added, changed or removed each one. Plus a fix for envs that silently
+lost values inherited from `default`.
+
+### What's new
+
+- **Descriptions and notes on everything in the vault** — variables, projects,
+  envs, the vault, trust records, exec runs, passkeys. `byn describe` writes a
+  description (plaintext, readable while locked — never put a secret in one);
+  `byn note add` writes a note (encrypted, owner-only). An agent may describe a
+  value only as it creates it. A trusted `.byn` can declare descriptions, which
+  take effect from the trust record, so editing the file changes nothing until
+  you re-approve it.
+- **Everywhere you look at a value.** `byn ls --long`, `byn get` (stderr, on a
+  terminal only), the portal (a description column, resizable columns, a
+  description box when you edit or add a value, a notes panel with edit,
+  remove and per-note history, removed notes included) and the TUI (a
+  description column, a note count, and `n` for a full-screen notes view with
+  the same abilities).
+- **In `.env` files.** Export writes each value's description and notes as the
+  comment block above it (`#` for the description, `##` per note), and import
+  reads them back without duplicating anything on a re-import. A
+  commented-out assignment is never taken as a description.
+- **Portal keyboard shortcuts** for the entry table: `j`/`k` select a row,
+  `e`/`Enter` edit, `d` describe, `Shift+N` notes, `Space` reveal, `y` copy.
+- **An env no longer silently loses a value it inherits from `default`** when
+  that value was stored unattended. Grants now carry default's keys, a launch
+  names any value it could not open with the fix, `byn doctor` and
+  `byn ls --long` flag such values, and **`byn import --unattended`** puts them
+  under your master password.
+- **A value that merely repeats `default`** is shown with an `=` badge, not
+  as an override.
+- **Forgot your master password** — a new troubleshooting section on what you
+  can still do. There is still no reset.
+- **Comparison:** the [tool comparison](field-notes/tool-comparison.md) now
+  covers Bitwarden Secrets Manager.
+
+### Upgrade notes
+
+- **Restart the daemon after upgrading** with `byn restart`. The portal and
+  the TUI's notes view need the new daemon; `byn daemon status` says
+  "stale" while an older one is still running.
+- **Vault schema v9.** Additive; each vault migrates the first time it is
+  opened. A v9 vault cannot be opened by an older byn.
+- **Existing grants pick up the inheritance fix when they are next re-sealed**
+  — storing any value with the vault open, `byn import --unattended`, or
+  re-trusting the `.byn`. If a non-default env is missing a value that
+  `byn ls` shows, run `byn doctor`; it names the command.
+- **`byn export` (env format) now includes your notes in plaintext**, alongside
+  the values it always contained. Treat the file like any `.env`. YAML and
+  JSON exports are unchanged.
+- **`byn import` of a `.env` now reads comments.** A `#` comment directly above
+  a variable becomes its description; a blank line between them prevents
+  that.
+- **Re-run `byn skill install`** so the Agent Skill knows about descriptions
+  and the unattended-value diagnostic.
+
+---
+
 ## v0.7.1
 
 **Headline:** on macOS, byn now walks you to the Full Disk Access switch

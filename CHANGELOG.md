@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## Unreleased
+## v0.8.0 — 2026-09-26
 
 ### An env no longer silently loses a value it inherits from default
 
@@ -116,6 +116,12 @@ the listing and leaves its text in `byn note history` / `byn describe
 traceable. A note you delete is retained until the thing it describes is.
 
 Vault schema v9 (additive; existing vaults migrate on open).
+
+### Keyboard shortcuts for the portal's entry table
+
+`j`/`k` (or the arrow keys) select a row; `e`/`Enter` edits its value and
+description, `d` edits just the description, `Shift+N` opens its notes and
+history, `Space` reveals it and `y` copies it. `?` lists every shortcut.
 
 ### A value that merely repeats default is no longer shown as an override
 
