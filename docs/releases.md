@@ -12,6 +12,83 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.9.0
+
+**Headline:** a security fix. From v0.5.0 to v0.8.0 the daemon accepted **any
+non-empty string** as the password for approving a command, so a process
+running as you could approve its own request. Approvals are now answered only
+by the password of the vault they were raised in, every card says exactly what
+a yes hands over and for how long, and `byn exec --var NAME` asks for named
+variables from anywhere on the machine, `.byn` or not.
+
+### Critical fix: a command approval accepted any password
+
+Approving a trust widening always verified the password against the file's
+vault. Approving a *command* did not verify it at all: the daemon required a
+password to be present and then recorded the decision. The same path served
+the terminal, the portal and the TUI.
+
+Now the password is checked against the vault the request was raised in, and
+no other; every surface names that vault when it asks. Vault, project and env
+are part of each request's fingerprint, so a yes for one scope says nothing
+about another. `byn approve --vault NAME` answers a vault's requests from any
+directory. Full detail, including what the audit log can and cannot tell you,
+is in the [changelog](../CHANGELOG.md#v090--2026-10-20).
+
+### What's new
+
+- **Ask ad hoc: `byn exec --var NAME -- COMMAND`.** A request for exactly the
+  named variables — no wildcard — from any directory, with or without a
+  `.byn`. Bound to the vault, project, env, directory, exact command line and
+  names; approved for an hour by default; sealed so it runs while the vault is
+  locked and a name not on the card is never injected. Beside a trusted `.byn`
+  it is allowed, flagged high risk, and the file is untouched.
+- **A `.byn` is the contract for one vault and the scope it pins.** Naming
+  another vault beside it is refused with both ways out named; naming another
+  vault sets the file aside whole, so what you did not name falls back to
+  `default` rather than to a project that exists only in the file's vault.
+- **The card is the whole question.** Every card — CLI, TUI, portal, `--json`,
+  `--history` — shows the `scope`, what the command `gets`, where an ad hoc
+  request is `from`, and how long a yes `lasts` (6h, 1h for ad hoc, one run,
+  or standing trust until the file changes again).
+- **`byn approve --vault NAME`**, and per-vault password prompts when more than
+  one vault has something waiting.
+- **`byn exec --reason "…" --vault X`** no longer drops `--vault`; an unknown
+  `byn exec` flag before `--` is an error.
+
+### Upgrade notes
+
+- **Restart the daemon after upgrading** with `byn restart`.
+- **No vault schema change.** Nothing is migrated; an older byn can still open
+  the vault.
+- **Each previously approved command asks once more** (the fingerprint now
+  includes vault and scope). Trust records are unchanged.
+- **A `.byn` is trusted for one vault at a time.** Trusting it for another
+  vault replaces the record. For a one-off in another vault, ask ad hoc.
+- **Re-run `byn skill install`** so agents are told to ask with `--var`.
+- **Scripts and agents:** `byn exec --vault X` beside a `.byn` trusted for
+  another vault is now refused (`trust_denied`); `--json` approval entries gain
+  `project`, `env`, `gets`, `gets_all`, `beside` and `window_seconds`.
+
+### Honest notes
+
+- The hole was found by the author, not reported. It existed for four
+  releases. A decision recorded by an earlier release looks the same whether
+  the password behind it was real or not, so the audit log cannot say whether
+  it was used against you; `byn approve --history` lists every decision.
+- On **macOS** the directory an ad hoc request is anchored to is what the CLI
+  said it was (Linux reads it from the kernel). The grant is still bound to
+  the asker's identity, vault, scope, command and names.
+- The ad hoc run under privilege separation is gated by the same daemon code
+  as a `.byn` run and is covered by daemon tests, but the integration harness
+  runs unprovisioned, so the end-to-end `_byn-exec` ad hoc run is not
+  exercised by a test, and it was not run by hand before this release. Run
+  one on a provisioned box after upgrading and report anything odd.
+- A no-`.byn` run **without** `--var` is unchanged: your password, the whole
+  scope, in-process. `--var` is the narrower path; nothing forces it yet.
+
+---
+
 ## v0.8.0
 
 **Headline:** every value can now say what it is for. A plaintext

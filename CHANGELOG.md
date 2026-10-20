@@ -3,6 +3,137 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## v0.9.0 — 2026-10-20
+
+### Security fix: a command approval accepted any password
+
+**Affects v0.5.0 through v0.8.0 — every release with an approval queue.
+Upgrade, then restart the daemon.**
+
+**Symptom:** a command a `.byn` does not pin raises an approval. `byn approve
+<id>` asks for "the master password" and the daemon accepts **any non-empty
+string**. The password of a vault you created a moment ago works; so does a
+wrong password; so does `x`. The portal and the TUI go through the same path.
+
+**Cause:** approving a trust widening re-granted the `.byn`, which verified the
+password against the file's vault. Approving a *command* took a different
+branch that only required a password to be present, then recorded the
+decision; nothing checked the password against the vault the command would
+read from. A process running as you could therefore raise a request for any
+command and approve it itself.
+
+**What changed:**
+
+- **The password that answers a request is checked against the vault the
+  request was raised in**, and no other. Every surface says which vault it is
+  asking for ("the master password of vault maison is proof you are here"). A
+  wrong password is refused and counted by the rate limiter like any other.
+- **A grant is bound to its vault and scope.** Vault, project and env are part
+  of a request's fingerprint, so a yes for one scope says nothing about
+  another. Grants made before v0.9.0 do not match the new fingerprint, so
+  **each approved command asks once more** after upgrading.
+- **`byn approve --vault NAME`** lists and answers that vault's requests from
+  any directory, with that vault's password. Without it, a project's `.byn`
+  picks the vault; outside any project every vault's requests are listed,
+  grouped, and each group asks for its own password. `--password-stdin`
+  answers one vault at a time.
+
+**Honest notes.** The hole was there from the day the queue shipped (v0.5.0)
+and was found by the author testing a cross-vault approval, not reported from
+outside. Its reach is bounded by byn's stated ceiling — a process running as
+you can already reach what you can — but the queue exists so that such a
+process cannot *grant itself* a command, and for four releases it could. The
+audit log has always recorded each decision under the request's vault, and
+from v0.9.0 also records its project and env; but a decision recorded by an
+earlier release looks the same whether the password behind it was real or not,
+so the log cannot tell you whether this was ever used against you. If a
+machine of yours ran agents against v0.5.0–v0.8.0, review
+`byn approve --history` for approvals you do not remember making.
+
+### A `.byn` is the contract for one vault, and for the scope it pins
+
+The trust record was looked up by path alone, so a `.byn` trusted in one vault
+was honoured as the contract for any vault named with `--vault`, and
+`--project`/`--env` on the command line silently overrode the scope the file
+pins while the card still described the file's. Now:
+
+- `byn exec --vault maison` beside a `.byn` trusted for `rinkats` is refused:
+  *"is trusted for vault rinkats, not maison"*. The hint names both ways out.
+- A `.byn`'s project and env are names inside its own vault. Naming another
+  vault sets the file aside whole; what you did not name falls back to
+  `default`, never to the file's project. Within the file's vault, `--env`
+  still fills in from the file as before.
+- A file whose own scope line changed is still a widening to approve, not a
+  refusal.
+- The scope banner says when the command line overrides the file, and when the
+  file is set aside, instead of printing a scope the file never said.
+
+### Ask ad hoc: `byn exec --var NAME -- COMMAND`
+
+A request for exactly the named variables, from any directory, with or without
+a `.byn`:
+
+```sh
+byn exec --vault maison --project monorepo --var DB_URL --var API_KEY --reason "backfill" -- ./run.sh
+```
+
+- Exact names only; there is no wildcard. The request is bound to the vault,
+  project, env, the directory it is made from, the exact command line and the
+  names. Change any one and it asks again.
+- Approving seals a capability for exactly those names from the approver's
+  password, so the run works while the vault is locked and a name not on the
+  card is never injected. **One hour** by default; `--for`, `--once`,
+  `--anyone` and `--revoke` apply as to any grant.
+- Beside a trusted `.byn` the request is allowed, flagged **high risk** on the
+  card, and the file is not changed; the file's own pinned commands keep
+  running on its terms.
+- Under privilege separation an ad hoc run is isolated like a `.byn` run. A
+  no-`.byn` run with no `--var` is unchanged: the vault password, the whole
+  scope, in-process.
+- Without `--var`, a scope that contradicts the `.byn` is refused with a hint;
+  `--no-discovery` runs on the whole scope with the vault password instead.
+
+### The card is the whole question
+
+Every approval card — CLI, TUI, portal, `--json`, `--history` — now carries:
+
+- **`scope`**: vault · project · env.
+- **`gets`**: the exact variables the command receives, "every variable in the
+  scope" for a `*` file, or "nothing".
+- **`from`** (ad hoc): the directory the request is anchored to and, flagged,
+  any `.byn` it steps around.
+- **`lasts`**: how long a plain yes lasts — 6h for a command the `.byn` does
+  not pin, 1h for an ad hoc request, one run when the asker asked for a single
+  use, or "until the file changes again" for a widening. It used to be shown
+  only for single-use requests, so every other card looked the same whether a
+  yes meant six hours or standing trust.
+
+`--history` has a `SCOPE` column; `--json` carries `vault`, `project`, `env`,
+`gets`, `gets_all`, `beside` and `window_seconds`.
+
+### Smaller fixes
+
+- **`byn exec --reason "…" --vault maison -- CMD` dropped `--vault`.** The text
+  after `--reason` was read as an alias name, which ended flag parsing, and the
+  run went to whichever vault the directory implied. Every `byn exec` flag that
+  takes a value is now known to the parser, and an unknown flag before `--` is
+  an error instead of being passed through.
+
+### After upgrading
+
+- **Restart the daemon** (`byn restart`). The per-vault password check and the
+  new cards need the new daemon.
+- **Each previously approved command asks once more.** Nothing else about your
+  trust records changes.
+- **A `.byn` is trusted for one vault at a time.** `byn trust` on a file for
+  another vault replaces its record; for a one-off in another vault, ask ad
+  hoc with `--var`.
+- **Re-run `byn skill install`** so the Agent Skill tells agents to ask with
+  `--var` rather than work around a `.byn`.
+- **Scripts:** `byn exec --vault X` beside a `.byn` trusted for another vault
+  is now refused (`trust_denied`); an unknown `byn exec` flag before `--` is
+  now an error; `--json` approval entries carry the new fields.
+
 ## v0.8.0 — 2026-09-26
 
 ### An env no longer silently loses a value it inherits from default

@@ -151,6 +151,28 @@ applying. The snapshot is taken once and is not overwritten by a second attempt.
 
 ---
 
+## v0.8.x → v0.9.0
+
+A security fix with no schema change. The full list is in the
+[release notes](releases.md#v090).
+
+- **Restart the daemon** after replacing the binary. The per-vault password
+  check lives in the daemon; an old one keeps accepting any string for a
+  command approval.
+- **Every previously approved command asks once more**, because the grant's
+  fingerprint now includes the vault and scope. Trust records are untouched.
+- **A `.byn` is honoured for the vault it was trusted into, and no other.**
+  `byn exec --vault X` beside a `.byn` trusted for another vault is refused
+  (`trust_denied`) with the two ways out named: `--var NAME` to ask ad hoc,
+  or `--no-discovery` to run on the whole scope with the vault password.
+- **An unknown `byn exec` flag before `--` is an error** rather than being
+  passed through; `--reason "…" --vault X` now keeps the `--vault`.
+- **`--json` approval entries** gain `project`, `env`, `gets`, `gets_all`,
+  `beside` and `window_seconds`. Nothing was removed.
+- **Re-run `byn skill install`.**
+
+---
+
 ## v0.4.x → v0.5.0
 
 The full list is in the [release notes](releases.md#v050) and

@@ -1,6 +1,6 @@
 # How agents and bots leak your secrets
 
-*Field note · coverage: v0.8.0 · updated with each release*
+*Field note · coverage: v0.9.0 · updated with each release*
 
 Most credential leaks in agentic development are not attacks. They are
 **accidents with your permissions**: an agent debugging a build reads the
@@ -12,7 +12,7 @@ running as you can read** — and your machine is now operated by a crowd
 of such processes.
 
 This field note catalogs the leak vectors one by one. For each: how the
-leak happens, what byn does about it **today (v0.8.0)**, where byn
+leak happens, what byn does about it **today (v0.9.0)**, where byn
 **cannot** protect, and what is **coming** that will close more of the
 gap. It is updated every release. For verified incidents in the wild,
 see [Real-world incidents](real-world-incidents.md); for the author's
@@ -46,7 +46,7 @@ the linked reports and the honest caveats.
   (`[security] privsep` + `sudo byn setup`) — runs the daemon and trusted-pinned
   exec children on their own service UIDs (`_byn`, `_byn-exec`), so a same-UID
   agent can't ptrace the daemon or read an injected child's env (`ps -E` on
-  macOS, `/proc/<pid>/environ` on Linux). **v0.8.0** spawns that child in your
+  macOS, `/proc/<pid>/environ` on Linux). **v0.9.0** spawns that child in your
   shell's process tree, so it inherits your TCC / Full Disk Access (it runs in
   `~/Documents` et al.) while the env stays hidden. Still on the roadmap: Phase 3
   shims (`aws`, `ssh`, …) to remove more plaintext files, and FUSE-gated
@@ -171,9 +171,16 @@ been demonstrated repeatedly against real agent stacks.
 - **byn today:** the agent's permissions no longer include silent value
   access. Reads require a session or fresh auth; ad-hoc exec is gated;
   trusted-`.byn` exec runs only the **pinned command list** approved
-  with your password; in agent mode (`--json`) byn refuses interactive
+  with your password; a command outside that list, or an ad hoc
+  `--var` request, raises an approval that only the owning vault's
+  password answers; in agent mode (`--json`) byn refuses interactive
   prompts entirely, so an injected agent can't social-engineer a y/N
   dialog. Sensitive grants (trust, reveal) demand proof-of-presence.
+- **Honest record:** from v0.5.0 to v0.8.0 the daemon accepted any
+  non-empty string as the password for a *command* approval, so an
+  injected agent could approve its own request. Fixed in v0.9.0; see
+  the [release notes](../releases.md#v090). The approval channel is only
+  a boundary when the thing answering it is checked.
 - **Where byn can't protect:** an injected agent operating inside a
   terminal with a live session can use that session for gated reads
   until it expires or you `byn lock --session`. The TTY binding is not
@@ -212,7 +219,7 @@ account](aws-credential-file-takeover.md).
 
 ## The honest summary: unprovisioned vs provisioned
 
-| Vector | v0.8.0 (unprovisioned) | v0.8.0 provisioned (`sudo byn setup`) | Planned |
+| Vector | v0.9.0 (unprovisioned) | v0.9.0 provisioned (`sudo byn setup`) | Planned |
 |---|---|---|---|
 | 1. Agent reads secret file | ✓ no plaintext file; reads gated + audited | ✓ + daemon/child on own UIDs | Shims, FUSE file gating |
 | 2. Secret enters agent context | ◐ reduced + audited; child output not controllable | — | Audit leak-pattern scan |
