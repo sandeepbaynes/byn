@@ -249,12 +249,17 @@ The decision queue, at `/approvals` — reachable from the nav badge, which coun
 what is waiting.
 
 Each card leads with the request id (the thing you type at a terminal, and the
-`approval_id` an agent printed), then what would run, whether the asker asked for
-a **single use**, the stated reason marked as unverifiable, and who asked as read
-from the kernel.
+`approval_id` an agent printed), then what would run, the **scope** (vault ·
+project · env), what the command **gets** (the exact variables, or every
+variable in the scope for a `*` file), for an ad hoc request where it is
+**from** (the directory, and flagged, any `.byn` it steps around), how long a
+plain yes **lasts** (6h, 1h for an ad hoc request, one run when the asker asked
+for a single use, or standing trust until the file changes again), the stated
+reason marked as unverifiable, and who asked as read from the kernel.
 
-- **approve** hands out authority, so it asks for the master password exactly as
-  the terminal does. The primary button does what the asker asked for — a
+- **approve** hands out authority, so it asks for the master password of the
+  vault the request was raised in, exactly as the terminal does; no other
+  vault's password answers it. The primary button does what the asker asked for — a
   one-shot request is approved as a one-shot by the plain button, so the narrow
   path is the default path — and the override sits beside it labelled with what
   it does rather than with a flag name.

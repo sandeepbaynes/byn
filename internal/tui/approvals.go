@@ -75,9 +75,21 @@ func (m Model) approvalLines(w int) []string {
 		for _, line := range a.Summary {
 			out = append(out, m.approvalField("runs", oneLineTUI(line, w-approvalLabelWidth-4)))
 		}
-		if a.AskOnce {
-			out = append(out, m.approvalField("wants",
-				m.styles.StatusOverridden.Render("a single use — approving grants one run")))
+		// Where a yes reaches and what it hands over — the two facts a
+		// decision is actually made on.
+		out = append(out, m.approvalField("scope", approvalScope(a)))
+		if gets := approvalGets(a); gets != "" {
+			out = append(out, m.approvalField("gets", oneLineTUI(gets, w-approvalLabelWidth-4)))
+		}
+		if a.Kind == "adhoc" {
+			from := "ad hoc — no .byn"
+			if a.Beside != "" {
+				from = m.styles.StatusOverridden.Render("ad hoc, beside " + a.Beside + " — not covered by it")
+			}
+			out = append(out, m.approvalField("from", oneLineTUI(from, w-approvalLabelWidth-4)))
+		}
+		if lasts := m.approvalLasts(a); lasts != "" {
+			out = append(out, m.approvalField("lasts", lasts))
 		}
 		if a.Reason != "" {
 			out = append(out, m.approvalField("why", a.Reason))
@@ -127,6 +139,20 @@ func (m Model) approvalOutcome(a ipc.ApprovalEntry) string {
 	}
 }
 
+// approvalLasts says how long a plain approval lasts, on every card: one run,
+// a window after which the command asks again, or standing trust in a file.
+func (m Model) approvalLasts(a ipc.ApprovalEntry) string {
+	switch {
+	case a.AskOnce:
+		return m.styles.StatusOverridden.Render("one run") + " — the asker wants a single use; lapses unused after 30m"
+	case a.WindowSeconds > 0:
+		return compactAgeTUI(time.Duration(a.WindowSeconds)*time.Second) + " — runs free for whoever asked, then asks again"
+	case a.Kind == "trust_widening":
+		return "until the file changes again — standing trust, not a window"
+	}
+	return ""
+}
+
 // approvalTiming is the one field that is legitimately a list: age, deadline and
 // retries all answer "when and how often".
 func approvalTiming(a ipc.ApprovalEntry) string {
@@ -141,10 +167,33 @@ func approvalTiming(a ipc.ApprovalEntry) string {
 	if a.Repeats > 0 {
 		parts = append(parts, fmt.Sprintf("retried %d×", a.Repeats))
 	}
-	if a.Vault != "" {
-		parts = append(parts, "vault "+a.Vault)
-	}
 	return strings.Join(parts, " · ")
+}
+
+// approvalScope renders vault/project/env with every field named.
+func approvalScope(a ipc.ApprovalEntry) string {
+	d := func(v string) string {
+		if v == "" {
+			return "default"
+		}
+		return v
+	}
+	return "vault " + d(a.Vault) + " · project " + d(a.Project) + " · env " + d(a.Env)
+}
+
+// approvalGets says what the command receives if approved.
+func approvalGets(a ipc.ApprovalEntry) string {
+	switch {
+	case a.GetsAll:
+		return "every variable in the scope (the .byn allows *)"
+	case len(a.Gets) > 0:
+		return strings.Join(a.Gets, ", ")
+	case a.Kind == "action_unpinned":
+		return "nothing — the .byn declares no env"
+	case a.Kind == "adhoc":
+		return "nothing"
+	}
+	return ""
 }
 
 // approvalFooter names the gestures available, including the reason line, which

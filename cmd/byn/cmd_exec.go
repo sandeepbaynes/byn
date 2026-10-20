@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -103,6 +104,9 @@ func runExec(args []string, scope cliScope) int {
 	// Asked for by the caller, decided by the approver. This only sets what a
 	// plain `byn approve <id>` will do; the approver can still override it.
 	args, askOnce := stripExecAskOnce(args)
+	// --var NAME, repeated, makes this an ad hoc request: exactly these
+	// variables, from the scope in force, for this command in this directory.
+	args, adhocVars := stripExecVars(args)
 	if reason == "" {
 		// BYN_WHY exists for harnesses that build byn's argv themselves and
 		// cannot add a flag to it. A wrapper script can export it once and
@@ -138,6 +142,11 @@ func runExec(args []string, scope cliScope) int {
 		aliasName = args[0]
 		extraArgs = args[1:]
 		isAliasExec = true
+		if len(adhocVars) > 0 {
+			fmt.Fprintln(os.Stderr, boldRed("Error:")+" an ad hoc request runs a command, not an alias — aliases come from the .byn")
+			fmt.Fprintln(os.Stderr, dim("Hint: byn exec --var NAME -- COMMAND"))
+			return exitErr
+		}
 		// childArgv is not known until the daemon responds with ResolvedArgv.
 		// We use a placeholder; it will be replaced by ResolvedArgv below.
 		childArgv = nil
@@ -149,6 +158,16 @@ func runExec(args []string, scope cliScope) int {
 				sepIdx = i
 				break
 			}
+		}
+		// Whatever is still in front of the separator is a flag byn does not
+		// know. Dropping it silently ran the command without what was asked
+		// for — `--vault x` placed where byn did not look for it ran against
+		// the .byn's vault instead, and said nothing.
+		if sepIdx > 0 {
+			fmt.Fprintf(os.Stderr, "%s unknown byn exec flag(s): %s\n", boldRed("Error:"),
+				strings.Join(args[:sepIdx], " "))
+			fmt.Fprintln(os.Stderr, dim("Flags for the command itself go after `--`. See `byn exec help`."))
+			return exitErr
 		}
 		if sepIdx < 0 {
 			fmt.Fprintln(os.Stderr, "Usage: byn exec -- COMMAND [ARGS...]")
@@ -184,7 +203,7 @@ func runExec(args []string, scope cliScope) int {
 		}
 		// The same argv the real call would send, so the answer is about the
 		// same command. An alias resolves server-side, so it is passed by name.
-		return runExecDryRun(scope.SourcePath, childArgv, aliasName, execJSONMode)
+		return runExecDryRun(scope.SourcePath, scope.ToIPC(), childArgv, aliasName, execJSONMode)
 	}
 
 	dir, err := defaultDir()
@@ -239,6 +258,7 @@ func runExec(args []string, scope cliScope) int {
 		}
 	} else {
 		cmd := execCommandLabel(childArgv)
+		cwd, _ := os.Getwd()
 		req = ipc.ExecFetchReq{
 			Path:     scope.SourcePath,
 			Scope:    scope.ToIPC(),
@@ -247,6 +267,8 @@ func runExec(args []string, scope cliScope) int {
 			ForceAsk: forceAsk,
 			Reason:   reason,
 			AskOnce:  askOnce,
+			Vars:     adhocVars,
+			Cwd:      cwd,
 			// Only when actually waiting: a caller that exits immediately has
 			// no deadline to state, and claiming one would put a hurry on the
 			// list that nothing is behind.
@@ -319,7 +341,9 @@ func runExec(args []string, scope cliScope) int {
 		reconcileWritableACLs(scope.SourcePath)
 	}
 
-	if privsepOn && scope.SourcePath != "" && !isAliasExec {
+	// An ad hoc run is isolated the same way: the daemon gates it through the
+	// same authorizeExec, and the helper needs only the command and the cwd.
+	if privsepOn && (scope.SourcePath != "" || len(adhocVars) > 0) && !isAliasExec {
 		if rc, handled := runExecPrivsep(client, req, childArgv, waitApproval, hasWait); handled {
 			return rc
 		}
@@ -376,9 +400,11 @@ func runExec(args []string, scope cliScope) int {
 					fmt.Fprintf(os.Stderr, "%s %s\n",
 						dim("Hint:"), dim("add the command to [exec] actions in "+scope.SourcePath+" and re-trust, or run interactively to supply the password"))
 				} else {
-					// Ad-hoc: hint about .byn.
+					// Ad-hoc without a list: the agent's way forward is to name
+					// what it needs, which queues a decision instead of a prompt.
 					fmt.Fprintf(os.Stderr, "%s %s\n",
-						dim("Hint:"), dim("run from a directory with a trusted .byn (credential-free), or unlock the vault's UI portal"))
+						dim("Hint:"), dim("name the variables you need and ask for approval: byn exec --var NAME -- COMMAND; "+
+							"or run from a directory with a trusted .byn"))
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "%s exec requires authorization.\n", boldRed("Error:"))
@@ -487,33 +513,64 @@ func runExec(args []string, scope cliScope) int {
 // and are passed through opaquely — a child of its own may legitimately take a
 // `--no-privsep` flag. Returns the cleaned args and whether the flag was present.
 func stripNoPrivsep(args []string) ([]string, bool) {
+	return stripExecBoolFlag(args, "--no-privsep")
+}
+
+// stripExecBoolFlag removes a boolean byn-exec flag (any of names) from the part
+// of args that belongs to byn, and reports whether it was there. byn's part ends
+// at the first `--` or the first bare token (an alias NAME); everything from
+// there on is the child's argv and is copied untouched.
+//
+// A bare token that is the VALUE of another exec flag — the text after --reason,
+// say — is not that boundary. Treating it as one hid every flag after it: in
+// `byn exec --reason "why" --json -- cmd`, --json was never seen, and the run
+// went ahead without it.
+func stripExecBoolFlag(args []string, names ...string) ([]string, bool) {
 	out := make([]string, 0, len(args))
 	found := false
-	boundary := false // once true, copy the rest verbatim (child argv)
-	for _, a := range args {
-		if boundary {
-			out = append(out, a)
-			continue
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			// Direct-form separator or alias NAME: byn flags end here.
+			return append(out, args[i:]...), found
 		}
-		if a == "--" {
-			// Direct-form separator: byn flags end here.
-			boundary = true
-			out = append(out, a)
-			continue
-		}
-		if !strings.HasPrefix(a, "-") {
-			// Alias NAME (or a bare token): byn flag parsing ends here too.
-			boundary = true
-			out = append(out, a)
-			continue
-		}
-		if a == "--no-privsep" {
+		if slices.Contains(names, a) {
 			found = true
 			continue
 		}
-		out = append(out, a)
+		n := execFlagValueLen(args, i)
+		out = append(out, args[i:i+1+n]...)
+		i += n
 	}
 	return out, found
+}
+
+// execFlagValueLen reports how many tokens after args[i] are the value of the
+// byn-exec flag at args[i]: 1 for a flag whose value is its own token, 0
+// otherwise. It is the one place that knows which exec flags take a value, so
+// every pass over exec's flags — and the global --vault/--project/--env parser —
+// skips a value instead of mistaking it for the alias NAME that ends byn's
+// flags. Each case mirrors how its own strip function reads the value.
+func execFlagValueLen(args []string, i int) int {
+	if i+1 >= len(args) {
+		return 0
+	}
+	next := args[i+1]
+	switch args[i] {
+	case "--reason", "--why", "--var":
+		return 1
+	case "--wait-approval":
+		if !strings.HasPrefix(next, "-") {
+			if _, err := time.ParseDuration(next); err == nil {
+				return 1
+			}
+		}
+	case "--inspect", "--inspect-brk":
+		if looksLikePort(next) {
+			return 1
+		}
+	}
+	return 0
 }
 
 // stripInspect removes a `--inspect` / `--inspect-brk` flag from the BYN side of
@@ -540,7 +597,9 @@ func stripInspect(args []string) (out []string, brk bool, value string, found bo
 		isInspect := a == "--inspect" || strings.HasPrefix(a, "--inspect=")
 		isBrk := a == "--inspect-brk" || strings.HasPrefix(a, "--inspect-brk=")
 		if !isInspect && !isBrk {
-			out = append(out, a)
+			n := execFlagValueLen(args, i)
+			out = append(out, args[i:i+1+n]...)
+			i += n
 			continue
 		}
 		found, brk = true, isBrk
@@ -1096,7 +1155,9 @@ func stripWaitApproval(args []string) ([]string, time.Duration, bool) {
 				wait = d
 			}
 		default:
-			out = append(out, a)
+			n := execFlagValueLen(args, i)
+			out = append(out, args[i:i+1+n]...)
+			i += n
 		}
 	}
 	return out, wait, found

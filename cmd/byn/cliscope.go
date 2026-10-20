@@ -28,6 +28,10 @@ type cliScope struct {
 	// `byn exec` verifies trust against it before injecting; other commands
 	// ignore it.
 	SourcePath string
+	// VaultNamed is true when Vault came from --vault or BYN_VAULT rather than
+	// from a discovered .byn — the difference between "I mean this vault" and
+	// "this is the vault of the directory I happen to be in".
+	VaultNamed bool
 }
 
 // envFallbackKeys maps each scope field to its environment-variable
@@ -174,9 +178,14 @@ func execPassthroughBoundary(args []string) int {
 				if strings.HasPrefix(t, "-") {
 					// A flag immediately after exec (e.g. `byn exec --help`) —
 					// skip past its value if it's a two-token flag so we don't
-					// mis-classify the value token as the alias name.
+					// mis-classify the value token as the alias name. That
+					// includes exec's own value flags: `--reason "why"` read
+					// as an alias put every flag after it — a --vault among
+					// them — beyond byn's reach.
 					if _, isGlobal := globalFlags[t]; isGlobal {
 						j++ // skip the value token
+					} else {
+						j += execFlagValueLen(args, j)
 					}
 					continue
 				}

@@ -32,17 +32,28 @@ func renderPendingEntry(w io.Writer, e ipc.ApprovalEntry, now time.Time, width i
 		_, _ = fmt.Fprint(w, fieldRowsWrapped(label, value, width, nil))
 	}
 
-	// What the asker asked for, on its own line and directly under what it wants
-	// to run.
+	// Where a yes reaches, and what it hands over. These two rows are the
+	// answer to "what will this approval do", which the card used to leave
+	// to be inferred from a path: the vault was in the timing line or
+	// nowhere, the project and env were not on the card at all, and the
+	// variables the command would receive were never said.
+	_, _ = fmt.Fprint(w, fieldRow("scope", scopeField(e)))
+	if gets := getsText(e); gets != "" {
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("gets", gets, width, nil))
+	}
+	if from := fromText(e); from != "" {
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("from", from, width, nil))
+	}
+
+	// How long a plain `byn approve <id>` lasts, on every card and directly
+	// under what it hands over. It changes what approving DOES, so an approver
+	// should learn it before deciding, not from the result afterwards.
 	//
-	// This started life appended to the timing row, between the retry count and
-	// the vault name — which is a list of bookkeeping, and it is not
-	// bookkeeping: it changes what a plain `byn approve <id>` DOES. An approver
-	// should learn that before deciding, not from the result afterwards, and
-	// certainly not by reading to the end of a line of five other facts.
-	if e.AskOnce {
-		_, _ = fmt.Fprint(w, fieldRow("wants", roleWarn("a single use")+
-			roleNote(" — approving grants one run, not a window")))
+	// It used to be said only when the asker wanted a single run, which left
+	// every other card looking the same whether a yes meant six hours, one
+	// hour or standing trust — the one thing nobody should have to guess.
+	if lasts := lastsText(e); lasts != "" {
+		_, _ = fmt.Fprint(w, fieldRowsWrapped("lasts", lasts, width, nil))
 	}
 
 	// Why, in the asker's words, marked as the claim it is. byn cannot check a
@@ -103,13 +114,70 @@ func pendingTiming(e ipc.ApprovalEntry, now time.Time) string {
 			parts = append(parts, roleNote("no longer waiting"))
 		}
 	}
-	if e.Vault != "" && e.Vault != "default" {
-		parts = append(parts, "vault "+e.Vault)
-	}
 	if e.HighRisk {
 		parts = append(parts, roleWarn("high risk"))
 	}
 	return strings.Join(parts, roleNote(" · "))
+}
+
+// scopeField renders vault · project · env, every field named even when it is
+// the default: "default" is a vault like any other, and a card that omits it
+// reads as if the question had no vault.
+func scopeField(e ipc.ApprovalEntry) string {
+	d := func(v string) string {
+		if v == "" {
+			return "default"
+		}
+		return v
+	}
+	return roleIdent("vault "+d(e.Vault)) + roleNote(" · ") + "project " + d(e.Project) +
+		roleNote(" · ") + "env " + d(e.Env)
+}
+
+// getsText says what the command receives if approved, or "" for a kind whose
+// summary already says (a widening names what it adds).
+func getsText(e ipc.ApprovalEntry) string {
+	switch {
+	case e.GetsAll:
+		return "every variable in the scope — the .byn allows *, including ones added later"
+	case len(e.Gets) > 0:
+		return strings.Join(e.Gets, ", ")
+	case e.Kind == "action_unpinned":
+		return roleNote("nothing — the .byn declares no env")
+	case e.Kind == "adhoc":
+		return roleNote("nothing")
+	}
+	return ""
+}
+
+// lastsText says how long a plain approval lasts: one run, a window after
+// which the command asks again, or standing trust in a file. The asker's
+// single-use request comes first because it replaces the window outright.
+func lastsText(e ipc.ApprovalEntry) string {
+	switch {
+	case e.AskOnce:
+		return roleWarn("one run") + roleNote(" — ") +
+			"the asker wants a single use: spent on the first run, or lapsed unused after 30m; --always grants the usual window instead"
+	case e.WindowSeconds > 0:
+		return compactLeft(time.Duration(e.WindowSeconds)*time.Second) + roleNote(" — ") +
+			"runs free for whoever asked, then asks again; --for 30m shortens it, --once makes it a single run"
+	case e.Kind == "trust_widening":
+		return "until the file changes again" + roleNote(" — ") +
+			"standing trust in the .byn as it is now, not a window"
+	}
+	return ""
+}
+
+// fromText says what an ad hoc request is anchored to, since it has no .byn:
+// the directory, and — flagged — a trusted file it is stepping around.
+func fromText(e ipc.ApprovalEntry) string {
+	if e.Kind != "adhoc" {
+		return ""
+	}
+	if e.Beside != "" {
+		return roleWarn("ad hoc, beside " + tildeHome(e.Beside) + " — which does not cover this and is not changed by approving")
+	}
+	return "ad hoc — no .byn; anchored to the directory it runs in"
 }
 
 // splitSummaryVerb lifts the leading verb of a stored summary into the label
@@ -131,7 +199,7 @@ func splitSummaryVerb(line string) (label, value string) {
 
 // historyRow is one decided request, flattened to a single line.
 type historyRow struct {
-	id, status, when, command, why string
+	id, status, when, scope, command, why string
 }
 
 // renderHistoryTable prints decided requests as a real table, one row each.
@@ -146,12 +214,13 @@ type historyRow struct {
 // untruncated, and the footer says so.
 func renderHistoryTable(w io.Writer, entries []ipc.ApprovalEntry, now time.Time, width int) {
 	rows := make([]historyRow, 0, len(entries))
-	idW, statusW, whenW := len("ID"), len("STATUS"), len("ASKED")
+	idW, statusW, whenW, scopeW := len("ID"), len("STATUS"), len("ASKED"), len("SCOPE")
 	for _, e := range entries {
 		r := historyRow{
 			id:     e.ID,
 			status: e.Status,
 			when:   compactAge(now.Sub(time.Unix(e.CreatedAt, 0))) + " ago",
+			scope:  plainScope(e),
 			why:    e.Reason,
 		}
 		if len(e.Summary) > 0 {
@@ -167,24 +236,48 @@ func renderHistoryTable(w io.Writer, entries []ipc.ApprovalEntry, now time.Time,
 		}
 		rows = append(rows, r)
 		idW, statusW, whenW = maxInt(idW, len(r.id)), maxInt(statusW, len(r.status)), maxInt(whenW, len(r.when))
+		scopeW = maxInt(scopeW, len(r.scope))
 	}
+	// A scope column stays legible on a narrow terminal by being capped, not
+	// dropped: a history that does not say which vault each row was for
+	// cannot answer the question it is read for.
+	scopeW = minInt(scopeW, 28)
 
 	// What is left after the fixed columns, split between the two free-text
 	// ones. Command gets the larger share: it is what was asked for, and the
 	// reason is optional and often absent.
-	rest := width - (idW + statusW + whenW + 8)
+	rest := width - (idW + statusW + whenW + scopeW + 10)
 	cmdW, whyW := maxInt(rest*2/3, 12), maxInt(rest/3, 8)
 
-	_, _ = fmt.Fprintf(w, "%s\n", roleLabel(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %s",
-		idW, "ID", statusW, "STATUS", whenW, "ASKED", cmdW, "COMMAND", "WHY")))
+	_, _ = fmt.Fprintf(w, "%s\n", roleLabel(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s  %s",
+		idW, "ID", statusW, "STATUS", whenW, "ASKED", scopeW, "SCOPE", cmdW, "COMMAND", "WHY")))
 	for _, r := range rows {
-		_, _ = fmt.Fprintf(w, "%-*s  %s  %-*s  %-*s  %s\n",
+		_, _ = fmt.Fprintf(w, "%-*s  %s  %-*s  %-*s  %-*s  %s\n",
 			idW, roleIdent(r.id),
 			padColored(statusColor(r.status), r.status, statusW),
 			whenW, r.when,
+			scopeW, ellipsize(r.scope, scopeW),
 			cmdW, ellipsize(r.command, cmdW),
 			roleNote(ellipsize(r.why, whyW)))
 	}
+}
+
+// plainScope is vault/project/env uncoloured, for a table cell.
+func plainScope(e ipc.ApprovalEntry) string {
+	d := func(v string) string {
+		if v == "" {
+			return "default"
+		}
+		return v
+	}
+	return d(e.Vault) + "/" + d(e.Project) + "/" + d(e.Env)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // statusColor maps an outcome to a role, so the colour of a status always says

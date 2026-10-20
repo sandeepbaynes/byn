@@ -164,14 +164,16 @@ func TestDiscoverScope_TrustedUnknownKeyRejected(t *testing.T) {
 }
 
 func TestMergeDiscoveryScope(t *testing.T) {
-	cli := cliScope{Vault: "cli"}
 	disc := cliScope{Vault: "disc", Project: "p", Env: "e"}
-	out := mergeDiscoveryScope(cli, disc)
-	if out.Vault != "cli" {
-		t.Fatalf("CLI should win: %+v", out)
+	// Within the file's vault the CLI wins and discovery fills what it left out.
+	out := mergeDiscoveryScope(cliScope{Vault: "disc", Env: "cli"}, disc)
+	if out.Vault != "disc" || out.Project != "p" || out.Env != "cli" {
+		t.Fatalf("CLI should win and discovery fill the rest: %+v", out)
 	}
-	if out.Project != "p" || out.Env != "e" {
-		t.Fatalf("discovery should fill missing: %+v", out)
+	// Named into another vault, the file is set aside whole: its project and
+	// env are names inside its own vault, not defaults for a different one.
+	if out := mergeDiscoveryScope(cliScope{Vault: "cli"}, disc); out != (cliScope{Vault: "cli"}) {
+		t.Fatalf("another vault must set the file aside, got %+v", out)
 	}
 }
 

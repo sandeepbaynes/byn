@@ -117,6 +117,7 @@ func run(args []string) int {
 		return exitErr
 	}
 	args = scrubbed
+	scope.VaultNamed = scope.Vault != ""
 
 	// `.byn` discovery + TOFU. Walk parents from CWD; fold the
 	// result UNDER any explicit CLI flags or env vars. Errors here are
@@ -136,9 +137,22 @@ func run(args []string) int {
 				return exitErr
 			}
 			if srcPath != "" {
+				flags := scope
 				scope = mergeDiscoveryScope(scope, discScope)
 				scope.SourcePath = srcPath // byn exec verifies trust against this
-				hintf("Using scope from %s: %s.", srcPath, scope)
+				// Say when the command line overrode the file. "Using scope
+				// from .byn: maison/…" with --vault maison on a file that says
+				// rinkats was a lie, and the one place the difference was
+				// visible before anything ran.
+				if bynSetAside(flags, discScope) {
+					hintf("Scope %s (--vault from the command line); %s says %s and is set aside — a .byn speaks for its own vault only.",
+						scope, srcPath, discScope)
+				} else if over := overriddenScopeFields(flags, discScope); len(over) > 0 {
+					hintf("Scope %s (%s from the command line); %s says %s.",
+						scope, strings.Join(over, ", "), srcPath, discScope)
+				} else {
+					hintf("Using scope from %s: %s.", srcPath, scope)
+				}
 			}
 		}
 	}

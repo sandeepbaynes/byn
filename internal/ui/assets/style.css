@@ -1473,7 +1473,10 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
    what byn will do, what the asker claims, and who byn saw asking. The claim is
    the one that must not look like a finding. */
 .approval-note { font-size: 12px; opacity: .72; margin: 2px 0 6px; }
-.approval-reason, .approval-actor { font-size: 12px; margin: 2px 0; display: flex; gap: 6px; }
+.approval-reason, .approval-actor,
+.approval-scope, .approval-gets, .approval-from, .approval-lasts { font-size: 12px; margin: 2px 0; display: flex; gap: 6px; }
+/* An ad hoc request stepping around a trusted .byn is flagged, not forbidden. */
+.approval-from.approval-warn span:last-child { color: var(--warn, #d08b28); }
 .approval-label {
   font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
   opacity: .6; flex: 0 0 auto; padding-top: 1px;

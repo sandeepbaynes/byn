@@ -134,7 +134,13 @@ func (d *Daemon) handleExecPreflight(ctx context.Context, env *ipc.Envelope) *ip
 	// refusal as a pause — the two answers that mislead rather than merely
 	// disappoint. This has to agree with the gate or it is worse than nothing.
 	if !out.Pinned && d.approvals != nil {
-		_, _, fingerprint := actionApprovalKey(canon, "", argv)
+		// A grant is per scope. The request's scope is the run's; a field it
+		// leaves empty takes what the record pins, then the default.
+		grantScope := vault.Scope{
+			Project: defaultIfEmpty(req.Scope.Project, defaultIfEmpty(rec.ScopeProject, vault.DefaultProjectName)),
+			Env:     defaultIfEmpty(req.Scope.Env, defaultIfEmpty(rec.ScopeEnv, vault.DefaultEnvName)),
+		}
+		_, _, fingerprint := actionApprovalKey(rec.Vault, grantScope, canon, "", argv)
 		if denial, refused := d.approvals.LastDenial(canon, fingerprint); refused {
 			out.Reason = "denied"
 			out.DeniedAt = denial.DecidedAt.Unix()

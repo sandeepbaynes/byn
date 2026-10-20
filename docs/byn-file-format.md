@@ -61,7 +61,9 @@ migrate = "python manage.py migrate"
   injects **all** scope vars — with a warning, since secrets added later
   are then auto-injected. An **empty or absent** `[exec] env` injects
   **nothing** (a project declares the vars it needs). With no `.byn` at
-  all (ad-hoc run), `byn exec` injects the whole scope.
+  all, `byn exec` injects the whole scope after your password; `byn exec
+  --var NAME` asks the owner for exactly the named variables instead, and
+  needs no `.byn`.
 - **`[exec] actions`** is the **command allowlist**: controls which
   commands may run without per-call authorization. Three states:
   - *Absent or empty* (secure default) — every exec requires authorization.
@@ -356,8 +358,10 @@ someone answers will succeed.
 byn approve                     # what is waiting, and why
 byn approve <id>                # grant it (asks for the master password)
 byn approve --deny <id>         # refuse it (no password needed)
-byn approve --all               # answer everything in one go
+byn approve --all               # answer everything in this vault in one go
+byn approve --vault NAME        # another vault's requests, from anywhere
 byn exec --wait-approval -- CMD # block until answered, instead of polling
+byn exec --var NAME -- CMD      # ask ad hoc: exactly these variables, no .byn needed
 ```
 
 Approving grants authority, so it takes the master password exactly as

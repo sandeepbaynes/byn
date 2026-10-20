@@ -99,10 +99,50 @@ func discoverScope(startDir, homeDir, _ string, _ bool) (cliScope, string, error
 	}
 }
 
+// bynSetAside reports whether --vault (or BYN_VAULT) names a vault other than
+// the one the discovered .byn speaks for, an omitted vault line meaning the
+// default vault. A .byn's project and env are names inside its own vault, so
+// in another vault the file has nothing to contribute: it is set aside whole,
+// and the fields the command line did not name fall back to the daemon's
+// defaults, never to the file's. Merging field by field put "maison/rinkats"
+// on a request from a file that said "rinkats/rinkats" — a project that does
+// not exist in that vault, and that nobody asked for.
+func bynSetAside(flags, discovered cliScope) bool {
+	fileVault := discovered.Vault
+	if fileVault == "" {
+		fileVault = "default"
+	}
+	return flags.Vault != "" && flags.Vault != fileVault
+}
+
+// overriddenScopeFields names the flags that replaced a value the .byn set,
+// so the scope banner can say so. A flag that merely repeats the file is not
+// an override, and a project or env the file leaves empty is the flag's to
+// fill. An omitted vault line is not empty, it is the default vault, so
+// --vault maison beside it is an override like any other.
+func overriddenScopeFields(flags, discovered cliScope) []string {
+	var out []string
+	if bynSetAside(flags, discovered) {
+		out = append(out, "--vault")
+	}
+	if flags.Project != "" && discovered.Project != "" && flags.Project != discovered.Project {
+		out = append(out, "--project")
+	}
+	if flags.Env != "" && discovered.Env != "" && flags.Env != discovered.Env {
+		out = append(out, "--env")
+	}
+	return out
+}
+
 // mergeDiscoveryScope folds discovered scope into CLI scope. CLI
-// flags win over discovery; discovery wins over daemon defaults.
+// flags win over discovery; discovery wins over daemon defaults — within
+// the file's own vault. Named into another vault, the file is set aside
+// and contributes nothing (see bynSetAside).
 func mergeDiscoveryScope(cli, discovered cliScope) cliScope {
 	out := cli
+	if bynSetAside(cli, discovered) {
+		return out
+	}
 	if out.Vault == "" {
 		out.Vault = discovered.Vault
 	}

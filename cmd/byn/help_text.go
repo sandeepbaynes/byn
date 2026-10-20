@@ -1071,6 +1071,9 @@ SYNOPSIS
        byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
                 [--reason TEXT] [--once] [--no-privsep] [--inspect[=TARGET]]
                 NAME [ARGS...]
+       byn exec [--vault V] [--project P] [--env E] --var NAME [--var NAME...]
+                [--reason TEXT] [--once] [--wait-approval[=DUR]]
+                -- COMMAND [ARGS...]
 
 DESCRIPTION
        Loads the .byn-allowlisted env-var entries from the active vault
@@ -1181,6 +1184,42 @@ DESCRIPTION
            Only byn's own flags are read before the command; a
            --reason after -- (or after an alias name) belongs to the
            child.
+
+       byn exec --var NAME        (repeatable; also --var=NAME)
+           Ask ad hoc: run COMMAND, here, with exactly the named variables
+           from the vault and scope in force. No .byn is needed, and this
+           is the way to ask from a directory that has none, or for a
+           one-off that should not go into the file. The request is
+           queued for a person like any other; the card shows the
+           command, the directory, every name, the vault, project and
+           env, and who asked. Approving seals a grant for exactly those
+           names — a name the vault has no value for gets nothing and is
+           reported missing at the run, as an allowlisted one would be —
+           good for an hour unless the approver sets --for, bound to
+           whoever asked, and revocable. The run works while the vault is
+           locked, as a trusted .byn's does.
+
+           There is no wildcard: the card lists what a yes hands over,
+           and "everything" is not a list. A name is exact.
+
+           A trusted .byn in the directory is stepped around, not used:
+           the card says so and marks the request high risk, and the file
+           is never changed by approving. The .byn's own pinned commands
+           keep running on the file's terms.
+
+           With --vault, --project or --env that contradict what the
+           directory's .byn pins, the file is not the contract for that
+           scope. Without --var the run is refused and says so; with it,
+           it is an ad hoc request in the scope you named. --vault naming
+           another vault sets the file aside whole: its project and env
+           are names inside its own vault, so what you do not name falls
+           back to default, never to the file. To run on the whole scope
+           with the vault password instead, as from a directory with no
+           .byn, add --no-discovery.
+
+           The grant answers exactly one question: this command, this
+           directory, these names, this vault and scope. Change any one
+           and it asks again.
 
        byn exec --once            (also --ask-once)
            Ask for a single-use approval rather than one that stays live
@@ -2613,10 +2652,10 @@ SEE ALSO
        byn-approve - answer decisions a .byn is waiting on
 
 SYNOPSIS
-       byn approve [--json]
+       byn approve [--vault NAME] [--json]
        byn approve [--password-stdin] ID...
        byn approve --deny ID...
-       byn approve --all [--password-stdin]
+       byn approve --all [--vault NAME] [--password-stdin]
        byn approve [--for DURATION] [--anyone] ID...
        byn approve [--once|--always] ID...
        byn approve --revoke ID...
@@ -2675,6 +2714,39 @@ DESCRIPTION
        exactly as "byn trust" does. Approving re-grants the .byn, so the
        caller's next attempt succeeds.
 
+       The password is the one for the vault the request was raised in —
+       the vault the command would read its secrets from. No other
+       vault's password approves it: anyone can make a vault of their own
+       and know its password, so accepting one would let a caller approve
+       itself. A grant is for that vault too; the same command against a
+       different vault is a different question.
+
+       Which vault's requests you see is decided like any other byn
+       command's scope: --vault NAME (or BYN_VAULT), else the vault of
+       the .byn in this directory. The list and --all cover that vault
+       and say how many requests wait in others. Outside any project with
+       no vault named, every vault is listed, and --all asks for each
+       vault's password in turn. "byn approve --vault NAME" answers
+       another vault's requests from anywhere. An ID is always approved
+       in its own vault; one that contradicts --vault is refused.
+
+       Every card says where a yes reaches and what it hands over: the
+       vault, project and env on a "scope" row, and the variables the
+       command receives on a "gets" row — the .byn's allowlist for a
+       command the file does not pin, "every variable in the scope" for
+       a file that allows *, and the exact names for an ad hoc request.
+       An ad hoc request ("byn exec --var NAME -- COMMAND") has no .byn:
+       its "from" row names the directory it is anchored to, and — flagged
+       — a trusted .byn it steps around. Approving one seals a grant for
+       exactly the names listed, good for an hour unless --for says
+       otherwise, revocable like any other.
+
+       Every card also says how long a plain yes lasts, on a "lasts" row:
+       6h for a command the .byn does not pin, 1h for an ad hoc request,
+       one run when the asker asked for a single use, or "until the file
+       changes again" for a widening, which is standing trust rather than
+       a window. --json carries it as window_seconds.
+
        --once makes the grant single-use: it is spent the first time byn
        authorizes a run with it, rather than staying live for the rest
        of the window. One-shot scripts are what approvals are most often
@@ -2714,7 +2786,8 @@ DESCRIPTION
        other way round the first time someone saw one of these lists.
 
        --for DURATION shortens or extends how long an approved command
-       runs free (default 6h, at most 24h). A command wanted once for
+       runs free (default 6h, 1h for an ad hoc request; at most 24h). A
+       command wanted once for
        the next ten minutes and one wanted all afternoon are different
        grants, and giving both the default makes the first a standing
        authority nobody asked for.
@@ -2756,8 +2829,12 @@ OPTIONS
            Refuse the named requests instead of granting them.
 
        --all
-           Answer every pending request. One password covers the batch,
-           so clearing a backlog does not become its own chore.
+           Answer every pending request in the vault in scope. One
+           password per vault covers the batch, so clearing a backlog
+           does not become its own chore.
+
+       --vault NAME
+           Answer the requests of vault NAME, wherever you run it from.
 
        --password-stdin
            Read the master password from stdin instead of prompting.

@@ -144,7 +144,13 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	// .byn's sealed exec capability (machine-fingerprint keyed, no vault key), so
 	// it runs autonomously while LOCKED. That is the core promise: agents run
 	// after a reboot with no password.
-	if req.Path == "" && st.IsLocked() {
+	// A request that names its variables is an AD HOC request, whatever else
+	// is in it: no .byn is needed, and one that is in scope is bypassed. It
+	// has its own gate — a grant sealed for exactly those names — so none of
+	// the ad hoc-without-a-list rules below (unlock, fresh credentials, the
+	// whole scope) apply to it.
+	adhoc := len(req.Vars) > 0
+	if !adhoc && req.Path == "" && st.IsLocked() {
 		le := ipc.NewError(id, ipc.CodeLocked, "vault is locked", "byn unlock")
 		auditExec(le)
 		return nil, nil, false, false, false, nil, nil, le
@@ -167,7 +173,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	// Ad-hoc exec always requires fresh credentials (password or presence
 	// token) because it exposes the entire vault scope without an env
 	// allowlist, making ambient session-based authorization too broad.
-	if req.Path == "" {
+	if !adhoc && req.Path == "" {
 		if len(req.Password) == 0 && len(req.PresenceToken) == 0 {
 			// No credentials supplied: emit the exec-specific message so the
 			// user understands that running from a trusted .byn is an alternative.
@@ -207,7 +213,17 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 	// It is set inside the req.Path != "" block and passed back in ResolvedArgv.
 	var finalArgv []string
 
-	if req.Path != "" {
+	if adhoc {
+		vars, argv, vals, le := d.authorizeAdhoc(ctx, id, req, st, scope, vaultName, canon)
+		if le != nil {
+			auditExec(le)
+			return nil, nil, false, false, false, nil, nil, le
+		}
+		// The names stand in for the allowlist, so the common tail reports a
+		// requested name the vault had no value for exactly as it reports an
+		// allowlisted one.
+		allow, finalArgv, values = vars, argv, vals
+	} else if req.Path != "" {
 		body, fi, rerr := readBynFile(canon)
 		if rerr != nil {
 			// Default: the daemon couldn't read the file → treat as untrusted.
@@ -250,6 +266,40 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 			auditExec(ie)
 			return nil, nil, false, false, false, nil, nil, ie
 		}
+		// The record is the contract for one vault and the scope the file
+		// pins, and nothing else — checked before anything is reconciled or
+		// raised on its strength, so a widening is never queued against a
+		// scope the file was not trusted for. A caller that meant another
+		// scope is told how to ask for it.
+		if rec.Path != "" {
+			// What the file pins now. A file that does not parse is refused
+			// below with the parse error; here it simply pins nothing.
+			var pinned ipc.Scope
+			if parsed, perr := bynfile.Parse(body); perr == nil {
+				pinned = ipc.Scope{Vault: parsed.Scope.Vault, Project: parsed.Scope.Project, Env: parsed.Scope.Env}
+			}
+			// A field the request left unset takes the file's pin: the CLI
+			// merges the file into the request, but a caller speaking IPC
+			// directly need not, and silence is not a contradiction. Only a
+			// value actually named on the request can clash — and only inside
+			// the file's own vault. A project and env are names within a
+			// vault; in another vault the file's name nothing, and borrowing
+			// them put a scope nobody asked for on the refusal and its hint.
+			if defaultIfEmpty(rec.Vault, vault.DefaultVaultName) == vaultName {
+				if req.Scope.Project == "" && pinned.Project != "" {
+					scope.Project = pinned.Project
+				}
+				if req.Scope.Env == "" && pinned.Env != "" {
+					scope.Env = pinned.Env
+				}
+			}
+			if clash := recordScopeClash(rec, pinned, vaultName, scope); clash != "" {
+				le := ipc.NewError(id, ipc.CodeTrustDenied, canon+" "+clash,
+					scopeClashHint(vaultName, scope))
+				auditExec(le)
+				return nil, nil, false, false, false, nil, nil, le
+			}
+		}
 		// A changed file is only a problem if it asks for more than was
 		// granted. Reformatting, a reordered list, an added comment, or a branch
 		// switch that rewrites mtimes all land here, and none of them are a
@@ -282,7 +332,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 				// Genuinely asking for more than was granted. Raise it for a
 				// human and tell the caller where to look, instead of dying on
 				// a password prompt no agent can answer.
-				le := d.raiseTrustApproval(ctx, id, canon, vaultName, req, delta)
+				le := d.raiseTrustApproval(ctx, id, canon, vaultName, scope, req, delta)
 				auditExec(le)
 				return nil, nil, false, false, false, nil, nil, le
 			}
@@ -443,12 +493,12 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 					// caller stopped at the same gate on its very next attempt, told
 					// each time that approval was granted. That is a worse dead end
 					// than the one the queue replaced, because it looks like progress.
-					if !matched && d.actionApproved(ctx, canon, req.Command, resolvedArgv) {
+					if !matched && d.actionApproved(ctx, vaultName, scope, canon, req.Command, resolvedArgv) {
 						matched = true
 						// A single-use grant is spent here — the moment byn
 						// authorizes a run with it. Dry-run and preflight go
 						// through a different op, so neither consumes it.
-						spent := d.consumeOnceGrant(canon, req.Command, resolvedArgv)
+						spent := d.consumeOnceGrant(vaultName, scope, canon, req.Command, resolvedArgv)
 						ev := audit.Event{
 							Op: "exec.action_approved", Outcome: audit.OutcomeOK, BynPath: canon,
 							Command: strings.Join(resolvedArgv, " "),
@@ -474,7 +524,8 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 						// break. Raise it as a decision instead, so the caller gets
 						// an id and the work resumes once someone answers.
 						if len(req.Password) == 0 && len(req.PresenceToken) == 0 {
-							le := d.raiseActionApproval(ctx, id, canon, vaultName, req, resolvedArgv)
+							le := d.raiseActionApproval(ctx, id, canon, vaultName, scope, req, resolvedArgv,
+								execGets{Names: allow, All: wildcard})
 							auditExec(le)
 							return nil, nil, false, false, false, nil, nil, le
 						}
@@ -533,7 +584,7 @@ func (d *Daemon) authorizeExec(ctx context.Context, id string, req ipc.ExecFetch
 		}
 	}
 
-	if req.Path == "" {
+	if !adhoc && req.Path == "" {
 		// Ad-hoc exec: inject the whole scope via the in-memory vault key
 		// (unlock was enforced at the top for this path).
 		var le *ipc.Envelope
@@ -667,6 +718,20 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	if len(rec.ExecCapability) == 0 {
 		return nil, nil // nothing to inject
 	}
+	// The allowlist this must obey comes from the record's SNAPSHOT, not from
+	// rec.EnvAllowlist(): see snapshotEnvAllowlist for why a nil there is not
+	// "no allowlist".
+	declared, wildcardEnv := snapshotEnvAllowlist(rec)
+	return d.openCapabilityValues(ctx, id, st, scope, rec.ExecCapability, declared, wildcardEnv, rec.Path)
+}
+
+// openCapabilityValues opens the values a sealed capability covers, limited to
+// the names declared (or everything in the scope for a wildcard). It is the
+// one place that reads a capability, so a trusted .byn's grant and an ad hoc
+// grant open values by exactly the same rules. stalePath is the .byn to name
+// when a key no longer opens its row, or "" for a grant with no file.
+func (d *Daemon) openCapabilityValues(ctx context.Context, id string, st *vault.Store, scope vault.Scope,
+	blob []byte, declared map[string]struct{}, wildcardEnv bool, stalePath string) ([]ipc.ExecFetchValue, *ipc.Envelope) {
 	if d.fpMACKey == nil {
 		return nil, ipc.NewError(id, ipc.CodeLocked,
 			"this machine has no fingerprint, so the trusted .byn's exec capability can't be unsealed",
@@ -677,11 +742,16 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 		return nil, internalErr(id, err)
 	}
 	defer zeroBytes(capKey)
-	rowKeys, err := vcrypto.OpenCapability(capKey, rec.ExecCapability)
+	rowKeys, err := vcrypto.OpenCapability(capKey, blob)
 	if err != nil {
+		if stalePath == "" {
+			return nil, ipc.NewError(id, ipc.CodeTrustDenied,
+				"this grant's sealed keys could not be unsealed on this machine",
+				"ask again, and have it approved afresh: byn exec --force-ask --var NAME -- COMMAND")
+		}
 		return nil, ipc.NewError(id, ipc.CodeTrustDenied,
 			"the trusted .byn's exec capability could not be unsealed on this machine",
-			"re-trust on this machine: byn trust "+rec.Path)
+			"re-trust on this machine: byn trust "+stalePath)
 	}
 	defer func() {
 		for _, k := range rowKeys {
@@ -766,7 +836,6 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 		//
 		// The snapshot is MAC-bound and always present, so it says what the
 		// file declares whether or not anything reconciled it.
-		declared, wildcardEnv := snapshotEnvAllowlist(rec)
 		infos, lerr := st.ListEnvVars(ctx, scope)
 		if lerr != nil {
 			return nil, internalErr(id, fmt.Errorf("list scope for authored entries: %w", lerr))
@@ -797,7 +866,7 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 	// grant time through, past the .byn's own [exec] env list. Narrower than
 	// the same bug on the authored path (only names that existed at grant
 	// time), identical in kind.
-	capDeclared, capWildcard := snapshotEnvAllowlist(rec)
+	capDeclared, capWildcard := declared, wildcardEnv
 	for name, rk := range rowKeys {
 		if isReservedCapName(name) {
 			continue
@@ -840,7 +909,7 @@ func (d *Daemon) execValuesFromCapability(ctx context.Context, id string, st *va
 				// Still fail-closed: byn cannot re-derive the key without the
 				// vault key, and starting the child without the value would
 				// swap a clear error for a failure deep inside the program.
-				msg, hint := staleCapabilityText(name, rec.Path)
+				msg, hint := staleCapabilityText(name, stalePath)
 				return nil, ipc.NewError(id, ipc.CodeTrustDenied, msg, hint)
 			}
 			return nil, internalErr(id, fmt.Errorf("decrypt %q via capability: %w", name, verr))
@@ -1045,10 +1114,14 @@ func execRunCommand(req ipc.ExecFetchReq, resolvedArgv []string) string {
 // staleCapabilityText is the wording for a grant that can no longer open a
 // value, kept in one place so a test can hold it to what it must not say.
 func staleCapabilityText(name, bynPath string) (msg, hint string) {
-	return fmt.Sprintf("this grant is out of date for %q — it cannot open the current value", name),
-		"re-trust to refresh it: byn trust " + bynPath +
-			"  (the value is intact; a grant goes stale when a variable is overridden " +
-			"in this env, or re-sealed by another writer)"
+	msg = fmt.Sprintf("this grant is out of date for %q — it cannot open the current value", name)
+	why := "  (the value is intact; a grant goes stale when a variable is overridden " +
+		"in this env, or re-sealed by another writer)"
+	if bynPath == "" {
+		// An ad hoc grant has no file to re-trust; asking again is the refresh.
+		return msg, "ask again, and have it approved afresh: byn exec --force-ask --var NAME -- COMMAND" + why
+	}
+	return msg, "re-trust to refresh it: byn trust " + bynPath + why
 }
 
 // isReservedCapName reports whether a capability entry is a key byn carries for

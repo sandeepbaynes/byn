@@ -36,26 +36,7 @@ var execJSONMode bool
 // same boundary rule as the other exec flags: everything at or after `--` (or a
 // bare alias name) belongs to the child and is never scanned.
 func stripExecJSON(args []string) ([]string, bool) {
-	out := make([]string, 0, len(args))
-	found := false
-	boundary := false
-	for _, a := range args {
-		if boundary {
-			out = append(out, a)
-			continue
-		}
-		if a == "--" || !strings.HasPrefix(a, "-") {
-			boundary = true
-			out = append(out, a)
-			continue
-		}
-		if a == "--json" {
-			found = true
-			continue
-		}
-		out = append(out, a)
-	}
-	return out, found
+	return stripExecBoolFlag(args, "--json")
 }
 
 // execApprovalJSON writes one object describing a paused command to stdout.
@@ -112,26 +93,7 @@ func execErrorJSON(w *os.File, status string, callErr error, exitCode int) {
 // stripExecDryRun removes byn's own --dry-run flag, with the same boundary rule
 // as the other exec flags.
 func stripExecDryRun(args []string) ([]string, bool) {
-	out := make([]string, 0, len(args))
-	found := false
-	boundary := false
-	for _, a := range args {
-		if boundary {
-			out = append(out, a)
-			continue
-		}
-		if a == "--" || !strings.HasPrefix(a, "-") {
-			boundary = true
-			out = append(out, a)
-			continue
-		}
-		if a == "--dry-run" {
-			found = true
-			continue
-		}
-		out = append(out, a)
-	}
-	return out, found
+	return stripExecBoolFlag(args, "--dry-run")
 }
 
 // runExecDryRun answers whether a command would run, and whether the variables
@@ -142,7 +104,7 @@ func stripExecDryRun(args []string) ([]string, bool) {
 // needs. Both are knowable up front. Exit 0 means it would run cleanly; 75 means
 // it would pause for a decision; 1 means it would run but a required variable
 // has no value.
-func runExecDryRun(bynPath string, argv []string, alias string, jsonOut bool) int {
+func runExecDryRun(bynPath string, scope ipc.Scope, argv []string, alias string, jsonOut bool) int {
 	dir, err := defaultDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), err)
@@ -150,7 +112,7 @@ func runExecDryRun(bynPath string, argv []string, alias string, jsonOut bool) in
 	}
 	var resp ipc.ExecPreflightResp
 	if cerr := newClient(dir, "").Call(ipc.OpExecPreflight,
-		ipc.ExecPreflightReq{Path: bynPath, Argv: argv, Alias: alias}, &resp); cerr != nil {
+		ipc.ExecPreflightReq{Path: bynPath, Scope: scope, Argv: argv, Alias: alias}, &resp); cerr != nil {
 		return handleCallError(cerr)
 	}
 
@@ -231,26 +193,7 @@ func printDryRun(r ipc.ExecPreflightResp) {
 // a refusal is a wall — deliberately, since the alternative is re-asking someone
 // who just said no. The case it exists for is the human who denied by mistake.
 func stripExecForceAsk(args []string) ([]string, bool) {
-	out := make([]string, 0, len(args))
-	found := false
-	boundary := false
-	for _, a := range args {
-		if boundary {
-			out = append(out, a)
-			continue
-		}
-		if a == "--" || !strings.HasPrefix(a, "-") {
-			boundary = true
-			out = append(out, a)
-			continue
-		}
-		if a == "--force-ask" {
-			found = true
-			continue
-		}
-		out = append(out, a)
-	}
-	return out, found
+	return stripExecBoolFlag(args, "--force-ask")
 }
 
 // stripExecReason removes byn's own --reason flag and returns its value.
@@ -295,9 +238,51 @@ func stripExecReason(args []string) ([]string, string) {
 			i++
 			continue
 		}
+		if n := execFlagValueLen(args, i); n > 0 {
+			out = append(out, args[i:i+1+n]...)
+			i += n
+			continue
+		}
 		out = append(out, a)
 	}
 	return out, reason
+}
+
+// stripExecVars removes byn's own --var NAME (repeatable; also --var=NAME) from
+// an exec argv and returns the names in the order given.
+//
+// Naming variables is what makes a run an AD HOC request: "this command, here,
+// with exactly these variables from this scope", with no .byn involved. The
+// daemon queues it for a person like any other request, and the card lists
+// the names — which is why there is no wildcard form.
+//
+// Same boundary rule as the other exec flags: a --var after -- belongs to the
+// child.
+func stripExecVars(args []string) ([]string, []string) {
+	out := make([]string, 0, len(args))
+	var vars []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			return append(out, args[i:]...), vars
+		}
+		if v, ok := strings.CutPrefix(a, "--var="); ok {
+			vars = append(vars, v)
+			continue
+		}
+		if a == "--var" && i+1 < len(args) {
+			vars = append(vars, args[i+1])
+			i++
+			continue
+		}
+		if n := execFlagValueLen(args, i); n > 0 {
+			out = append(out, args[i:i+1+n]...)
+			i += n
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, vars
 }
 
 // stripExecAskOnce removes byn's own --once / --ask-once from an exec argv and
@@ -318,24 +303,5 @@ func stripExecReason(args []string) ([]string, string) {
 // non-flag argument belongs to the child, so `byn exec -- prog --once` passes
 // --once to prog rather than byn taking it.
 func stripExecAskOnce(args []string) ([]string, bool) {
-	out := make([]string, 0, len(args))
-	askOnce := false
-	boundary := false
-	for _, a := range args {
-		if boundary {
-			out = append(out, a)
-			continue
-		}
-		if a == "--" || !strings.HasPrefix(a, "-") {
-			boundary = true
-			out = append(out, a)
-			continue
-		}
-		if a == "--once" || a == "--ask-once" {
-			askOnce = true
-			continue
-		}
-		out = append(out, a)
-	}
-	return out, askOnce
+	return stripExecBoolFlag(args, "--once", "--ask-once")
 }

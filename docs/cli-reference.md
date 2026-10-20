@@ -1046,9 +1046,14 @@ stop at a password prompt no agent can answer. It queues the decision, prints
 its id, and exits `75`. The work resumes on the next attempt once someone has
 answered.
 
-### `byn approve [--json]`
+### `byn approve [--vault NAME] [--json]`
 
-Lists what is waiting: the file, what would be granted **in plain words**, how
+Lists what is waiting in the vault in scope — `--vault NAME` (or `BYN_VAULT`),
+else the vault of the `.byn` in this directory — and says how many requests wait
+in other vaults. Outside any project with no vault named, every vault is listed.
+`byn approve --vault NAME` answers another vault's requests from anywhere.
+
+For each request it shows the file, what would be granted **in plain words**, how
 long it has waited, and how many times it has been re-asked. Entries marked `!`
 are the consequential ones — a wildcard, a scope move, write access to a
 credential directory, or an `[auth]` gate being relaxed.
@@ -1079,6 +1084,28 @@ Grants the request. Takes the master password, exactly as `byn trust` does,
 because approving grants authority. It re-grants the `.byn`, so the caller's
 next attempt succeeds — recording a decision without applying it would leave
 the caller stuck asking forever.
+
+Every card says where a yes reaches and what it hands over: a `scope` row
+(vault · project · env) and a `gets` row naming the variables the command
+receives — the `.byn`'s allowlist for a command the file does not pin, "every
+variable in the scope" for a file that allows `*`, the exact names for an ad
+hoc request. An ad hoc request also has a `from` row: the directory it is
+anchored to and, flagged, any trusted `.byn` it steps around. `--history` has a
+`SCOPE` column, and `--json` carries `vault`, `project`, `env`, `gets`,
+`gets_all` and `beside`.
+
+Every card also says how long a plain yes lasts, on a `lasts` row: 6h for a
+command the `.byn` does not pin, 1h for an ad hoc request, one run when the
+asker asked for a single use, or "until the file changes again" for a widening,
+which is standing trust rather than a window. `--json` carries it as
+`window_seconds`.
+
+The password is that of the vault the request was raised in — the vault the
+command reads its secrets from — and no other approves it. Anyone can create a
+vault and know its password, so accepting one would let a caller approve itself.
+The grant is for that vault too: the same command against a different vault is a
+different question. An ID is always approved in its own vault; one that
+contradicts `--vault` is refused before any password is asked for.
 
 ### `byn approve --deny ID...`
 
@@ -1190,7 +1217,8 @@ counts.
 
 ### `byn approve [--for DURATION] [--anyone] ID...`
 
-`--for` sets how long an approved command runs free — default 6h, at most 24h.
+`--for` sets how long an approved command runs free — default 6h (1h for an ad
+hoc request), at most 24h.
 A command wanted once for the next ten minutes and one wanted all afternoon are
 different grants, and giving both the default makes the first a standing
 authority nobody asked for.
@@ -1202,10 +1230,12 @@ letting anything else in that directory use the answer would be a wider grant
 than the question. Widen it deliberately for a shared build command, or one that
 has to outlive the session that asked.
 
-### `byn approve --all [--password-stdin]`
+### `byn approve --all [--vault NAME] [--password-stdin]`
 
-Answers every pending request; one password covers the batch, so clearing a
-backlog does not become its own chore.
+Answers every pending request in the vault in scope; one password per vault
+covers the batch, so clearing a backlog does not become its own chore. With no
+vault in scope it asks for each vault's password in turn. `--password-stdin`
+answers one vault, so name it with `--vault` when requests span several.
 
 ### `byn runs [-n N] [--json]`
 
@@ -1254,6 +1284,43 @@ builds byn's argv itself.
 
 Passing it on a retry fills in a blank reason on the same pending request; it
 never overwrites one already given.
+
+### `byn exec --var NAME [--var NAME...] -- COMMAND` (ad hoc)
+
+Ask for exactly the named variables, for this command, in this directory, from
+the vault and scope in force (`--vault`, `--project`, `--env`, or the
+directory's `.byn`). No `.byn` is needed: this is how to ask from a directory
+that has none, or for a one-off that should not go into the file. The request
+queues for a person like any other, and the card carries the whole question:
+the command, the directory, every name, the vault, project and env, and who
+asked.
+
+There is no wildcard. The card lists what a yes hands over, and "everything"
+is not a list.
+
+Approving seals a grant for exactly those names, from the approver's password:
+a name the vault has no value for gets nothing and is reported missing at the
+run, a name not on the card is never injected. The run works while the vault is
+locked, as a trusted `.byn`'s does. The grant is good for an hour unless the
+approver passes `--for` (up to 24h), bound to whoever asked unless `--anyone`,
+single-use with `--once`, and revocable. It answers exactly one question: the
+same command from another directory, against another vault or scope, or with
+one more name, asks again.
+
+A trusted `.byn` in the directory is stepped around, not used. The card says so
+and marks the request high risk; the file is never changed by approving, and
+its own pinned commands keep running on its terms. When `--vault`, `--project`
+or `--env` contradict what the directory's `.byn` pins, the file is not the
+contract for that scope: without `--var` the run is refused and says so, with
+it the run is an ad hoc request in the scope you named. `--vault` naming another
+vault sets the file aside whole: a `.byn`'s project and env are names inside its
+own vault, so whatever you did not name falls back to default, never to the
+file. To run on the whole scope with the vault password instead, exactly as from
+a directory with no `.byn`, add `--no-discovery`.
+
+Under privilege separation an ad hoc run is isolated exactly as a `.byn` run
+is: the child runs as `_byn-exec` and the values never pass through the
+owner-UID CLI.
 
 ### `byn exec --wait-approval[=DURATION] -- COMMAND`
 

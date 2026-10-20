@@ -77,6 +77,10 @@ func TestE2E_ApproveAlways_OverridesTheAskersOnce(t *testing.T) {
 // approvalEntryJSON is the subset of `byn approve --json` this test reads.
 type approvalEntryJSON struct {
 	ID           string `json:"id"`
+	Vault        string `json:"vault"`
+	Project      string `json:"project"`
+	Kind         string `json:"kind"`
+	WindowSecs   int64  `json:"window_seconds"`
 	Status       string `json:"status"`
 	Once         bool   `json:"once"`
 	AskOnce      bool   `json:"ask_once"`

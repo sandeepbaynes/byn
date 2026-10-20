@@ -14,6 +14,7 @@ import (
 	"github.com/sandeepbaynes/byn/internal/audit"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 	"github.com/sandeepbaynes/byn/internal/trust"
+	"github.com/sandeepbaynes/byn/internal/vault"
 )
 
 // raiseTrustApproval records that a .byn is asking for more authority than it
@@ -24,7 +25,7 @@ import (
 // ended at "run byn trust", which an agent cannot do — and because trust is
 // per-project, one agent's unanswerable prompt stalled every other agent
 // working there.
-func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName string,
+func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName string, scope vault.Scope,
 	req ipc.ExecFetchReq, delta trust.Delta) *ipc.Envelope {
 
 	summary := make([]string, 0, len(delta.Widenings))
@@ -40,8 +41,10 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 		WatchHash:   watchHash,
 		Kind:        approval.KindTrustWidening,
 		Vault:       vaultName,
+		Project:     scope.Project,
+		Env:         scope.Env,
 		Subject:     canon,
-		Fingerprint: fingerprintOf(canon, summary),
+		Fingerprint: fingerprintOf(vaultName, scope, canon, summary),
 		Summary:     summary,
 		HighRisk:    delta.HighRisk(),
 		Requestor:   d.requestorOf(ctx, vaultName, req),
@@ -78,15 +81,27 @@ func (d *Daemon) raiseTrustApproval(ctx context.Context, id, canon, vaultName st
 	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
 		fmt.Sprintf("%s asks for more than it was granted (%s) — approval %s is waiting",
 			canon, strings.Join(summary, "; "), pending.ID),
-		"approve it with: byn approve "+pending.ID+reasonHint(pending),
+		"approve it with: "+approveHint(vaultName, pending.ID)+reasonHint(pending),
 		approvalDetails(pending, "", ticketIfCreated(ticket, created)))
 }
 
 // fingerprintOf identifies a question by what it asks for, so the same request
 // coming from a retry loop collapses onto one card rather than a hundred.
-func fingerprintOf(subject string, summary []string) string {
+//
+// The vault is part of the question. The same .byn and command run against a
+// different vault reach different secrets, and an approval is proven with that
+// vault's password — so a grant in one vault must never be recognised as an
+// answer in another, or anyone could make a vault of their own, approve there,
+// and run the command against the vault the project actually uses.
+//
+// The scope is in it for the same reason: a grant for one project's values
+// says nothing about another's, and --env picks the env for a .byn that pins
+// none, so two runs of the same command can reach different secrets.
+func fingerprintOf(vaultName string, scope vault.Scope, subject string, summary []string) string {
 	return trust.Policy{
+		Vault:     defaultIfEmpty(vaultName, vault.DefaultVaultName),
 		Project:   subject,
+		Env:       scopeLabel(scope),
 		EnvGrants: summary,
 	}.Hash()
 }
@@ -165,7 +180,7 @@ func requestReason(s string) string {
 // cannot drift apart. If they computed the fingerprint differently, approving
 // would appear to work and change nothing — the caller would be told it was
 // granted and be asked again on the very next attempt, forever.
-func actionApprovalKey(canon, command string, resolvedArgv []string) (cmd string, summary []string, fingerprint string) {
+func actionApprovalKey(vaultName string, scope vault.Scope, canon, command string, resolvedArgv []string) (cmd string, summary []string, fingerprint string) {
 	cmd = strings.Join(resolvedArgv, " ")
 	if cmd == "" {
 		cmd = command
@@ -174,26 +189,26 @@ func actionApprovalKey(canon, command string, resolvedArgv []string) (cmd string
 		cmd = cmd[:200] + "…"
 	}
 	summary = []string{"runs " + cmd}
-	return cmd, summary, fingerprintOf(canon, summary)
+	return cmd, summary, fingerprintOf(vaultName, scope, canon, summary)
 }
 
 // actionApproved reports whether someone has already approved this exact
-// command on this exact .byn, and the grant has not lapsed.
+// command on this exact .byn in this vault, and the grant has not lapsed.
 //
 // Best-effort: an unreadable queue means "not approved", so the caller is asked
 // again rather than let through on a store byn could not read.
-func (d *Daemon) actionApproved(ctx context.Context, canon, command string, resolvedArgv []string) bool {
-	_, ok := d.actionApprovedUntil(ctx, canon, command, resolvedArgv)
+func (d *Daemon) actionApproved(ctx context.Context, vaultName string, scope vault.Scope, canon, command string, resolvedArgv []string) bool {
+	_, ok := d.actionApprovedUntil(ctx, vaultName, scope, canon, command, resolvedArgv)
 	return ok
 }
 
 // actionApprovedUntil is actionApproved plus when the grant lapses, so a caller
 // can be told how long it has rather than discovering the end by being stopped.
-func (d *Daemon) actionApprovedUntil(ctx context.Context, canon, command string, resolvedArgv []string) (int64, bool) {
+func (d *Daemon) actionApprovedUntil(ctx context.Context, vaultName string, scope vault.Scope, canon, command string, resolvedArgv []string) (int64, bool) {
 	if d.approvals == nil {
 		return 0, false
 	}
-	_, _, fingerprint := actionApprovalKey(canon, command, resolvedArgv)
+	_, _, fingerprint := actionApprovalKey(vaultName, scope, canon, command, resolvedArgv)
 	granted, until, err := d.approvals.ActionGrantFor(canon, fingerprint, d.grantUsableBy(ctx))
 	if err != nil || !granted {
 		return 0, false
@@ -209,10 +224,10 @@ func (d *Daemon) actionApprovedUntil(ctx context.Context, canon, command string,
 // the run stopped and a person had to add the command to [exec] actions and
 // re-trust. Turning it into a decision keeps the same authority boundary (the
 // command still does not run until a human agrees) while removing the dead end.
-func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName string,
-	req ipc.ExecFetchReq, resolvedArgv []string) *ipc.Envelope {
+func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName string, scope vault.Scope,
+	req ipc.ExecFetchReq, resolvedArgv []string, gets execGets) *ipc.Envelope {
 
-	cmd, summary, fingerprint := actionApprovalKey(canon, req.Command, resolvedArgv)
+	cmd, summary, fingerprint := actionApprovalKey(vaultName, scope, canon, req.Command, resolvedArgv)
 
 	// Already refused? Say so and stop, rather than quietly raising a new id.
 	//
@@ -243,13 +258,20 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 		WatchHash:   watchHash,
 		Kind:        approval.KindActionUnpinned,
 		Vault:       vaultName,
+		Project:     scope.Project,
+		Env:         scope.Env,
 		Subject:     canon,
 		Fingerprint: fingerprint,
 		Summary:     summary,
-		Requestor:   d.requestorOf(ctx, vaultName, req),
-		Reason:      requestReason(req.Reason),
-		NeededBy:    neededBy(req.WaitSeconds),
-		AskOnce:     req.AskOnce,
+		// What the command receives if approved, resolved now from the .byn
+		// so the card can say it. The run resolves it again from the file;
+		// a file that later asks for more raises a widening of its own.
+		Gets:      gets.Names,
+		GetsAll:   gets.All,
+		Requestor: d.requestorOf(ctx, vaultName, req),
+		Reason:    requestReason(req.Reason),
+		NeededBy:  neededBy(req.WaitSeconds),
+		AskOnce:   req.AskOnce,
 	})
 	switch {
 	case errors.Is(err, approval.ErrOnHold):
@@ -271,7 +293,7 @@ func (d *Daemon) raiseActionApproval(ctx context.Context, id, canon, vaultName s
 	return ipc.NewErrorWithDetails(id, ipc.CodeApprovalPending,
 		fmt.Sprintf("%s is not pinned in %s [exec] actions — approval %s is waiting",
 			cmd, canon, pending.ID),
-		"approve it with: byn approve "+pending.ID+
+		"approve it with: "+approveHint(vaultName, pending.ID)+
 			", or pin it in [exec] actions and re-trust"+reasonHint(pending),
 		approvalDetails(pending, cmd, ticketIfCreated(ticket, created)))
 }
@@ -307,6 +329,24 @@ func approvalDetails(pending approval.Request, command, watchTicket string) map[
 	if pending.Vault != "" {
 		d["vault"] = pending.Vault
 	}
+	// The rest of what a yes reaches: a caller handing the request to a
+	// person, or deciding whether to wait, should not have to parse the
+	// English for it.
+	if pending.Project != "" {
+		d["project"] = pending.Project
+	}
+	if pending.Env != "" {
+		d["env"] = pending.Env
+	}
+	switch {
+	case pending.GetsAll:
+		d["gets"] = "*"
+	case len(pending.Gets) > 0:
+		d["gets"] = strings.Join(pending.Gets, ",")
+	}
+	if pending.Beside != "" {
+		d["beside"] = pending.Beside
+	}
 	// Handed over exactly here and nowhere else. There is no op that returns a
 	// ticket for an existing request, deliberately: an agent that dropped it
 	// cannot ask for it back, because a way to re-request one would be a way for
@@ -324,10 +364,26 @@ func approvalDetails(pending approval.Request, command, watchTicket string) map[
 // answer is only for display, and a command allowed by the file has no expiry
 // to report.
 func (d *Daemon) grantExpiryFor(ctx context.Context, req ipc.ExecFetchReq, resolvedArgv []string) int64 {
+	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	if len(req.Vars) > 0 {
+		// An ad hoc run is on a grant by definition; say when it lapses.
+		vars, err := adhocVars(req.Vars)
+		subject := d.adhocSubject(ctx, req)
+		if err != nil || subject == "" || d.approvals == nil {
+			return 0
+		}
+		_, _, fingerprint := adhocApprovalKey(vaultName, scopeOf(req.Scope), subject, req.Argv, vars)
+		granted, until, gerr := d.approvals.ActionGrantFor(subject, fingerprint, d.grantUsableBy(ctx))
+		if gerr != nil || !granted {
+			return 0
+		}
+		return until.Unix()
+	}
 	if req.Path == "" {
 		return 0
 	}
-	until, ok := d.actionApprovedUntil(ctx, trust.Canonicalize(req.Path), req.Command, resolvedArgv)
+	until, ok := d.actionApprovedUntil(ctx, vaultName, scopeOf(req.Scope),
+		trust.Canonicalize(req.Path), req.Command, resolvedArgv)
 	if !ok {
 		return 0
 	}
@@ -434,11 +490,11 @@ func (d *Daemon) grantUsableBy(ctx context.Context) func(approval.Request) bool 
 // Best-effort: a queue byn cannot write is not a reason to refuse a command it
 // has already decided to allow. The grant outliving its single use is the
 // lesser failure, and it still expires.
-func (d *Daemon) consumeOnceGrant(canon, command string, resolvedArgv []string) bool {
+func (d *Daemon) consumeOnceGrant(vaultName string, scope vault.Scope, canon, command string, resolvedArgv []string) bool {
 	if d.approvals == nil {
 		return false
 	}
-	_, _, fingerprint := actionApprovalKey(canon, command, resolvedArgv)
+	_, _, fingerprint := actionApprovalKey(vaultName, scope, canon, command, resolvedArgv)
 	spent, err := d.approvals.ConsumeOnce(canon, fingerprint)
 	return err == nil && spent
 }

@@ -18,6 +18,16 @@ byn uses AAD to bind ciphertext to context:
   params + nonce). Means tampering with the header (e.g., downgrading
   Argon2 params) fails to unwrap.
 
+### Ad hoc request
+
+`byn exec --var NAME -- CMD`: a request for exactly the named variables, from
+any directory, with or without a `.byn`. It raises an approval bound to the
+vault, project, env, directory, exact command line and names; the owner's yes
+seals a capability for those names, good for an hour by default. Beside a
+trusted `.byn` it is allowed but flagged, and the file is not changed. Distinct
+from a whole-scope ad-hoc exec (no `.byn`, no `--var`), which takes your
+password and injects the whole scope.
+
 ### AEAD
 
 Authenticated Encryption with Associated Data. The primitive family
@@ -35,6 +45,15 @@ When `--json` appears in the CLI args (before any `--`), byn:
 
 Lets CI, scripts, and AI coding agents interact with
 byn safely.
+
+### Approval
+
+A question byn parks for a person: a command a trusted `.byn` does not pin, a
+changed `.byn` asking for more, or an ad hoc request. Listed by `byn approve`,
+the TUI and the portal. The card is the whole question — what runs, the scope,
+what it gets, who asked and from where, and how long a yes lasts — and the yes
+is proven by the master password of the vault the request was raised in, no
+other. Approving grants; it runs nothing and edits no file.
 
 ### Argon2id
 

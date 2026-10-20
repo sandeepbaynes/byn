@@ -721,6 +721,10 @@ type SecretMeta struct {
 type ExecPreflightReq struct {
 	Path string   `json:"path"`
 	Argv []string `json:"argv,omitempty"`
+	// Scope is the scope the run would use, so a standing grant — which is
+	// per scope — is looked up for the right one. Empty fields default as
+	// the run's would.
+	Scope Scope `json:"scope,omitempty"`
 	// Alias names an entry point from the .byn's [aliases] table, expanded by
 	// the daemon exactly as exec expands it — so the answer is about the
 	// command that would actually run, not the name that was typed.
@@ -1278,6 +1282,18 @@ type ExecFetchReq struct {
 	// The daemon expands the alias value + Argv into the resolved argv, then
 	// gates that through the normal [exec] actions pattern matrix.
 	Alias string `json:"alias,omitempty"`
+	// Vars makes this an AD HOC request: the caller names exactly the
+	// variables it wants, by name, and asks for a grant covering this command
+	// in this directory with those names from this scope. No .byn is needed,
+	// and one that is present is bypassed (the card says so). Explicit names
+	// only — there is no wildcard, because the card must list what a yes
+	// hands over.
+	Vars []string `json:"vars,omitempty"`
+	// Cwd is where the caller is running, as the CLI sees it. The daemon
+	// prefers what the kernel says about the caller and uses this only where
+	// it cannot ask (macOS), so it is a claim, shown as where the request was
+	// made rather than treated as proof of anything.
+	Cwd string `json:"cwd,omitempty"`
 	// Password authorizes ad-hoc exec when no session is present, and
 	// trusted-path exec when the command is not pinned in [exec] actions
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
@@ -1798,9 +1814,23 @@ type ApprovalListReq struct {
 
 // ApprovalEntry is one queued decision, flattened for the wire.
 type ApprovalEntry struct {
-	ID       string   `json:"id"`
-	Kind     string   `json:"kind"`
-	Vault    string   `json:"vault,omitempty"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Vault string `json:"vault,omitempty"`
+	// Project and Env complete the scope a yes reaches into. With Vault they
+	// are the whole answer to "which secrets": the same command approved for
+	// one scope says nothing about another.
+	Project string `json:"project,omitempty"`
+	Env     string `json:"env,omitempty"`
+	// Gets names the variables the command receives if approved. GetsAll is
+	// a .byn wildcard: every variable in the scope, including ones added
+	// later. Neither set means the command gets nothing.
+	Gets    []string `json:"gets,omitempty"`
+	GetsAll bool     `json:"gets_all,omitempty"`
+	// Beside is the trusted .byn in the directory an ad hoc request bypasses,
+	// when there is one. The request asks for what that file does not cover,
+	// and the file is not changed by approving.
+	Beside   string   `json:"beside,omitempty"`
 	Subject  string   `json:"subject"`
 	Summary  []string `json:"summary,omitempty"`
 	HighRisk bool     `json:"high_risk,omitempty"`
@@ -1823,12 +1853,17 @@ type ApprovalEntry struct {
 	// AskOnce is what the ASKER asked for, where Once is what was granted. A
 	// surface shows the first so a person can see whether a single-use grant
 	// was the agent's own request or their restraint.
-	AskOnce    bool   `json:"ask_once,omitempty"`
-	Status     string `json:"status"`
-	CreatedAt  int64  `json:"created_at"`
-	ExpiresAt  int64  `json:"expires_at"`
-	Repeats    int    `json:"repeats,omitempty"`
-	DecidedVia string `json:"decided_via,omitempty"`
+	AskOnce bool `json:"ask_once,omitempty"`
+	// WindowSeconds is how long a plain approval lets this run before it asks
+	// again: the kind's default, which --for shortens and --once replaces
+	// with a single run. Zero for a widening, which grants standing trust in
+	// the file as it is rather than a window.
+	WindowSeconds int64  `json:"window_seconds,omitempty"`
+	Status        string `json:"status"`
+	CreatedAt     int64  `json:"created_at"`
+	ExpiresAt     int64  `json:"expires_at"`
+	Repeats       int    `json:"repeats,omitempty"`
+	DecidedVia    string `json:"decided_via,omitempty"`
 	// DecidedAt and DecidedReason describe an answered request. Without them a
 	// decided entry can only say "gone", and the caller that asked cannot tell
 	// whether it was granted, refused, or simply timed out — which is the one

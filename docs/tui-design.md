@@ -314,10 +314,12 @@ place that could not unblock anything.
   went with it.
 - `ESC`/`q` returns to NORMAL.
 
-The selected card shows what would run, whether the asker asked for a **single
-use** (which changes what a plain approve does, so it is on its own line rather
-than in the timing strip), the stated reason marked as the claim it is, and who
-asked as read from the kernel.
+The selected card shows what would run, the scope and what the command gets,
+how long a plain yes **lasts** (which changes what `a` does, so it is on its own
+line rather than in the timing strip: a window, one run when the asker asked for
+a single use, or standing trust for a widening), the stated reason marked as the
+claim it is, and who asked as read from the kernel. Approving asks for the
+password of the vault the request was raised in.
 
 Approving reuses the AUTHORIZE overlay: it hands out authority, so it is gated
 exactly as a put is. Denying and revoking are not gated — they can only remove

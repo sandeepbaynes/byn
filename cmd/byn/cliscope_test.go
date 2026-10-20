@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -372,5 +373,96 @@ func TestPreParseGlobals_DirectFormUnchanged(t *testing.T) {
 	want := []string{"exec", "--", "cmd", "--vault", "x"}
 	if !reflect.DeepEqual(out, want) {
 		t.Errorf("out = %v, want %v", out, want)
+	}
+}
+
+// The text after an exec flag that takes a value is that flag's value, not the
+// alias NAME that ends byn's flags. Read as a NAME, `--reason "why"` pushed the
+// --vault after it into the child's half, and the run quietly used the .byn's
+// vault instead of the one asked for.
+func TestPreParseGlobals_VaultAfterExecValueFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"exec", "--reason", "Some test", "--vault", "maison", "--", "echo", "hello"},
+		{"exec", "--why", "x", "--wait-approval", "5m", "--vault", "maison", "--", "echo"},
+		{"exec", "--inspect", "9230", "--vault", "maison", "--", "node", "app.js"},
+	} {
+		sc, rest, err := preParseGlobals(args)
+		if err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		if sc.Vault != "maison" {
+			t.Errorf("%q: vault = %q, want maison", args, sc.Vault)
+		}
+		if slices.Contains(rest, "--vault") {
+			t.Errorf("%q: --vault left in %q", args, rest)
+		}
+	}
+	// A child's own --vault is still the child's.
+	sc, rest, err := preParseGlobals([]string{"exec", "--reason", "x", "--", "tool", "--vault", "v"})
+	if err != nil || sc.Vault != "" || !slices.Contains(rest, "--vault") {
+		t.Errorf("child's --vault was taken: scope=%+v rest=%q err=%v", sc, rest, err)
+	}
+}
+
+// The banner says when a flag replaced what the .byn set, and only then: a
+// flag that repeats the file, or fills a field the file left empty, is not an
+// override.
+func TestOverriddenScopeFields(t *testing.T) {
+	disc := cliScope{Vault: "rinkats", Project: "rinkats"}
+	cases := []struct {
+		flags cliScope
+		want  []string
+	}{
+		{cliScope{}, nil},
+		{cliScope{Vault: "rinkats"}, nil},
+		{cliScope{Env: "prod"}, nil},
+		{cliScope{Vault: "maison"}, []string{"--vault"}},
+		{cliScope{Vault: "maison", Project: "monorepo", Env: "prod"}, []string{"--vault", "--project"}},
+	}
+	for _, c := range cases {
+		if got := overriddenScopeFields(c.flags, disc); !slices.Equal(got, c.want) {
+			t.Errorf("flags %+v: got %v, want %v", c.flags, got, c.want)
+		}
+	}
+	// A .byn with no vault line speaks for the default vault, so --vault
+	// maison beside it is an override; --vault default is not.
+	noVault := cliScope{Project: "p"}
+	if got := overriddenScopeFields(cliScope{Vault: "maison"}, noVault); !slices.Equal(got, []string{"--vault"}) {
+		t.Errorf("--vault maison beside a .byn with no vault line: got %v, want [--vault]", got)
+	}
+	if got := overriddenScopeFields(cliScope{Vault: "default"}, noVault); got != nil {
+		t.Errorf("--vault default beside a .byn with no vault line: got %v, want none", got)
+	}
+}
+
+// A .byn's project and env are names inside its own vault. Named into another
+// vault, the file is set aside whole and the fields the command line did not
+// name fall back to default — never to a project that exists only in the
+// file's vault.
+func TestMergeDiscoveryScope_AnotherVaultSetsTheFileAside(t *testing.T) {
+	disc := cliScope{Vault: "rinkats", Project: "rinkats", Env: "prod"}
+	cases := []struct {
+		flags, want cliScope
+	}{
+		{cliScope{}, disc},
+		{cliScope{Vault: "rinkats"}, disc},
+		{cliScope{Env: "dev"}, cliScope{Vault: "rinkats", Project: "rinkats", Env: "dev"}},
+		{cliScope{Project: "other"}, cliScope{Vault: "rinkats", Project: "other", Env: "prod"}},
+		{cliScope{Vault: "maison"}, cliScope{Vault: "maison"}},
+		{cliScope{Vault: "maison", Project: "monorepo"}, cliScope{Vault: "maison", Project: "monorepo"}},
+	}
+	for _, c := range cases {
+		if got := mergeDiscoveryScope(c.flags, disc); got != c.want {
+			t.Errorf("flags %+v: got %+v, want %+v", c.flags, got, c.want)
+		}
+	}
+	// No vault line means the default vault: --vault maison sets the file
+	// aside, --vault default keeps it.
+	noVault := cliScope{Project: "p", Env: "e"}
+	if got := mergeDiscoveryScope(cliScope{Vault: "maison"}, noVault); got != (cliScope{Vault: "maison"}) {
+		t.Errorf("--vault maison beside a .byn with no vault line: got %+v", got)
+	}
+	if got := mergeDiscoveryScope(cliScope{Vault: "default"}, noVault); got != (cliScope{Vault: "default", Project: "p", Env: "e"}) {
+		t.Errorf("--vault default beside a .byn with no vault line: got %+v", got)
 	}
 }

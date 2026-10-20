@@ -126,9 +126,41 @@ The JSON gives `status` (`approved` / `denied`), the decider's `reason`, and
 whether the grant was `once`. A denial is an answer, not an obstacle: report the
 reason to the user and stop.
 
+The owner answers with the master password of the vault the request was raised
+in, and the card shows the vault, scope, the exact variables, how long a yes
+lasts, who asked and from where. Ask only for what that card can justify.
+
 If you are running unattended and cannot wait for a human, prefer
 `byn exec --wait-approval=DUR` so the request has a bounded life rather than
 hanging forever.
+
+## Asking for variables a `.byn` does not give you
+
+When there is no `.byn`, or the one here does not cover what a command needs,
+ask ad hoc. Name exactly the variables, and say why:
+
+```bash
+byn exec --var DB_URL --var API_KEY --reason "one-off backfill" -- ./backfill.sh
+byn exec --vault maison --project monorepo --var DB_URL --reason "…" -- ./run.sh
+```
+
+- Exact names only; there is no wildcard. The request is bound to the vault,
+  project, env, the directory you run it from, the exact command line and the
+  names. Change any one and it asks again.
+- It raises an approval like any other (exit 75, a `watch_ticket`). Approved,
+  it runs for an hour by default, works while the vault is locked, and is
+  given exactly the names on the card — a name the vault has no value for is
+  reported, never invented.
+- Beside a trusted `.byn` the request is allowed but flagged high risk, and
+  the file is not changed by approving. If the need is ongoing, add the
+  variable to the `.byn` and ask the owner to re-trust it instead of asking ad
+  hoc every hour.
+- `--vault`, `--project` or `--env` that contradict what the directory's
+  `.byn` pins are refused without `--var`; with `--var` the run is an ad hoc
+  request in the scope you named, and the file's own project and env are not
+  borrowed into it.
+- Never edit a `.byn` to get around any of this. The file is a contract the
+  owner trusted; a changed file is refused until they re-trust it.
 
 ## Storing a value
 

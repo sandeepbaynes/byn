@@ -1553,6 +1553,31 @@ async function renderApprovalsView() {
     for (const line of (a.summary || [])) why.appendChild(el("li", "", line));
     card.appendChild(why);
 
+    // Where a yes reaches, and what it hands over. The card used to say
+    // neither: the vault was nowhere on it, and the variables the command
+    // would receive were left to be inferred from a file path.
+    const d = (v) => v || "default";
+    const scope = el("div", "approval-scope");
+    scope.appendChild(el("span", "approval-label", "scope"));
+    scope.appendChild(el("span", "", "vault " + d(a.vault) + " \u00b7 project " + d(a.project) +
+      " \u00b7 env " + d(a.env)));
+    card.appendChild(scope);
+    const gets = approvalGets(a);
+    if (gets) {
+      const g = el("div", "approval-gets");
+      g.appendChild(el("span", "approval-label", "gets"));
+      g.appendChild(el("span", "", gets));
+      card.appendChild(g);
+    }
+    if (a.kind === "adhoc") {
+      const f = el("div", "approval-from" + (a.beside ? " approval-warn" : ""));
+      f.appendChild(el("span", "approval-label", "from"));
+      f.appendChild(el("span", "", a.beside
+        ? "ad hoc, beside " + a.beside + " \u2014 which does not cover this and is not changed by approving"
+        : "ad hoc \u2014 no .byn; anchored to the directory it runs in"));
+      card.appendChild(f);
+    }
+
     // What a yes actually does. Both kinds were read as "byn will now do this",
     // and the widening one as a proposed edit to the .byn. Neither is true.
     const does = whatApprovingDoes(a.kind);
@@ -1579,14 +1604,17 @@ async function renderApprovalsView() {
       card.appendChild(w);
     }
 
-    // What the asker asked for, on its own line rather than in the meta strip.
-    // It changes what approving DOES, so it belongs where the decision is being
-    // made, not at the end of a run of bookkeeping.
-    if (a.ask_once) {
-      const once = el("div", "approval-once");
-      once.appendChild(el("span", "approval-label", "wants"));
-      once.appendChild(el("span", "", "a single use \u2014 approving grants one run, not a window"));
-      card.appendChild(once);
+    // How long a plain yes lasts, on every card. It changes what approving
+    // DOES, so it belongs where the decision is being made, not at the end of
+    // a run of bookkeeping. Said only for a single-use request, every other
+    // card looked the same whether a yes meant six hours, one hour or
+    // standing trust.
+    const lastsText = approvalLasts(a);
+    if (lastsText) {
+      const lasts = el("div", a.ask_once ? "approval-once" : "approval-lasts");
+      lasts.appendChild(el("span", "approval-label", "lasts"));
+      lasts.appendChild(el("span", "", lastsText));
+      card.appendChild(lasts);
     }
 
     const meta = [];
@@ -1661,7 +1689,20 @@ async function renderApprovalsView() {
 
 // whatApprovingDoes says, per kind, what a yes does — the same sentence the
 // terminal shows, so the two surfaces cannot describe the decision differently.
+// approvalGets says what the command receives if approved.
+function approvalGets(a) {
+  if (a.gets_all) return "every variable in the scope \u2014 the .byn allows *";
+  if (a.gets && a.gets.length) return a.gets.join(", ");
+  if (a.kind === "action_unpinned") return "nothing \u2014 the .byn declares no env";
+  if (a.kind === "adhoc") return "nothing";
+  return "";
+}
+
 function whatApprovingDoes(kind) {
+  if (kind === "adhoc") {
+    return "approving lets this command run when it is next attempted, with exactly the " +
+      "variables listed \u2014 it does not run now, and no .byn is written or changed";
+  }
   if (kind === "action_unpinned") {
     return "approving lets this command run when it is next attempted \u2014 " +
       "it does not run now, and the .byn is not changed";
@@ -1671,6 +1712,24 @@ function whatApprovingDoes(kind) {
       "it does not edit the file, and nothing runs until it is attempted again";
   }
   return "";
+}
+
+// approvalLasts says how long a plain approval lasts: one run, a window after
+// which the command asks again, or standing trust in a file.
+function approvalLasts(a) {
+  if (a.ask_once) return "one run \u2014 the asker wants a single use; lapses unused after 30m";
+  if (a.window_seconds > 0) return windowText(a.window_seconds) + " \u2014 runs free for whoever asked, then asks again";
+  if (a.kind === "trust_widening") return "until the file changes again \u2014 standing trust, not a window";
+  return "";
+}
+
+// windowText renders a grant window the way the terminal does: "6h", "1h",
+// "90m", "1h30m".
+function windowText(secs) {
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  if (h > 0 && m > 0) return h + "h" + m + "m";
+  if (h > 0) return h + "h";
+  return m + "m";
 }
 
 function relTime(unixSecs) {

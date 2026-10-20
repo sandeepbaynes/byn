@@ -160,12 +160,24 @@ clearly marked.
 - `byn trust [PATH]`, `byn trust list [--json]`, `byn untrust [PATH]` —
   all routed through the daemon.
 - `--no-discovery` flag and `BYN_NO_DISCOVERY=1` opt out.
+- **A `.byn` is the contract for one vault and the scope it pins (v0.9.0).**
+  Named into another vault it is refused with the ways out named; its
+  project and env never leak into a request for another vault.
+- **Approvals are answered by the vault's own password (v0.9.0).** A command
+  the `.byn` does not pin, or an ad hoc request, raises an approval bound to
+  the vault, scope, directory, command and names; only that vault's master
+  password answers it. Every card shows the scope, what the command gets, and
+  how long a yes lasts. (Through v0.8.0 a command approval accepted any
+  non-empty string — see the release notes.)
+- **Ad hoc requests:** `byn exec --var NAME -- CMD` asks for exactly the named
+  variables from any directory, with or without a `.byn`. Approved for an hour
+  by default, sealed so it runs while the vault is locked, revocable.
 - Management commands (`trust`, `untrust`, `daemon`, `doctor`,
   `help`, `version`) skip discovery so an untrusted file can't lock
   the user out of fixing it.
 - **Deferred (separate slice):** HMAC-signing the trust store so a direct
   write to `trusted_byn.json` (which the password gate can't stop) is
-  detected; and a portal "approve" action as an out-of-band channel.
+  detected. (The portal's approve action shipped; see [portal](portal.md).)
 
 ---
 

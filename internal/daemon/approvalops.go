@@ -32,8 +32,10 @@ const onceGrantWindow = 30 * time.Minute
 func approvalEntry(r approval.Request) ipc.ApprovalEntry {
 	return ipc.ApprovalEntry{
 		ID: r.ID, Kind: string(r.Kind), Vault: r.Vault, Subject: r.Subject,
+		Project: r.Project, Env: r.Env, Gets: r.Gets, GetsAll: r.GetsAll, Beside: r.Beside,
 		Summary: r.Summary, HighRisk: r.HighRisk, Status: string(r.Status), AskOnce: r.AskOnce,
-		CreatedAt: r.CreatedAt.Unix(), ExpiresAt: r.ExpiresAt.Unix(),
+		WindowSeconds: int64(r.Kind.Window() / time.Second),
+		CreatedAt:     r.CreatedAt.Unix(), ExpiresAt: r.ExpiresAt.Unix(),
 		Repeats: r.Repeats, DecidedVia: r.DecidedVia,
 		DecidedReason: r.DecidedReason,
 		DecidedAt:     decidedUnix(r.DecidedAt),
@@ -141,6 +143,41 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 		if errEnv != nil {
 			return errEnv
 		}
+		// The password proves presence for the vault the request was raised
+		// in, and only that vault. A command approval used to accept any
+		// password at all — nothing checked it — so anyone could approve their
+		// own request; and a password for some other vault proves nothing
+		// either, because anyone can create a vault and know its password.
+		// Trust widenings are checked inside applyTrustApproval, against the
+		// same vault, so they are not verified twice.
+		if pending.Kind != approval.KindTrustWidening {
+			if errEnv := d.authorizeWithPassword(ctx, env.ID, vaultName, st, req.Password); errEnv != nil {
+				return errEnv
+			}
+		}
+		// An ad hoc grant IS a sealed capability for the names on the card,
+		// made here from the password just verified. Sealing it now, rather
+		// than opening values with the vault key at run time, is what lets
+		// the approved command run while the vault is locked — and it is
+		// exactly as wide as the card: a name the vault has no value for
+		// gets no key, and a name not on the card gets nothing at all.
+		if pending.Kind == approval.KindAdhoc {
+			blob, serr := d.sealExecCapabilityWithKey(ctx, st,
+				vault.Scope{
+					Project: defaultIfEmpty(pending.Project, vault.DefaultProjectName),
+					Env:     defaultIfEmpty(pending.Env, vault.DefaultEnvName),
+				}, pending.Gets, false, req.Password, nil)
+			if serr != nil {
+				return ipc.NewError(env.ID, ipc.CodeBadRequest,
+					fmt.Sprintf("sealing the grant for %s: %v", pending.ID, serr),
+					"the scope may no longer exist; refuse the request if so")
+			}
+			if len(blob) > 0 {
+				if aerr := d.approvals.AttachCapability(req.ID, blob); aerr != nil {
+					return internalErr(env.ID, aerr)
+				}
+			}
+		}
 		// A recorded decision is not the point — the grant is. Marking the
 		// request approved without re-granting would leave the .byn exactly as
 		// it was, so the next exec would raise the same question again and the
@@ -207,6 +244,8 @@ func (d *Daemon) handleApprovalDecide(ctx context.Context, env *ipc.Envelope) *i
 	d.auditEmit(ctx, defaultIfEmpty(pending.Vault, vault.DefaultVaultName), audit.Event{
 		Op:      string(ipc.OpApprovalDecide),
 		Outcome: outcome,
+		Project: pending.Project,
+		Env:     pending.Env,
 		BynPath: pending.Subject,
 		Command: string(decided.Status) + " via " + decided.DecidedVia + " (" + decided.ID + ")" +
 			reasonSuffix(decided.DecidedReason),

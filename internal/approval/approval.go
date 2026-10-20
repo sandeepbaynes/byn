@@ -48,6 +48,11 @@ const DefaultTTL = 6 * time.Hour
 // for how long a question stays askable.
 const ActionGrantFor = 6 * time.Hour
 
+// AdhocGrantFor is how long an approved ad hoc request stays runnable when
+// the approver names no window. Shorter than a .byn grant: nothing on disk
+// anchors it, and the asker said what it needed for one piece of work.
+const AdhocGrantFor = time.Hour
+
 // Rate limiting bounds how fast one project can raise requests. Any process at
 // the caller's UID can invoke byn in a loop, and an approver worn down by a
 // flood is the documented way these systems get beaten — an attacker does not
@@ -96,6 +101,10 @@ const (
 	// KindActionUnpinned is a caller wanting to run a command the trusted .byn
 	// does not pin.
 	KindActionUnpinned Kind = "action_unpinned"
+	// KindAdhoc is a caller asking to run one command with named variables
+	// from a scope, anchored to the directory it runs in rather than to a
+	// .byn. The grant is a sealed capability for exactly those names.
+	KindAdhoc Kind = "adhoc"
 )
 
 var (
@@ -167,6 +176,23 @@ type Request struct {
 	ID    string `json:"id"`
 	Kind  Kind   `json:"kind"`
 	Vault string `json:"vault,omitempty"`
+	// Project and Env are the rest of the scope the request reaches into.
+	// Recorded so the card can say which secrets a yes covers; the
+	// fingerprint already binds them.
+	Project string `json:"project,omitempty"`
+	Env     string `json:"env,omitempty"`
+	// Gets names the variables the command receives; GetsAll is a wildcard
+	// .byn. For an ad hoc request Gets is the whole ask.
+	Gets    []string `json:"gets,omitempty"`
+	GetsAll bool     `json:"gets_all,omitempty"`
+	// Beside is the trusted .byn an ad hoc request runs next to and does not
+	// use, so the approver sees that the file does not cover this.
+	Beside string `json:"beside,omitempty"`
+	// Capability is the sealed per-row keys an approved ad hoc request runs
+	// on — the grant itself, made at approval time from the approver's
+	// password and good only until GrantedUntil. Never sent to a client; it
+	// is cleared when the grant is spent, revoked or lapses.
+	Capability []byte `json:"capability,omitempty"`
 	// Subject is what the decision is about — for a trust widening, the
 	// canonical .byn path.
 	Subject string `json:"subject"`
@@ -340,10 +366,38 @@ func (s *Store) save(f *file) error {
 // expire marks anything past its deadline, in place.
 func (s *Store) expire(f *file, now time.Time) {
 	for i := range f.Requests {
-		if f.Requests[i].Status == StatusPending && now.After(f.Requests[i].ExpiresAt) {
-			f.Requests[i].Status = StatusExpired
+		r := &f.Requests[i]
+		if r.Status == StatusPending && now.After(r.ExpiresAt) {
+			r.Status = StatusExpired
+		}
+		// A lapsed grant's keys have nothing left to authorize. Dropping them
+		// keeps the file from accumulating sealed key material for grants
+		// nothing can use.
+		if r.Status == StatusApproved && len(r.Capability) > 0 && !now.Before(r.GrantedUntil) {
+			r.Capability = nil
 		}
 	}
+}
+
+// AttachCapability stores the sealed keys an ad hoc grant will run on. Called
+// while the request is still pending, just before it is decided: a capability
+// on a request that is never approved authorizes nothing, since only an
+// approved grant inside its window is ever consulted.
+func (s *Store) AttachCapability(id string, blob []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.load()
+	if err != nil {
+		return err
+	}
+	for i := range f.Requests {
+		if f.Requests[i].ID != id {
+			continue
+		}
+		f.Requests[i].Capability = blob
+		return s.save(f)
+	}
+	return ErrNotFound
 }
 
 // Enqueue records a request and returns it.
@@ -487,10 +541,10 @@ func (s *Store) decide(id string, approve bool, via, reason string,
 		}
 		if approve {
 			r.Status = StatusApproved
-			if r.Kind == KindActionUnpinned {
+			if r.Kind.Grants() {
 				window := grantFor
 				if window <= 0 {
-					window = ActionGrantFor
+					window = r.Kind.Window()
 				}
 				r.GrantedUntil = now.Add(window)
 			}
@@ -567,6 +621,7 @@ func (s *Store) Revoke(id string) (Request, error) {
 			return *r, fmt.Errorf("%w: %s is %s, not approved", ErrNotApproved, id, r.Status)
 		}
 		r.Status = StatusRevoked
+		r.Capability = nil
 		// The grant is what actually authorises a command, so it has to go, not
 		// merely be relabelled. Zeroing it is what makes the next exec ask again.
 		r.GrantedUntil = time.Time{}
@@ -610,6 +665,7 @@ func (s *Store) ConsumeOnce(subject, fingerprint string) (bool, error) {
 			continue // already lapsed; nothing to spend
 		}
 		r.Status = StatusUsed
+		r.Capability = nil
 		r.GrantedUntil = time.Time{}
 		r.DecidedAt = now
 		if err := s.save(f); err != nil {
@@ -683,15 +739,23 @@ func (s *Store) ActionGrantedUntil(subject, fingerprint string) (bool, time.Time
 // recorded one and asks the daemon, which is the only part that can compare a
 // live process against it.
 func (s *Store) ActionGrantFor(subject, fingerprint string, usable func(Request) bool) (bool, time.Time, error) {
+	r, ok, err := s.ActionGrantRequest(subject, fingerprint, usable)
+	return ok, r.GrantedUntil, err
+}
+
+// ActionGrantRequest is ActionGrantFor returning the grant itself, for a
+// caller that needs more than its expiry — an ad hoc grant carries the sealed
+// keys the run opens its values with.
+func (s *Store) ActionGrantRequest(subject, fingerprint string, usable func(Request) bool) (Request, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
 	if err != nil {
-		return false, time.Time{}, err
+		return Request{}, false, err
 	}
 	now := s.now()
 	for _, r := range f.Requests {
-		if r.Kind != KindActionUnpinned || r.Status != StatusApproved {
+		if !r.Kind.Grants() || r.Status != StatusApproved {
 			continue
 		}
 		if r.Subject != subject || r.Fingerprint != fingerprint {
@@ -706,9 +770,31 @@ func (s *Store) ActionGrantFor(subject, fingerprint string, usable func(Request)
 		if usable != nil && !usable(r) {
 			continue
 		}
-		return true, r.GrantedUntil, nil
+		return r, true, nil
 	}
-	return false, time.Time{}, nil
+	return Request{}, false, nil
+}
+
+// Grants reports whether an approval of this kind is a standing grant with a
+// window, as opposed to a trust widening that is applied once by re-granting
+// the .byn.
+func (k Kind) Grants() bool {
+	return k == KindActionUnpinned || k == KindAdhoc
+}
+
+// Window is how long a plain approval of this kind lets the request run
+// before it asks again: six hours for a command a .byn does not pin, one for
+// an ad hoc request, and nothing for a widening, which re-grants trust in the
+// file as it is — standing, not a window. Every card says this before the
+// decision, so --for and --once are chosen against a number, not a guess.
+func (k Kind) Window() time.Duration {
+	switch k {
+	case KindActionUnpinned:
+		return ActionGrantFor
+	case KindAdhoc:
+		return AdhocGrantFor
+	}
+	return 0
 }
 
 // Get returns one request by id.

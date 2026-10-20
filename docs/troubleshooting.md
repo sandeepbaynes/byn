@@ -299,6 +299,46 @@ model.
 
 ---
 
+## "is trusted for vault X, not Y"
+
+```
+$ byn exec --vault maison -- ./run.sh
+Scope maison/default/default (--vault from the command line); /p/.byn says rinkats/rinkats/default and is set aside — a .byn speaks for its own vault only.
+Error: /p/.byn is trusted for vault rinkats, not maison.
+```
+
+The directory's `.byn` was trusted into one vault, and you named another. The
+file is the contract for its own vault only, so byn will not use it to
+authorize a run against `maison`. Two honest ways out, both printed under the
+error:
+
+- **Ask for exactly what you need:** `byn exec --vault maison --var NAME --
+  ./run.sh`. The request goes to the owner with the vault, scope, directory,
+  command and names on the card; only `maison`'s password approves it.
+- **Set the file aside and use the whole scope:** add `--no-discovery`. The
+  run then behaves as it would from a directory with no `.byn` — your master
+  password for `maison`, every variable in the scope injected.
+
+The same shape appears as *"pins project X, not Y"* / *"pins env X, not Y"*
+when `--project` or `--env` contradicts the file inside its own vault. Editing
+the file's `[scope]` and re-trusting it is the third way, if the file itself
+should change.
+
+A `.byn` is trusted for one vault at a time: `byn trust` on it for another
+vault replaces the record rather than adding one.
+
+---
+
+## An approved command asks again after upgrading to v0.9.0
+
+Expected, once. v0.9.0 binds each grant to its vault, project and env, so a
+grant recorded by an earlier release no longer matches and the command raises
+a fresh request. Approve it; the new grant carries the full scope. Trust
+records are untouched. This is a consequence of the v0.9.0 security fix — see
+the [release notes](releases.md#v090).
+
+---
+
 ## "name already exists"
 
 ```

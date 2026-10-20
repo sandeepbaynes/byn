@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -159,5 +160,48 @@ func TestStripExecReason_StopsAtTheChild(t *testing.T) {
 				t.Errorf("args = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Every exec flag is found wherever it sits among byn's flags, including after
+// one that takes a value. Each pass used to stop at the first bare token, so a
+// flag behind `--reason "why"` was never seen by the passes that ran first.
+func TestExecFlags_SeenAfterAValueFlag(t *testing.T) {
+	args := []string{"--reason", "why", "--inspect", "9230", "--wait-approval", "1m",
+		"--json", "--dry-run", "--force-ask", "--once", "--no-privsep", "--", "cmd", "--json"}
+	args, noPrivsep := stripNoPrivsep(args)
+	args, _, hasWait := stripWaitApproval(args)
+	args, jsonOut := stripExecJSON(args)
+	args, dryRun := stripExecDryRun(args)
+	args, forceAsk := stripExecForceAsk(args)
+	args, reason := stripExecReason(args)
+	args, askOnce := stripExecAskOnce(args)
+	args, _, inspect, hasInspect := stripInspect(args)
+	if !noPrivsep || !hasWait || !jsonOut || !dryRun || !forceAsk || !askOnce || !hasInspect {
+		t.Errorf("missed a flag: privsep=%v wait=%v json=%v dry=%v force=%v once=%v inspect=%v",
+			noPrivsep, hasWait, jsonOut, dryRun, forceAsk, askOnce, hasInspect)
+	}
+	if reason != "why" || inspect != "9230" {
+		t.Errorf("reason=%q inspect=%q", reason, inspect)
+	}
+	if want := []string{"--", "cmd", "--json"}; !slices.Equal(args, want) {
+		t.Errorf("left %q, want %q — the child's argv must be untouched", args, want)
+	}
+}
+
+// --var is repeatable, takes the attached form too, and stops at the child.
+func TestStripExecVars(t *testing.T) {
+	args := []string{"--reason", "why", "--var", "DB_URL", "--var=API_KEY", "--json", "--", "cmd", "--var", "X"}
+	rest, vars := stripExecVars(args)
+	if want := []string{"DB_URL", "API_KEY"}; !slices.Equal(vars, want) {
+		t.Errorf("vars = %q, want %q", vars, want)
+	}
+	if want := []string{"--reason", "why", "--json", "--", "cmd", "--var", "X"}; !slices.Equal(rest, want) {
+		t.Errorf("rest = %q, want %q — the child's --var is the child's", rest, want)
+	}
+	// A --var with nothing after it is not silently a flag with no value.
+	rest, vars = stripExecVars([]string{"--var"})
+	if len(vars) != 0 || !slices.Equal(rest, []string{"--var"}) {
+		t.Errorf("bare --var: vars=%q rest=%q", vars, rest)
 	}
 }
