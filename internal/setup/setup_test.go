@@ -24,6 +24,7 @@ type recorder struct {
 	installHelperEr error
 	installSvcErr   error
 	relocateErr     error
+	stopLegacyErr   error
 	writeOwnerErr   error
 	verifyErr       error
 	grantHomeErr    error
@@ -33,6 +34,8 @@ type recorder struct {
 	wroteOwnerUID            int
 	wroteOwnerPath           string
 	grantedHomeDir           string
+	stoppedLegacyDir         string
+	stoppedOwnerUID          int
 }
 
 const (
@@ -55,6 +58,11 @@ func (r *recorder) deps() Deps {
 		},
 		InstallSpawnHelper: func() error { r.calls = append(r.calls, "InstallSpawnHelper"); return r.installHelperEr },
 		InstallService:     func() error { r.calls = append(r.calls, "InstallService"); return r.installSvcErr },
+		StopLegacyDaemon: func(legacy string, ownerUID int) error {
+			r.calls = append(r.calls, "StopLegacyDaemon")
+			r.stoppedLegacyDir, r.stoppedOwnerUID = legacy, ownerUID
+			return r.stopLegacyErr
+		},
 		Relocate: func(legacy, sys string, uid, gid int) error {
 			r.calls = append(r.calls, "Relocate")
 			r.relocateUID, r.relocateGID = uid, gid
@@ -126,14 +134,18 @@ func TestProvision_HappyPath_LegacyPresent_CallsRelocate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	// GrantHomeAccess runs between LegacyDir and Relocate; service is installed LAST.
-	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "GrantHomeAccess", "Relocate", "WriteOwnerRecord", "InstallService", "Verify"}
+	// GrantHomeAccess runs between LegacyDir and Relocate; the per-user daemon is
+	// stopped immediately before Relocate; service is installed LAST.
+	want := []string{"SudoUID", "InstallSpawnHelper", "DaemonUser", "LegacyDir", "GrantHomeAccess", "StopLegacyDaemon", "Relocate", "WriteOwnerRecord", "InstallService", "Verify"}
 	assertSeq(t, r.calls, want)
 	if !res.Migrated {
 		t.Error("Migrated = false despite a present legacy dir")
 	}
 	if res.LegacyDir != "/home/alice/.byn" {
 		t.Errorf("LegacyDir = %q, want /home/alice/.byn", res.LegacyDir)
+	}
+	if r.stoppedLegacyDir != "/home/alice/.byn" || r.stoppedOwnerUID != 501 {
+		t.Errorf("StopLegacyDaemon(%q, %d), want (/home/alice/.byn, 501)", r.stoppedLegacyDir, r.stoppedOwnerUID)
 	}
 	// Relocate must chown to the _byn account (DaemonUser), not the owner.
 	if r.relocateUID != 200 || r.relocateGID != 200 {
@@ -230,6 +242,11 @@ func TestProvision_StopsOnEachStepError(t *testing.T) {
 		{"DaemonUser", func(r *recorder) { r.daemonErr = errors.New("boom") }, "DaemonUser", "service account"},
 		{"InstallService", func(r *recorder) { r.installSvcErr = errors.New("boom") }, "InstallService", "system service"},
 		{"LegacyDir", func(r *recorder) { r.legacyErr = errors.New("boom") }, "LegacyDir", "legacy data dir"},
+		{"StopLegacyDaemon", func(r *recorder) {
+			r.legacyExists = true
+			r.legacyDir = "/h/.byn"
+			r.stopLegacyErr = errors.New("boom")
+		}, "StopLegacyDaemon", "per-user byn daemon"},
 		{"Relocate", func(r *recorder) { r.legacyExists = true; r.legacyDir = "/h/.byn"; r.relocateErr = errors.New("boom") }, "Relocate", "relocate"},
 		{"WriteOwnerRecord", func(r *recorder) { r.writeOwnerErr = errors.New("boom") }, "WriteOwnerRecord", "owner UID"},
 		{"Verify", func(r *recorder) { r.verifyErr = errors.New("boom") }, "Verify", "verify"},

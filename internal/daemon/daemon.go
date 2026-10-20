@@ -136,6 +136,12 @@ type Daemon struct {
 	// uiSrv is the embedded browser portal, started in Start when
 	// cfg.UIEnabled and stopped in Shutdown. nil when disabled.
 	uiSrv *ui.Server
+	// uiErr is why the last attempt to start the portal failed ("" when it is
+	// running, or was never asked to). Under launchd/systemd the daemon's
+	// stderr goes nowhere a person looks, so status carries it instead — the
+	// portal port held by another process otherwise shows up only as a browser
+	// that cannot connect, or worse, connects to that other process.
+	uiErr string
 
 	// pkChallenges holds in-flight WebAuthn ceremony challenges (register +
 	// auth) keyed by a one-time ceremony id, with a short TTL. Server-side
@@ -469,6 +475,14 @@ func (d *Daemon) Start(ctx context.Context) error {
 	return nil
 }
 
+// UIError reports why the portal failed to start, or "" when it is running
+// or disabled.
+func (d *Daemon) UIError() string {
+	d.uiMu.Lock()
+	defer d.uiMu.Unlock()
+	return d.uiErr
+}
+
 // UIPort reports the bound portal port, or 0 when the portal isn't
 // running.
 func (d *Daemon) UIPort() int {
@@ -490,7 +504,13 @@ func (d *Daemon) UIPort() int {
 // disabled (same path as a bind failure) and a warning is printed to stderr.
 // The daemon keeps serving the socket. The token is persisted across daemon
 // restarts so browser localStorage remains valid.
-func (d *Daemon) startUILocked(port int) error {
+func (d *Daemon) startUILocked(port int) (err error) {
+	defer func() {
+		d.uiErr = ""
+		if err != nil {
+			d.uiErr = err.Error()
+		}
+	}()
 	select {
 	case <-d.closeCh:
 		return errors.New("daemon: shutting down")
@@ -806,6 +826,7 @@ func (d *Daemon) reloadUI(enabled bool, port int) []string {
 
 	switch {
 	case !enabled && !running:
+		d.uiErr = ""
 		return nil
 	case !enabled && running:
 		_ = d.uiSrv.Close()

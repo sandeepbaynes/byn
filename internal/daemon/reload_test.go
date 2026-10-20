@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,5 +183,36 @@ func TestReload_MalformedConfig(t *testing.T) {
 	}
 	if d.idleTimeoutDur() != 5*time.Minute {
 		t.Fatalf("idle timeout changed despite reload error: %v", d.idleTimeoutDur())
+	}
+}
+
+// A portal port already held by another process — on an upgraded machine, a
+// per-user byn daemon left running — must not just disappear into the daemon's
+// stderr. UIError carries the bind failure, and clears once the portal is up.
+func TestStart_PortalPortTakenIsReportedThenClears(t *testing.T) {
+	squatter, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := squatter.Addr().(*net.TCPAddr).Port
+
+	d := startBareDaemon(t, Config{UIEnabled: true, UIPort: port})
+	if d.UIPort() != 0 {
+		t.Fatalf("portal reports port %d while another process holds it", d.UIPort())
+	}
+	if msg := d.UIError(); !strings.Contains(msg, strconv.Itoa(port)) {
+		t.Fatalf("UIError = %q, want the bind failure on :%d", msg, port)
+	}
+
+	_ = squatter.Close()
+	writeConfig(t, d.cfg.Dir, fmt.Sprintf("[ui]\nenabled = true\nport = %d\n[daemon]\nidle_timeout = \"0s\"\n", port))
+	if _, err := d.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if d.UIPort() != port {
+		t.Fatalf("portal port = %d after the port freed, want %d", d.UIPort(), port)
+	}
+	if msg := d.UIError(); msg != "" {
+		t.Fatalf("UIError = %q after the portal started, want empty", msg)
 	}
 }

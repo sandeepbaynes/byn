@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"syscall"
 
 	"github.com/sandeepbaynes/byn/internal/migrate"
 	"github.com/sandeepbaynes/byn/internal/paths"
@@ -32,6 +33,7 @@ type migrateDeps struct {
 	systemDir  func() string                    // paths.SystemDataDir
 	legacyDir  func() (string, error)           // paths.LegacyDataDir
 	daemonUser func() (uid, gid int, err error) // privsep.LookupDaemonUser
+	stopLegacy func(legacy string) error        // stopLegacyDaemon for the dir's owner
 	relocate   func(legacy, system string, o migrate.Options) error
 	importFrom func(srcDir, system string, o migrate.Options) error
 }
@@ -42,7 +44,21 @@ func defaultMigrateDeps() migrateDeps {
 		systemDir:  paths.SystemDataDir,
 		legacyDir:  paths.LegacyDataDir,
 		daemonUser: privsep.LookupDaemonUser,
-		relocate:   migrate.Relocate,
+		stopLegacy: func(legacy string) error {
+			fi, err := os.Stat(legacy)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			st, ok := fi.Sys().(*syscall.Stat_t)
+			if !ok {
+				return fmt.Errorf("cannot determine the owner of %s", legacy)
+			}
+			return stopLegacyDaemon(legacy, int(st.Uid), defaultLegacyDaemonOps())
+		},
+		relocate: migrate.Relocate,
 		importFrom: func(srcDir, system string, o migrate.Options) error {
 			return migrate.Import(migrate.NewLocalSource(srcDir), system, o)
 		},
@@ -104,6 +120,11 @@ func runMigrateRelocate(deps migrateDeps, systemDir string, opts migrate.Options
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s could not locate the legacy data dir: %v\n", boldRed("Error:"), err)
 		return exitErr
+	}
+	// Same reason as setup: a daemon still serving the legacy dir would write
+	// into files the relocate deletes, and keep the portal port from _byn's.
+	if err := deps.stopLegacy(legacy); err != nil {
+		return reportMigrateErr(stderr, err)
 	}
 	if err := deps.relocate(legacy, systemDir, opts); err != nil {
 		return reportMigrateErr(stderr, err)

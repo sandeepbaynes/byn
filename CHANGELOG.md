@@ -3,6 +3,40 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## Unreleased
+
+### Fix: `byn setup` left the per-user daemon running, and could lose a vault
+
+**Affects machines that ran byn without privilege separation (`byn start`, or
+`byn daemon install`) and then ran `byn setup`.**
+
+**Symptom:** after setup, `byn web` shows a vault that `byn vault ls` does
+not, and the portal will not log in or delete it. `byn status` looks healthy.
+
+**Cause:** setup copied `~/.byn` into the system data dir and deleted it, but
+never stopped the daemon still running from `~/.byn`. That daemon kept its
+vaults open, so anything it held that was not in the copy now existed only in
+its memory and its unlinked files, and was gone once it exited. It also kept
+the web portal port, so the `_byn` daemon's portal failed to bind, silently,
+and `byn web` opened a page served by the old daemon.
+
+**What changed:**
+
+- **`byn setup` and `byn migrate` stop the per-user daemon before copying
+  `~/.byn`**, and remove the per-user auto-start service (LaunchAgent or
+  systemd user unit) that would restart it. If the daemon will not stop,
+  nothing is copied or deleted.
+- **A portal that fails to start says so.** `byn status` shows why, and
+  `byn web` refuses to open the URL rather than landing on whatever else holds
+  the port.
+
+**If you already hit this:** `byn status` on a machine that ran setup with an
+old daemon running will show `portal: NOT RUNNING`. Check what holds the port
+with `lsof -nP -iTCP:2967 -sTCP:LISTEN`. If a byn process there serves a vault
+that `byn vault ls` does not list, do not stop it until you have recovered
+what you need from that vault: its files are already deleted, and that
+process holds the only copy.
+
 ## v0.9.0 — 2026-10-20
 
 ### Security fix: a command approval accepted any password

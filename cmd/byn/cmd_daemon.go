@@ -465,6 +465,12 @@ func runDaemonStatus(args []string) int {
 	}
 	fmt.Printf("socket:  %s\n", resp.SocketPath)
 	fmt.Printf("uptime:  %s\n", time.Since(resp.StartedAt).Round(time.Second))
+	if resp.UIEnabled && resp.UIError != "" {
+		fmt.Println(boldYellow("portal:") + "  NOT RUNNING — " + resp.UIError)
+		for _, l := range strings.Split(portalDownHint(resp.UIPort), "\n") {
+			fmt.Println("         " + l)
+		}
+	}
 	if resp.FDAGranted != nil {
 		if *resp.FDAGranted {
 			fmt.Println("fda:     granted")

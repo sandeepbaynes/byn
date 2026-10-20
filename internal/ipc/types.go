@@ -324,6 +324,12 @@ type StatusResp struct {
 	UIPort    int  `json:"ui_port"`
 	Privsep   bool `json:"privsep"`
 
+	// UIError is why the web portal is enabled but not serving — typically the
+	// port is held by another process, such as a per-user byn daemon left
+	// running. Empty when the portal is up or disabled, and from a daemon that
+	// predates the field, so `byn web` treats empty as "go ahead".
+	UIError string `json:"ui_error,omitempty"`
+
 	// FDAGranted is non-nil only on macOS when privsep is active (daemon runs
 	// as _byn). true = the daemon has Full Disk Access and can read .byn files
 	// anywhere; false = it lacks FDA and cannot reach ~/Documents, ~/Desktop,

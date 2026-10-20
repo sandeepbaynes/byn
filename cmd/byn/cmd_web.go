@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 
+	"github.com/sandeepbaynes/byn/internal/config"
 	"github.com/sandeepbaynes/byn/internal/ipc"
 )
 
@@ -44,6 +45,14 @@ func runWeb(args []string) int {
 		fmt.Fprintln(os.Stderr, "Set [ui] enabled = true (portal Settings, or the config file) and restart the daemon.")
 		return exitErr
 	}
+	// Enabled is not running. Opening the URL anyway lands on a refused
+	// connection — or, when another process holds the port, on THAT process,
+	// carrying a bootstrap token minted for this daemon.
+	if st.UIError != "" {
+		fmt.Fprintf(os.Stderr, "Error: the web portal is not running: %s\n", st.UIError)
+		fmt.Fprintln(os.Stderr, portalDownHint(st.UIPort))
+		return exitErr
+	}
 
 	// Mint a one-time bootstrap token via the UID-gated socket. The token is
 	// single-use and expires in 30s, so a `ps` snapshot is of limited value
@@ -70,6 +79,22 @@ func runWeb(args []string) int {
 		fmt.Fprintln(os.Stderr, "(Re-run `byn web` to open an authorized session.)")
 	}
 	return exitOK
+}
+
+// portalDownHint says what to do about a portal that failed to start. The
+// usual cause is the port being held by something else — on an upgraded
+// machine, a per-user byn daemon from before `byn setup` — so it names the
+// command that shows the holder before the one that retries.
+func portalDownHint(port int) string {
+	if port <= 0 {
+		port = config.DefaultUIPort
+	}
+	restart := "byn restart"
+	if daemonProvisioned() {
+		restart = "sudo byn restart"
+	}
+	return fmt.Sprintf("See what holds the port: lsof -nP -iTCP:%d -sTCP:LISTEN\n"+
+		"Stop it, then run: %s", port, restart)
 }
 
 // openBrowserFn is the function used to launch the browser. Tests replace it

@@ -20,6 +20,10 @@ func fakeMigrateDeps() (migrateDeps, *migrateCalls) {
 		systemDir:  func() string { return "/sys/byn" },
 		legacyDir:  func() (string, error) { return "/home/u/.byn", nil },
 		daemonUser: func() (int, int, error) { return 410, 410, nil },
+		stopLegacy: func(legacy string) error {
+			calls.stops = append(calls.stops, legacy)
+			return calls.stopErr
+		},
 		relocate: func(legacy, system string, o migrate.Options) error {
 			calls.relocate++
 			calls.relocLegacy, calls.relocSystem, calls.relocOpts = legacy, system, o
@@ -35,6 +39,8 @@ func fakeMigrateDeps() (migrateDeps, *migrateCalls) {
 }
 
 type migrateCalls struct {
+	stops                    []string
+	stopErr                  error
 	relocate                 int
 	relocLegacy, relocSystem string
 	relocOpts                migrate.Options
@@ -190,5 +196,40 @@ func TestMigrate_BadFlagRejected(t *testing.T) {
 	deps, _ := fakeMigrateDeps()
 	if code, _, _ := runMigrateCaptured([]string{"--nope"}, deps); code != exitErr {
 		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+}
+
+func TestMigrate_RelocateStopsLegacyDaemonFirst(t *testing.T) {
+	deps, calls := fakeMigrateDeps()
+	if code, _, _ := runMigrateCaptured(nil, deps); code != exitOK {
+		t.Fatalf("exit = %d, want %d", code, exitOK)
+	}
+	if len(calls.stops) != 1 || calls.stops[0] != "/home/u/.byn" {
+		t.Errorf("stopLegacy calls = %v, want [/home/u/.byn]", calls.stops)
+	}
+}
+
+func TestMigrate_LegacyDaemonStillRunningAbortsBeforeRelocate(t *testing.T) {
+	deps, calls := fakeMigrateDeps()
+	calls.stopErr = errors.New("a byn daemon is still answering")
+	code, _, stderr := runMigrateCaptured(nil, deps)
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if calls.relocate != 0 {
+		t.Error("relocate ran although the legacy daemon could not be stopped")
+	}
+	if !strings.Contains(stderr, "still answering") {
+		t.Errorf("stderr = %q, want the stop error", stderr)
+	}
+}
+
+func TestMigrate_ImportLeavesLegacyDaemonAlone(t *testing.T) {
+	deps, calls := fakeMigrateDeps()
+	if code, _, _ := runMigrateCaptured([]string{"--from", "/backup/byn"}, deps); code != exitOK {
+		t.Fatalf("exit = %d, want %d", code, exitOK)
+	}
+	if len(calls.stops) != 0 {
+		t.Errorf("stopLegacy ran on an import: %v", calls.stops)
 	}
 }

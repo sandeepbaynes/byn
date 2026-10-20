@@ -254,6 +254,9 @@ func defaultProvisionDeps() (setup.Deps, error) {
 			}
 			return privsep.InstallService(run, exe)
 		},
+		StopLegacyDaemon: func(legacyDir string, ownerUID int) error {
+			return stopLegacyDaemon(legacyDir, ownerUID, defaultLegacyDaemonOps())
+		},
 		Relocate: func(legacyDir, sysDir string, uid, gid int) error {
 			return migrate.Relocate(legacyDir, sysDir, migrate.Options{UID: uid, GID: gid})
 		},

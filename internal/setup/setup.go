@@ -66,6 +66,14 @@ type Deps struct {
 	// LaunchDaemon) running the daemon as _byn (privsep.InstallService). Idempotent.
 	InstallService func() error
 
+	// StopLegacyDaemon stops a per-user daemon still serving the legacy dir, and
+	// removes the per-user auto-start service that would bring it back. Called
+	// ONLY when the legacy dir exists, before Relocate: a daemon left running
+	// there writes into files the relocate is about to delete, and holds the web
+	// portal port the _byn daemon needs. An error aborts setup before any data
+	// moves.
+	StopLegacyDaemon func(legacyDir string, ownerUID int) error
+
 	// Relocate moves a legacy ~/.byn into the system data dir, chowned to the _byn
 	// service account (migrate.Relocate). Called ONLY when LegacyDir reports the
 	// legacy dir exists.
@@ -117,7 +125,10 @@ type Result struct {
 //     User=_byn both need _byn to exist before they run.
 //  2. Relocate (only if a legacy ~/.byn exists) — moves the old vault into the
 //     system dir, chowned to _byn, BEFORE the service starts so the daemon never
-//     races the adopt or boots against an empty, not-yet-owned data dir.
+//     races the adopt or boots against an empty, not-yet-owned data dir. Any
+//     per-user daemon still serving the legacy dir is stopped first
+//     (StopLegacyDaemon), so the copy is not of files another process is
+//     still writing.
 //  3. WriteOwnerRecord — records the invoking human's UID (never 0), before the
 //     daemon starts so it allowlists the owner on first boot.
 //  4. InstallService LAST — installs + starts the system unit/LaunchDaemon
@@ -170,6 +181,9 @@ func Provision(d Deps) (Result, error) {
 	}
 
 	if legacyExists {
+		if err := d.StopLegacyDaemon(legacyDir, ownerUID); err != nil {
+			return Result{}, fmt.Errorf("stop the per-user byn daemon before relocating %s: %w", legacyDir, err)
+		}
 		if err := d.Relocate(legacyDir, systemDir, daemonUID, daemonGID); err != nil {
 			return Result{}, fmt.Errorf("relocate legacy data dir %s: %w", legacyDir, err)
 		}

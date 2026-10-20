@@ -377,6 +377,7 @@ func (d *Daemon) handleStatus(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 		Vaults:      summaries,
 		UIEnabled:   d.cfg.UIEnabled,
 		UIPort:      d.cfg.UIPort,
+		UIError:     d.UIError(),
 		Privsep:     d.cfg.Privsep,
 		FDAGranted:  fdaGranted,
 	})
