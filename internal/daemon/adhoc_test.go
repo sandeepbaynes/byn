@@ -18,11 +18,20 @@ import (
 // directory, the names, the vault and scope, and who asked. Nothing is left for
 // the run to decide that the approver did not see.
 
+// adhocReq builds a request the way the CLI sends one: with the directory it
+// is made from. Linux reads the caller's directory from the kernel and ignores
+// the claim; macOS has no such read, so the claim is what anchors the request
+// there — a test that leaves it out passes on one and not the other.
 func adhocReq(vars ...string) ipc.ExecFetchReq {
 	return ipc.ExecFetchReq{
 		Command: "echo hello", Argv: []string{"echo", "hello"}, Vars: vars,
-		Reason: "one-off check",
+		Reason: "one-off check", Cwd: testCwd(),
 	}
+}
+
+func testCwd() string {
+	cwd, _ := os.Getwd()
+	return cwd
 }
 
 func errDetails(t *testing.T, err error) map[string]string {
@@ -171,8 +180,14 @@ func TestAdhoc_GrantIsBoundToVaultDirectoryAndNames(t *testing.T) {
 	if _, err := execFetch(t, c, other); errCode(t, err) != ipc.CodeApprovalPending {
 		t.Error("the same command against another vault ran on this vault's grant")
 	}
-	t.Chdir(t.TempDir())
-	if _, err := execFetch(t, c, req); errCode(t, err) != ipc.CodeApprovalPending {
+	// Moving the process moves the claim with it, as the CLI's does. Linux
+	// anchors the request to the kernel's view of the directory; macOS to the
+	// claim; both must see a different directory here.
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
+	moved := req
+	moved.Cwd = elsewhere
+	if _, err := execFetch(t, c, moved); errCode(t, err) != ipc.CodeApprovalPending {
 		t.Error("the same command from another directory ran on this directory's grant")
 	}
 }
@@ -274,7 +289,7 @@ func TestExec_AnotherVaultDoesNotBorrowTheBynsProject(t *testing.T) {
 
 	run := ipc.ExecFetchReq{
 		Path: byn, Command: "pinned run", Argv: []string{"pinned", "run"},
-		Scope: ipc.Scope{Vault: "mine"},
+		Scope: ipc.Scope{Vault: "mine"}, Cwd: testCwd(),
 	}
 	err := mustErr(execFetch(t, c, run))
 	if code := errCode(t, err); code != ipc.CodeTrustDenied {
@@ -308,7 +323,7 @@ func TestExec_BynTrustedForAnotherVaultIsRefusedUnlessAskedAdhoc(t *testing.T) {
 
 	run := ipc.ExecFetchReq{
 		Path: byn, Command: "pinned run", Argv: []string{"pinned", "run"},
-		Scope: ipc.Scope{Vault: "mine"},
+		Scope: ipc.Scope{Vault: "mine"}, Cwd: testCwd(),
 	}
 	_, err := execFetch(t, c, run)
 	if code := errCode(t, err); code != ipc.CodeTrustDenied {
