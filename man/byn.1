@@ -312,6 +312,28 @@ parent shell or argv.
 The "\fB\-\-\fR" separator is required to disambiguate exec's own
 flags from the child command's flags.
 .TP
+.B exec \fB\-\-var\fR \fINAME\fR... \fR[\fB\-\-reason\fR \fITEXT\fR] \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS...\fR]
+\fBAd hoc form:\fR ask for exactly the named variables, from any
+directory, with or without a \fB.byn\fR. There is no wildcard. The
+request raises an approval bound to the vault, project, env, the
+directory it is made from, the exact command line and the names \(em
+change any one and it asks again \(em and exits 75 with the id until a
+person answers. Approving seals a grant for exactly those names (an
+hour by default; \fB\-\-for\fR, \fB\-\-once\fR, \fB\-\-anyone\fR and
+\fB\-\-revoke\fR apply), so the run works while the vault is locked and
+nothing off the card is injected. Beside a trusted \fB.byn\fR the
+request is allowed, flagged high risk on the card, and the file is not
+changed; the file's own pinned commands keep running on its terms.
+.IP
+\fB\-\-vault\fR, \fB\-\-project\fR or \fB\-\-env\fR that contradict
+what the directory's \fB.byn\fR pins make the file not the contract:
+with \fB\-\-var\fR the run is an ad hoc request in the scope you named;
+without it the run is refused and the error names both ways out
+(\fB\-\-var\fR, or \fB\-\-no\-discovery\fR to run on the whole scope
+with the vault password). Naming another vault sets the file aside
+whole: what you do not name falls back to \fIdefault\fR, never to the
+file's project, which exists only in the file's own vault.
+.TP
 .B exec \fINAME\fR \fR[\fIARGS...\fR]
 \fBAlias form:\fR when a trusted \fB.byn\fR is in scope (discovered
 by walking up from CWD), named entry points from its \fB[aliases]\fR
@@ -382,8 +404,9 @@ command line. Alias execs are logged as "alias NAME \(-> resolved argv"
 trusted \fB.byn\fR runs exec by its own \fB[exec] actions\fR + per\-action auth:
 a \fIpinned\fR command runs autonomously (no unlock, no password \(em even while
 the vault is locked) via its sealed capability; an \fIunpinned\fR one prompts for
-the master password. Only \fBad\-hoc exec\fR (no \fB.byn\fR) requires the vault
-unlocked.
+the master password. Only a whole\-scope \fBad\-hoc exec\fR (no \fB.byn\fR,
+no \fB\-\-var\fR) requires the vault unlocked; an ad hoc \fB\-\-var\fR run
+goes by its owner\-approved grant, locked or not.
 .IP
 Only exec verifies the \fB.byn\fR is trusted (machine + vault\-key MAC)
 before injecting; an untrusted, changed, or tampered \fB.byn\fR aborts
@@ -392,7 +415,8 @@ A discovered \fB.byn\fR controls two separate allowlists:
 .IP
 \fB[exec] env\fR (env\-vars): a name list injects only those, \fB"*"\fR
 injects all (with a warning), and an empty or absent list injects
-nothing; with no \fB.byn\fR (ad\-hoc) the whole scope is injected.
+nothing; with no \fB.byn\fR (ad\-hoc) the whole scope is injected,
+unless \fB\-\-var\fR names exactly what to ask for.
 \fB[exec] env\fR is ENV\-VARS ONLY \(em it does not restrict which
 command runs.
 .IP
@@ -424,18 +448,23 @@ for ad\-hoc exec.
 The \fB.byn\fR is strict TOML: any key outside \fB[scope]\fR / \fB[exec]\fR
 / \fB[auth]\fR / \fB[aliases]\fR is a hard parse error.
 .IP
-Ad\-hoc exec (no \fB.byn\fR) is always gated by the NU\-3 session gate:
-the CLI prompts once for the master password and retries when no session
-is present. Trusted\-\fB.byn\fR exec with an unmatched command is also
-gated (same retry flow). Trusted\-\fB.byn\fR exec with a pinned command
-runs free \(em the session gate and the actions list are independent.
+A whole\-scope ad\-hoc exec (no \fB.byn\fR, no \fB\-\-var\fR) is always
+gated by the NU\-3 session gate: the CLI prompts once for the master
+password and retries when no session is present. An ad hoc \fB\-\-var\fR
+run and a trusted\-\fB.byn\fR exec with an unmatched command both raise an
+approval (exit 75) that a person answers with the master password of the
+vault the request was raised in \(em no other vault's password counts.
+Trusted\-\fB.byn\fR exec with a pinned command runs free \(em the session
+gate and the actions list are independent.
 .IP
 \fBPrivilege separation:\fR with \fB[security] privsep\fR enabled in
 \fI~/.byn/config\fR, a trusted\-\fB.byn\fR pinned exec runs its child as
 the \fB_byn\-exec\fR service user (set up via \fBbyn setup\fR), so other
 same\-UID processes cannot read the injected secrets from the child's
-environment. \fB\-\-no\-privsep\fR forces the in\-process path. Ad\-hoc
-exec (no \fB.byn\fR) always runs in\-process. Privsep is opt\-in and off
+environment. \fB\-\-no\-privsep\fR forces the in\-process path. A
+whole\-scope ad\-hoc exec (no \fB.byn\fR, no \fB\-\-var\fR) always runs
+in\-process; an ad hoc \fB\-\-var\fR run is privilege\-separated like a
+pinned one. Privsep is opt\-in and off
 by default; if it is enabled but \fBbyn setup\fR has not provisioned the
 service users, exec fails with an actionable error rather than silently
 running in\-process.
@@ -712,18 +741,31 @@ which bounds what it can fix \(em changing a file's ACL requires being its owner
 Defaults to the current directory; silent when there is nothing to do.
 .SS Approvals (decisions a \fB.byn\fR is waiting on)
 .TP
-.B approve \fR[\fB\-\-json\fR] \fR[\fB\-\-history\fR]
-List what is waiting for a decision. Each card says what would be
-granted, who asked, why they say they need it, and whether the asker
-asked for a single use. \fB\-\-history\fR shows decided and expired
-requests as a table \(em what an agent asked for, and what you said.
+.B approve \fR[\fB\-\-vault\fR \fINAME\fR] \fR[\fB\-\-json\fR] \fR[\fB\-\-history\fR]
+List what is waiting for a decision. Each card is the whole question:
+what would run; the \fBscope\fR (vault, project, env) a yes reaches
+into; what the command \fBgets\fR (the exact variables, every variable
+in the scope for a \fB*\fR file, or nothing); for an ad hoc request
+where it is \fBfrom\fR (its directory and, flagged, any \fB.byn\fR it
+steps around); how long a plain yes \fBlasts\fR (6h for a command the
+\fB.byn\fR does not pin, 1h for an ad hoc request, one run when the
+asker asked for a single use, or standing trust until the file changes
+again); who asked; and why they say they need it. Without
+\fB\-\-vault\fR a project's \fB.byn\fR picks the vault; outside any
+project every vault's requests are listed. \fB\-\-history\fR shows
+decided and expired requests as a table \(em what an agent asked for,
+and what you said.
 Listing needs no credentials: a request describes what is being asked
 for and never carries a secret.
 .TP
-.B approve \fR[\fB\-\-password\-stdin\fR] \fIID\fR...
+.B approve \fR[\fB\-\-vault\fR \fINAME\fR] \fR[\fB\-\-password\-stdin\fR] \fIID\fR...
 Grant it. Approving hands out authority, so it asks for the master
-password exactly as \fBtrust\fR does. Nothing runs now: whoever asked
-has to attempt the command again.
+password of the vault the request was raised in, exactly as \fBtrust\fR
+does \(em no other vault's password answers it, and with requests
+waiting in several vaults each group asks for its own
+(\fB\-\-password\-stdin\fR answers one vault at a time). \fB\-\-vault\fR
+names the vault from any directory and refuses an id waiting elsewhere.
+Nothing runs now: whoever asked has to attempt the command again.
 .TP
 .B approve \fB\-\-deny\fR \fR[\fB\-\-reason\fR \fIR\fR] \fIID\fR...
 Refuse it. No password, because refusing grants nothing \(em and
@@ -1214,7 +1256,9 @@ duplicates are a hard error.
 .B \-\-vault \fINAME\fR
 Target vault. Env\-var fallback:
 .BR BYN_VAULT .
-Defaults to \fIdefault\fR.
+Defaults to \fIdefault\fR. For \fBapprove\fR, the vault whose requests
+to list and answer. Beside a \fB.byn\fR trusted for another vault,
+\fBexec\fR sets the file aside (see \fBexec\fR).
 .TP
 .B \-\-project \fINAME\fR
 Target project. Env\-var fallback:
@@ -1340,8 +1384,15 @@ was about one asker, and the grant is the size of the question.
 .TP
 .B \-\-for \fIDURATION\fR
 Used by \fBapprove\fR. How long an approved command runs free: default
-6h, at most 24h. A command wanted once for the next ten minutes and one
+6h (1h for an ad hoc request), at most 24h. A command wanted once for the next ten minutes and one
 wanted all afternoon are different grants.
+.TP
+.B \-\-var \fINAME\fR
+Used by \fBexec\fR, repeatable. Ask ad hoc for exactly the named
+variables (no wildcard), from any directory, with or without a
+\fB.byn\fR; see the ad hoc form under \fBexec\fR. An unknown \fBexec\fR
+flag before \fB\-\-\fR is an error rather than being passed to the
+child.
 .TP
 .B \-\-why \fITEXT\fR
 Used by \fBexec\fR; a spelling of \fB\-\-reason\fR. \fBBYN_WHY\fR in
