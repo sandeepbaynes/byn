@@ -12,6 +12,37 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.9.1
+
+**Headline:** a fix for upgrading to privilege separation. `byn setup` moved
+`~/.byn` into the system data dir without stopping a byn daemon still running
+from it, and that daemon could take a vault with it when it exited.
+
+### What's fixed
+
+- **`byn setup` and `byn migrate` stop the per-user daemon first.** Before
+  copying `~/.byn`, byn removes the per-user auto-start service (the LaunchAgent
+  or systemd user unit `byn daemon install` writes), stops the daemon running
+  from `~/.byn` and waits for it to close its vaults. If it will not stop,
+  nothing is copied or deleted. Before this, a vault the old daemon held that
+  was not in the copy existed only in that process, and was lost when it
+  exited.
+- **A web portal that fails to start says so.** The old daemon also kept the
+  portal port, so the new daemon's portal never started and the error went
+  nowhere. `byn web` then opened a page served by the old daemon, listing
+  vaults `byn vault ls` did not know, which would not log in or delete.
+  `byn status` now shows `portal: NOT RUNNING` with the reason, and `byn web`
+  refuses to open the page.
+
+### Upgrade notes
+
+- **If you already ran `byn setup` with a byn daemon running**, run
+  `byn status`. If it shows `portal: NOT RUNNING`, find what holds the port
+  with `lsof -nP -iTCP:2967 -sTCP:LISTEN`. A byn process there that serves a
+  vault `byn vault ls` does not list holds the only copy of that vault: do not
+  stop it until you have recovered what you need from it. Otherwise stop it,
+  then run `byn restart`.
+
 ## v0.9.0
 
 **Headline:** a security fix. From v0.5.0 to v0.8.0 the daemon accepted **any

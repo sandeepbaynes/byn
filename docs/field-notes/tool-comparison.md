@@ -1,6 +1,6 @@
 # byn vs the other tools, honestly
 
-*Field note · coverage: v0.9.0 · updated with each release*
+*Field note · coverage: v0.9.1 · updated with each release*
 
 A strengths-**and**-weaknesses comparison of the tools developers
 actually use to handle secrets — including byn's own weaknesses, listed
@@ -255,8 +255,9 @@ aws-vault STS today; byn's planned broker) wherever you can get them.
 ---
 
 *Tool capabilities are re-verified when this page is re-stamped at each
-byn release. For v0.9.0 nothing here was re-verified against vendors: that
-release fixes byn's own approval queue and changes no comparison claim. For
+byn release. For v0.9.1 and v0.9.0 nothing here was re-verified against
+vendors: those releases fix byn's own setup and approval queue and change no
+comparison claim. For
 v0.8.0 the Bitwarden Secrets Manager section and the
 Doppler and Infisical offline behaviour were checked against the vendors'
 own documentation (September 2026): Bitwarden's

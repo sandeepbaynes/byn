@@ -1,6 +1,6 @@
 # byn
 
-**v0.9.0** · by Sandeep Baynes · [github.com/sandeepbaynes/byn](https://github.com/sandeepbaynes/byn) ·
+**v0.9.1** · by Sandeep Baynes · [github.com/sandeepbaynes/byn](https://github.com/sandeepbaynes/byn) ·
 Source-available (BUSL-1.1)
 
 Secure secrets vault and credential management with a local daemon and a

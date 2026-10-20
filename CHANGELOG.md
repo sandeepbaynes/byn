@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## Unreleased
+## v0.9.1 — 2026-10-20
 
 ### Fix: `byn setup` left the per-user daemon running, and could lose a vault
 
