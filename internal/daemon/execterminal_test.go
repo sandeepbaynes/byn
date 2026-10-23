@@ -70,10 +70,9 @@ func TestExecAuthorize_TrustedPinned_MintsRedeemableToken(t *testing.T) {
 	grantBynFile(t, c, byn, pw)
 
 	req := ipc.ExecAuthorizeReq{
-		ExecFetchReq: ipc.ExecFetchReq{Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"}},
+		ExecFetchReq: ipc.ExecFetchReq{Path: byn, Command: "mytool run", Argv: []string{"mytool", "run"}, Cwd: "/proj"},
 		BaseEnv:      []string{"PATH=/usr/bin", "LD_PRELOAD=/evil.so", "TMPDIR=/var/folders/owner-private/T"},
 		AbsTarget:    target,
-		Cwd:          "/proj",
 	}
 	resp := d.handleExecAuthorize(context.Background(), authorizeEnvelope(t, req))
 	if resp.Err != nil {
@@ -266,5 +265,46 @@ func TestIsExecHelperUID(t *testing.T) {
 	}
 	if d.isExecHelperUID(execUIDForTest(d) + 1) {
 		t.Error("an unrelated uid must never qualify")
+	}
+}
+
+// TestExecAuthorize_AdhocAnchorsToTheClaimedDirectory: an ad hoc request on the
+// privsep path reaches the daemon as JSON, and the directory it claims must
+// arrive on the request the authorization gate reads. The caller here has no
+// kernel-readable PID (as on macOS, where there is no lookup at all), so the
+// claim is the only anchor: lose it and every ad hoc run under privsep is
+// refused with "cannot tell which directory this would run in" before a card
+// is ever raised.
+func TestExecAuthorize_AdhocAnchorsToTheClaimedDirectory(t *testing.T) {
+	_ = stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "API_KEY", []byte("secret-api"))
+	provisionExecForTest(d)
+	target := regularFileTarget(t, "mytool")
+
+	req := ipc.ExecAuthorizeReq{
+		ExecFetchReq: ipc.ExecFetchReq{
+			Command: "mytool run", Argv: []string{"mytool", "run"},
+			Vars: []string{"API_KEY"}, Cwd: testCwd(),
+		},
+		AbsTarget: target,
+	}
+	resp := d.handleExecAuthorize(context.Background(), authorizeEnvelope(t, req))
+	if resp.Err == nil {
+		t.Fatal("an ad hoc request with no standing grant must queue an approval, not run")
+	}
+	if resp.Err.Code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %s (%s), want approval_pending — the claimed directory did not reach the gate",
+			resp.Err.Code, resp.Err.Message)
+	}
+	// The card is anchored to the claimed directory (the subject travels under
+	// "byn", the key a .byn-anchored card uses for its file).
+	if got := resp.Err.Details["byn"]; got != testCwd() {
+		t.Errorf("card subject = %q, want %q", got, testCwd())
+	}
+	if resp.Err.Details["kind"] != "adhoc" || resp.Err.Details["gets"] != "API_KEY" {
+		t.Errorf("details = %v, want an ad hoc card that gets API_KEY", resp.Err.Details)
 	}
 }

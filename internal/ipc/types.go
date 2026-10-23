@@ -1386,11 +1386,17 @@ type ExecSpawnResp struct {
 // ExecFetchReq), PLUS the caller's base environment, the CLI-resolved absolute
 // target, and the working directory. Secrets are NEVER returned to the
 // owner-UID CLI — only the token is; the root helper redeems the env directly.
+//
+// The working directory travels on the embedded ExecFetchReq.Cwd, and nowhere
+// else. This type once declared its own Cwd under the same "cwd" key; the
+// decoder filled that one and left the embedded field empty, so the gate that
+// anchors an ad hoc request to its directory never saw it. Linux hid that by
+// reading the caller's directory from the kernel; macOS, which cannot, refused
+// every ad hoc run under privsep.
 type ExecAuthorizeReq struct {
-	ExecFetchReq          // embed: Path, Scope, Command, Argv, Alias, Password, PresenceToken
+	ExecFetchReq          // embed: Path, Scope, Command, Argv, Alias, Vars, Cwd, Password, PresenceToken
 	BaseEnv      []string `json:"base_env,omitempty"`   // the CLI's environment (owner terminal env, minus sensitive), KEY=VALUE
 	AbsTarget    string   `json:"abs_target,omitempty"` // CLI-resolved ABSOLUTE path of the command (argv[0])
-	Cwd          string   `json:"cwd,omitempty"`        // the CLI's working directory (for audit/binding)
 }
 
 // ExecAuthorizeResp returns the one-time redemption Token plus the allowlist

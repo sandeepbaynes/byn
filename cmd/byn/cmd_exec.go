@@ -757,12 +757,11 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 		childArgv[0] = absTarget
 	}
 
-	cwd, _ := os.Getwd()
+	// req.Cwd already carries the working directory; the gate reads it there.
 	authReq := ipc.ExecAuthorizeReq{
 		ExecFetchReq: req,
 		BaseEnv:      os.Environ(),
 		AbsTarget:    absTarget,
-		Cwd:          cwd,
 	}
 	var authResp ipc.ExecAuthorizeResp
 	callErr := client.Call(ipc.OpExecAuthorize, authReq, &authResp)

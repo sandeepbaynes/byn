@@ -3,6 +3,30 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## Unreleased
+
+### Fix: ad hoc `byn exec --var` was refused on macOS
+
+**Affects macOS with privilege separation on (every `byn setup` install).**
+
+**Symptom:** `byn exec --var NAME -- COMMAND` fails before any approval is
+raised with `cannot tell which directory this would run in`, from any
+directory, with or without a `.byn` present. `--dry-run` is unaffected, which
+makes it look like the real run should work. The usual reason to reach for
+`--var` — a `.byn` in the directory pins one project and the command needs a
+value from another — therefore had no working path on macOS.
+
+**Cause:** the request the CLI sends on the privilege-separated path carried
+the working directory under one JSON key in two places. The daemon read the
+one the authorization gate does not look at. Linux never noticed because it
+reads the caller's directory from the kernel; macOS has no such read and
+anchors an ad hoc request to what the CLI says.
+
+**What changed:** the working directory travels in one field, the one the
+gate reads. An ad hoc request on macOS now raises its approval card like one
+on Linux. No wire-format change: the key is the same, so a new daemon accepts
+requests from an older CLI and the reverse.
+
 ## v0.9.1 — 2026-10-20
 
 ### Fix: `byn setup` left the per-user daemon running, and could lose a vault
