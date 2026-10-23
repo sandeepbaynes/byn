@@ -27,6 +27,28 @@ gate reads. An ad hoc request on macOS now raises its approval card like one
 on Linux. No wire-format change: the key is the same, so a new daemon accepts
 requests from an older CLI and the reverse.
 
+### Fix: an approved `byn exec` could never reach the process waiting for it
+
+**Affects any `byn exec --wait-approval` run whose shell is killed while it
+waits, which is what an agent harness does when a tool call times out or is
+moved to the background.**
+
+**Symptom:** the card is approved, but the waiting `byn exec` never starts.
+Instead it raises a fresh card for the same command every two seconds (the
+audit log shows `approval.raise` followed by `exec … denied`, repeating), and
+the new card shows `pid N` with no agent behind it. The grant on the first
+card sits unused.
+
+**Cause:** a grant is for whoever asked, and byn identified "whoever" by the
+agent process found above the caller at raise time. When the shell between
+byn and that agent is killed, the waiting byn is reparented to init and can
+no longer prove that identity, although it is the very process that asked.
+
+**What changed:** the card also records the asking process itself, pinned
+across pid reuse by its start time, and that process may always use its own
+grant. Other processes are judged as before. If you hit this, revoke the
+unused grant (`byn approve --revoke <id>`) and deny the repeat card.
+
 ## v0.9.1 — 2026-10-20
 
 ### Fix: `byn setup` left the per-user daemon running, and could lose a vault

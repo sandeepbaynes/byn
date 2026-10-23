@@ -3,6 +3,8 @@
 package daemon
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -178,7 +180,7 @@ func onlyPending(t *testing.T, c *ipc.Client) ipc.ApprovalEntry {
 // binding is the default and widening is deliberate.
 func TestGrant_BoundToWhoeverAsked(t *testing.T) {
 	origin := stubOrigin(t, true)
-	_, c := startTestDaemon(t)
+	d, c := startTestDaemon(t)
 	pw := []byte(authzPW)
 	initUnlocked(t, c, pw)
 
@@ -206,10 +208,21 @@ func TestGrant_BoundToWhoeverAsked(t *testing.T) {
 	}
 
 	// Somebody else in the same project, running the same command, is not
-	// covered by it — that is the whole point of binding.
-	origin(false) // a different caller from here on
-	if code := errCode(t, run()); code != ipc.CodeApprovalPending {
-		t.Fatalf("another caller inherited a grant answered for someone else: code = %v", code)
+	// covered by it — that is the whole point of binding. Somebody else is a
+	// different process without the asker's ancestry: the process that asked
+	// keeps its grant whatever happens to its parents, so a stranger has to
+	// be another pid, not this one with its ancestry stubbed away.
+	origin(false)
+	stranger := withCaller(context.Background(), socketCaller(d.ownerUID, os.Getppid(), nil))
+	env, err := ipc.NewRequest("fetch-stranger", ipc.OpExecFetch, ipc.ExecFetchReq{
+		Path: byn, Command: "make dev", Argv: []string{"make", "dev"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleExecFetch(stranger, env)
+	if resp.Err == nil || resp.Err.Code != ipc.CodeApprovalPending {
+		t.Fatalf("another caller inherited a grant answered for someone else: %+v", resp.Err)
 	}
 }
 

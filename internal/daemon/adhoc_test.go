@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"os"
 	"slices"
@@ -355,3 +356,93 @@ func TestExec_BynTrustedForAnotherVaultIsRefusedUnlessAskedAdhoc(t *testing.T) {
 }
 
 func mustErr(_ ipc.ExecFetchResp, err error) error { return err }
+
+// The process that raised a card is "whoever asked" before anyone else is.
+//
+// A CLI waiting on its approval is the same process that asked, yet its
+// ancestry can change while it waits: an agent harness that times out or
+// backgrounds the tool call kills the shell between byn and the agent, and
+// byn is reparented to init. The grant was bound to the agent identity
+// recorded at raise time, which that process can no longer prove — so it
+// re-raised a fresh card with no identity at all, every two seconds, and
+// the approval it had just been given was never used.
+func TestAdhoc_TheAskingProcessKeepsItsGrantWhenItsAncestryIsGone(t *testing.T) {
+	setShares := stubOrigin(t, true)
+	_, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "DB_URL", []byte("postgres://x"))
+
+	req := adhocReq("DB_URL")
+	if _, err := execFetch(t, c, req); errCode(t, err) != ipc.CodeApprovalPending {
+		t.Fatal("wanted a queued request")
+	}
+	pending := onlyPending(t, c)
+	if pending.Requestor.AgentPID == 0 {
+		t.Fatal("test premise: the card must record an agent identity to be bound to")
+	}
+	var resp ipc.ApprovalDecideResp
+	if err := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw,
+	}, &resp); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	// The shell between byn and the agent is gone; the ancestry walk from
+	// this process no longer reaches the recorded agent.
+	setShares(false)
+
+	got, err := execFetch(t, c, req)
+	if err != nil {
+		t.Fatalf("the process that raised the card could not use its own grant: %v", err)
+	}
+	if m := valueMap(got.Values); m["DB_URL"] != "postgres://x" {
+		t.Errorf("values = %v, want DB_URL", m)
+	}
+	var list ipc.ApprovalListResp
+	if err := c.Call(ipc.OpApprovalList, ipc.ApprovalListReq{}, &list); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, e := range list.Entries {
+		if e.Status == "pending" {
+			t.Errorf("a second card %s was raised for a question already answered", e.ID)
+		}
+	}
+}
+
+// The same-process rule reaches exactly one process. Another process that
+// cannot prove the agent's ancestry either is a stranger, and gets a card of
+// its own rather than the grant.
+func TestAdhoc_AnotherProcessWithoutTheAncestryGetsNoGrant(t *testing.T) {
+	setShares := stubOrigin(t, true)
+	d, c := startTestDaemon(t)
+	pw := []byte(authzPW)
+	initUnlocked(t, c, pw)
+	putVar(t, c, ipc.Scope{}, "DB_URL", []byte("postgres://x"))
+
+	req := adhocReq("DB_URL")
+	if _, err := execFetch(t, c, req); errCode(t, err) != ipc.CodeApprovalPending {
+		t.Fatal("wanted a queued request")
+	}
+	pending := onlyPending(t, c)
+	if err := c.Call(ipc.OpApprovalDecide, ipc.ApprovalDecideReq{
+		ID: pending.ID, Approve: true, Password: pw,
+	}, new(ipc.ApprovalDecideResp)); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	setShares(false)
+
+	// A live process that is not the one that asked: the test runner's parent.
+	stranger := withCaller(context.Background(), socketCaller(d.ownerUID, os.Getppid(), nil))
+	env, err := ipc.NewRequest("fetch-1", ipc.OpExecFetch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleExecFetch(stranger, env)
+	if resp.Err == nil {
+		t.Fatal("a process with neither the ancestry nor the asker's identity used the grant")
+	}
+	if resp.Err.Code != ipc.CodeApprovalPending {
+		t.Fatalf("code = %s (%s), want approval_pending", resp.Err.Code, resp.Err.Message)
+	}
+}

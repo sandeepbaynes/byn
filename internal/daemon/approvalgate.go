@@ -137,6 +137,12 @@ func (d *Daemon) requestorOf(ctx context.Context, vaultName string, req ipc.Exec
 			r.Agent = comm
 		}
 	}
+	// The process that asked, pinned across pid reuse. A CLI that waits on
+	// this card and retries is this process, whatever happens to its parents
+	// in the meantime.
+	if self := procSelfRef(ci.PID); self.ok() {
+		r.ProcKey = agentKey(self)
+	}
 	if r.Cwd == "" && req.Path != "" {
 		// Falling back to the .byn's directory is not the same fact, but it is
 		// the same neighbourhood, and it is the one place byn knows the request
@@ -470,10 +476,21 @@ func parseAgentKey(k string) (procRef, bool) {
 // the version-skew case, and refusing those would re-ask for every grant that
 // existed before an upgrade — the surest way to teach people to approve without
 // reading.
+//
+// The process that raised the request may always use its grant. It is the
+// most exact reading of "whoever asked" there is, and it is the one caller the
+// ancestry check can wrongly refuse: a CLI that waits on its card can lose
+// the shell between itself and the agent while it waits (a harness timeout or
+// a backgrounded tool call), be reparented to init, and then be unable to
+// prove the agent identity recorded seconds earlier. It re-raised a fresh card
+// with no identity at all, every retry, and the grant it had was never used.
 func (d *Daemon) grantUsableBy(ctx context.Context) func(approval.Request) bool {
 	pid := callerFrom(ctx).PID
 	return func(r approval.Request) bool {
 		if r.Anyone || r.Requestor.AgentKey == "" {
+			return true
+		}
+		if self, ok := parseAgentKey(r.Requestor.ProcKey); ok && procSelfRef(pid) == self {
 			return true
 		}
 		want, ok := parseAgentKey(r.Requestor.AgentKey)
@@ -482,6 +499,19 @@ func (d *Daemon) grantUsableBy(ctx context.Context) func(approval.Request) bool 
 		}
 		return sharesAncestryFn(pid, []procRef{want})
 	}
+}
+
+// procSelfRef pins a live process as (pid, start time), or returns a reference
+// that matches nothing when the platform cannot supply a start time.
+func procSelfRef(pid int) procRef {
+	if pid <= 0 {
+		return procRef{}
+	}
+	start, ok := procStartTime(pid)
+	if !ok {
+		return procRef{}
+	}
+	return procRef{PID: pid, Start: start}
 }
 
 // consumeOnceGrant spends a single-use grant for this command, if that is what

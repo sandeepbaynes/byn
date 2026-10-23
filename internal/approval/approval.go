@@ -150,6 +150,14 @@ type Requestor struct {
 	// purpose — the queue stores it and hands it back, and only the daemon
 	// knows how to decide whether a caller matches it.
 	AgentKey string `json:"agent_key,omitempty"`
+	// ProcKey is the asking process itself, in the same pid-plus-start-time
+	// form. The agent identity above is derived from the process's ancestry,
+	// and ancestry is not stable for the lifetime of a request: a harness that
+	// times out or backgrounds a tool call kills the shell between byn and the
+	// agent, and the byn that is still waiting on this very card is reparented
+	// to init. It is the same process that asked, and "whoever asked" has to
+	// include it, or an approval can never reach the process it was for.
+	ProcKey string `json:"proc_key,omitempty"`
 	// Attended records whether a person was at a terminal for this request.
 	// An unattended request is the normal case for an agent, and saying so
 	// stops the absence of a TTY from looking like something being hidden.
