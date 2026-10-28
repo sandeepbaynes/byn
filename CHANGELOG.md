@@ -49,6 +49,36 @@ across pid reuse by its start time, and that process may always use its own
 grant. Other processes are judged as before. If you hit this, revoke the
 unused grant (`byn approve --revoke <id>`) and deny the repeat card.
 
+### Security: binaries are built with Go 1.27.3 (eMudhra CA key compromise, and nine other standard-library fixes)
+
+**Affects every byn binary built from the previous toolchain line.**
+
+**What happened upstream:** on 17 October 2026 eight eMudhra intermediate
+CA certificates were found to have trivially recoverable private keys and
+were revoked; browsers and OS root stores blocked them within days. Go
+1.27.3 and 1.26.10 (19 October) add those eight public keys to a distrust
+list inside `crypto/x509`, so any chain containing one fails verification
+regardless of the system root store (CVE-2026-111943, GO-2026-6809).
+
+**What it means for byn:** byn's own code opens no TLS connections and
+bundles no certificates, so the compromised keys could not have been used
+against byn as shipped. But `crypto/x509` is linked into `byn` and
+`byn-tui` through the portal's HTTP server, byn's `go.mod` pinned Go 1.25,
+which left support in August, and a vulnerability scan of the previous
+toolchain reported ten reachable standard-library advisories: the eMudhra
+distrust, seven in `net/http` and its HTTP/2 code (the portal's server), two
+in `html/template` (the docs generator), and one in `os`.
+
+**What changed:**
+
+- **`go.mod` now requires Go 1.27.3.** Release binaries, CI, and `make
+  install` build with it; the `go` command downloads it automatically if
+  your installed Go is older. `govulncheck ./...` under this toolchain
+  reports no reachable vulnerabilities.
+- Nothing in byn's behaviour changes. Four advisories remain in a
+  dependency byn requires but does not call into (`golang.org/x/crypto`);
+  they are tracked for the next dependency refresh.
+
 ## v0.9.1 — 2026-10-20
 
 ### Fix: `byn setup` left the per-user daemon running, and could lose a vault

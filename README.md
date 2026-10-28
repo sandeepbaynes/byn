@@ -101,7 +101,7 @@ byn ls             # names are always listable; values stay encrypted
 
 ## Platform support
 
-byn targets **macOS and Linux** today (Go 1.25+, pure-Go binary). **Windows is
+byn targets **macOS and Linux** today (Go 1.27.3+, pure-Go binary). **Windows is
 not yet supported** — the daemon's Unix-socket IPC + peer-UID enforcement, the
 `syscall.Exec` injection path, the machine fingerprint, and `mlock` / file-mode
 hardening all assume a Unix host. A Windows port (named-pipe IPC, token/SID
@@ -243,7 +243,7 @@ byn/
 
 ## Build, test, lint
 
-Requires Go 1.25+ (dependency floor). (Developed against 1.26.)
+Requires Go 1.27.3+ (the `go` command downloads it if yours is older). The floor tracks the supported Go line so release binaries carry current standard-library security fixes.
 
 ```sh
 make build              # → bin/byn
