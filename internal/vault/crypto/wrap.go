@@ -125,7 +125,7 @@ func Wrap(password []byte, vaultKey []byte, params Argon2Params) ([]byte, error)
 	// (e.g. raising Memory after the fact) fails the MAC.
 	out := make([]byte, len(header), len(header)+len(vaultKey)+aead.Overhead())
 	copy(out, header)
-	out = aead.Seal(out, nonce, vaultKey, header)
+	out = aead.Seal(out, nonce, vaultKey, header) // #nosec G407 -- nonce is filled from crypto/rand above, not hardcoded
 	return out, nil
 }
 

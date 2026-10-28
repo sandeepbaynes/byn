@@ -75,7 +75,7 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.12.2
+          version: v2.15.0
 
   # Root-gated privilege-separation integration tests. Two proofs run here as
   # root (they t.Skip cleanly on the non-root `test` jobs above):

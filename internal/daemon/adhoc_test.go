@@ -30,11 +30,6 @@ func adhocReq(vars ...string) ipc.ExecFetchReq {
 	}
 }
 
-func testCwd() string {
-	cwd, _ := os.Getwd()
-	return cwd
-}
-
 func errDetails(t *testing.T, err error) map[string]string {
 	t.Helper()
 	var er *ipc.ErrResponse

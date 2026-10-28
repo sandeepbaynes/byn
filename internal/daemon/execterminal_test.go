@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -41,6 +42,15 @@ func redeemEnvelope(t *testing.T, req ipc.ExecRedeemReq) *ipc.Envelope {
 // a valid redeemer.
 func helperRedeemCtx(d *Daemon) context.Context {
 	return withCaller(context.Background(), socketCaller(execUIDForTest(d), 1234, nil))
+}
+
+// testCwd is the directory an ad hoc request claims, the way the CLI sends
+// it. It lives in this untagged file because both the tagged ad hoc tests and
+// the privsep authorize tests use it, and a helper defined only under the
+// byntest tag leaves the untagged test build (what lint type-checks) broken.
+func testCwd() string {
+	cwd, _ := os.Getwd()
+	return cwd
 }
 
 func envToMap(env []string) map[string]string {

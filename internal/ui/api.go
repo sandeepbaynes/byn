@@ -671,7 +671,7 @@ func (s *Server) handleFSReadFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "path required")
 		return
 	}
-	info, err := os.Stat(path) // #nosec G304 -- user-named; portal runs as the user
+	info, err := os.Stat(path) // #nosec G304 G703 -- user-named by design (import picker); sameOrigin + owner token gate the route
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -680,7 +680,7 @@ func (s *Server) handleFSReadFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "path is a directory")
 		return
 	}
-	f, err := os.Open(path) // #nosec G304 -- user-named; portal runs as the user
+	f, err := os.Open(path) // #nosec G304 G703 -- user-named by design (import picker); sameOrigin + owner token gate the route
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
