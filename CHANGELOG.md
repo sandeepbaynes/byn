@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## Unreleased
+## v0.9.2 — 2026-10-28
 
 ### Fix: ad hoc `byn exec --var` was refused on macOS
 

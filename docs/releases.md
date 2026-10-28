@@ -12,6 +12,51 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.9.2
+
+**Headline:** two fixes for `byn exec --var`, the ad hoc request that asks for
+named variables from another project, and a toolchain update that carries
+the Go fix for the eMudhra CA key compromise.
+
+### What's fixed
+
+- **Ad hoc `byn exec --var` works on macOS with privilege separation.** It
+  failed from any directory with `cannot tell which directory this would run
+  in` before an approval was raised. The request carried the working
+  directory under one JSON key declared in two places, and the daemon read
+  the one the authorization gate does not look at. Linux never noticed
+  because it reads the caller's directory from the kernel.
+- **An approved `byn exec --wait-approval` reaches the process waiting for
+  it.** A grant is for whoever asked, identified by the agent process found
+  above the caller at raise time. If the shell between byn and that agent was
+  killed while byn waited, as an agent harness does on a tool-call timeout,
+  byn could no longer prove that identity and raised a fresh card every two
+  seconds instead of running on the grant it had. The card now also records
+  the asking process itself, and that process may always use its own grant.
+
+### Security
+
+- **Binaries are built with Go 1.27.3.** On 17 October 2026 eight eMudhra
+  intermediate CA certificates were revoked for compromised private keys. Go
+  1.27.3 distrusts those keys inside certificate verification regardless of
+  the system root store (CVE-2026-111943). byn opens no TLS connections and
+  bundles no certificates, so the keys were never usable against it, but the
+  previous toolchain also carried nine other standard-library advisories that
+  do reach code byn runs: seven in the portal's HTTP server, two in the docs
+  generator, one in `os`. A vulnerability scan under Go 1.27.3 reports no
+  reachable issues.
+
+### Upgrade notes
+
+- **Building from source now requires Go 1.27.3.** The `go` command downloads
+  it automatically when the installed Go is older; nothing else changes.
+- **If a `byn exec --wait-approval` run ever looped on an approval you had
+  already given**, the queue holds an unused grant and a repeat card that
+  shows `pid N` with no agent behind it. Do not approve the repeat card: a
+  card with no identity, once approved, is usable by anyone in that
+  directory. Let it expire, and `byn approve --revoke <id>` the unused grant
+  if it has not lapsed.
+
 ## v0.9.1
 
 **Headline:** a fix for upgrading to privilege separation. `byn setup` moved
