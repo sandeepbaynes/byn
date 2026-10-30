@@ -18,7 +18,12 @@ shape the roadmap).
 
 See also: [the author's own incident](aws-credential-file-takeover.md),
 and the vector-by-vector analysis in
-[How agents leak secrets](how-agents-leak-secrets.md).
+[How agents leak secrets](how-agents-leak-secrets.md). Single-incident
+deep dives for 2026 — the [trojaned Claude Code
+extension](claude-code-extension-2-1-313.md), [October's npm
+harvesters](npm-october-2026-harvesters.md), [PHP2Shell and the Composer
+plugin](php-2026-php2shell-composer.md), and [Oracle
+Health](oracle-health-one-credential.md) — follow the same verdict rules.
 
 ---
 

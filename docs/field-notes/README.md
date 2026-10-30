@@ -31,6 +31,30 @@ were verified against.
   — design rationale: a container's boundary points the wrong way for
   this threat; sandbox the agent, not the secret.
 
+### 2026 incident notes
+
+Single-incident write-ups, newest first. Each uses the same verdict
+rules as the pages above, and each says where byn would not have helped.
+
+- **[The trojaned Claude Code extension, and what an editor extension can reach](claude-code-extension-2-1-313.md)**
+  — on 29 October 2026 a tampered VS Code extension, served from Open
+  VSX and Cursor, planted an SSH backdoor and told its operator which
+  credential variables were on the machine. Why that list is empty
+  under byn, what an attacker's shell can and cannot get at afterwards,
+  and the parts byn does not cover: `~/.ssh` and the backdoor itself.
+- **[October's npm credential stealers, and what they would have found under byn](npm-october-2026-harvesters.md)**
+  — SubQuery, Tensorlake and the testmetest worm in one month, the one
+  trap byn users must know about (never pin `npm install` with secrets
+  in scope), and why the Node.js Brotli bug is a production problem byn
+  cannot claim.
+- **[PHP in 2026: PHP2Shell, a Composer plugin that stole keys, and a token in the CI log](php-2026-php2shell-composer.md)**
+  — byn is no help against the server-side PHP bug, a real help against
+  the Composer plugin that ran on developer machines, and no help for
+  the CI log leak. The Composer `auth.json` caveat is spelled out.
+- **[Oracle Health: twenty million records behind one stolen credential](oracle-health-one-credential.md)**
+  — the largest 2026 example of the pattern byn targets, and a breach
+  byn would not have prevented. The note explains why it is here anyway.
+
 ---
 
 ## Ground rules for these pages
