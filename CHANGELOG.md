@@ -3,7 +3,7 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
-## Unreleased
+## v0.9.3 — 2026-11-16
 
 ### New: unsecure values — config that needs no password
 

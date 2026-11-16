@@ -12,6 +12,83 @@ This page is the curated changelog; the GitHub page is the artifacts.
 
 ---
 
+## v0.9.3
+
+**Headline:** *unsecure values* — configuration that is not a secret (a port,
+a region, a log level) can be read with no password and injected into a
+command without a trusted `.byn`, so an agent is not stopped by a question
+nobody needs to answer — and one `byn audit reseal` now covers a vault that
+was deleted and re-created.
+
+### What's new
+
+- **Unsecure values.** `byn put --unsecure NAME` stores a value unsealed.
+  `byn get` returns it with no session, password or unlocked vault, past any
+  `[auth]` policy; `byn exec` injects it without a trusted `.byn`.
+  `byn unsecure NAME|GLOB...` opens up values already stored and **always
+  asks for the master password** (a session is not enough, and `[auth]`
+  cannot relax it); `byn secure` seals them again on a session. Both act on
+  all names or none. `byn list --unsecure | --secure` filters; `--long` marks
+  each one; `--json` carries `"unsecure": true`.
+- **Nothing becomes unsecure by accident.** Secure is the default and is
+  never inherited: a `put` or `import` that does not say unsecure seals the
+  value, even over a name that was unsecure before, and tells you.
+- **An untrusted `.byn` no longer stops `byn exec`.** The command runs as you
+  with the unsecure values the file lists; the sealed ones are withheld and
+  named in a warning, with the `byn trust` line to fix it. An alias still
+  needs trust, since its expansion comes from the trust record. Under
+  privilege separation such a run never goes to the `_byn-exec` user: there
+  is no secret for that isolation to protect. `byn exec --unsecure` asks for
+  this outright, `--var` is granted at once when every name is unsecure, and
+  adding an unsecure name to a trusted `.byn` is not a widening.
+- **Tamper evidence.** Each unsecure row carries a MAC keyed from its scope,
+  so a value edited in the vault file is refused (`value_tampered`) wherever
+  byn holds that key: on an unlocked vault, and on a locked one for a scope
+  a trusted `.byn` governs. Set the value again to repair it. A locked read
+  of a scope no trusted `.byn` governs cannot be checked.
+- **Import and export.** A `# unsecure` line in the comment block above a
+  variable in a `.env` file marks that one variable; `--unsecure-names LIST`
+  does the same for YAML and JSON. Export writes the marker back;
+  `byn export --unsecure` writes only the unsecure values, no password.
+- **TUI and portal.** The TUI shows `◌ unsecure` where a sealed value shows
+  its mask, with `:unsecure`, `:secure` and `:w unsecure|secure`. The portal
+  tags the row, puts a lock button on it, offers an `unsecure` tick-box when
+  adding, and its import/export carry the marker. Editing an unsecure value
+  in either keeps it unsecure, since its state is on screen beside the edit.
+
+### What's fixed
+
+- **One `audit reseal` covers a vault that was deleted and re-created.**
+  byn keeps a deleted vault's audit directory (the record of the deletion is
+  the point), so a vault re-created under the same name appends to a log
+  whose earlier lines were signed with the old vault's seed. Every one of
+  them fails under the new seed, and `reseal` bridged one event per run —
+  fifty old events meant fifty reseals, and doctor's `broken at event #0 (of
+  0)` gave no hint why. A marker now records where the chain verifies again;
+  one reseal acknowledges the whole stretch, and `verify` and `doctor` say
+  how many events were signed off as unverifiable rather than counting them
+  as checked.
+
+### Upgrade notes
+
+- **Vault schema v10.** Unsecure values are a new row scheme. The upgrade
+  runs on first open and writes the usual `vault.db.v9.bak` snapshot first.
+  **An older byn will refuse a vault this version has opened** — upgrade
+  every machine that shares one, and remove stale copies of the binary
+  (`byn doctor` lists them).
+- **`byn exec` with an untrusted `.byn` now exits 0, not 3.** The command
+  runs, with a warning on stderr and no sealed values. A script or agent
+  harness that relied on the refusal should check for the warning, or pass
+  the command through `byn exec --unsecure` where that is what it wants.
+  The alias form, an unreadable `.byn`, and a `.byn` trusted for a different
+  vault are still refused.
+- **If `byn doctor` reports a broken audit chain for a vault you once
+  deleted and re-created**, run `byn --vault NAME audit reseal` once with a
+  reason; it now acknowledges the whole old stretch.
+- **Unsecure values are plaintext in `vault.db`**, readable by anything on
+  the machine that can run byn. Only mark values you would be content to
+  commit to the repo. See [Known weaknesses](security.md#known-weaknesses--how-to-protect-yourself).
+
 ## v0.9.2
 
 **Headline:** two fixes for `byn exec --var`, the ad hoc request that asks for

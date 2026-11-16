@@ -1,6 +1,6 @@
 # byn vs the other tools, honestly
 
-*Field note · coverage: v0.9.2 · updated with each release*
+*Field note · coverage: v0.9.3 · updated with each release*
 
 A strengths-**and**-weaknesses comparison of the tools developers
 actually use to handle secrets — including byn's own weaknesses, listed
@@ -177,7 +177,9 @@ them.**
 
 - **Strengths (the combination the others lack):** local-first, no
   account, works offline; values AEAD-encrypted at rest with **no
-  plaintext files**; **per-terminal sessions** (your unlock grants an
+  plaintext files** (the one exception is a value the owner marks
+  *unsecure*, v0.9.3+: stored unsealed on purpose, for config that is not a
+  secret); **per-terminal sessions** (your unlock grants an
   agent's shell nothing); **pinned per-command allowlist** (`[exec]
   actions`) so only approved commands run without fresh auth;
   agent-mode (`--json`) hard-fails instead of showing prompts an agent
@@ -255,9 +257,11 @@ aws-vault STS today; byn's planned broker) wherever you can get them.
 ---
 
 *Tool capabilities are re-verified when this page is re-stamped at each
-byn release. For v0.9.2, v0.9.1 and v0.9.0 nothing here was re-verified
-against vendors: those releases fix byn's own setup, approval queue and exec
-path, update the Go toolchain, and change no comparison claim. For
+byn release. For v0.9.3, v0.9.2, v0.9.1 and v0.9.0 nothing here was
+re-verified against vendors: those releases fix byn's own setup, approval
+queue, exec path and audit reseal, update the Go toolchain, and add opt-in
+unsecure values, which the byn entry above now names as the one exception to
+"encrypted at rest"; no comparison claim changes. For
 v0.8.0 the Bitwarden Secrets Manager section and the
 Doppler and Infisical offline behaviour were checked against the vendors'
 own documentation (September 2026): Bitwarden's
