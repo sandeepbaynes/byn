@@ -24,6 +24,9 @@ type fakeDisp struct {
 	lastNewPw         []byte // new_password from the last passwd op
 	lastBynContent    []byte // content bytes from the last OpBynWrite request
 	lastConfigContent []byte // content bytes from the last OpConfigSet request
+	lastPut           ipc.PutReq
+	lastSecure        *ipc.SecureSetReq
+	secureNeedsCreds  bool // secure.set with no password → auth_required
 }
 
 func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope {
@@ -54,7 +57,17 @@ func (f *fakeDisp) Dispatch(_ context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return mk(ipc.ListResp{Secrets: []ipc.SecretMeta{{Name: "API_KEY", Source: "scope"}}})
 	case ipc.OpGet:
 		return mk(ipc.GetResp{Name: "API_KEY", Value: []byte(f.revealValue), Source: "scope"})
+	case ipc.OpSecureSet:
+		var req ipc.SecureSetReq
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &req)
+		f.lastSecure = &req
+		if f.secureNeedsCreds && len(req.Password) == 0 {
+			return ipc.NewError(env.ID, ipc.CodeAuthRequired, "needs the master password", "")
+		}
+		return mk(ipc.SecureSetResp{Changed: req.Names})
 	case ipc.OpPut:
+		f.lastPut = ipc.PutReq{}
+		_ = ipc.DecodeBody(ipc.BodyReq, env, &f.lastPut)
 		if f.dupOnCreate {
 			var pr ipc.PutReq
 			_ = ipc.DecodeBody(ipc.BodyReq, env, &pr)
@@ -1480,5 +1493,60 @@ func TestApprovals_ListAndDecide(t *testing.T) {
 	}
 	if len(lastApprovalDecide.Password) != 0 {
 		t.Error("deny should not carry a password")
+	}
+}
+
+// A put is unsecure only when the request says so; the field is passed through
+// as given and is false when absent.
+func TestPut_UnsecureIsPassedThrough(t *testing.T) {
+	f := &fakeDisp{}
+	ts, c := newTestServer(t, f)
+	for _, tc := range []struct {
+		body map[string]any
+		want bool
+	}{
+		{map[string]any{"scope": map[string]string{"vault": "default"}, "name": "PORT", "value": "1", "unsecure": true}, true},
+		{map[string]any{"scope": map[string]string{"vault": "default"}, "name": "PORT", "value": "1"}, false},
+	} {
+		resp := post(t, c, ts.URL+"/api/entries", "", tc.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("put = %d, want 200", resp.StatusCode)
+		}
+		if f.lastPut.Unsecure != tc.want {
+			t.Fatalf("daemon saw Unsecure=%v, want %v", f.lastPut.Unsecure, tc.want)
+		}
+	}
+}
+
+// The secure toggle forwards the names, the direction and the password, and a
+// daemon refusal reaches the page as 401 auth_required so its step-up runs.
+func TestEntrySecure(t *testing.T) {
+	f := &fakeDisp{secureNeedsCreds: true}
+	ts, c := newTestServer(t, f)
+	body := map[string]any{"scope": map[string]string{"vault": "default"}, "names": []string{"PORT"}, "secure": false}
+
+	resp := post(t, c, ts.URL+"/api/entry/secure", "", body)
+	var e struct {
+		Code string `json:"code"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || e.Code != string(ipc.CodeAuthRequired) {
+		t.Fatalf("no password: %d %q, want 401 auth_required", resp.StatusCode, e.Code)
+	}
+
+	body["password"] = "pw"
+	resp = post(t, c, ts.URL+"/api/entry/secure", "", body)
+	var out struct {
+		Changed []string `json:"changed"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(out.Changed) != 1 || out.Changed[0] != "PORT" {
+		t.Fatalf("with password: %d %+v", resp.StatusCode, out)
+	}
+	if f.lastSecure == nil || f.lastSecure.Secure || string(f.lastSecure.Password) != "pw" || f.lastSecure.Names[0] != "PORT" {
+		t.Fatalf("daemon saw %+v", f.lastSecure)
 	}
 }

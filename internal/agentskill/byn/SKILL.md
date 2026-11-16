@@ -112,6 +112,31 @@ do it and must not try.** When you hit an untrusted or changed `.byn`:
 3. Wait. Do not edit the `.byn` to make the error go away, and do not fall back
    to reading a `.env`.
 
+### An untrusted `.byn` still runs — without its secrets
+
+An untrusted `.byn` does not stop `byn exec -- COMMAND`. The command runs with
+the **unsecure** values the file lists (configuration the owner has marked as
+needing no password) and **without** any sealed value, and byn prints:
+
+```
+Warning: /repo/.byn is untrusted.
+Secure values were NOT injected: DATABASE_URL, STRIPE_KEY
+```
+
+Read that warning every time. It means:
+
+- If the command only needs configuration, it worked — carry on.
+- If the command needs one of the names listed, it **will fail or misbehave**
+  for want of it. Do not debug the command, and do not supply the value some
+  other way. Stop, tell the user the `.byn` is untrusted and which values were
+  withheld, and ask them to run `byn trust`.
+
+Either way, mention the warning to the user: an untrusted `.byn` is something
+they need to know about even when your command succeeded.
+
+`byn exec --unsecure -- COMMAND` asks for exactly this on purpose — use it for
+a command you know needs no secrets.
+
 ## When byn asks for approval
 
 Some requests raise an approval the owner must answer. The response carries a
@@ -169,6 +194,16 @@ Only when the user asks you to store something:
 ```bash
 printf '%s' "$VALUE" | byn put NAME     # value on stdin, never in argv
 ```
+
+`byn put --unsecure NAME` stores a value **unsealed**: anything can then read
+it with no password. Use it only for configuration that is plainly not a
+secret (a port, a region, a log level) and only when the user wants that —
+never for a credential, and never to make a value easier for yourself to read.
+You cannot make an existing value unsecure: `byn unsecure` needs the master
+password. If byn answers `value_tampered`, an unsecure value was changed in
+the vault file by something other than byn: stop, do not work around it, and
+tell the user which name it was. `byn get NAME` on an unsecure value is allowed and needs nothing;
+`byn list --unsecure` shows which ones those are.
 
 Values you store while unattended are marked `put.unattended` in the audit log,
 because byn cannot tell a value an agent invented from one the user dictated.

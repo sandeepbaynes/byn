@@ -59,33 +59,59 @@ func (s *session) runInDir(cwd, stdin string, env []string, args ...string) (str
 	return stdoutBuf.String(), stderrBuf.String(), code
 }
 
-func TestE2E_Exec_UntrustedBynFails(t *testing.T) {
+// An untrusted .byn does not stop a command: it runs on the unsecure values the
+// file lists, is given no sealed value, and is told so. The alias form, which
+// only a trust record can define, is still refused.
+func TestE2E_Exec_UntrustedBynRunsWithoutSecrets(t *testing.T) {
 	s := bootstrapUnlocked(t)
-	// Create a project root with a .byn file.
 	projDir := filepath.Join(s.dir, "myproj")
 	if err := os.MkdirAll(projDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(
 		filepath.Join(projDir, ".byn"),
-		[]byte("[scope]\nproject = \"alpha\"\n"),
+		[]byte("[scope]\nproject = \"alpha\"\n\n[exec]\nenv = [\"PORT\", \"API_KEY\"]\n\n[aliases]\nshow = \"env\"\n"),
 		0o600,
 	); err != nil {
 		t.Fatalf("write .byn: %v", err)
 	}
-	// Pre-create project so exec would otherwise succeed.
 	if _, _, code := s.run("", "project", "create", "alpha"); code != 0 {
 		t.Fatalf("project create alpha failed")
 	}
-	// byn exec must hard-fail on an untrusted .byn before injecting anything.
-	_, stderr, code := s.runInDir(projDir, "", nil, "exec", "--", "true")
+	if _, se, code := s.run("8080", "--project", "alpha", "put", "--unsecure", "PORT"); code != 0 {
+		t.Fatalf("put --unsecure PORT: %s", se)
+	}
+	if _, se, code := s.run("s3cret-value", "--project", "alpha", "put", "API_KEY"); code != 0 {
+		t.Fatalf("put API_KEY: %s", se)
+	}
+
+	stdout, stderr, code := s.runInDir(projDir, "", nil, "exec", "--",
+		"sh", "-c", `echo "port=[$PORT] key=[$API_KEY]"`)
+	if code != 0 {
+		t.Fatalf("exec on an untrusted .byn should run on unsecure values; got code %d:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "port=[8080]") {
+		t.Errorf("the unsecure value was not injected:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "key=[]") || strings.Contains(stdout, "s3cret-value") {
+		t.Fatalf("a sealed value reached a command run from an untrusted .byn:\n%s", stdout)
+	}
+	// The run is only acceptable because it says what it left out, and why.
+	for _, want := range []string{"untrusted", "API_KEY", "byn trust"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the warning should mention %q:\n%s", want, stderr)
+		}
+	}
+
+	// An alias is defined by the trust record: no trust, no command.
+	_, stderr, code = s.runInDir(projDir, "", nil, "exec", "show")
 	if code == 0 {
-		t.Fatalf("exec on an untrusted .byn should fail; got code 0")
+		t.Fatalf("an alias from an untrusted .byn should be refused; got code 0")
 	}
 	if !strings.Contains(stderr, "untrusted") || !strings.Contains(stderr, "byn trust") {
 		t.Fatalf("rejection should mention untrusted + trust command:\n%s", stderr)
 	}
-	// But a non-exec command must pass through — only exec gates on trust.
+	// A non-exec command passes through — only exec consults trust.
 	if _, _, code := s.runInDir(projDir, "", nil, "list", "--json"); code != 0 {
 		t.Fatalf("list on an untrusted .byn should pass through; got code %d", code)
 	}

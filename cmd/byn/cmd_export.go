@@ -34,6 +34,8 @@ func runExport(args []string, scope cliScope) int {
 	output := fs.String("output", "-", "output path or '-' for stdout")
 	pwStdin := fs.Bool("password-stdin", false,
 		"read the master password from stdin for non-interactive authorization")
+	onlyUnsecure := fs.Bool("unsecure", false,
+		"export only the unsecure values (needs no password)")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
@@ -73,6 +75,9 @@ func runExport(args []string, scope cliScope) int {
 	entries := make(map[string]string, len(lresp.Secrets))
 	keys := make([]string, 0, len(lresp.Secrets))
 	for _, meta := range lresp.Secrets {
+		if *onlyUnsecure && !meta.Unsecure {
+			continue
+		}
 		var got ipc.GetResp
 		err := client.Call(ipc.OpGet, ipc.GetReq{Scope: scopeIPC, Name: meta.Name, Password: pw}, &got)
 		if err != nil && isAuthRequiredErr(err) && !pwAcquired {
@@ -99,6 +104,12 @@ func runExport(args []string, scope cliScope) int {
 			continue
 		}
 		a := entryAnnotations{desc: vaultDescription(meta)}
+		// Carried in the file so that importing it back stores the value the
+		// same way. Read from the value just fetched rather than the listing:
+		// it is what was true of the bytes being written out.
+		if got.Unsecure {
+			a.marker = markerUnsecure
+		}
 		if meta.Notes > 0 {
 			// An inherited row's notes are default's: ask default for them.
 			nscope := scopeIPC

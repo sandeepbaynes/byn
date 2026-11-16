@@ -616,7 +616,7 @@ func (m Model) startEdit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.Mode = ModeInsert
-	m.edit = &editBuf{Name: e.Name, IsNew: false}
+	m.edit = &editBuf{Name: e.Name, IsNew: false, Unsecure: e.Unsecure}
 	// Fetch the current value to prefill the buffer.
 	return m, getValueCmd(m.client, m.scope, e.Name)
 }
@@ -1093,13 +1093,14 @@ func (m Model) commitEdit() (tea.Model, tea.Cmd) {
 		}
 		val := []byte(m.edit.Value)
 		scope := m.scope
+		unsecure := m.edit.Unsecure
 		m.edit = nil
 		m.Mode = ModeNormal
 		// Capture the auth-retry context at dispatch time and carry it
 		// inside the message so a second op dispatched before this result
 		// lands cannot overwrite the pending context on the model.
 		ctx := &authReqState{
-			kind: authRetryPut, scope: scope, name: name, value: val, createOnly: true,
+			kind: authRetryPut, scope: scope, name: name, value: val, createOnly: true, unsecure: unsecure,
 		}
 		// CreateOnly=true on the daemon side catches the racy case
 		// where another writer added the same name between our list
@@ -1109,10 +1110,11 @@ func (m Model) commitEdit() (tea.Model, tea.Cmd) {
 		name := m.edit.Name
 		val := []byte(m.edit.Value)
 		scope := m.scope
+		unsecure := m.edit.Unsecure
 		m.edit = nil
 		m.Mode = ModeNormal
 		ctx := &authReqState{
-			kind: authRetryPut, scope: scope, name: name, value: val,
+			kind: authRetryPut, scope: scope, name: name, value: val, unsecure: unsecure,
 		}
 		return m, putValueCmd(m.client, scope, name, val, ctx)
 	case ModeRename:
@@ -1166,7 +1168,8 @@ func (m Model) keyReveal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.reveal != nil {
 			name := m.reveal.Name
 			m.Mode = ModeInsert
-			m.edit = &editBuf{Name: name, Value: m.reveal.Value, CursorIdx: len(m.reveal.Value), OriginalVal: m.reveal.Value}
+			m.edit = &editBuf{Name: name, Value: m.reveal.Value, CursorIdx: len(m.reveal.Value), OriginalVal: m.reveal.Value,
+				Unsecure: m.entryUnsecure(name)}
 			m.reveal = nil
 		}
 		return m, nil
@@ -1441,6 +1444,19 @@ func (m Model) runCommand(input string, fromEdit bool) (tea.Model, tea.Cmd) {
 	switch args[0] {
 	case "w":
 		if m.edit != nil {
+			// `:w secure` / `:w unsecure` say how this save stores the value,
+			// whatever the entry was before.
+			if len(args) == 2 && !m.edit.IsRename {
+				switch args[1] {
+				case "secure":
+					m.edit.Unsecure = false
+				case "unsecure":
+					m.edit.Unsecure = true
+				default:
+					m.flash("usage: :w [secure|unsecure]", false)
+					return m, nil
+				}
+			}
 			switch {
 			case m.edit.IsNew:
 				m.Mode = ModeAdd
@@ -1533,6 +1549,8 @@ func (m Model) runCommand(input string, fromEdit bool) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, noteEntryCmd(m.client, m.scope, e.Name, text)
+	case "secure", "unsecure":
+		return m.startSecureSet(args[0] == "secure")
 	case "audit":
 		m.Mode = ModeAudit
 		return m, loadAuditCmd(m.client, m.scope.Vault, 200)
@@ -1544,6 +1562,46 @@ func (m Model) runCommand(input string, fromEdit bool) (tea.Model, tea.Cmd) {
 	}
 	m.flash("unknown command: "+input, false)
 	return m, nil
+}
+
+// startSecureSet handles :secure and :unsecure on the entry under the cursor.
+//
+// Sealing is an ordinary update. Making a value unsecure publishes something
+// stored, so the daemon wants the master password however fresh the session —
+// the overlay opens straight away rather than after a refusal that was certain.
+func (m Model) startSecureSet(secure bool) (tea.Model, tea.Cmd) {
+	e := m.currentEntry()
+	if e == nil {
+		m.flash("select an entry first", false)
+		return m, nil
+	}
+	if e.Source == "default" && envOrDefault(m.scope.Env) != "default" {
+		m.flash(e.Name+" is inherited — change it in the default env (:env default)", false)
+		return m, nil
+	}
+	if e.Unsecure != secure {
+		m.flash(e.Name+" is already "+map[bool]string{true: "sealed", false: "unsecure"}[secure], true)
+		return m, nil
+	}
+	ctx := &authReqState{kind: authRetrySecure, scope: m.scope, name: e.Name, secure: secure, priorMode: ModeNormal}
+	if secure {
+		return m, secureSetCmd(m.client, m.scope, e.Name, true, ctx)
+	}
+	ctx.Cause = "making " + e.Name + " unsecure needs the master password — anything that can run byn will be able to read it"
+	m.authReq = ctx
+	m.Mode = ModeAuthRequired
+	return m, nil
+}
+
+// entryUnsecure reports whether the named entry of the current listing is
+// stored unsealed.
+func (m Model) entryUnsecure(name string) bool {
+	for _, e := range m.entries {
+		if e.Name == name {
+			return e.Unsecure
+		}
+	}
+	return false
 }
 
 // ---- SEARCH mode --------------------------------------------------------
@@ -1701,10 +1759,12 @@ func (m Model) keyAuthRequired(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = authRetryGetCmd(m.client, ar.scope, ar.name, pw)
 		case authRetryPut:
 			if ar.createOnly {
-				cmd = authRetryAddCmd(m.client, ar.scope, ar.name, ar.value, pw)
+				cmd = authRetryAddCmd(m.client, ar.scope, ar.name, ar.value, pw, ar.unsecure)
 			} else {
-				cmd = authRetryPutCmd(m.client, ar.scope, ar.name, ar.value, pw)
+				cmd = authRetryPutCmd(m.client, ar.scope, ar.name, ar.value, pw, ar.unsecure)
 			}
+		case authRetrySecure:
+			cmd = authRetrySecureCmd(m.client, ar.scope, ar.name, ar.secure, pw)
 		case authRetryDelete:
 			cmd = authRetryDeleteCmd(m.client, ar.scope, ar.name, pw)
 		case authRetryRename:
@@ -1793,7 +1853,13 @@ func (m Model) handleAuthRetry(msg authRetryMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case authRetryPut:
-		m.flash("put "+msg.name+" ok", true)
+		m.flash(putOpLabel("put", ar != nil && ar.unsecure)+" "+msg.name+" ok", true)
+	case authRetrySecure:
+		if ar != nil && ar.secure {
+			m.flash(msg.name+" is sealed again — rotate it if it mattered", true)
+		} else {
+			m.flash(msg.name+" is now unsecure — readable without a password", true)
+		}
 	case authRetryDelete:
 		m.flash("delete "+msg.name+" ok", true)
 	case authRetryRename:

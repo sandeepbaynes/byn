@@ -24,6 +24,8 @@ func helpFor(name string) string {
 		return commandHelp["rename"]
 	case "desc":
 		return commandHelp["describe"]
+	case "secure":
+		return commandHelp["unsecure"]
 	case "notes":
 		return commandHelp["note"]
 	case "view":
@@ -358,6 +360,107 @@ IF AN ENV IS MISSING A VALUE THAT IS PLAINLY THERE
 
 SEE ALSO
        byn-exec(1), byn-put(1), byn-import(1), byn-approve(1), byn-doctor(1)
+`,
+	"unsecure": `NAME
+       byn-unsecure, byn-secure - choose whether a value needs a
+       password to read
+
+SYNOPSIS
+       byn unsecure [--dry-run] [--json] [--password-stdin] NAME|GLOB...
+       byn secure   [--dry-run] [--json] [--password-stdin] NAME|GLOB...
+       byn put --unsecure NAME
+       byn list --unsecure | --secure
+
+DESCRIPTION
+       Not everything a project keeps beside its secrets is one. A
+       port, a region, a log level, the URL of a public API: they live
+       in the same .env file as the database password, and a vault
+       that guards them all alike makes the harmless ones as hard to
+       reach as the dangerous ones.
+
+       A value can therefore be stored UNSECURE. An unsecure value:
+
+         - is returned by "byn get" with no password and no session,
+           whether or not the vault is locked;
+         - is injected by "byn exec" without a trusted .byn (see
+           byn help exec);
+         - is stored UNSEALED. It is not encrypted on disk. It does
+           carry a MAC: byn refuses a value that was edited in the
+           vault file ("value_tampered") whenever it holds the scope's
+           key — vault unlocked, or locked with a trusted .byn for
+           the scope. Set it again to repair it. A locked vault with
+           no trusted .byn for the scope has no key to check with.
+
+       Everything is SECURE unless told otherwise, and nothing becomes
+       unsecure by accident:
+
+         - "byn put NAME" seals the value. "byn put --unsecure NAME"
+           is the only way a write stores one unsealed, and it has to
+           be said on EVERY write. A put that does not say it seals
+           the value even when the name was unsecure before — byn
+           tells you when that happens. This is deliberate: otherwise
+           a name created unsecure with a placeholder would take the
+           real credential in the clear when you later stored it.
+         - "byn import" seals everything except the variables a .env
+           file marks "# unsecure" (see byn help import).
+
+       byn unsecure NAME|GLOB...
+           Makes values that are already stored unsecure. This
+           publishes them to everything on the machine that can run
+           byn, for good, so it ALWAYS asks for the master password. A
+           session is not enough, and a .byn [auth] policy cannot
+           relax it.
+
+       byn secure NAME|GLOB...
+           Seals them again. Anything allowed to change the value may
+           do this — a session will do — because it only takes access
+           away. Sealing protects the value from now on; it does not
+           take back what could be read before. If it was a real
+           secret, rotate it.
+
+       Both take several names and globs (quote a glob), change all of
+       them or none, and act on the active scope only. A value this
+       env merely inherits from "default" is changed in default.
+
+       Storing a value unsecure AS YOU WRITE IT needs nothing extra —
+       you supplied the value, so nothing is disclosed to you. Only
+       turning an EXISTING sealed value unsecure needs the password.
+
+OPTIONS
+       --dry-run
+           Say which values would change, and change nothing.
+
+       --json
+           Print {scope, secure, changed, unchanged}.
+
+       --password-stdin
+           Read the master password from stdin.
+
+EXAMPLES
+       Store a setting that is not a secret:
+           $ printf 8080 | byn put --unsecure PORT
+
+       Read it back with the vault locked and no password:
+           $ byn get PORT
+
+       Open up the settings that were imported sealed:
+           $ byn unsecure PORT LOG_LEVEL 'FEATURE_*'
+
+       See what can be read without a password:
+           $ byn list --unsecure
+
+       Change your mind:
+           $ byn secure 'FEATURE_*'
+
+EXIT STATUS
+       0    Done (or nothing needed changing).
+       1    Bad usage, or a glob that matches nothing.
+       2    Daemon unreachable.
+       3    Refused: no password, wrong password, or a name that does
+            not exist in this scope. Nothing was changed.
+
+SEE ALSO
+       byn-put(1), byn-get(1), byn-exec(1), byn-import(1)
 `,
 	"kill": `NAME
        byn-kill - stop running byn exec processes
@@ -771,7 +874,7 @@ SEE ALSO
        byn-put - store a secret
 
 SYNOPSIS
-       byn put [--create-only] [--password-stdin] NAME
+       byn put [--create-only] [--unsecure] [--password-stdin] NAME
 
 DESCRIPTION
        Stores or updates a secret called NAME. On a terminal byn asks
@@ -792,6 +895,12 @@ DESCRIPTION
 
        Existing secrets are upserted by default. Use --create-only to
        refuse overwrites.
+
+       --unsecure stores the value UNSEALED, for config that is not a
+       secret: it can then be read with no password and injected
+       without a trusted .byn. It applies to this write only — a put
+       without it seals the value, even over a name that was unsecure,
+       and says so. See byn help unsecure.
 
        Storing a new secret does not require authorization, and does
        not require the vault to be unlocked. An agent building an app
@@ -899,7 +1008,8 @@ SEE ALSO
        byn-get - print a secret's value to stdout
 
        NEEDS A CREDENTIAL, except for a value you stored unattended
-       yourself — see byn help unattended.
+       yourself — see byn help unattended — and for a value stored
+       unsecure, which needs nothing — see byn help unsecure.
 
 SYNOPSIS
        byn get [--json] [--password-stdin] NAME
@@ -971,7 +1081,7 @@ SEE ALSO
        byn-list - list secret names
 
 SYNOPSIS
-       byn list [NAME|GLOB]
+       byn list [--long] [--unsecure | --secure] [--json] [NAME|GLOB]
        byn ls [NAME|GLOB]
 
 DESCRIPTION
@@ -981,6 +1091,10 @@ DESCRIPTION
 
        With no argument it lists every name (and prints "(no secrets
        stored)" to stderr when the scope is empty).
+
+       --unsecure lists only the values stored unsecure (readable with
+       no password), and --secure only the sealed ones. --long marks
+       each unsecure name, and --json carries it as "unsecure".
 
        With a NAME or GLOB argument it behaves like grep: it prints only
        the matching names and exits 0 when at least one matches, or
@@ -1071,6 +1185,7 @@ SYNOPSIS
        byn exec [--json] [--dry-run] [--wait-approval[=DUR]] [--force-ask]
                 [--reason TEXT] [--once] [--no-privsep] [--inspect[=TARGET]]
                 NAME [ARGS...]
+       byn exec --unsecure -- COMMAND [ARGS...]
        byn exec [--vault V] [--project P] [--env E] --var NAME [--var NAME...]
                 [--reason TEXT] [--once] [--wait-approval[=DUR]]
                 -- COMMAND [ARGS...]
@@ -1396,9 +1511,37 @@ DESCRIPTION
 
        Trust: when the scope comes from a discovered .byn, exec verifies
        it is trusted (machine + vault-key MAC, checked by the daemon)
-       before injecting; an untrusted, changed, or tampered .byn aborts
-       with a re-trust hint. Only exec gates on trust — other commands
-       apply a .byn scope without a trust check. Approve with byn trust.
+       before injecting SEALED values. Only exec gates on trust — other
+       commands apply a .byn scope without a trust check. Approve with
+       byn trust.
+
+       An untrusted .byn does not stop the command. Values stored
+       UNSECURE (byn help unsecure) need no trust, so the command runs
+       with the unsecure values the .byn lists and WITHOUT the sealed
+       ones, and byn prints a warning naming what was left out:
+
+           Warning: /repo/.byn is untrusted.
+           Secure values were NOT injected: DATABASE_URL, STRIPE_KEY
+
+       That keeps a project with one .byn for everything usable for
+       the commands that need no secrets. A command that does need
+       them will start and then fail for want of them — if you see
+       this warning and the command needs a secret, stop and have the
+       .byn trusted rather than debugging the command. Such a run is
+       yours: it runs as you, not under privilege separation, and the
+       [exec] actions list is not consulted, because nothing it is
+       given is protected. An alias still needs a trusted .byn.
+
+       A trusted .byn that has been CHANGED to ask for more is still
+       held for approval, as before — except that adding the name of
+       an unsecure value is not asking for more, and needs none.
+
+       --unsecure asks for this outright: the unsecure values only,
+       with no password, no trust check and no unlocked vault. With a
+       .byn in scope, the ones its [exec] env lists; without one,
+       every unsecure value in the scope. Likewise "--var NAME" is
+       answered at once, with no approval, when every name asked for
+       is unsecure.
 
        Allowlist: a discovered .byn controls which vars exec injects via
        [exec] env — a name list injects only those, "*" (or ["*"]) injects
@@ -1478,8 +1621,10 @@ EXIT STATUS
        1    Bad usage, missing binary, or alias form without a .byn.
        2    Daemon unreachable.
        3    Daemon error: vault locked (always a hard failure for exec),
-            untrusted/changed/tampered .byn (re-trust with byn trust),
-            alias not found in [aliases].
+            a .byn byn cannot read, an alias used with an untrusted
+            .byn, alias not found in [aliases]. An untrusted .byn is
+            NOT an error for a plain command: it runs on unsecure
+            values, with a warning.
 
 SECURITY NOTES
        Once a value is in the child's environment, it is visible to
@@ -1714,7 +1859,16 @@ KEYS - normal mode
        q                        same as :q
        n                        description and notes of the selected
                                 entry (see below)
+       :unsecure                make the selected value unsecure
+                                (always asks for the master password)
+       :secure                  seal it again
+       :w unsecure, :w secure   save this edit / new entry unsealed, or
+                                sealed. Plain :w keeps an existing
+                                entry as it was and seals a new one.
        Ctrl-C                   always exit (drafts lost)
+
+       A value stored unsecure shows "unsecure" where a sealed one shows
+       its mask (see byn help unsecure).
 
 KEYS - notes view (n)
        j/k                      move over the description and notes
@@ -1956,6 +2110,13 @@ DESCRIPTION
        token consumed by the retry. The portal binds loopback only
        (127.0.0.1), never the network; its CSRF defense is an Origin check.
 
+       A value stored unsecure (see byn help unsecure) carries an
+       "unsecure" tag on its row. The lock button on a row seals it or
+       makes it unsecure -- the latter always asks for the master
+       password or a passkey, whatever session is open. Editing an
+       unsecure value keeps it unsecure; a new entry is sealed unless
+       its "unsecure" box is ticked.
+
        The portal includes a .byn STUDIO (top-left ".byn" button): a
        structured builder form, inline TOML validator, command tester
        (simulates the exec gate before trust is granted), and one-click
@@ -2142,7 +2303,8 @@ SEE ALSO
 
 SYNOPSIS
        byn import [--format env|yaml|json] [--dry-run]
-                     [--skip-existing | --replace [--yes]] [PATH | -]
+                     [--skip-existing | --replace [--yes]]
+                     [--unsecure-names LIST] [PATH | -]
        byn import --unattended [--all] [--dry-run] [--password-stdin]
                      [NAME...]
 
@@ -2166,6 +2328,22 @@ DESCRIPTION
        read - and it ends the block. A description is written only if
        it differs from the stored one, and a note the value already
        carries is not added again. YAML and JSON carry no annotations.
+
+       A line in that block that is exactly the word "unsecure" stores
+       the variable UNSECURE — unsealed, readable with no password
+       (byn help unsecure):
+
+         # unsecure
+         # the port the dev server listens on
+         PORT=8080
+
+       The marker applies to the one variable directly below it and
+       to nothing else; a blank line ends it like the rest of the
+       block. Every unmarked variable is SEALED, including one that
+       was unsecure before the import — byn lists those when it
+       happens. "# secure" is accepted too and only matters against
+       --unsecure-names. For YAML and JSON, which have no comments,
+       name the variables with --unsecure-names.
 
        Three modes (mutually exclusive):
          merge (default)   add new keys; overwrite matching ones;
@@ -2197,6 +2375,11 @@ OPTIONS
 
        --skip-existing
            Add-only mode. Existing keys count as "skipped".
+
+       --unsecure-names LIST
+           Comma-separated names or globs to store unsecure, for a
+           file that cannot mark them itself. A pattern that matches
+           nothing in the file is an error.
 
        --replace
            Wipe scope first, then import. Operation order: list +
@@ -2258,7 +2441,7 @@ SEE ALSO
 
 SYNOPSIS
        byn export [--format env|yaml|json] [--output PATH]
-                  [--password-stdin]
+                  [--unsecure] [--password-stdin]
 
 DESCRIPTION
        Materializes all env-var entries in the active scope as a
@@ -2279,7 +2462,12 @@ DESCRIPTION
        description, one ## line per note - which byn import reads
        back. An inherited value carries default's. A description a
        trusted .byn declares is not exported. YAML and JSON carry no
-       annotations.
+       annotations. An unsecure value is marked "# unsecure" so that
+       importing the file stores it the same way.
+
+       --unsecure exports only the unsecure values. That needs no
+       password, and the result holds nothing the vault was keeping
+       secret.
 
 OPTIONS
        --format env|yaml|json

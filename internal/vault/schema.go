@@ -513,6 +513,20 @@ var schemaMigrations = map[int]func(context.Context, *sql.DB) error{
 	6: migrateV6toV7,
 	7: migrateV7toV8,
 	8: migrateV8toV9,
+	9: migrateV9toV10,
+}
+
+// migrateV9toV10 changes no table. Unsecure entries are a new value of
+// entries.aad_version, which the column already admits; what the step does is
+// record the version, so that a binary from before them — which would open the
+// vault and then fail row by row on a scheme it has never heard of — refuses
+// the whole vault with one clear message instead.
+func migrateV9toV10(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx,
+		`UPDATE meta SET value = '10' WHERE key = 'schema_version'`); err != nil {
+		return fmt.Errorf("record schema version: %w", err)
+	}
+	return nil
 }
 
 // migrateV8toV9 adds the annotation tables. Purely additive: it creates empty

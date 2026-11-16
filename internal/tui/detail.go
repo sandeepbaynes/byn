@@ -52,6 +52,10 @@ func (m Model) renderDetail() string {
 		lines = append(lines, kv(m.styles, " Created", e.CreatedAt.Format("2006-01-02 15:04")))
 		lines = append(lines, kv(m.styles, " Updated", e.UpdatedAt.Format("2006-01-02 15:04")))
 		lines = append(lines, kv(m.styles, " Source ", e.Source))
+		if e.Unsecure {
+			lines = append(lines, m.styles.DetailLabel.Render(" Storage")+"  "+
+				m.styles.StatusUnsecure.Render("unsecure — no password needed"))
+		}
 		switch m.entryStatus(*e) {
 		case StatusOverridden:
 			lines = append(lines, kv(m.styles, " Default", "overridden here"))

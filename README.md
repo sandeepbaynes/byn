@@ -127,6 +127,7 @@ What works today:
 - Provisioning & migration: `byn setup` (one-sudo privsep install, idempotent, `--uninstall`/`--purge`), `byn migrate` (relocate legacy `~/.byn` → system path keeping trust+passkeys, or `--from PATH` import that drops trust+passkeys)
 - CLI structure CRUD: `vault {list,delete,init,unlock,lock}`, `project {list,create,delete,rename}`, `env {list,create,delete,rename}` — all `list`s accept `--json`
 - CLI env-var ops (per active scope): `put`, `get [--json]`, `list [--json]`, `delete`, `rename`, `cat`/`ls`/`rm`/`mv` aliases
+- **Unsecure values** for config that is not a secret (`put --unsecure`, `byn unsecure`/`secure`, `# unsecure` on import): readable with no password and injected without a trusted `.byn`; secure stays the default, and opening up a stored value always takes the master password
 - Bulk I/O: `import` from `.env`/`.yaml`/`.json` (file path, stdin, or `--format`-forced), `export` to same formats (stdout or `--output PATH`)
 - `byn exec -- CMD` — replace-in-place execution that injects vault env-vars into the child's environ via `syscall.Exec`. Values never appear in shell history, argv, or scrollback.
 - Hybrid scope-flag positioning: `--vault`/`--project`/`--env` work before OR after the subcommand; conflicting duplicates are a hard error; env-var fallbacks `BYN_VAULT`/`BYN_PROJECT`/`BYN_ENV`

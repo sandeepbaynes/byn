@@ -168,7 +168,7 @@ and exits non\-zero. Password\-gated like a delete.
 Rename an env.
 .SS Secret CRUD
 .TP
-.B put \fINAME\fR \fR[\fB\-\-create\-only\fR] \fR[\fB\-\-description\fR \fITEXT\fR] \fR[\fB\-\-note\fR \fITEXT\fR] \fR[\fB\-\-password\-stdin\fR]
+.B put \fINAME\fR \fR[\fB\-\-create\-only\fR] \fR[\fB\-\-unsecure\fR] \fR[\fB\-\-description\fR \fITEXT\fR] \fR[\fB\-\-note\fR \fITEXT\fR] \fR[\fB\-\-password\-stdin\fR]
 Store a secret. On a terminal byn asks for the value and hides what you
 type, the way a password prompt does; otherwise it is read from stdin.
 Either way the value never comes from the command line, so it never
@@ -228,6 +228,35 @@ The master password is required (whether the vault is locked or simply
 has no active session); use \fB\-\-password\-stdin\fR for scripts.
 See \fBDELETING WHILE LOCKED\fR below and
 .BR byn-delete (1).
+.TP
+.B unsecure \fINAME\fR|\fIGLOB\fR... \fR[\fB\-\-dry\-run\fR] \fR[\fB\-\-json\fR] \fR[\fB\-\-password\-stdin\fR]
+Store values \fIunsealed\fR, for configuration that is not a secret \(em
+a port, a region, a log level. An unsecure value is returned by
+\fBget\fR with no password and no session, locked or not, and is
+injected by \fBexec\fR without a trusted \fB.byn\fR. It is not
+encrypted on disk. It does carry a MAC: byn refuses a value that was
+edited in the vault file (\fBvalue_tampered\fR) whenever it holds the
+scope's key \(em vault unlocked, or locked with a trusted \fB.byn\fR
+for the scope.
+Making a stored value unsecure publishes it to everything on the machine
+that can run byn, so this \fIalways\fR asks for the master password; a
+session is not enough and an \fB[auth]\fR policy cannot relax it.
+.PP
+Everything is secure unless told otherwise. \fBput\fR seals a value
+unless given \fB\-\-unsecure\fR, on every write \(em a put without it
+seals the value even over a name that was unsecure, and says so.
+\fBimport\fR seals everything except the variables a \fB.env\fR file
+marks \fB# unsecure\fR. \fBlist \-\-unsecure\fR shows what can be read
+without a password. \fBexec\fR run against an untrusted \fB.byn\fR no
+longer stops: it runs the command with the unsecure values the file
+lists, leaves the sealed ones out, and prints a warning naming them.
+See
+.BR byn-unsecure (1).
+.TP
+.B secure \fINAME\fR|\fIGLOB\fR... \fR[\fB\-\-dry\-run\fR] \fR[\fB\-\-json\fR] \fR[\fB\-\-password\-stdin\fR]
+Seal unsecure values again. An active session is enough, since this only
+takes access away. It does not take back what could be read before: a
+value that was a real secret should be rotated.
 .TP
 .B rename \fIOLD\fR \fINEW\fR \fR[\fB\-\-password\-stdin\fR]
 Move a secret to a new name. Re\-encrypts under the new name's AAD,

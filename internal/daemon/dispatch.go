@@ -247,6 +247,8 @@ func (d *Daemon) dispatch(ctx context.Context, env *ipc.Envelope) *ipc.Envelope 
 		return d.handleRename(ctx, env)
 	case ipc.OpUnattendedList:
 		return d.handleUnattendedList(ctx, env)
+	case ipc.OpSecureSet:
+		return d.handleSecureSet(ctx, env)
 	case ipc.OpUnattendedImport:
 		return d.handleUnattendedImport(ctx, env)
 
@@ -1361,7 +1363,23 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	}
 	// Only a locked vault has no alternative. Unlocked, an unattended write
 	// with no grant to key it just takes the ordinary path, exactly as before.
-	useAuthored := authKey != nil
+	//
+	// An unsecure value is sealed under nothing, so no key of either kind is
+	// involved and the question of which one to use never comes up.
+	useAuthored := authKey != nil && !req.Unsecure
+	// ownable is whether the caller may treat the value as its own afterwards:
+	// it supplied the value with no credential behind the call, so no
+	// credential stands between it and that value later. For a sealed write
+	// that is the authored key's doing; for an unsecure one there is no key to
+	// speak of, and the same reasoning holds.
+	ownable := useAuthored || (req.Unsecure && unattended)
+	// What this write replaces, for the response: sealing over an unsecure
+	// entry takes a credential-free read away from whatever relied on it.
+	wasUnsecure, _ := st.IsUnsecureEntry(ctx, scope, req.Name)
+	// An unsecure value needs a key as much as a sealed one does — not to hide
+	// it, but for the MAC that lets byn tell its own write from a row someone
+	// edited in the vault file. So the same three things will do: an open
+	// vault, the master password, or a grant's authored key.
 	if st.IsLocked() {
 		if authKey == nil && len(req.Password) == 0 {
 			// No trusted .byn covers this scope, so byn holds no key it could
@@ -1386,6 +1404,24 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	}
 
 	put := func(opt vault.PutOpt) error {
+		if req.Unsecure {
+			// Only ever because THIS call asked. There is no path on which a
+			// value becomes unsecure by inheriting the state of what it
+			// replaces — see internal/vault/unsecure.go for why.
+			switch {
+			case !st.IsLocked():
+				return st.PutEnvVarUnsecure(ctx, scope, req.Name, req.Value, opt)
+			case len(req.Password) > 0:
+				ak, kerr := st.CaptureAuthoredKeyWithPassword(ctx, req.Password, scope)
+				if kerr != nil {
+					return kerr
+				}
+				defer zeroBytes(ak)
+				return st.PutEnvVarUnsecureWithKey(ctx, ak, scope, req.Name, req.Value, opt)
+			default:
+				return st.PutEnvVarUnsecureWithKey(ctx, authKey, scope, req.Name, req.Value, opt)
+			}
+		}
 		if useAuthored {
 			return st.PutEnvVarAuthored(ctx, scope, req.Name, req.Value, authKey, opt)
 		}
@@ -1426,7 +1462,7 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 				// caller's, and the record has to keep saying so — it is what
 				// everything downstream reads to decide whether the value is
 				// still the author's, rather than any timestamp on the entry.
-				d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored, unattended)
+				d.recordAuthored(ctx, st, vaultName, scope, req.Name, ownable, unattended)
 			}
 		} else {
 			if le := d.authorizeAction(ctx, env.ID, vaultName, scope, st, "update", req.Password, req.PresenceToken); le != nil {
@@ -1446,13 +1482,15 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	} else {
 		d.touchVault(req.Scope.Vault)
 		if created {
-			d.recordAuthored(ctx, st, vaultName, scope, req.Name, useAuthored, unattended)
+			d.recordAuthored(ctx, st, vaultName, scope, req.Name, ownable, unattended)
 		}
 		annotated := d.applyPutAnnotations(ctx, st, scope, req, created, !unattended, authKey)
 		out, oerr := ipc.NewResponse(env.ID, ipc.PutResp{
-			Unattended: unattended && useAuthored,
+			Unattended: unattended && ownable,
 			Created:    created,
 			Annotated:  annotated,
+			Unsecure:   req.Unsecure,
+			Resecured:  wasUnsecure && !req.Unsecure,
 		})
 		if oerr != nil {
 			resp = internalErr(env.ID, oerr)
@@ -1466,6 +1504,11 @@ func (d *Daemon) handlePut(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 	putOp := "put"
 	if unattended {
 		putOp = "put.unattended"
+	}
+	if req.Unsecure {
+		// Named in the log for the same reason: a value stored where anything
+		// can read it is the write worth finding later.
+		putOp += ".unsecure"
 	}
 	d.auditPlane(ctx, req.Scope, "env_var", req.Name, putOp, resp)
 	return resp
@@ -1483,6 +1526,37 @@ func (d *Daemon) handleGet(ctx context.Context, env *ipc.Envelope) *ipc.Envelope
 		return errEnv
 	}
 	vaultName := defaultIfEmpty(req.Scope.Vault, vault.DefaultVaultName)
+	// An unsecure value is answered before any gate is consulted: no session,
+	// no password, no unlocked vault, and no [auth] policy — not even "always".
+	// Unsecure is a statement about the VALUE, made by someone who proved
+	// they were present to make it; a policy about the scope does not put back
+	// a protection the value itself was told not to have, and pretending it
+	// did would leave an owner believing a public value was gated. The read is
+	// still audited, under its own name.
+	plainKeys := d.plainKeysFor(st, vaultName, scope)
+	e, ok, uerr := st.UnsecureEnvVarWithKeys(ctx, scope, req.Name, plainKeys)
+	zeroPlainKeys(plainKeys)
+	if errors.Is(uerr, vault.ErrPlainTampered) {
+		resp := tamperedErr(env.ID, req.Name)
+		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get.unsecure", resp)
+		return resp
+	}
+	if uerr == nil && ok {
+		resp, rerr := ipc.NewResponse(env.ID, ipc.GetResp{
+			Name:         e.Name,
+			Value:        e.Value,
+			Source:       e.Source.String(),
+			CreatedAt:    e.CreatedAt,
+			UpdatedAt:    e.UpdatedAt,
+			Unsecure:     true,
+			Descriptions: d.describeEntry(ctx, st, scope, vaultName, e.Name),
+		})
+		if rerr != nil {
+			resp = internalErr(env.ID, rerr)
+		}
+		d.auditPlane(ctx, req.Scope, "env_var", req.Name, "get.unsecure", resp)
+		return resp
+	}
 	// A caller reading back a value it created itself learns nothing. Requiring
 	// a password for that is the step that stops an agent mid-task, and it buys
 	// nothing: the caller supplied the value in the first place.
@@ -1602,6 +1676,7 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 			UpdatedAt:     m.UpdatedAt,
 			InDefault:     m.InDefault,
 			SameAsDefault: m.SameAsDefault,
+			Unsecure:      m.Unsecure,
 		}
 		if a, ok := annotations[m.Name]; ok {
 			meta.Description = a.Description
@@ -1627,7 +1702,8 @@ func (d *Daemon) handleList(ctx context.Context, env *ipc.Envelope) *ipc.Envelop
 			meta.Unattended = true
 			meta.UnattendedInherited = true
 		}
-		if unlocked {
+		// An unsecure value's emptiness is no secret either way.
+		if unlocked || m.Unsecure {
 			empty := m.IsEmpty
 			meta.Empty = &empty
 		}
@@ -2236,9 +2312,24 @@ func mapVaultErr(id string, err error) *ipc.Envelope {
 			"the default env cannot be renamed or deleted", "")
 	case errors.Is(err, vault.ErrBadEnvName):
 		return ipc.NewError(id, ipc.CodeBadName, "invalid env name", "")
+	case errors.Is(err, vault.ErrPlainTampered):
+		var ne *vault.NameError
+		name := "an unsecure value"
+		if errors.As(err, &ne) {
+			name = ne.Name
+		}
+		return tamperedErr(id, name)
 	default:
 		return internalErr(id, err)
 	}
+}
+
+// tamperedErr reports an unsecure value whose MAC does not match: the row was
+// written or altered by something other than byn. It is never served.
+func tamperedErr(id, name string) *ipc.Envelope {
+	return ipc.NewError(id, ipc.CodeTampered,
+		name+" was changed in the vault file by something other than byn, so it is not being used",
+		"set it again if you know the right value (byn put --unsecure "+name+"), or remove it (byn rm "+name+")")
 }
 
 func badRequest(id string, err error) *ipc.Envelope {

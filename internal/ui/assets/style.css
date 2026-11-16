@@ -1362,6 +1362,24 @@ textarea.inline-input { resize: none; overflow: hidden; line-height: 1.45; min-h
   opacity: .8;
 }
 
+/* ---- Unsecure values ---- */
+/* A word on the row, not a glyph to decode: the value is stored unsealed and
+   anything on the machine can read it. Amber, like the other "look twice"
+   states. */
+.tag-unsecure {
+  margin-left: 8px; padding: 1px 6px; border-radius: 4px;
+  font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-border);
+  vertical-align: 1px;
+}
+.act-ico.unseal:hover { color: var(--amber); }
+.act-ico.seal { color: var(--amber); }
+.act-ico.seal:hover { color: var(--signal); }
+.add-unsecure {
+  display: inline-flex; align-items: center; gap: 4px; margin-right: 8px;
+  font-size: 11px; color: var(--text-dim); cursor: pointer; white-space: nowrap;
+}
+
 /* ---- Dirpicker: file rows visually distinct from directories ---- */
 /* File rows are dimmer than directory rows so the folder/navigate affordance
    remains visually dominant. */

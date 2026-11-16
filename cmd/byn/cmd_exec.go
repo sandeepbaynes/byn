@@ -107,6 +107,11 @@ func runExec(args []string, scope cliScope) int {
 	// --var NAME, repeated, makes this an ad hoc request: exactly these
 	// variables, from the scope in force, for this command in this directory.
 	args, adhocVars := stripExecVars(args)
+	// --unsecure asks for the unsecure values and nothing else: no password,
+	// no trusted .byn, no unlocked vault, because nothing it is given is
+	// protected by any of them. For the command that needs config and no
+	// secrets, said outright rather than discovered by being refused.
+	args, unsecureOnly := stripExecBoolFlag(args, "--unsecure")
 	if reason == "" {
 		// BYN_WHY exists for harnesses that build byn's argv themselves and
 		// cannot add a flag to it. A wrapper script can export it once and
@@ -142,6 +147,11 @@ func runExec(args []string, scope cliScope) int {
 		aliasName = args[0]
 		extraArgs = args[1:]
 		isAliasExec = true
+		if unsecureOnly {
+			fmt.Fprintln(os.Stderr, boldRed("Error:")+" --unsecure runs a command, not an alias — an alias comes from a trusted .byn")
+			fmt.Fprintln(os.Stderr, dim("Hint: byn exec --unsecure -- COMMAND"))
+			return exitErr
+		}
 		if len(adhocVars) > 0 {
 			fmt.Fprintln(os.Stderr, boldRed("Error:")+" an ad hoc request runs a command, not an alias — aliases come from the .byn")
 			fmt.Fprintln(os.Stderr, dim("Hint: byn exec --var NAME -- COMMAND"))
@@ -281,6 +291,7 @@ func runExec(args []string, scope cliScope) int {
 	// run. ForceAuth makes the daemon require it regardless of [exec] actions. The
 	// privsep path (default) leaves it false: a trusted .byn is the authorization.
 	req.ForceAuth = noPrivsep
+	req.UnsecureOnly = unsecureOnly
 
 	// PRIVSEP ROUTING (NU-5). When [security] privsep is enabled and this is a
 	// trusted-.byn DIRECT exec, the daemon spawns the child SERVER-side under the
@@ -343,7 +354,11 @@ func runExec(args []string, scope cliScope) int {
 
 	// An ad hoc run is isolated the same way: the daemon gates it through the
 	// same authorizeExec, and the helper needs only the command and the cwd.
-	if privsepOn && (scope.SourcePath != "" || len(adhocVars) > 0) && !isAliasExec {
+	//
+	// Not for --unsecure. Privilege separation hides a child's secrets from the
+	// user who started it; a run handed only unsecure values has none to hide,
+	// and runs as the caller.
+	if privsepOn && !unsecureOnly && (scope.SourcePath != "" || len(adhocVars) > 0) && !isAliasExec {
 		if rc, handled := runExecPrivsep(client, req, childArgv, waitApproval, hasWait); handled {
 			return rc
 		}
@@ -451,7 +466,11 @@ func runExec(args []string, scope cliScope) int {
 		}
 		return rc
 	}
-	renderAllowlistNotes(fetched, scope.SourcePath)
+	if fetched.Untrusted != "" || fetched.UnsecureOnly {
+		renderUnsecureRun(fetched, scope.SourcePath)
+	} else {
+		renderAllowlistNotes(fetched, scope.SourcePath)
+	}
 	renderMissingValues(fetched.MissingValues, fetched.UnattendedValues, scope.SourcePath)
 
 	// Use the daemon's ResolvedArgv as the authoritative argv. For direct exec
@@ -817,6 +836,12 @@ func runExecPrivsep(client *ipc.Client, req ipc.ExecFetchReq, childArgv []string
 	case isUnknownOpErr(callErr):
 		// Daemon predates exec.authorize — signal the caller to use the legacy path.
 		return 0, false
+	case isUnsecureOnlyErr(callErr):
+		// The .byn's trust does not cover this run, so there is nothing sealed
+		// to hand to a privilege-separated child. Not a refusal: the caller
+		// runs the command itself, on the unsecure values exec.fetch returns,
+		// and is told what was left out.
+		return 0, false
 	case isApprovalPendingErr(callErr):
 		// Nothing was refused: a person has been asked. Report it as its own
 		// outcome so a caller does not treat a pause as permanent failure.
@@ -1063,6 +1088,51 @@ func handleExecFetchError(err error) int {
 		}
 	}
 	return handleCallError(err)
+}
+
+// isUnsecureOnlyErr reports the daemon's redirect for a run that may only be
+// given unsecure values: run it yourself, through exec.fetch.
+func isUnsecureOnlyErr(err error) bool {
+	var er *ipc.ErrResponse
+	return errors.As(err, &er) && er.Code == ipc.CodeUnsecureOnly
+}
+
+// renderUnsecureRun says that a command is starting WITHOUT its secrets, and
+// why.
+//
+// This is the line the whole behaviour rests on. byn used to refuse a command
+// whose .byn was not trusted; now it runs the command on the unsecure values
+// and leaves the sealed ones out. That is only better than refusing if the
+// caller can see it happened — a program that starts and then fails for want of
+// a credential, with nothing said, is worse than one that never started. So it
+// is a warning, on every such run, naming the values that were held back and
+// the one command that fixes it. An agent reading it knows to raise the flag
+// rather than debug the program.
+func renderUnsecureRun(resp ipc.ExecFetchResp, sourcePath string) {
+	withheld := strings.Join(resp.WithheldValues, ", ")
+	if resp.Untrusted == "" {
+		// Asked for with --unsecure. Nothing is wrong; say what was left out
+		// only if something was.
+		if len(resp.WithheldValues) > 0 {
+			fmt.Fprintf(os.Stderr, "%s %s\n", dim("note:"),
+				dim(fmt.Sprintf("--unsecure: %d unsecure value(s) injected; left out (sealed): %s",
+					len(resp.Values), withheld)))
+		}
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s %s\n", boldYellow("Warning:"), yellow(resp.Untrusted+"."))
+	if len(resp.WithheldValues) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %s\n", yellow("Secure values were NOT injected:"), withheld)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s\n", yellow("Secure values are not injected from an untrusted .byn."))
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", dim(fmt.Sprintf(
+		"Running as you, with %d unsecure value(s). If this command needs the rest, it will not have them.",
+		len(resp.Values))))
+	if sourcePath != "" {
+		fmt.Fprintf(os.Stderr, "%s %s %s\n", yellow("To trust it:"), cyan("byn trust "+sourcePath),
+			dim("(byn asks for the master password)"))
+	}
 }
 
 // renderGrantNote says that a command is running on a standing approval rather

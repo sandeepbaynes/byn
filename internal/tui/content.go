@@ -310,7 +310,14 @@ func (m Model) renderEntryRow(e ipc.SecretMeta, selected, expanded bool, w int) 
 		// or not the vault is open. `n` opens them.
 		right = append(right, m.styles.EntryMeta.Render(fmt.Sprintf("✎%d", e.Notes)))
 	}
-	if maskWidth > 0 {
+	switch {
+	case e.Unsecure && maskWidth > 0:
+		// Not a row of dots: those say "hidden", and this value is not. The
+		// word takes the mask's place, at the mask's width.
+		right = append(right, m.styles.StatusUnsecure.Render(padRightLipgloss(unsecureTag(maskWidth), maskWidth)))
+	case e.Unsecure:
+		right = append(right, m.styles.StatusUnsecure.Render("◌"))
+	case maskWidth > 0:
 		right = append(right, m.styles.EntryMasked.Render(mask))
 	}
 	if sizeWidth > 0 {
@@ -362,6 +369,14 @@ func (m Model) entryNameColumn() int {
 	return 4 + longest // "▸ " + badge
 }
 
+// unsecureTag is what an unsecure row shows where a sealed one shows its mask.
+func unsecureTag(width int) string {
+	if width < len("◌ unsecure") {
+		return "◌ open"
+	}
+	return "◌ unsecure"
+}
+
 func maskBar(width int) string {
 	if width <= 0 {
 		return ""
@@ -411,7 +426,11 @@ func (m Model) renderEditBox(w int) string {
 	}
 	line := boxedLine("", m.edit.Value, true, m.edit.CursorIdx, inner)
 	box := m.styles.EditBox.Render(line)
-	return strings.Join(indentLines("   ", box), "\n")
+	out := strings.Join(indentLines("   ", box), "\n")
+	if m.edit.Unsecure {
+		out += "\n   " + m.styles.StatusUnsecure.Render("◌ unsecure — :w keeps it readable without a password   :w secure seals it")
+	}
+	return out
 }
 
 func (m Model) renderRenameBox(w int) string {

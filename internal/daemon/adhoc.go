@@ -183,6 +183,25 @@ func (d *Daemon) authorizeAdhoc(ctx context.Context, id string, req ipc.ExecFetc
 	cmd, summary, fingerprint := adhocApprovalKey(vaultName, scope, subject, req.Argv, vars)
 	gets := strings.Join(vars, ", ")
 
+	// Every name asked for is unsecure: there is no question to put to anyone.
+	// The caller could read each of these with `byn get` and no credential, so
+	// a card asking permission to hand them over would be asking nothing. All
+	// of them, though — one sealed name and the whole request is a real one.
+	if d.allUnsecure(ctx, st, scope, vars) {
+		keys := d.plainKeysFor(st, vaultName, scope)
+		vals, _, uerr := d.unsecureValues(ctx, st, scope, vars, false, keys)
+		zeroPlainKeys(keys)
+		if uerr != nil {
+			return nil, nil, nil, mapVaultErr(id, uerr)
+		}
+		d.auditEmit(ctx, vaultName, audit.Event{
+			Op: "exec.unsecure", Outcome: audit.OutcomeOK,
+			Project: scope.Project, Env: scope.Env, BynPath: subject,
+			Command: cmd + " (gets " + gets + ")",
+		})
+		return vars, req.Argv, vals, nil
+	}
+
 	// A standing grant for exactly this question, usable by this caller.
 	if grant, ok, gerr := d.approvals.ActionGrantRequest(subject, fingerprint, d.grantUsableBy(ctx)); gerr == nil && ok {
 		values, le = d.adhocValues(ctx, id, st, scope, vars, grant.Capability)

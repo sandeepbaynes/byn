@@ -65,6 +65,11 @@ const (
 	OpUnattendedList   Op = "unattended.list"
 	OpUnattendedImport Op = "unattended.import"
 
+	// OpSecureSet moves entries between sealed and unsecure (stored unsealed,
+	// readable with no credential). One op for both directions because they
+	// are one decision seen from two sides; they are gated very differently.
+	OpSecureSet Op = "secure.set"
+
 	// Audit log (per-vault; reads the HMAC-chained log written by
 	// dispatch.auditEmit).
 	OpAuditTail   Op = "audit.tail"
@@ -177,7 +182,7 @@ var AllOps = []Op{
 	OpProjectCreate, OpProjectList, OpProjectDelete, OpProjectRename,
 	OpEnvCreate, OpEnvList, OpEnvDelete, OpEnvClear, OpEnvRename,
 	OpPut, OpGet, OpList, OpDelete, OpRename,
-	OpUnattendedList, OpUnattendedImport,
+	OpUnattendedList, OpUnattendedImport, OpSecureSet,
 	OpAuditTail, OpAuditVerify, OpAuditReseal, OpDoctor,
 	OpApprovalList, OpApprovalDecide, OpApprovalWatch, OpApprovalCancel,
 	OpTrustList, OpTrustRemove, OpTrustGrant, OpTrustGrantBulk, OpTrustVerify, OpTrustDiff, OpBynWrite, OpBynValidate, OpBynSimulate, OpBynRead, OpFSListDir,
@@ -269,6 +274,15 @@ const (
 	// not read as a permanent failure.
 	CodeApprovalPending ErrCode = "approval_pending"
 	CodeAuthRequired    ErrCode = "auth_required" // auth gate: supply password/presence token or session
+	// CodeUnsecureOnly answers an exec.authorize or exec.spawn that the .byn's
+	// trust does not cover: nothing sealed can be handed over, so there is
+	// nothing for the privilege-separated child to protect. The caller is being
+	// told to run the command itself, with the unsecure values exec.fetch will
+	// return — not that it was refused.
+	CodeUnsecureOnly ErrCode = "unsecure_only"
+	// CodeTampered means an unsecure value's MAC does not match its contents:
+	// the row was written or altered outside byn. The value is not returned.
+	CodeTampered ErrCode = "value_tampered"
 
 	// Project / env.
 	CodeProjectNotFound ErrCode = "project_not_found"
@@ -587,6 +601,12 @@ type PutReq struct {
 	// caller was not authorized to annotate; see the daemon's put handler.
 	Description string `json:"description,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// Unsecure stores the value unsealed: readable by anything that can reach
+	// byn, with no credential, locked or not. It applies to THIS write only.
+	// A put that leaves it false seals the value even when the entry it
+	// replaces was unsecure, so the least safe state is never one a value
+	// inherits by accident.
+	Unsecure bool `json:"unsecure,omitempty"`
 	// Password authorizes the write when no session is present
 	// (one-shot verify, no unlock; empty otherwise). PresenceToken is the
 	// portal's passkey-ceremony alternative (one-time, short-lived).
@@ -612,6 +632,13 @@ type PutResp struct {
 	// rather than dropped silently — a caller that passed a description
 	// deserves to know it did not take.
 	Annotated bool `json:"annotated,omitempty"`
+	// Unsecure echoes that the value was stored unsealed.
+	Unsecure bool `json:"unsecure,omitempty"`
+	// Resecured is true when this put sealed a value over an entry that had
+	// been unsecure. Reported because something that used to read the name
+	// without a credential no longer can, and the caller that caused that
+	// should not have to discover it from another tool's failure.
+	Resecured bool `json:"resecured,omitempty"`
 }
 
 // GetReq retrieves an env-var entry from Scope. Applies inheritance
@@ -634,6 +661,9 @@ type GetResp struct {
 	Source    string    `json:"source"` // "scope" or "default" — set on inheritance fallback
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Unsecure is true when the value is stored unsealed, which is why no
+	// credential was needed to read it.
+	Unsecure bool `json:"unsecure,omitempty"`
 	// Descriptions is every layer of context attached to this variable: the
 	// one stored in the vault, and the one a trusted .byn declares. Both are
 	// returned, labelled, never merged — they differ in who vouched for them.
@@ -670,6 +700,9 @@ type SecretMeta struct {
 	Source    string    `json:"source"` // "scope" or "default"
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Unsecure is true when the value is stored unsealed: `byn get` returns
+	// it with no credential and exec injects it without a trusted .byn.
+	Unsecure bool `json:"unsecure,omitempty"`
 	// Empty is non-nil and true when the vault is unlocked and the stored
 	// value is the empty byte sequence. It is omitted (nil) when the vault
 	// is locked or the emptiness could not be determined without decryption.
@@ -1295,6 +1328,12 @@ type ExecFetchReq struct {
 	// only — there is no wildcard, because the card must list what a yes
 	// hands over.
 	Vars []string `json:"vars,omitempty"`
+	// UnsecureOnly asks for the unsecure values and nothing else. Such a run
+	// needs no credential, no trust and no unlocked vault, because it is
+	// handed nothing that any of those protect. With a .byn in scope its
+	// [exec] env list still chooses the names; without one, every unsecure
+	// value in the scope is injected.
+	UnsecureOnly bool `json:"unsecure_only,omitempty"`
 	// Cwd is where the caller is running, as the CLI sees it. The daemon
 	// prefers what the kernel says about the caller and uses this only where
 	// it cannot ask (macOS), so it is a claim, shown as where the request was
@@ -1356,6 +1395,39 @@ type ExecFetchResp struct {
 	// let this command run, and says when that lapses. A caller otherwise
 	// discovers the end of a grant by being stopped by it.
 	GrantExpiresAt int64 `json:"grant_expires_at,omitempty"`
+	// Untrusted is set when the run went ahead WITHOUT the .byn's trust, and
+	// says why (the wording `byn exec` would otherwise have refused with).
+	// Only unsecure values are in Values; WithheldValues names what the .byn
+	// asked for that stayed sealed. Empty on every trusted run.
+	Untrusted string `json:"untrusted,omitempty"`
+	// WithheldValues are names the run asked for whose values are sealed and
+	// were therefore not handed over — because the .byn is not trusted, or
+	// because the caller asked for unsecure values only.
+	WithheldValues []string `json:"withheld_values,omitempty"`
+	// UnsecureOnly echoes that only unsecure values were considered.
+	UnsecureOnly bool `json:"unsecure_only,omitempty"`
+}
+
+// SecureSetReq moves the named entries of Scope between sealed and unsecure.
+//
+// Secure=false is the dangerous direction: it publishes stored values to
+// everything that can reach byn, permanently, so it is never satisfied by a
+// session or relaxed by an [auth] policy — only by the master password or a
+// presence token. Secure=true takes access away and is gated like an update.
+// All of the names change or none do.
+type SecureSetReq struct {
+	Scope         Scope    `json:"scope,omitempty"`
+	Names         []string `json:"names"`
+	Secure        bool     `json:"secure"`
+	Password      []byte   `json:"password,omitempty"`
+	PresenceToken []byte   `json:"presence_token,omitempty"`
+}
+
+// SecureSetResp reports which names changed state and which were already
+// there.
+type SecureSetResp struct {
+	Changed   []string `json:"changed,omitempty"`
+	Unchanged []string `json:"unchanged,omitempty"`
 }
 
 // ExecSpawnReq runs a byn exec child SERVER-side under privsep (NU-5). It

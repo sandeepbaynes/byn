@@ -159,8 +159,9 @@ func yankToClipboardCmd(c Client, scope ipc.Scope, name string) tea.Cmd {
 
 func putValueCmd(c Client, scope ipc.Scope, name string, value []byte, ctx *authReqState) tea.Cmd {
 	return func() tea.Msg {
-		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value}, &ipc.PutResp{})
-		return opCompleteMsg{Op: "put", Err: err, Note: name, authCtx: ctx}
+		unsecure := ctx != nil && ctx.unsecure
+		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, Unsecure: unsecure}, &ipc.PutResp{})
+		return opCompleteMsg{Op: putOpLabel("put", unsecure), Err: err, Note: name, authCtx: ctx}
 	}
 }
 
@@ -169,10 +170,51 @@ func putValueCmd(c Client, scope ipc.Scope, name string, value []byte, ctx *auth
 // even when the local pre-check missed (race with another writer).
 func addEntryCmd(c Client, scope ipc.Scope, name string, value []byte, ctx *authReqState) tea.Cmd {
 	return func() tea.Msg {
+		unsecure := ctx != nil && ctx.unsecure
 		err := c.Call(ipc.OpPut,
-			ipc.PutReq{Scope: scope, Name: name, Value: value, CreateOnly: true},
+			ipc.PutReq{Scope: scope, Name: name, Value: value, CreateOnly: true, Unsecure: unsecure},
 			&ipc.PutResp{})
-		return opCompleteMsg{Op: "add", Err: err, Note: name, authCtx: ctx}
+		return opCompleteMsg{Op: putOpLabel("add", unsecure), Err: err, Note: name, authCtx: ctx}
+	}
+}
+
+// putOpLabel names a write for the status line, saying so when it stored the
+// value unsealed: that is the write worth noticing.
+func putOpLabel(op string, unsecure bool) string {
+	if unsecure {
+		return op + " (unsecure)"
+	}
+	return op
+}
+
+// secureSetCmd moves one entry between sealed and unsecure. Sealing passes on
+// a session; making a value unsecure always needs the password, so that
+// direction is only ever issued from the Authorize overlay (see
+// authRetrySecureCmd).
+func secureSetCmd(c Client, scope ipc.Scope, name string, secure bool, ctx *authReqState) tea.Cmd {
+	return func() tea.Msg {
+		err := c.Call(ipc.OpSecureSet, ipc.SecureSetReq{Scope: scope, Names: []string{name}, Secure: secure}, &ipc.SecureSetResp{})
+		return opCompleteMsg{Op: secureOpLabel(secure), Err: err, Note: name, authCtx: ctx}
+	}
+}
+
+func secureOpLabel(secure bool) string {
+	if secure {
+		return "secure"
+	}
+	return "unsecure"
+}
+
+// authRetrySecureCmd issues secure.set with the supplied password.
+// Note: buffer zeroed; JSON marshaling copies are subject to GC.
+func authRetrySecureCmd(c Client, scope ipc.Scope, name string, secure bool, pw []byte) tea.Cmd {
+	return func() tea.Msg {
+		pwCopy := append([]byte{}, pw...) //nolint:gocritic
+		err := c.Call(ipc.OpSecureSet, ipc.SecureSetReq{Scope: scope, Names: []string{name}, Secure: secure, Password: pwCopy}, &ipc.SecureSetResp{})
+		for i := range pw {
+			pw[i] = 0
+		}
+		return authRetryMsg{kind: authRetrySecure, name: name, err: err}
 	}
 }
 
@@ -300,6 +342,8 @@ const (
 	// authRetryAnnotation replays whatever the annotations view parked
 	// (annState.pending) with the password — a read, a history or a write.
 	authRetryAnnotation
+	// authRetrySecure moves an entry between sealed and unsecure.
+	authRetrySecure
 )
 
 // authRetryGetCmd re-issues OpGet with the supplied password.
@@ -320,10 +364,10 @@ func authRetryGetCmd(c Client, scope ipc.Scope, name string, pw []byte) tea.Cmd 
 
 // authRetryPutCmd re-issues OpPut with the supplied password.
 // Note: buffer zeroed; JSON marshaling copies are subject to GC.
-func authRetryPutCmd(c Client, scope ipc.Scope, name string, value []byte, pw []byte) tea.Cmd {
+func authRetryPutCmd(c Client, scope ipc.Scope, name string, value []byte, pw []byte, unsecure bool) tea.Cmd {
 	return func() tea.Msg {
 		pwCopy := append([]byte{}, pw...) //nolint:gocritic
-		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, Password: pwCopy}, &ipc.PutResp{})
+		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, Password: pwCopy, Unsecure: unsecure}, &ipc.PutResp{})
 		for i := range pw {
 			pw[i] = 0
 		}
@@ -333,10 +377,10 @@ func authRetryPutCmd(c Client, scope ipc.Scope, name string, value []byte, pw []
 
 // authRetryAddCmd re-issues OpPut with CreateOnly and the supplied password.
 // Note: buffer zeroed; JSON marshaling copies are subject to GC.
-func authRetryAddCmd(c Client, scope ipc.Scope, name string, value []byte, pw []byte) tea.Cmd {
+func authRetryAddCmd(c Client, scope ipc.Scope, name string, value []byte, pw []byte, unsecure bool) tea.Cmd {
 	return func() tea.Msg {
 		pwCopy := append([]byte{}, pw...) //nolint:gocritic
-		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, CreateOnly: true, Password: pwCopy}, &ipc.PutResp{})
+		err := c.Call(ipc.OpPut, ipc.PutReq{Scope: scope, Name: name, Value: value, CreateOnly: true, Password: pwCopy, Unsecure: unsecure}, &ipc.PutResp{})
 		for i := range pw {
 			pw[i] = 0
 		}

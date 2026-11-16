@@ -107,6 +107,72 @@ versioning surface.
 1.3.8. `entry_versions` is append-only. Future `byn history` /
 `revert` / `diff` will read it; today only writes flow in.
 
+### 1.4 Unsecure entries
+
+1.4.1. An entry is either **secure** (sealed, §1.2.5) or **unsecure**. An
+unsecure entry's `aad_version` is `5` and its `entries.value` is
+`0x01 || HMAC-SHA-256(32 bytes) || value`: the value bytes under no key,
+preceded by a MAC (§1.4.9). It has no confidentiality at rest.
+
+1.4.2. Secure is the default. A write stores an entry unsecure ONLY when that
+write says so (`PutReq.Unsecure`). A write that does not say so MUST seal the
+value, including when the entry it replaces was unsecure; the response reports
+this (`PutResp.Resecured`). Unsecure is never inherited from a prior state.
+
+1.4.3. Reading an unsecure value MUST NOT require a session, a password, a
+presence token, an unlocked vault, or a trusted `.byn`, and MUST NOT be gated
+by an `[auth]` policy (including `get = "always"`). The read is audited as
+`get.unsecure`.
+
+1.4.4. Storing a value unsecure as it is written requires only what the write
+itself requires (creation is free; overwrite is `update`-gated, §5),
+including its key: an unlocked vault, the master password, or a grant's
+authored key for the scope. A locked vault with none of these MUST refuse the
+write exactly as it refuses a sealed one.
+
+1.4.5. Changing an EXISTING entry from secure to unsecure (`secure.set` with
+`Secure=false`) MUST require fresh proof of presence — the master password or
+a presence token. A session MUST NOT satisfy it and an `[auth]` policy MUST
+NOT relax it.
+
+1.4.6. Changing an entry from unsecure to secure is `update`-gated (a session
+satisfies it). Both directions need the vault key: a locked vault requires the
+password itself.
+
+1.4.7. `secure.set` is atomic over its names and acts only on entries that
+live in the named scope. A name present only by inheritance, or absent, MUST
+fail the whole request and change nothing.
+
+1.4.8. Renaming an unsecure entry keeps it unsecure.
+
+1.4.9. **Tamper evidence.** The MAC key is
+`HKDF-SHA-256(K_auth(scope), info="byn:plain-row-mac:v1")`, where `K_auth` is
+the scope's authored key. The MAC covers the 4-byte big-endian length of the
+entry's v3 AAD (scope ids, kind, name), that AAD, then the value — so a row
+does not verify under another name or in another env. Every unsecure row
+carries one; there is no unauthenticated form.
+
+1.4.10. The MAC MUST be verified wherever `K_auth` for the row's scope is at
+hand: every read on an unlocked vault, and on a locked one every read of a
+scope that some trusted `.byn` governs — a trusted exec, and equally `get`,
+an untrusted `.byn`'s run and `exec --unsecure` (any grant's capability
+carries `K_auth`; default's is taken from a grant that governs default, or,
+in a trusted exec, from the grant itself when sealed since inheritance was
+followed on the locked path). A row that fails, or whose
+blob is not in the §1.4.1 format, MUST NOT be returned or injected: `get`
+answers `value_tampered`, and an exec that would have carried it fails with
+`value_tampered` rather than running without it. A listing MUST still succeed.
+
+1.4.11. A read with no key at hand — a locked vault and no trusted `.byn`
+governing the row's scope — returns the value unverified. Such a read can
+only be a `get` or a run on unsecure values alone; it carries no sealed
+value.
+
+1.4.12. In the TUI and the portal, saving an edit to an unsecure entry stores
+the new value unsecure (the client sends `PutReq.Unsecure`, with the entry's
+state on screen beside the edit). §1.4.2 is unchanged: the daemon never
+infers it.
+
 ---
 
 ## 2. Scope hierarchy
@@ -316,13 +382,16 @@ so the vault is **left locked** afterwards. Like deletes, `vault rename`,
 (`authorizeMutationWhileLocked`); `project/env rename` still require unlock.
 
 5.2.4. **Env-var data plane:** `put`, `get` (alias `cat`), `list`
-(alias `ls`), `delete` (alias `rm`), `rename` (alias `mv`).
+(alias `ls`), `delete` (alias `rm`), `rename` (alias `mv`),
+`unsecure NAME|GLOB...`, `secure NAME|GLOB...` (§1.4). `put --unsecure`
+stores unsecure; `list --unsecure | --secure` filters.
 
 5.2.5. **Bulk I/O:** `import [PATH | -] [--format env|yaml|json]
 [--dry-run] [--skip-existing | --replace [--yes]]`,
 `export [--format env|yaml|json] [--output PATH]`.
 
-5.2.6. **Execution:** `exec -- COMMAND [ARGS...]`.
+5.2.6. **Execution:** `exec -- COMMAND [ARGS...]`,
+`exec --unsecure -- COMMAND [ARGS...]` (§6.3).
 
 5.2.7. **Editor / TUI:** `edit`, `view`, bare `byn` (no args).
 
@@ -427,6 +496,38 @@ or absent record MUST be treated as untrusted.
 6.2.5. Trust file integrity is currently UNIX-perms only. HMAC
 signing is designed and deferred (see
 internal design notes).
+
+### 6.3 Exec without trust: unsecure values only
+
+6.3.1. Trust gates SEALED values. A direct `byn exec -- COMMAND` whose `.byn`
+is untrusted, tampered, or stale MUST NOT be refused on that ground: it runs
+with the unsecure values (§1.4) that the file's `[exec] env` selects ("*"
+selects every unsecure value in scope) and with no sealed value.
+
+6.3.2. Such a run MUST be reported: the response carries why the file is not
+trusted (`ExecFetchResp.Untrusted`) and the names that were withheld
+(`WithheldValues`), and the CLI MUST print both as a warning on stderr on
+every such run. A withheld name is not reported as missing.
+
+6.3.3. Such a run executes as the CALLER. It MUST NOT be spawned under
+privilege separation: `exec.authorize` / `exec.spawn` answer `unsecure_only`
+and the CLI runs the command through `exec.fetch`.
+
+6.3.4. The `[exec] actions` gate, credentials, sessions and the vault's lock
+state are not consulted for such a run.
+
+6.3.5. Still refused without trust: the alias form (an alias is defined by the
+trust record), a `.byn` the daemon cannot read or parse, and a `.byn` trusted
+for a different vault or scope than the one requested.
+
+6.3.6. A trusted `.byn` changed to request MORE is still held for approval
+(§6.2), except that adding the name of a value that is unsecure at the time of
+the run is not a widening. The judgment is made per run: sealing the value
+later makes the same file a widening again.
+
+6.3.7. `exec --unsecure` requests §6.3.1 behavior outright, with or without a
+`.byn`; with none, every unsecure value in the scope is injected. An ad hoc
+`--var` request whose names are all unsecure is granted without approval.
 
 ---
 

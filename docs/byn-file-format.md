@@ -314,9 +314,31 @@ MAC-verify the `.byn` (machine-fingerprint + vault-key MACs, see
 | Trusted (hash matches, MACs valid) | **Inject** the allowlisted vars |
 | Changed, but asking for no more than was granted | **Inject** — see "A change is judged by what it asks for" below |
 | Changed, asking for MORE than was granted | **Queue a decision** and exit 75 with the request id — `byn approve <id>` |
-| Untrusted (no record) | **Abort** — `byn trust PATH` |
-| Tampered (a MAC failed — forged / copied from another machine) | **Abort** — re-establish with `byn trust PATH` |
-| Stale (record predates MAC hardening) | **Abort** — re-trust to add snapshot protection |
+| Untrusted (no record) | **Run on unsecure values only**, with a warning — `byn trust PATH` to get the rest |
+| Tampered (a MAC failed — forged / copied from another machine) | **Run on unsecure values only**, with a warning — re-establish with `byn trust PATH` |
+| Stale (record predates MAC hardening) | **Run on unsecure values only**, with a warning — re-trust to add snapshot protection |
+
+**Not trusted does not mean nothing runs.** Trust protects *sealed* values.
+A value stored [unsecure](cli-reference.md#byn-unsecure-nameglob--byn-secure-nameglob)
+can be read by anything with no password, so a `.byn` listing it grants
+nothing, trusted or not. When the file is not trusted, `byn exec -- COMMAND`
+therefore runs the command with the unsecure values `[exec] env` lists, leaves
+every sealed value out, and says so on stderr:
+
+```
+Warning: /repo/.byn is untrusted.
+Secure values were NOT injected: DATABASE_URL, STRIPE_KEY
+Running as you, with 2 unsecure value(s). If this command needs the rest, it will not have them.
+To trust it: byn trust /repo/.byn
+```
+
+This is what lets one `.byn` serve a whole monorepo: the commands that need
+only configuration keep working while the file waits for approval, and the
+ones that need a secret show exactly why they will not get it. Such a run is
+the caller's own — it runs at your UID rather than under privilege separation,
+and `[exec] actions` is not consulted, since nothing it is given is protected.
+The alias form (`byn exec NAME`) still needs a trusted file, because the alias
+itself comes from the trust record.
 
 ### A change is judged by what it asks for, not by its bytes
 
@@ -338,6 +360,10 @@ against the policy that was granted:
   prompting for it only teaches people the prompt is noise. Enforcement
   follows the current file, so a removed variable stops being injected at
   once rather than lingering until the next re-trust.
+- **More requested, but only unsecure values** → the run proceeds. Adding the
+  name of an unsecure value to `[exec] env` asks for nothing that was not
+  already readable. This is judged at each run: seal the value later and the
+  same line becomes a request for more.
 - **More requested** → a decision is queued and the caller is told its id
   instead of dying on a prompt. See [Approvals](#approvals).
 

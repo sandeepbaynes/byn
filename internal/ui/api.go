@@ -461,18 +461,21 @@ func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPost:
 		var body struct {
-			Scope         scopeBody `json:"scope"`
-			Name          string    `json:"name"`
-			Value         string    `json:"value"`
-			CreateOnly    bool      `json:"create_only"`
-			Password      string    `json:"password"`
-			PresenceToken []byte    `json:"presence_token"`
+			Scope      scopeBody `json:"scope"`
+			Name       string    `json:"name"`
+			Value      string    `json:"value"`
+			CreateOnly bool      `json:"create_only"`
+			// Unsecure stores the value unsealed. Only ever what this request
+			// says: the daemon seals a write that does not ask.
+			Unsecure      bool   `json:"unsecure"`
+			Password      string `json:"password"`
+			PresenceToken []byte `json:"presence_token"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		req := ipc.PutReq{Scope: body.Scope.toIPC(), Name: body.Name, Value: []byte(body.Value), CreateOnly: body.CreateOnly, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
+		req := ipc.PutReq{Scope: body.Scope.toIPC(), Name: body.Name, Value: []byte(body.Value), CreateOnly: body.CreateOnly, Unsecure: body.Unsecure, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
 		if !s.runInVault(w, r, body.Scope.Vault, ipc.OpPut, req, &ipc.PutResp{}) {
 			return
 		}
@@ -505,10 +508,39 @@ func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":   resp.Name,
-		"value":  string(resp.Value),
-		"source": resp.Source,
+		"name":     resp.Name,
+		"value":    string(resp.Value),
+		"source":   resp.Source,
+		"unsecure": resp.Unsecure,
 	})
+}
+
+// POST /api/entry/secure {scope, names, secure, password?, presence_token?} —
+// move entries between sealed and unsecure, all of them or none.
+//
+// Sealing (secure: true) is an ordinary update and passes on the portal's
+// session. Making a value unsecure never does: the daemon answers
+// auth_required until this request itself carries the master password or a
+// presence token, whatever session is attached, and the page's step-up
+// supplies it.
+func (s *Server) handleEntrySecure(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope         scopeBody `json:"scope"`
+		Names         []string  `json:"names"`
+		Secure        bool      `json:"secure"`
+		Password      string    `json:"password"`
+		PresenceToken []byte    `json:"presence_token"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var resp ipc.SecureSetResp
+	req := ipc.SecureSetReq{Scope: body.Scope.toIPC(), Names: body.Names, Secure: body.Secure, Password: []byte(body.Password), PresenceToken: body.PresenceToken}
+	if !s.runInVault(w, r, body.Scope.Vault, ipc.OpSecureSet, req, &resp) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "changed": resp.Changed, "unchanged": resp.Unchanged})
 }
 
 // POST /api/entry/delete {scope, name, password?, presence_token?}. Password

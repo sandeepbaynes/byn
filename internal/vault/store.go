@@ -57,7 +57,10 @@ const (
 	// agent's name on a run record — the pid alone identifies nothing by
 	// the time anyone audits it. v8: which of a run's values byn had taken
 	// in with no credential behind them.
-	schemaVersion = 9
+	// v10: unsecure entries (aad_version 5, stored unsealed). No table changes;
+	// the bump exists so a binary that predates them refuses the vault outright
+	// instead of failing on individual rows.
+	schemaVersion = 10
 
 	// FileMetaMACKeyInfo is the HKDF info string for the HMAC key used to
 	// sign file_meta.sha256_hmac entries. Using a keyed HMAC instead of
@@ -182,10 +185,12 @@ func (s Scope) Validate() error {
 
 // Entry is a get result. Value is decrypted plaintext.
 type Entry struct {
-	Name      string
-	Value     []byte
-	Kind      string // "env_var" or "file"
-	Source    Source
+	Name   string
+	Value  []byte
+	Kind   string // "env_var" or "file"
+	Source Source
+	// Unsecure is true when the value was stored unsealed (see unsecure.go).
+	Unsecure  bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -200,10 +205,13 @@ type Entry struct {
 // of overhead; empty plaintext → exactly 41 bytes). This is deterministic
 // and requires no decryption.
 type EntryInfo struct {
-	Name      string
-	Kind      string
-	Source    Source
-	IsEmpty   bool // true when stored ciphertext encodes an empty value
+	Name    string
+	Kind    string
+	Source  Source
+	IsEmpty bool // true when stored ciphertext encodes an empty value
+	// Unsecure is true when the value is stored unsealed (see unsecure.go):
+	// readable with no credential, by design.
+	Unsecure  bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	// InDefault is true when a SourceScope row in a non-default env shadows an
@@ -1272,16 +1280,16 @@ func (s *Store) ListEnvVars(ctx context.Context, scope Scope) ([]EntryInfo, erro
 	// differ from default without decryption either.
 	rows, err := s.db.QueryContext(ctx,
 		`WITH scope_entries AS (
-			SELECT name, kind, created_at, updated_at, 'scope' AS source, length(value) AS ct_len
+			SELECT name, kind, created_at, updated_at, 'scope' AS source, length(value) AS ct_len, aad_version AS ver
 			FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		), default_entries AS (
-			SELECT name, kind, created_at, updated_at, 'default' AS source, length(value) AS ct_len
+			SELECT name, kind, created_at, updated_at, 'default' AS source, length(value) AS ct_len, aad_version AS ver
 			FROM entries WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		)
-		SELECT s.name, s.kind, s.created_at, s.updated_at, s.source, s.ct_len, d.ct_len
+		SELECT s.name, s.kind, s.created_at, s.updated_at, s.source, s.ct_len, s.ver, d.ct_len, d.ver
 		FROM scope_entries s LEFT JOIN default_entries d ON d.name = s.name
 		UNION ALL
-		SELECT name, kind, created_at, updated_at, source, ct_len, NULL FROM default_entries
+		SELECT name, kind, created_at, updated_at, source, ct_len, ver, NULL, NULL FROM default_entries
 		WHERE name NOT IN (SELECT name FROM scope_entries)
 		ORDER BY 1`,
 		projectID, envID, projectID, defaultEnvID)
@@ -1305,6 +1313,11 @@ func (s *Store) ListEnvVars(ctx context.Context, scope Scope) ([]EntryInfo, erro
 	defer zero(key)
 	for _, i := range undecided {
 		same, err := s.equalsDefault(ctx, key, projectID, envID, defaultEnvID, infos[i].Name)
+		if errors.Is(err, ErrPlainTampered) {
+			// A listing is how the owner finds the row to fix; it must not be
+			// the thing that fails. The comparison stays undecided.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1484,16 +1497,28 @@ func (s *Store) RenameEnvVar(ctx context.Context, scope Scope, oldName, newName 
 	if err != nil {
 		return fmt.Errorf("vault: decrypt during rename: %w", err)
 	}
-	ctNew, err := s.sealEntry(key, projectID, envID, kindAADEnvVar, newName, pt)
-	if err != nil {
+	// An unsecure value stays unsecure under its new name: a rename is not the
+	// place where what a value is quietly changes.
+	newVer := currentAADVersion
+	var ctNew []byte
+	if oldVer == aadVersionPlain {
+		// The MAC binds the name, so it is made again under the new one.
+		newVer = aadVersionPlain
+		ctNew, err = s.sealPlainWithVaultKey(key, projectID, envID, kindAADEnvVar, newName, pt)
+		if err != nil {
+			return fmt.Errorf("vault: rename unsecure value: %w", err)
+		}
+	} else {
+		ctNew, err = s.sealEntry(key, projectID, envID, kindAADEnvVar, newName, pt)
 		zero(pt)
-		return fmt.Errorf("vault: encrypt during rename: %w", err)
+		if err != nil {
+			return fmt.Errorf("vault: encrypt during rename: %w", err)
+		}
 	}
-	zero(pt)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE entries SET name = ?, value = ?, aad_version = ?, updated_at = ?
 		 WHERE project_id = ? AND env_id = ? AND kind = 'env_var' AND name = ?`,
-		newName, ctNew, currentAADVersion, nowUnix(), projectID, envID, oldName); err != nil {
+		newName, ctNew, newVer, nowUnix(), projectID, envID, oldName); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1529,6 +1554,12 @@ const (
 	// and it is deliberately a different key so that holding it opens only
 	// entries written this way — never the secrets that were already there.
 	aadVersionAuthoredKey = 4
+	// aadVersionPlain marks an UNSECURE entry: the value column holds the raw
+	// bytes, sealed under nothing. See unsecure.go. It is a scheme like the
+	// others so that every reader has to decide what to do with one — a reader
+	// that does not know it fails closed on "unknown aad_version" rather than
+	// handing ciphertext-shaped garbage to a caller.
+	aadVersionPlain = 5
 
 	// currentAADVersion is the scheme all new writes use. Deriving row keys
 	// through a per-(project, env) scope key means a trusted .byn can be granted
@@ -1634,6 +1665,10 @@ func (s *Store) openEntry(vaultKey []byte, aadVersion int, projectID, envID int6
 		}
 		defer zero(krow)
 		return vcrypto.DecryptWithAAD(krow, ct, s.entryAADV3(projectID, envID, kind, name))
+	case aadVersionPlain:
+		// Nothing to decrypt, but the row carries a MAC, and a caller that got
+		// here holding the vault key can check it.
+		return s.openPlainWithVaultKey(vaultKey, projectID, envID, kind, name, ct)
 	case aadVersionAuthoredKey:
 		// An unlocked vault can open these too: the authored key is derived
 		// from the vault key, so the master password remains a complete
@@ -1740,6 +1775,7 @@ func (s *Store) decryptEntry(key []byte, r entryRow, source Source) (Entry, erro
 		Value:     pt,
 		Kind:      r.Kind,
 		Source:    source,
+		Unsecure:  r.AADVersion == aadVersionPlain,
 		CreatedAt: time.Unix(r.CreatedAt, 0).UTC(),
 		UpdatedAt: time.Unix(r.UpdatedAt, 0).UTC(),
 	}, nil
@@ -1753,9 +1789,19 @@ func (s *Store) decryptEntry(key []byte, r entryRow, source Source) (Entry, erro
 // has an empty plaintext — no decryption required.
 const emptyCiphertextLen = 41
 
+// plainLen is the length of the value a stored blob holds, from the blob's
+// length alone. A sealed row carries a fixed AEAD overhead; an unsecure row
+// carries a version byte and a MAC.
+func plainLen(storedLen, aadVersion int) int {
+	if aadVersion == aadVersionPlain {
+		return storedLen - plainHeaderLen
+	}
+	return storedLen - emptyCiphertextLen
+}
+
 func (s *Store) listEntriesForEnv(ctx context.Context, projectID, envID int64, source Source) ([]EntryInfo, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, created_at, updated_at, length(value) FROM entries
+		`SELECT name, kind, created_at, updated_at, length(value), aad_version FROM entries
 		 WHERE project_id = ? AND env_id = ? AND kind = 'env_var'
 		 ORDER BY name`,
 		projectID, envID)
@@ -1768,12 +1814,13 @@ func (s *Store) listEntriesForEnv(ctx context.Context, projectID, envID int64, s
 	for rows.Next() {
 		var info EntryInfo
 		var createdNs, updatedNs int64
-		var ctLen int
-		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &ctLen); err != nil {
+		var ctLen, aadVer int
+		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &ctLen, &aadVer); err != nil {
 			return nil, err
 		}
 		info.Source = source
-		info.IsEmpty = ctLen == emptyCiphertextLen
+		info.Unsecure = aadVer == aadVersionPlain
+		info.IsEmpty = plainLen(ctLen, aadVer) == 0
 		info.CreatedAt = time.Unix(createdNs, 0).UTC()
 		info.UpdatedAt = time.Unix(updatedNs, 0).UTC()
 		out = append(out, info)
@@ -1792,14 +1839,18 @@ func scanMergedEntryInfos(rows *sql.Rows) ([]EntryInfo, []int, error) {
 		var info EntryInfo
 		var createdNs, updatedNs int64
 		var source string
-		var ctLen int
-		var defaultCtLen sql.NullInt64
-		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &source, &ctLen, &defaultCtLen); err != nil {
+		var ctLen, aadVer int
+		var defaultCtLen, defaultVer sql.NullInt64
+		if err := rows.Scan(&info.Name, &info.Kind, &createdNs, &updatedNs, &source, &ctLen, &aadVer, &defaultCtLen, &defaultVer); err != nil {
 			return nil, nil, err
 		}
 		info.CreatedAt = time.Unix(createdNs, 0).UTC()
 		info.UpdatedAt = time.Unix(updatedNs, 0).UTC()
-		info.IsEmpty = ctLen == emptyCiphertextLen
+		info.Unsecure = aadVer == aadVersionPlain
+		// Value lengths, not stored lengths: a sealed row and an unsecure one
+		// holding the same value are different sizes on disk.
+		ownLen := plainLen(ctLen, aadVer)
+		info.IsEmpty = ownLen == 0
 		if source == "default" {
 			info.Source = SourceDefault
 		} else if defaultCtLen.Valid {
@@ -1808,10 +1859,10 @@ func scanMergedEntryInfos(rows *sql.Rows) ([]EntryInfo, []int, error) {
 			// lengths hold plaintexts of different lengths: settled without
 			// the key. Two empty values are equal for the same reason.
 			switch {
-			case int64(ctLen) != defaultCtLen.Int64:
+			case ownLen != plainLen(int(defaultCtLen.Int64), int(defaultVer.Int64)):
 				same := false
 				info.SameAsDefault = &same
-			case ctLen == emptyCiphertextLen:
+			case ownLen == 0:
 				same := true
 				info.SameAsDefault = &same
 			default:

@@ -3,6 +3,75 @@
 Notable changes per release. The GitHub release page carries the full commit
 list; this file carries what you need to know before upgrading.
 
+## Unreleased
+
+### New: unsecure values — config that needs no password
+
+Not everything in a `.env` is a secret, and treating `PORT` like
+`STRIPE_KEY` meant an approval for every read of either. A value can now be
+stored **unsecure**: `byn get` returns it with no password, locked or not, and
+`byn exec` injects it without a trusted `.byn`.
+
+- `byn put --unsecure NAME` stores one. `byn unsecure NAME|GLOB...` opens up
+  values already stored — it **always** asks for the master password; a
+  session is not enough. `byn secure NAME|GLOB...` seals them again.
+- **Secure stays the default and is never inherited away.** A `put` or
+  `import` that does not say unsecure seals the value, even over a name that
+  was unsecure, and tells you. Nothing becomes unsecure by accident.
+- `byn import` reads a `# unsecure` line in the comment block above a
+  variable (that variable only); `--unsecure-names LIST` does the same for
+  YAML/JSON. `byn export` writes the marker back; `byn export --unsecure`
+  needs no password.
+- `byn list --unsecure | --secure`, a mark in `--long`, `"unsecure"` in
+  `--json`. New audit ops: `get.unsecure`, `put.unsecure`,
+  `put.unattended.unsecure`, `unsecure`, `secure`, `exec.unsecure`.
+
+An unsecure value is stored **unsealed** — not encrypted — but not free to
+change: each one carries a MAC keyed from its scope's key, and byn refuses a
+value that was edited in the vault file (`value_tampered`) wherever it holds
+that key: on an unlocked vault, and on a locked one for any scope a trusted
+`.byn` governs. A locked read of a scope no trusted `.byn` governs cannot be
+checked. Because the
+MAC needs a key, storing an unsecure value takes what storing a sealed one
+takes: an unlocked vault, the master password, or a trusted `.byn` for the
+scope. See
+[Known weaknesses](docs/security.md#known-weaknesses--how-to-protect-yourself).
+
+The TUI and the portal show which values are unsecure and can change it:
+`:unsecure` / `:secure` in the TUI (and `:w unsecure` / `:w secure` when
+saving), a lock button on each row in the portal and an `unsecure` tick-box
+when adding. Editing an unsecure value in either keeps it unsecure — its
+state is on screen beside the edit — where `byn put` seals unless told
+otherwise. The portal's import and export read and write the `# unsecure`
+marker.
+
+### Changed: an untrusted `.byn` no longer stops `byn exec`
+
+**Behavior change.** `byn exec -- COMMAND` against an untrusted, tampered or
+stale `.byn` used to exit 3. It now **runs the command** with the unsecure
+values the file lists and **without** any sealed value, and prints a warning
+naming what was withheld. A monorepo with one `.byn` keeps working for the
+commands that need no secrets while the file waits to be trusted.
+
+- A script that relied on exit 3 to detect an untrusted `.byn` will no longer
+  see it for a plain command. The warning is on stderr; with `--json`-style
+  callers, check `byn trust list` or run `byn exec --dry-run`.
+- Such a run executes as you, not under privilege separation, and does not
+  consult `[exec] actions` — it is handed nothing that either protects.
+- Still refused: the alias form, a `.byn` byn cannot read, and a `.byn`
+  trusted for a different vault or scope.
+- A trusted `.byn` that grows by the name of an unsecure value now runs with
+  no approval. Any other widening is queued exactly as before.
+- `byn exec --unsecure -- COMMAND` asks for this outright, with or without a
+  `.byn`; `--var NAME` is granted at once when every name is unsecure.
+
+### Vault schema v10
+
+Unsecure values are a new row scheme, so the vault schema moves to v10. The
+upgrade is automatic on first open and writes the usual
+`vault.db.v<N>.bak` snapshot first. **An older byn will refuse a vault this
+version has opened** — upgrade every machine that shares it.
+
 ## v0.9.2 — 2026-10-28
 
 ### Fix: ad hoc `byn exec --var` was refused on macOS

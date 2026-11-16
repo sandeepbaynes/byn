@@ -40,6 +40,7 @@ type Styles struct {
 
 	// Inheritance badges shown on every entry row in non-default envs.
 	StatusInherited  lipgloss.Style // ↓ dim cyan — value comes from default
+	StatusUnsecure   lipgloss.Style // ◌ yellow — stored unsealed, readable without a password
 	StatusOverridden lipgloss.Style // ⤴ yellow — also in default with a different value; this env wins
 	StatusSame       lipgloss.Style // = dim — also in default with the same value; a redundant copy
 	StatusNew        lipgloss.Style // ✦ green — created in this env only
@@ -108,6 +109,7 @@ func NewStyles() Styles {
 		AuditError:  lipgloss.NewStyle().Foreground(c("1")).Bold(true),
 
 		StatusInherited:  lipgloss.NewStyle().Foreground(c("6")).Faint(true),
+		StatusUnsecure:   lipgloss.NewStyle().Foreground(c("3")),
 		StatusOverridden: lipgloss.NewStyle().Foreground(c("3")).Bold(true),
 		StatusSame:       lipgloss.NewStyle().Foreground(c("8")),
 		StatusNew:        lipgloss.NewStyle().Foreground(c("2")).Bold(true),

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	vcrypto "github.com/sandeepbaynes/byn/internal/vault/crypto"
@@ -518,8 +519,10 @@ func TestMigrateV4toV5_InPlace(t *testing.T) {
 		`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&got); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if got != "5" {
-		t.Fatalf("schema_version=%s after open, want 5", got)
+	// The walk continues past v5 to whatever is current, and the last step
+	// records it.
+	if want := strconv.Itoa(schemaVersion); got != want {
+		t.Fatalf("schema_version=%s after open, want %s", got, want)
 	}
 	var lamport int64
 	if err := st2.db.QueryRowContext(ctx,

@@ -98,7 +98,7 @@ func httpStatusForCode(code ipc.ErrCode) int {
 		ipc.CodeEnvNotFound, ipc.CodeNotInit:
 		return http.StatusNotFound
 	case ipc.CodeAlreadyExists, ipc.CodeVaultExists, ipc.CodeProjectExists,
-		ipc.CodeEnvExists, ipc.CodeAlreadyInit:
+		ipc.CodeEnvExists, ipc.CodeAlreadyInit, ipc.CodeTampered:
 		return http.StatusConflict
 	case ipc.CodeBadName, ipc.CodeBadRequest, ipc.CodeUnknownOp,
 		ipc.CodeEnvProtected, ipc.CodeFingerprint:

@@ -60,8 +60,8 @@ var completionCommands = []string{
 	"approve", "audit", "completion", "config-auth", "daemon", "delete", "describe",
 	"doctor", "edit", "env", "exec", "export", "get", "help", "import", "init",
 	"kill", "list", "lock", "migrate", "note", "passwd", "project", "ps", "put",
-	"reload", "rename", "repair", "request", "restart", "runs", "setup", "skill",
-	"start", "status", "stop", "trust", "uninstall", "unlock", "untrust", "vault",
+	"reload", "rename", "repair", "request", "restart", "runs", "secure", "setup", "skill",
+	"start", "status", "stop", "trust", "uninstall", "unlock", "unsecure", "untrust", "vault",
 	"version", "web",
 }
 

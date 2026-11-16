@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -45,11 +46,13 @@ func runImport(args []string, scope cliScope) int {
 	unattended := fs.Bool("unattended", false,
 		"put values stored unattended under the master password (NAME... or all in scope)")
 	all := fs.Bool("all", false, "with --unattended: every scope in the vault")
+	unsecureNames := fs.String("unsecure-names", "",
+		"comma-separated names or globs to store UNSECURE (readable with no password); a .env file can say `# unsecure` above a variable instead")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
 	if *unattended {
-		if *format != "" || *skipExisting || *replace || *yes {
+		if *format != "" || *skipExisting || *replace || *yes || *unsecureNames != "" {
 			fmt.Fprintln(os.Stderr, "Error: --unattended imports values already in the vault; it takes no file flags")
 			return exitErr
 		}
@@ -110,6 +113,11 @@ func runImport(args []string, scope cliScope) int {
 		fmt.Fprintln(os.Stderr, "(no entries found in input)")
 		return exitOK
 	}
+	unsecure, uerr := importUnsecureSet(entries, *unsecureNames)
+	if uerr != nil {
+		fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), uerr)
+		return exitErr
+	}
 
 	dir, err := defaultDir()
 	if err != nil {
@@ -157,7 +165,11 @@ func runImport(args []string, scope cliScope) int {
 			fmt.Printf("  add/overwrite (%d entries from input):\n", len(entries))
 		}
 		for _, e := range entries {
-			fmt.Printf("    + %s = (%d bytes)%s\n", e.k, len(e.v), annotationSummary(e.ann))
+			mark := ""
+			if unsecure[e.k] {
+				mark = "  [UNSECURE — readable with no password]"
+			}
+			fmt.Printf("    + %s = (%d bytes)%s%s\n", e.k, len(e.v), annotationSummary(e.ann), mark)
 		}
 		return exitOK
 	}
@@ -244,6 +256,7 @@ func runImport(args []string, scope cliScope) int {
 	// value exists.
 	created, updated, skipped := 0, 0, 0
 	described, noted := 0, 0
+	var storedUnsecure, resecured []string
 	for _, e := range entries {
 		req := ipc.PutReq{
 			Scope:      scopeIPC,
@@ -251,11 +264,17 @@ func runImport(args []string, scope cliScope) int {
 			Value:      []byte(e.v),
 			CreateOnly: *skipExisting,
 			Password:   sharedPw,
+			// Per variable, from its own marker or --unsecure-names. Anything
+			// that does not say so is sealed, including a variable that was
+			// unsecure before this import: the file is the statement of what
+			// each value is, and silence means "a secret".
+			Unsecure: unsecure[e.k],
 		}
 		if e.ann.desc != "" && e.ann.desc != vaultDescription(existing[e.k]) {
 			req.Description = e.ann.desc
 		}
-		err := client.Call(ipc.OpPut, req, &ipc.PutResp{})
+		var presp ipc.PutResp
+		err := client.Call(ipc.OpPut, req, &presp)
 		if err != nil && isAuthRequiredErr(err) {
 			if aerr := acquireSharedPw(); aerr != nil {
 				fmt.Fprintf(os.Stderr, "%s %v\n", boldRed("Error:"), aerr)
@@ -263,7 +282,8 @@ func runImport(args []string, scope cliScope) int {
 			}
 			// Retry this entry with the now-known password.
 			req.Password = sharedPw
-			err = client.Call(ipc.OpPut, req, &ipc.PutResp{})
+			presp = ipc.PutResp{}
+			err = client.Call(ipc.OpPut, req, &presp)
 		}
 		if err != nil {
 			if *skipExisting && isAlreadyExists(err) {
@@ -277,6 +297,12 @@ func runImport(args []string, scope cliScope) int {
 			created++
 		} else {
 			updated++
+		}
+		if presp.Unsecure {
+			storedUnsecure = append(storedUnsecure, e.k)
+		}
+		if presp.Resecured {
+			resecured = append(resecured, e.k)
 		}
 		if req.Description != "" {
 			described++
@@ -301,7 +327,66 @@ func runImport(args []string, scope cliScope) int {
 	if described > 0 || noted > 0 {
 		hintf("Set %d description(s) and added %d note(s) from the file's comments.", described, noted)
 	}
+	// Not hints: both are about what can now be read without a password, and
+	// that is not something to say only when someone is watching.
+	if len(storedUnsecure) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %d value(s) stored UNSECURE — readable with no password by anything that can run byn: %s\n",
+			yellow("note:"), len(storedUnsecure), strings.Join(storedUnsecure, ", "))
+	}
+	if len(resecured) > 0 {
+		fmt.Fprintf(os.Stderr, "%s %d value(s) were unsecure and are now sealed (not marked unsecure in this import): %s\n",
+			yellow("note:"), len(resecured), strings.Join(resecured, ", "))
+		fmt.Fprintf(os.Stderr, "      To keep one readable without a password: byn unsecure NAME\n")
+	}
 	return exitOK
+}
+
+// importUnsecureSet decides, per variable, whether an import stores it
+// unsecure. A variable's own marker is the last word on it — `# unsecure` makes
+// it so, `# secure` keeps it sealed — and the --unsecure-names patterns cover
+// the rest, which is how a JSON or YAML file, with no comments to carry a
+// marker, says the same thing. No match and no marker means sealed.
+//
+// A pattern that matches nothing in the file is an error. It is almost always
+// a typo, and the alternative is an import that quietly seals a value its
+// caller believes it just made readable.
+func importUnsecureSet(entries []kv, patterns string) (map[string]bool, error) {
+	var pats []string
+	for _, p := range strings.Split(patterns, ",") {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		if _, err := path.Match(p, ""); err != nil {
+			return nil, fmt.Errorf("--unsecure-names: invalid pattern %q: %v", p, err)
+		}
+		pats = append(pats, p)
+	}
+	used := make([]bool, len(pats))
+	out := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		byPattern := false
+		for i, p := range pats {
+			if ok, _ := path.Match(p, e.k); ok {
+				used[i], byPattern = true, true
+			}
+		}
+		switch e.ann.marker {
+		case markerUnsecure:
+			out[e.k] = true
+		case markerSecure:
+			// stays sealed, whatever the patterns say
+		default:
+			if byPattern {
+				out[e.k] = true
+			}
+		}
+	}
+	for i, p := range pats {
+		if !used[i] {
+			return nil, fmt.Errorf("--unsecure-names: %q matches no variable in this import", p)
+		}
+	}
+	return out, nil
 }
 
 // vaultDescription is the description stored in the vault for m. Text a

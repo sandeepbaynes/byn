@@ -78,7 +78,9 @@ func (d *Daemon) handleExecAuthorize(ctx context.Context, env *ipc.Envelope) *ip
 	// Shared authorization gate — identical to exec.fetch/exec.spawn. It audits the
 	// authorization decision exactly once (denials already audited); we must not
 	// re-audit on success here.
-	values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, missing, unattended, le := d.authorizeExec(ctx, env.ID, req.ExecFetchReq)
+	// asCaller=false: this path hands the run to the privsep helper. A run with no
+	// trust behind it is answered with unsecure_only instead, and the CLI runs it.
+	values, resolvedArgv, wildcard, noneDeclared, actionsWildcard, missing, unattended, _, le := d.authorizeExec(ctx, env.ID, req.ExecFetchReq, false)
 	if le != nil {
 		return le
 	}

@@ -58,6 +58,15 @@ eq(ann("# desc\n## note one\n# stray\n## note two\nK=v\n"),
   { desc: "desc", notes: ["note one", "note two"] }, "# after a note is dropped");
 eq(ann("### a note\n##no space\n##\nK=v\n").notes, ["a note", "no space"], "### is a note");
 eq(ann("# Database settings\n\nDB_URL=x\n"), { desc: "", notes: [] }, "blank line ends the block");
+eq(ann("# unsecure\n# the port\nPORT=1\n"), { desc: "the port", notes: [], marker: "unsecure" }, "unsecure marker");
+eq(ann("# the port\n#  UnSecure \nPORT=1\n"), { desc: "the port", notes: [], marker: "unsecure" }, "marker anywhere in the block, any case");
+eq(ann("# unsecure\nA=1\nB=2\n", 1), { desc: "", notes: [] }, "the marker belongs to one variable");
+eq(ann("# unsecure\n\nA=1\n"), { desc: "", notes: [] }, "a blank line ends the marker too");
+eq(ann("# unsecure by default\nA=1\n"), { desc: "unsecure by default", notes: [] }, "a sentence is a description");
+eq(ann("## unsecure\nA=1\n"), { desc: "", notes: ["unsecure"] }, "## unsecure is a note");
+eq(ann("# secure\nA=1\n"), { desc: "", notes: [], marker: "secure" }, "secure marker");
+eq(annotationComments({ desc: "the port", notes: [], marker: "unsecure" }), ["# unsecure", "# the port"], "export writes the marker first");
+eq(annotationComments({ desc: "", notes: [], marker: "" }), [], "nothing for a sealed, undescribed value");
 for (const l of ["# OLD_KEY=sk_live_123", "#export OLD_KEY=x", "# app.port = 80"]) {
   eq(ann("# about the old key\n" + l + "\nNEW_KEY=v\n"), { desc: "", notes: [] }, "commented-out " + l);
 }

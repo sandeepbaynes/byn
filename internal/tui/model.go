@@ -126,7 +126,11 @@ type editBuf struct {
 	OnNameField bool
 	OriginalVal string // for INSERT, the pre-edit value; used for dirty + size delta
 	IsNew       bool   // ADD-ENTRY vs INSERT
-	IsRename    bool   // RENAME variant of edit
+	// Unsecure says the commit stores the value unsealed. An edit starts from
+	// what the entry already is — the row says "unsecure" right above the box,
+	// so saving keeps it — and `:w secure` / `:w unsecure` choose otherwise.
+	Unsecure bool
+	IsRename bool // RENAME variant of edit
 	// NameError, when non-empty, blocks commit and triggers red-bordered
 	// rendering of the NAME field plus an inline error message under it.
 	// Set live as the user types in ADD-ENTRY mode (duplicate detection).
@@ -619,6 +623,8 @@ type authReqState struct {
 	value      []byte
 	newName    string // rename new name (rename op)
 	createOnly bool   // true when the original add used CreateOnly
+	unsecure   bool   // put op: store the value unsealed
+	secure     bool   // secure-set op: the state being asked for
 }
 
 // scopeRenameState backs ModeScopeRename: an inline rename of a rail node

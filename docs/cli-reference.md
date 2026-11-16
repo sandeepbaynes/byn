@@ -388,6 +388,70 @@ Requires unlock (re-encryption needs the vault key).
 - Locked vault: hard fail ("byn unlock") — re-encryption requires the
   vault key.
 
+### `byn unsecure NAME|GLOB...` / `byn secure NAME|GLOB...`
+
+Choose whether a value needs a password to read. Both take `--dry-run`,
+`--json` and `--password-stdin`.
+
+An **unsecure** value is for configuration that is not a secret — a port, a
+region, a log level. It is:
+
+- returned by `byn get` with no password and no session, locked or not;
+- injected by `byn exec` without a trusted `.byn` (see [Execution](#execution));
+- stored **unsealed**: not encrypted on disk, and not protected against being
+  altered by something that can write the vault file.
+
+Everything is **secure unless told otherwise**, and nothing becomes unsecure
+by accident:
+
+| How a value gets written | Result |
+|---|---|
+| `byn put NAME` | sealed — even if `NAME` was unsecure before (byn says so) |
+| `byn put --unsecure NAME` | unsecure, for this write |
+| `byn import FILE` | sealed, except variables marked `# unsecure` in a `.env`, or matched by `--unsecure-names` |
+| editing a value in the TUI or portal | what it was — the row shows `unsecure` beside the edit. `:w secure` / `:w unsecure` in the TUI, or the lock button in the portal, change it |
+| adding a value in the TUI or portal | sealed, unless you say `:w unsecure` or tick `unsecure` |
+
+- `byn unsecure` publishes values that are **already stored** to everything on
+  the machine that can run byn. It **always asks for the master password**: a
+  session is not enough, and an `[auth]` policy cannot relax it.
+- `byn secure` seals them again. A session is enough, since it only takes
+  access away. It does not take back what could be read before — rotate a
+  value that was a real secret.
+- Several names and globs are changed **all or none**, in the active scope
+  only. A value an env inherits from `default` is changed in `default`.
+- `byn list --unsecure` shows what can be read without a password;
+  `byn list --long` marks each one; `--json` carries `"unsecure": true`.
+
+Storing a value unsecure *as you write it* needs nothing beyond what any write
+needs — you supplied the value, so nothing is disclosed to you. Only turning
+an existing sealed value unsecure needs the password. (A write to a **locked**
+vault needs a key either way: the master password, or a trusted `.byn` for the
+scope.)
+
+**Unsecure is not unprotected from change.** Each unsecure value carries a MAC,
+and byn refuses one that was edited in the vault file — `value_tampered` —
+whenever it holds the scope's key: with the vault unlocked, or locked with a
+trusted `.byn` for the scope. Set the value again to repair it. A locked vault
+with no trusted `.byn` for the scope has no key to check with.
+
+In the TUI, `:unsecure` and `:secure` act on the selected value; in the portal
+each row has a lock button.
+
+In a `.env` file the marker goes in the comment block directly above the
+variable, and applies to that one variable only:
+
+```sh
+# unsecure
+# the port the dev server listens on
+PORT=8080
+
+STRIPE_KEY=sk_live_...     # no marker: sealed
+```
+
+`byn export` writes the marker back, and `byn export --unsecure` writes only
+the unsecure values (no password needed).
+
 ---
 
 ## Commentary (descriptions and notes)

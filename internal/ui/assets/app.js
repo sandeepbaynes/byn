@@ -2660,7 +2660,7 @@ async function exportEnv() {
       const r = await apiWithAuth("POST", "/api/entry/reveal", { scope: curScope(), name: e.name }, s.vault);
       // Each value's description and notes ride above it as comments (see
       // parseDotenv). An inherited value's notes are default's.
-      const ann = { desc: vaultDescription(e), notes: [] };
+      const ann = { desc: vaultDescription(e), notes: [], marker: e.unsecure ? "unsecure" : "" };
       if (e.notes > 0) {
         const d = await api("GET", "/api/annotations?" + scopeQuery(e.source === "default" ? "default" : undefined) +
           "&type=entry&name=" + enc(e.name));
@@ -2780,10 +2780,16 @@ async function applyImport(pairs) {
   const scope = curScope();
   let ok = 0, described = 0, noted = 0;
   const withheld = [];
+  // A variable is stored unsecure only when ITS comment block says so; every
+  // other one is sealed, including one that was unsecure before.
+  const stayedOpen = [], resealed = [];
   for (const [k, v, ann] of pairs) {
     try {
-      await apiWithAuth("POST", "/api/entries", { scope, name: k, value: v }, state.scope.vault);
+      const unsecure = !!(ann && ann.marker === "unsecure");
+      await apiWithAuth("POST", "/api/entries", { scope, name: k, value: v, unsecure }, state.scope.vault);
       ok++;
+      if (unsecure) stayedOpen.push(k);
+      else if (existing.get(k) && existing.get(k).unsecure) resealed.push(k);
       if (!ann) continue;
       const target = { type: "entry", name: k };
       if (ann.desc && ann.desc !== vaultDescription(existing.get(k))) {
@@ -2810,6 +2816,8 @@ async function applyImport(pairs) {
   let msg = `imported ${ok}/${pairs.length} vars`;
   if (described || noted) msg += ` · ${described} description(s), ${noted} note(s)`;
   toast(msg);
+  if (stayedOpen.length) toast(`stored unsecure (readable without a password): ${stayedOpen.join(", ")}`);
+  if (resealed.length) toast(`sealed — were unsecure, and the file did not mark them: ${resealed.join(", ")}`, true);
   if (withheld.length) toast(`notes not imported (existing notes unreadable): ${withheld.join(", ")}`, true);
   await loadEntries();
 }
@@ -2832,11 +2840,19 @@ function vaultDescription(x) {
 // — descriptions are plaintext any tool can read — and it ends the block.
 const COMMENTED_ASSIGNMENT = /^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=/;
 
-function newCommentBlock() { return { desc: [], notes: [], inNotes: false }; }
+//
+// A `#` line that is the single word `unsecure` (or `secure`), in any case, is
+// neither: it says how the ONE variable below is stored (see `byn help
+// unsecure`). `## unsecure` is a note that happens to say so.
+function newCommentBlock() { return { desc: [], notes: [], inNotes: false, marker: "" }; }
 function commentBlockAdd(b, line) {
   const rest = line.replace(/^#+/, "");
   const hashes = line.length - rest.length;
   const body = rest.startsWith(" ") ? rest.slice(1) : rest;
+  if (hashes === 1) {
+    const word = body.trim().toLowerCase();
+    if (word === "unsecure" || word === "secure") { b.marker = word; return; }
+  }
   if (hashes >= 2) {
     b.inNotes = true;
     const t = body.trim();
@@ -2849,6 +2865,7 @@ function commentBlockAdd(b, line) {
 }
 function commentBlockTake(b) {
   const out = { desc: b.desc.join("\n").replace(/^\n+|\n+$/g, ""), notes: b.notes.slice() };
+  if (b.marker) out.marker = b.marker;
   Object.assign(b, newCommentBlock());
   return out;
 }
@@ -2856,6 +2873,9 @@ function commentBlockTake(b) {
 // line breaks, one `#` line each; a note is one `##` line.
 function annotationComments(ann) {
   const out = [];
+  // First, so it is the first thing read about the variable. Only ever
+  // `unsecure`: sealed is what an unmarked variable already is.
+  if (ann.marker === "unsecure") out.push("# unsecure");
   if (ann.desc) {
     for (let ln of ann.desc.replace(/\r\n/g, "\n").split("\n")) {
       ln = ln.replace(/[ \t]+$/, "");
@@ -3017,8 +3037,16 @@ function entryRow(s, i) {
     bdgWrap.appendChild(emptyBdg);
   }
   row.appendChild(bdgWrap);
+  if (s.unsecure) row.classList.add("unsecure");
 
   const name = el("span", "cell name", s.name);
+  // Said in words, on the row, whether or not the vault is open: this value
+  // is not a secret to anything on the machine.
+  if (s.unsecure) {
+    const tag = el("span", "tag-unsecure", "unsecure");
+    tag.title = "stored unsealed — readable with no password and injected without a trusted .byn";
+    name.appendChild(tag);
+  }
   if (!inherited) { name.title = "double-click to rename"; name.ondblclick = (e) => { e.stopPropagation(); editName(s, name); }; }
   else { name.title = "inherited from default"; }
   row.appendChild(name);
@@ -3041,6 +3069,12 @@ function entryRow(s, i) {
   acts.appendChild(iconBtn("eye", "reveal", "reveal value", () => reveal(s, val)));
   acts.appendChild(iconBtn("copy", "copy", "copy value", () => copyValue(s)));
   acts.appendChild(iconBtn("pencil", "edit", inherited ? "override in this env" : "edit value", () => editValue(s, val)));
+  // Sealed ⇄ unsecure, on the entry where it lives (an inherited one is
+  // changed in default, not from here).
+  if (!inherited) {
+    if (s.unsecure) acts.appendChild(iconBtn("lock", "seal", "seal this value (it is unsecure now)", () => setSecure(s, true)));
+    else acts.appendChild(iconBtn("unlock", "unseal", "make unsecure — readable without a password", () => setSecure(s, false)));
+  }
   // Action set depends on the row's inheritance state (bd is null in the
   // default env, where every row is just deletable; see badgeFor):
   //   override (⤴) → revert (drop override → default) + persist (set as default)
@@ -3245,7 +3279,8 @@ async function revealValue(s) {
   return data.value;
 }
 async function reveal(s, valEl) {
-  if (vaultLocked(state.scope.vault)) {
+  // An unsecure value needs no key, so a locked vault does not stand in its way.
+  if (vaultLocked(state.scope.vault) && !s.unsecure) {
     // A value cannot be decrypted while the vault is locked: a one-shot password
     // can authorize the read but does not load the vault key, so the daemon
     // returns "vault is locked". Unlock the vault first — that loads the key for
@@ -3269,8 +3304,35 @@ function hideReveal(s, valEl) {
 function toggleReveal(s, valEl) {
   if (valEl.classList.contains("revealed")) hideReveal(s, valEl); else reveal(s, valEl);
 }
+// setSecure moves one entry between sealed and unsecure.
+//
+// Sealing is an ordinary update. Making a value unsecure publishes something
+// stored to everything on the machine, so the daemon refuses it on a session
+// alone: the first request comes back auth_required and apiWithAuth asks for
+// the master password (or a passkey touch) for this one change.
+async function setSecure(s, secure) {
+  const vault = state.scope.vault;
+  if (vaultLocked(vault)) { toast("unlock the vault to change how a value is stored", true); return; }
+  const ok = await openDialog(secure ? {
+    title: "Seal value", okText: "seal",
+    message: `Seal “${s.name}”? It will need the vault again to read, and a trusted .byn to be injected.` +
+      "\n\nSealing does not take back what was readable until now — rotate the value if it mattered.",
+  } : {
+    title: "Make unsecure", danger: true, okText: "make unsecure",
+    message: `Make “${s.name}” unsecure?\n\nIts value will be stored unsealed: anything on this machine that can run byn ` +
+      "can read it with no password, and it is injected into commands without a trusted .byn. " +
+      "Do this only for configuration you would be content to commit to the repo — never for a credential." +
+      "\n\nYou will be asked for the master password.",
+  });
+  if (!ok) return;
+  try {
+    await apiWithAuth("POST", "/api/entry/secure", { scope: curScope(), names: [s.name], secure }, vault);
+    toast(secure ? "sealed " + s.name : s.name + " is now unsecure");
+    await loadEntries();
+  } catch (e) { if (e.code !== "cancelled") toast(e.message, true); }
+}
 async function copyValue(s) {
-  if (vaultLocked(state.scope.vault)) { await unlockVault(state.scope.vault); return; }
+  if (vaultLocked(state.scope.vault) && !s.unsecure) { await unlockVault(state.scope.vault); return; }
   try { const value = await revealValue(s); await navigator.clipboard.writeText(value); toast("copied " + s.name); }
   catch (e) { toast(e.message || "copy failed", true); }
 }
@@ -3433,11 +3495,14 @@ async function editValue(s, cell) {
     finished = true;
     if (!commit) { renderEntries(); return; }
     try {
-      await apiWithAuth("POST", "/api/entries", { scope: curScope(), name: s.name, value: ta.value }, state.scope.vault);
+      // An unsecure entry stays unsecure when its value is edited here: the
+      // row says what it is, right where the typing happens. (The CLI seals
+      // unless told otherwise, because there nothing is on screen to say so.)
+      await apiWithAuth("POST", "/api/entries", { scope: curScope(), name: s.name, value: ta.value, unsecure: !!s.unsecure }, state.scope.vault);
       // The put wrote this env's own row (an override, for an inherited
       // value), so that is the row the description belongs to.
       if (desc && desc.changed()) await saveDescription(s.name, desc.text(), curScope());
-      toast((s.source === "default" ? "overrode " : "updated ") + s.name + (s.source === "default" ? " in " + state.scope.env : ""));
+      toast((s.source === "default" ? "overrode " : "updated ") + s.name + (s.source === "default" ? " in " + state.scope.env : "") + (s.unsecure ? " (unsecure)" : ""));
       await loadEntries();
     } catch (e) { toast(e.message, true); renderEntries(); }
   };
@@ -3514,20 +3579,26 @@ function addNewRow() {
   descIn.placeholder = "description (optional) — plaintext, agents can read it";
   row.appendChild(descIn);
   const acts = el("span", "acts");
+  // Off unless ticked, every time: unsecure is never the default.
+  const openLbl = el("label", "add-unsecure");
+  const openIn = el("input"); openIn.type = "checkbox";
+  openLbl.appendChild(openIn); openLbl.appendChild(document.createTextNode(" unsecure"));
+  openLbl.title = "store unsealed: readable with no password, injected without a trusted .byn — for config that is not a secret";
+  acts.appendChild(openLbl);
   const save = el("button", "act save", "save"); const cancel = el("button", "act", "cancel");
   acts.appendChild(save); acts.appendChild(cancel); row.appendChild(acts);
   tbl.appendChild(row); nameIn.focus();
   const commit = async () => {
     const name = nameIn.value.trim(); if (!name) { nameIn.focus(); return; }
     try {
-      await api("POST", "/api/entries", { scope: curScope(), name, value: valIn.value, create_only: true });
+      await api("POST", "/api/entries", { scope: curScope(), name, value: valIn.value, create_only: true, unsecure: openIn.checked });
       const d = descIn.value.trim();
       if (d) {
         // The value is stored either way; a description that fails to save
         // is reported, not allowed to look like a failed add.
         try { await saveDescription(name, d, curScope()); } catch (e) { toast("added " + name + ", but the description failed: " + e.message, true); await loadEntries(); return; }
       }
-      toast("added " + name); await loadEntries();
+      toast("added " + name + (openIn.checked ? " (unsecure)" : "")); await loadEntries();
     }
     catch (e) { toast(e.message, true); nameIn.focus(); nameIn.select(); }
   };
@@ -3651,7 +3722,7 @@ async function revertOverride(s) {
   const scope = curScope(); // pin the scope for the undo closure
   toastUndo("reverted " + s.name + " to default", async () => {
     try {
-      await apiWithAuth("POST", "/api/entries", { scope, name: s.name, value: old, create_only: true }, vault);
+      await apiWithAuth("POST", "/api/entries", { scope, name: s.name, value: old, create_only: true, unsecure: !!s.unsecure }, vault);
       toast("restored override " + s.name);
       await loadEntries();
     } catch (e) { toast(e.message, true); }
@@ -3679,7 +3750,7 @@ async function persistToDefault(s) {
   let value;
   try { value = await revealValue(s); } catch (e) { toast(e.message, true); return; }
   const defScope = { vault, project: state.scope.project, env: "default" };
-  try { await apiWithAuth("POST", "/api/entries", { scope: defScope, name: s.name, value }, vault); }
+  try { await apiWithAuth("POST", "/api/entries", { scope: defScope, name: s.name, value, unsecure: !!s.unsecure }, vault); }
   catch (e) { toast("could not write default: " + e.message, true); return; }
   // Drop the local copy so this env inherits the new default. If this fails the
   // promote already succeeded — surface it rather than silently leaving a dupe.

@@ -235,6 +235,7 @@ func runPut(args []string, scope cliScope) int {
 	createOnly := fs.Bool("create-only", false, "fail if name already exists")
 	description := fs.String("description", "", "what this value is for — plaintext, readable by agents (settable only as the value is created)")
 	note := fs.String("note", "", "a private note about this value — encrypted, readable only by you")
+	unsecure := fs.Bool("unsecure", false, "store the value UNSEALED: readable with no password, by anything that can run byn (for config that is not a secret; applies to this write only)")
 	jsonOut := fs.Bool("json", false, "emit {stored,created,unattended} JSON instead of prose")
 	pwStdin := fs.Bool("password-stdin", false, "read the authorizing password from stdin for non-interactive authorization")
 	if err := parseFlags(fs, args); err != nil {
@@ -359,6 +360,7 @@ func runPut(args []string, scope cliScope) int {
 			ipc.PutReq{
 				Scope: scope.ToIPC(), Name: name, Value: value, CreateOnly: *createOnly,
 				Description: *description, Note: *note, Password: pw,
+				Unsecure: *unsecure,
 			},
 			&putResp)
 		return putErr
@@ -404,7 +406,13 @@ func runPut(args []string, scope cliScope) int {
 			if *description != "" || *note != "" {
 				obj["annotated"] = putResp.Annotated
 			}
-			if putResp.Unattended {
+			if putResp.Unsecure {
+				obj["unsecure"] = true
+			}
+			if putResp.Resecured {
+				obj["resecured"] = true
+			}
+			if putResp.Unattended && !putResp.Unsecure {
 				// The prose says how long this stays readable; the JSON has to
 				// carry the same fact, or a caller reading only the JSON does
 				// not know it holds something with a lifetime.
@@ -415,6 +423,12 @@ func runPut(args []string, scope cliScope) int {
 			if merr == nil {
 				_, _ = fmt.Fprintln(os.Stdout, string(out))
 			}
+		case putResp.Unsecure:
+			// Said every time, not as a hint: this is the least protected way
+			// byn stores anything, and the caller should never have to wonder
+			// afterwards which way a value went in.
+			fmt.Fprintf(os.Stderr, "%s stored %s UNSECURE in %s — readable with no password by anything that can run byn\n",
+				yellow("note:"), name, scope)
 		case putResp.Unattended:
 			// Not a hint: hints are suppressed when nothing is watching, which
 			// is exactly when this matters. A caller that stored a value it can
@@ -429,6 +443,16 @@ func runPut(args []string, scope cliScope) int {
 		// when the put turned out to be an overwrite the caller was not
 		// authorized to annotate, and a caller that believes it labelled a
 		// value when it did not will not go back and check.
+		// The name was unsecure and this write sealed it, because it did not
+		// say --unsecure. That is the safe reading of an unmarked write, and it
+		// also means whatever read this name freely a moment ago now cannot —
+		// so it is said out loud rather than left to be found by a failure
+		// somewhere else.
+		if putResp.Resecured && !*jsonOut {
+			fmt.Fprintf(os.Stderr, "%s %s was unsecure and is now sealed (this write did not say --unsecure).\n",
+				yellow("note:"), name)
+			fmt.Fprintf(os.Stderr, "      To keep it readable without a password: byn unsecure %s\n", name)
+		}
 		if (*description != "" || *note != "") && !putResp.Annotated && !*jsonOut {
 			fmt.Fprintf(os.Stderr, "%s the description/note was not applied: %s already existed.\n",
 				yellow("note:"), name)
@@ -483,8 +507,9 @@ func runGet(args []string, scope cliScope) int {
 		out, _ := json.Marshal(struct {
 			Name         string                `json:"name"`
 			Value        string                `json:"value"`
+			Unsecure     bool                  `json:"unsecure,omitempty"`
 			Descriptions []ipc.DescriptionView `json:"descriptions,omitempty"`
-		}{Name: name, Value: string(resp.Value), Descriptions: resp.Descriptions})
+		}{Name: name, Value: string(resp.Value), Unsecure: resp.Unsecure, Descriptions: resp.Descriptions})
 		fmt.Println(string(out))
 		return exitOK
 	}
@@ -527,7 +552,9 @@ func runList(args []string, scope cliScope) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "output as JSON array")
-	long := fs.Bool("long", false, "annotate each name (marks values stored with no password behind the call)")
+	long := fs.Bool("long", false, "annotate each name (marks unsecure values, and values stored with no password behind the call)")
+	onlyUnsecure := fs.Bool("unsecure", false, "list only the unsecure values (readable with no password)")
+	onlySecure := fs.Bool("secure", false, "list only the sealed values")
 	if err := parseFlags(fs, args); err != nil {
 		return exitErr
 	}
@@ -560,6 +587,19 @@ func runList(args []string, scope cliScope) int {
 	}
 
 	secrets := resp.Secrets
+	if *onlyUnsecure && *onlySecure {
+		fmt.Fprintln(os.Stderr, "Error: --secure and --unsecure are mutually exclusive")
+		return exitErr
+	}
+	if *onlyUnsecure || *onlySecure {
+		kept := make([]ipc.SecretMeta, 0, len(secrets))
+		for _, s := range secrets {
+			if s.Unsecure == *onlyUnsecure {
+				kept = append(kept, s)
+			}
+		}
+		secrets = kept
+	}
 	if pattern != "" {
 		matched := secrets[:0]
 		for _, s := range secrets {
@@ -592,7 +632,14 @@ func runList(args []string, scope cliScope) int {
 	}
 
 	if len(secrets) == 0 {
-		fmt.Fprintln(os.Stderr, "(no secrets stored)")
+		switch {
+		case *onlyUnsecure:
+			fmt.Fprintln(os.Stderr, "(nothing here is stored unsecure)")
+		case *onlySecure:
+			fmt.Fprintln(os.Stderr, "(nothing here is sealed)")
+		default:
+			fmt.Fprintln(os.Stderr, "(no secrets stored)")
+		}
 		return exitOK
 	}
 	for _, s := range secrets {
@@ -602,11 +649,14 @@ func runList(args []string, scope cliScope) int {
 			// `byn list NAME && …`; annotating it would break them, which is
 			// why this is a separate flag rather than a nicer default.
 			mark := ""
+			if s.Unsecure {
+				mark = "  " + cyan("(unsecure)")
+			}
 			switch {
 			case s.UnattendedInherited:
-				mark = "  " + yellow("(unattended value, inherited from default)")
+				mark += "  " + yellow("(unattended value, inherited from default)")
 			case s.Unattended:
-				mark = "  " + yellow("(unattended value)")
+				mark += "  " + yellow("(unattended value)")
 			}
 			if s.Notes > 0 {
 				noteWord := "notes"
@@ -632,17 +682,30 @@ func runList(args []string, scope cliScope) int {
 	// On stderr, and never in the pattern form: stdout here is a names-only
 	// list that callers pipe and use as an existence probe, and decorating it
 	// would break them. --json carries the same fact as a field.
-	var unattended []string
+	var unattended, unattendedUnsecure []string
 	for _, s := range secrets {
 		if s.Unattended {
 			unattended = append(unattended, s.Name)
+			if s.Unsecure {
+				unattendedUnsecure = append(unattendedUnsecure, s.Name)
+			}
 		}
 	}
 	if len(unattended) > 0 {
 		fmt.Fprintf(os.Stderr, "%s %d value(s) here were stored with no password behind the call: %s\n",
 			yellow("note:"), len(unattended), strings.Join(unattended, ", "))
 		fmt.Fprintf(os.Stderr, "      byn cannot tell one an agent invented from one you provisioned.\n")
-		fmt.Fprintf(os.Stderr, "      To put them under your password: byn import --unattended%s\n", importEnvHint(secrets))
+		// Two different fixes, because they are stored two different ways. A
+		// sealed one is under this machine's key and is imported under yours;
+		// an unsecure one is under no key at all, and importing has nothing
+		// to re-seal — sealing it is its own command.
+		if len(unattended) > len(unattendedUnsecure) {
+			fmt.Fprintf(os.Stderr, "      To put them under your password: byn import --unattended%s\n", importEnvHint(secrets))
+		}
+		if len(unattendedUnsecure) > 0 {
+			fmt.Fprintf(os.Stderr, "      Stored unsecure (readable with no password): %s — to seal: byn secure NAME\n",
+				strings.Join(unattendedUnsecure, ", "))
+		}
 	}
 	return exitOK
 }
