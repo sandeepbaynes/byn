@@ -12,17 +12,17 @@ import (
 // resealed chain is hard to build through the live daemon; the reseal+verify
 // logic itself is unit-tested in internal/audit).
 func TestAuditChainDetail(t *testing.T) {
-	if sev, d := auditChainDetail("default", 5, 5, 0); sev != "fail" ||
-		!strings.Contains(d, "broken at event #5") || !strings.Contains(d, "byn audit reseal default") {
+	if sev, d := auditChainDetail("default", 5, 12, 0, 0); sev != "fail" ||
+		!strings.Contains(d, "broken at event #5 of 12") || !strings.Contains(d, "byn --vault default audit reseal") {
 		t.Errorf("broken: sev=%s detail=%q", sev, d)
 	}
-	if sev, d := auditChainDetail("default", -1, 10, 0); sev != "ok" || d != "10 events, chain intact" {
+	if sev, d := auditChainDetail("default", -1, 10, 0, 0); sev != "ok" || d != "10 events, chain intact" {
 		t.Errorf("intact: sev=%s detail=%q", sev, d)
 	}
-	if _, d := auditChainDetail("default", -1, 10, 1); !strings.Contains(d, "(1 acknowledged reseal)") {
+	if _, d := auditChainDetail("default", -1, 10, 1, 1); !strings.Contains(d, "(1 unverifiable event acknowledged by 1 reseal)") {
 		t.Errorf("1 reseal (singular): %q", d)
 	}
-	if _, d := auditChainDetail("default", -1, 10, 2); !strings.Contains(d, "(2 acknowledged reseals)") {
+	if _, d := auditChainDetail("default", -1, 10, 2, 50); !strings.Contains(d, "(50 unverifiable events acknowledged by 2 reseals)") {
 		t.Errorf("2 reseals (plural): %q", d)
 	}
 }

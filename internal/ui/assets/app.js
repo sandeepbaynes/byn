@@ -1393,7 +1393,8 @@ async function renderAuditView() {
     const v = await api("GET", "/api/audit/verify?vault=" + enc(vault));
     const ok = v.bad_index < 0;
     head.appendChild(el("span", "verify-chip " + (ok ? "ok" : "bad"),
-      ok ? `chain intact · ${v.total}` : `chain BROKEN at #${v.bad_index}`));
+      ok ? `chain intact · ${v.total}` + (v.unverifiable ? ` (${v.unverifiable} unverifiable, acknowledged)` : "")
+         : `chain BROKEN at #${v.bad_index} of ${v.total}`));
   } catch (_) { /* verify is best-effort */ }
 
   // Filter bar — server-side, so it scans the WHOLE log, not just the fetched

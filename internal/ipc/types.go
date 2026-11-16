@@ -1031,8 +1031,13 @@ type AuditVerifyReq struct {
 // AuditVerifyResp summarises the verification result. If BadIndex >= 0,
 // the chain broke at that index — manual triage required.
 type AuditVerifyResp struct {
-	Total    int `json:"total"`
+	Total    int `json:"total"`     // events in the log, reseal markers included
 	BadIndex int `json:"bad_index"` // -1 when intact
+	// Acked is how many breaks an owner has acknowledged with a reseal marker;
+	// Unverifiable is how many events sit inside those breaks — lines the
+	// current chain seed cannot vouch for.
+	Acked        int `json:"acked,omitempty"`
+	Unverifiable int `json:"unverifiable,omitempty"`
 }
 
 // AuditResealReq acknowledges the first un-acknowledged chain break in a vault's
@@ -1052,6 +1057,10 @@ type AuditResealResp struct {
 	ExpectedHead string `json:"expected_head,omitempty"`
 	Reason       string `json:"reason,omitempty"`
 	By           string `json:"by,omitempty"`
+	// ResumeIndex is the first event after the break that the chain verifies
+	// again from; events BrokenIndex..ResumeIndex-1 are acknowledged as
+	// unverifiable by this one marker.
+	ResumeIndex int `json:"resume_index,omitempty"`
 }
 
 // ---- Trust store -------------------------------------------------------

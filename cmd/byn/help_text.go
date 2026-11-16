@@ -2615,6 +2615,10 @@ DESCRIPTION
            as intact. The vault must be UNLOCKED. Prompts for a reason
            and confirmation; --reason with --yes runs non-interactively.
            A marker forged without the chain seed cannot clear a break.
+           One marker covers the stretch up to where the chain verifies
+           again, and the output says how many events it signed off:
+           a vault deleted and re-created under the same name keeps the
+           old vault's log, whose every line fails under the new seed.
 
 EXAMPLES
        Recent 20 events for the active vault:

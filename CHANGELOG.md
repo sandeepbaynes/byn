@@ -65,6 +65,19 @@ commands that need no secrets while the file waits to be trusted.
 - `byn exec --unsecure -- COMMAND` asks for this outright, with or without a
   `.byn`; `--var NAME` is granted at once when every name is unsecure.
 
+### Fixed: one `audit reseal` now covers a whole unverifiable stretch
+
+A vault deleted and re-created under the same name keeps its audit directory
+(the record of the deletion is the point), so the new vault appends to a log
+whose earlier lines were signed with the old vault's seed. Every one of them
+fails under the new seed, and `byn audit reseal` bridged one event per run —
+fifty old events meant fifty reseals, and doctor's "broken at event #0 (of 0)"
+gave no hint why. A reseal marker now records where the chain verifies again
+(`resume_index`), one reseal acknowledges the whole stretch, and `verify` and
+`doctor` report how many events were signed off as unverifiable rather than
+counting them as checked. Markers from before this field still work as they
+did. `verify` also reports the break against the log's full event count.
+
 ### Vault schema v10
 
 Unsecure values are a new row scheme, so the vault schema moves to v10. The

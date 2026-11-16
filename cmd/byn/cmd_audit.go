@@ -338,6 +338,11 @@ func runAuditVerify(args []string, scope cliScope) int {
 		return exitOK
 	}
 	if resp.BadIndex < 0 {
+		if resp.Acked > 0 {
+			fmt.Printf("audit chain intact — %d events; %d of them unverifiable, acknowledged by %d reseal(s)\n",
+				resp.Total, resp.Unverifiable, resp.Acked)
+			return exitOK
+		}
 		fmt.Printf("audit chain intact — %d events verified\n", resp.Total)
 		return exitOK
 	}
@@ -415,7 +420,16 @@ func runAuditReseal(args []string, scope cliScope) int {
 		fmt.Println(string(out))
 		return exitOK
 	}
-	fmt.Printf("Resealed — acknowledged the break at event #%d.\n", resp.BrokenIndex)
+	if resp.ResumeIndex > resp.BrokenIndex+1 {
+		// A stretch, not a point: the chain only picks up again further on.
+		// Say how much was signed off, so an owner acknowledging a few events
+		// after a crash notices when it is thousands.
+		fmt.Printf("Resealed — acknowledged events #%d–#%d (%d events the current chain cannot verify).\n",
+			resp.BrokenIndex, resp.ResumeIndex-1, resp.ResumeIndex-resp.BrokenIndex)
+		fmt.Printf("  the chain verifies again from event #%d\n", resp.ResumeIndex)
+	} else {
+		fmt.Printf("Resealed — acknowledged the break at event #%d.\n", resp.BrokenIndex)
+	}
 	fmt.Printf("  reason: %s\n", resp.Reason)
 	fmt.Printf("  by:     %s\n", resp.By)
 	fmt.Println("`byn audit verify` (and `byn doctor`) now read the chain as intact.")

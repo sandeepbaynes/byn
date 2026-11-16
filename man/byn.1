@@ -703,7 +703,10 @@ visible and attributable. Afterwards \fBaudit verify\fR and \fBdoctor\fR read th
 chain as intact (annotated with the acknowledged reseal). The vault must be
 unlocked (a deliberate owner action). Prompts for a reason and an explicit
 confirmation; \fB\-\-reason\fR with \fB\-\-yes\fR runs non\-interactively. A forged
-marker (without the chain seed) cannot clear a break.
+marker (without the chain seed) cannot clear a break. One marker covers the
+stretch up to where the chain verifies again, and the output says how many
+events it signed off: a vault deleted and re\-created under the same name keeps
+the old vault's log, whose every line fails under the new seed.
 .SS Running processes and their leftovers
 .TP
 .B ps

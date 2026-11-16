@@ -77,6 +77,27 @@ type ResealMarker struct {
 	ExpectedHead string `json:"expected_head"` // hmac verification expected there (forensic)
 	Reason       string `json:"reason"`        // free-text, owner-supplied
 	By           string `json:"by"`            // who acknowledged (owner / session)
+	// ResumeIndex is the first event after the break that chains correctly
+	// from its predecessor's recorded head under the current seed. Events
+	// BrokenIndex..ResumeIndex-1 cannot be verified and the marker acknowledges
+	// all of them at once: a vault deleted and re-created under the same name
+	// keeps appending to the old vault's log, so every line signed with the old
+	// seed fails, and a marker that bridged one event would have to be followed
+	// by one for each of the rest. Zero (a marker from before this field) means
+	// BrokenIndex+1, the single-event bridge.
+	ResumeIndex int `json:"resume_index,omitempty"`
+}
+
+// Result is what a chain verification found.
+type Result struct {
+	BadIndex int // index of the first UN-acknowledged break, or -1 if none
+	Total    int // events in the log, markers included
+	Acked    int // acknowledged breaks honoured
+	// Unverifiable counts the events inside acknowledged breaks: lines the
+	// current seed cannot vouch for, which an owner has signed off on.
+	Unverifiable int
+	Observed     string // recorded hmac at BadIndex (hex), "" when intact
+	Expected     string // expected hmac at BadIndex (hex), "" when intact
 }
 
 // ErrNoBreak is returned by Reseal when the chain has no un-acknowledged break.
@@ -355,78 +376,121 @@ func (l *Logger) auditLines() ([][]byte, error) {
 	return out, nil
 }
 
-// chainWalk is the result of a marker-aware chain verification.
-type chainWalk struct {
-	badIndex int    // index of the first UN-acknowledged break, or -1 if none
-	total    int    // events walked
-	acked    int    // acknowledged reseal restarts honored
-	observed string // recorded hmac at badIndex (hex), "" when intact
-	expected string // expected hmac at badIndex (hex), "" when intact
+// parsedEvent is one log line with its recorded head decoded.
+type parsedEvent struct {
+	ev       Event
+	recorded []byte
+}
+
+// parseLinesLocked decodes every line of the log. A line that does not parse is
+// an error naming it: the log is append-only JSON lines, so a torn one is damage
+// to report, not something to step over. Caller holds l.mu.
+func (l *Logger) parseLinesLocked() ([]parsedEvent, error) {
+	lines, err := l.auditLines()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]parsedEvent, 0, len(lines))
+	for i, line := range lines {
+		var e Event
+		if jerr := json.Unmarshal(line, &e); jerr != nil {
+			return nil, fmt.Errorf("audit: parse line %d: %w", i, jerr)
+		}
+		recorded, derr := hex.DecodeString(e.HMACChain)
+		if derr != nil {
+			return nil, fmt.Errorf("audit: parse hmac at line %d: %w", i, derr)
+		}
+		out = append(out, parsedEvent{ev: e, recorded: recorded})
+	}
+	return out, nil
 }
 
 // walkChainLocked verifies the chain, tolerating a break that a valid reseal
 // marker acknowledges (the bridge model). Caller holds l.mu.
-func (l *Logger) walkChainLocked() (chainWalk, error) {
-	lines, err := l.auditLines()
+func (l *Logger) walkChainLocked() (Result, error) {
+	events, err := l.parseLinesLocked()
 	if err != nil {
-		return chainWalk{badIndex: -1}, err
+		return Result{BadIndex: -1}, err
 	}
+	n := len(events)
 	// Pass 1: collect reseal markers, keyed on the head they acknowledge.
 	ackByObserved := map[string]*ResealMarker{}
-	for _, line := range lines {
-		var e Event
-		if json.Unmarshal(line, &e) != nil {
-			continue // torn line — pass 2 surfaces it as an error
-		}
-		if e.Reseal != nil {
-			ackByObserved[e.Reseal.ObservedHead] = e.Reseal
+	for _, pe := range events {
+		if pe.ev.Reseal != nil {
+			ackByObserved[pe.ev.Reseal.ObservedHead] = pe.ev.Reseal
 		}
 	}
 	// Pass 2: walk, honoring acknowledged restarts.
+	r := Result{BadIndex: -1, Total: n}
 	prev := []byte(nil)
-	idx, acked := 0, 0
-	for _, line := range lines {
-		var e Event
-		if jerr := json.Unmarshal(line, &e); jerr != nil {
-			return chainWalk{badIndex: idx, total: idx, acked: acked}, fmt.Errorf("audit: parse line %d: %w", idx, jerr)
-		}
-		recorded, derr := hex.DecodeString(e.HMACChain)
-		if derr != nil {
-			return chainWalk{badIndex: idx, total: idx, acked: acked}, fmt.Errorf("audit: parse hmac at line %d: %w", idx, derr)
-		}
-		expected, eerr := computeWithSeed(l.seed, prev, e)
+	for idx := 0; idx < n; {
+		pe := events[idx]
+		expected, eerr := computeWithSeed(l.seed, prev, pe.ev)
 		if eerr != nil {
-			return chainWalk{badIndex: idx, total: idx, acked: acked}, eerr
+			return Result{BadIndex: idx, Total: n, Acked: r.Acked, Unverifiable: r.Unverifiable}, eerr
 		}
-		if !hmac.Equal(recorded, expected) {
-			// Acknowledged iff a marker records EXACTLY this observed (recorded)
-			// head and the expected head we just computed. A forged marker fails at
-			// its own line below (it can't be signed without the seed).
-			if m := ackByObserved[e.HMACChain]; m != nil && m.ExpectedHead == hex.EncodeToString(expected) {
-				acked++
-				prev = recorded
-				idx++
-				continue
-			}
-			return chainWalk{
-				badIndex: idx, total: idx, acked: acked,
-				observed: e.HMACChain, expected: hex.EncodeToString(expected),
-			}, nil
+		if hmac.Equal(pe.recorded, expected) {
+			prev = pe.recorded
+			idx++
+			continue
 		}
-		prev = recorded
-		idx++
+		// Acknowledged iff a marker records EXACTLY this observed (recorded)
+		// head and the expected head we just computed. A forged marker fails at
+		// its own line further on (it can't be signed without the seed).
+		m := ackByObserved[pe.ev.HMACChain]
+		if m == nil || m.ExpectedHead != hex.EncodeToString(expected) {
+			r.BadIndex, r.Observed, r.Expected = idx, pe.ev.HMACChain, hex.EncodeToString(expected)
+			return r, nil
+		}
+		r.Acked++
+		// The marker says where the chain picks up again. Everything before
+		// that is acknowledged as unverifiable; the walk resumes chained from
+		// the last unverifiable event's recorded head, which is what the first
+		// verifiable event after the gap was written against.
+		resume := m.ResumeIndex
+		if resume <= idx {
+			resume = idx + 1
+		}
+		if resume > n {
+			resume = n
+		}
+		r.Unverifiable += resume - idx
+		prev = events[resume-1].recorded
+		idx = resume
 	}
-	return chainWalk{badIndex: -1, total: idx, acked: acked}, nil
+	return r, nil
 }
 
-// VerifyChain re-walks the chain, tolerating breaks acknowledged by a reseal
-// marker. Returns the first un-acknowledged break index (or -1), the events
-// walked, and the count of acknowledged reseals. Used by `byn doctor`.
-func (l *Logger) VerifyChain(_ context.Context) (badIndex, total, acked int, err error) {
+// resumeIndexLocked finds where the chain, broken at breakIdx, picks up again
+// under the current seed: the first later event whose recorded head is what
+// the seed computes from its predecessor's recorded head. When no such event
+// exists the break is treated as a single-event bridge, the pre-ResumeIndex
+// behaviour: anything that still fails afterwards is a further break to be
+// looked at on its own. Caller holds l.mu.
+func (l *Logger) resumeIndexLocked(events []parsedEvent, breakIdx int) int {
+	for j := breakIdx + 1; j < len(events); j++ {
+		expected, err := computeWithSeed(l.seed, events[j-1].recorded, events[j].ev)
+		if err == nil && hmac.Equal(events[j].recorded, expected) {
+			return j
+		}
+	}
+	return breakIdx + 1
+}
+
+// Verify re-walks the chain, tolerating breaks acknowledged by a reseal
+// marker. Used by `byn audit verify` and `byn doctor`.
+func (l *Logger) Verify(_ context.Context) (Result, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	w, werr := l.walkChainLocked()
-	return w.badIndex, w.total, w.acked, werr
+	return l.walkChainLocked()
+}
+
+// VerifyChain is Verify for callers that want the three numbers: the first
+// un-acknowledged break index (or -1), the events in the log, and the count of
+// acknowledged reseals.
+func (l *Logger) VerifyChain(ctx context.Context) (badIndex, total, acked int, err error) {
+	r, err := l.Verify(ctx)
+	return r.BadIndex, r.Total, r.Acked, err
 }
 
 // Reseal acknowledges the first un-acknowledged chain break by appending a
@@ -440,15 +504,20 @@ func (l *Logger) Reseal(ctx context.Context, reason, by string) (*ResealMarker, 
 	if err != nil {
 		return nil, err
 	}
-	if w.badIndex < 0 {
+	if w.BadIndex < 0 {
 		return nil, ErrNoBreak
 	}
+	events, err := l.parseLinesLocked()
+	if err != nil {
+		return nil, err
+	}
 	m := &ResealMarker{
-		BrokenIndex:  w.badIndex,
-		ObservedHead: w.observed,
-		ExpectedHead: w.expected,
+		BrokenIndex:  w.BadIndex,
+		ObservedHead: w.Observed,
+		ExpectedHead: w.Expected,
 		Reason:       reason,
 		By:           by,
+		ResumeIndex:  l.resumeIndexLocked(events, w.BadIndex),
 	}
 	if _, err := l.appendLocked(ctx, Event{Op: "audit.reseal", Outcome: OutcomeOK, Reseal: m}); err != nil {
 		return nil, err

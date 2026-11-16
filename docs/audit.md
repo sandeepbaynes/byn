@@ -125,6 +125,16 @@ byn handles this in two layers:
    acknowledged reseal)*. A marker forged without the seed cannot clear a break.
    For scripting: `byn audit reseal --reason "daemon restart" --yes`.
 
+   A marker covers a **stretch**, not just one event. `reseal` finds where the
+   chain verifies again under the current seed and records that as the
+   marker's `resume_index`; everything from the break up to it is acknowledged
+   as *unverifiable*, and `verify` and `doctor` say how many events that is.
+   The case this exists for: a vault **deleted and re-created under the same
+   name** keeps its old audit directory (the trail of the deletion is the point),
+   so the new vault appends to a log whose first lines were signed with the old
+   vault's seed. Every one of those lines fails under the new seed, and before
+   `resume_index` each needed a reseal of its own.
+
 The design choice — *bridge marker, not re-chain* — is deliberate: rewriting the
 hashes forward would make a benign gap and a real tamper indistinguishable. The
 marker keeps every acknowledged gap honest.

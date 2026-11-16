@@ -126,13 +126,15 @@ func (d *Daemon) handleAuditVerify(ctx context.Context, env *ipc.Envelope) *ipc.
 			fmt.Sprintf("vault %q: %v", name, err),
 			"check `byn vault list`")
 	}
-	bad, total, _, vErr := entry.auditor.VerifyChain(ctx)
+	r, vErr := entry.auditor.Verify(ctx)
 	if vErr != nil {
 		return internalErr(env.ID, vErr)
 	}
 	resp, err := ipc.NewResponse(env.ID, ipc.AuditVerifyResp{
-		Total:    total,
-		BadIndex: bad,
+		Total:        r.Total,
+		BadIndex:     r.BadIndex,
+		Acked:        r.Acked,
+		Unverifiable: r.Unverifiable,
 	})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -182,6 +184,7 @@ func (d *Daemon) handleAuditReseal(ctx context.Context, env *ipc.Envelope) *ipc.
 		ExpectedHead: m.ExpectedHead,
 		Reason:       m.Reason,
 		By:           m.By,
+		ResumeIndex:  m.ResumeIndex,
 	})
 	if err != nil {
 		return internalErr(env.ID, err)
@@ -192,19 +195,23 @@ func (d *Daemon) handleAuditReseal(ctx context.Context, env *ipc.Envelope) *ipc.
 // auditChainDetail formats the doctor audit check from a VerifyChain result: a
 // break FAILs with a reseal hint; an intact chain is OK, annotated with the
 // count of owner-acknowledged reseals when any are present.
-func auditChainDetail(vaultName string, bad, total, acked int) (severity, detail string) {
+func auditChainDetail(vaultName string, bad, total, acked, unverifiable int) (severity, detail string) {
 	if bad >= 0 {
-		return "fail", fmt.Sprintf("chain broken at event #%d — run: byn audit reseal %s", bad, vaultName)
+		return "fail", fmt.Sprintf("chain broken at event #%d of %d — run: byn --vault %s audit reseal", bad, total, vaultName)
 	}
 	detail = fmt.Sprintf("%d events, chain intact", total)
 	if acked > 0 {
-		suffix := "s"
-		if acked == 1 {
-			suffix = ""
-		}
-		detail = fmt.Sprintf("%d events, chain intact (%d acknowledged reseal%s)", total, acked, suffix)
+		detail = fmt.Sprintf("%d events, chain intact (%s acknowledged by %s)",
+			total, plural(unverifiable, "unverifiable event"), plural(acked, "reseal"))
 	}
 	return "ok", detail
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func auditToWire(e audit.Event) ipc.AuditEvent {
@@ -309,13 +316,13 @@ func (d *Daemon) handleDoctor(ctx context.Context, env *ipc.Envelope) *ipc.Envel
 			Detail: "schema + fingerprint ok",
 		})
 		// Audit chain.
-		bad, total, acked, vErr := entry.auditor.VerifyChain(ctx)
+		r, vErr := entry.auditor.Verify(ctx)
 		if vErr != nil {
 			checks = append(checks, ipc.DoctorCheck{
 				Name: "vault[" + name + "].audit", Severity: "fail", Detail: vErr.Error(),
 			})
 		} else {
-			sev, detail := auditChainDetail(name, bad, total, acked)
+			sev, detail := auditChainDetail(name, r.BadIndex, r.Total, r.Acked, r.Unverifiable)
 			checks = append(checks, ipc.DoctorCheck{
 				Name: "vault[" + name + "].audit", Severity: sev, Detail: detail,
 			})

@@ -3,6 +3,7 @@ package audit
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -131,5 +132,126 @@ func appendRawLine(t *testing.T, dir string, e Event) {
 	defer func() { _ = f.Close() }()
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// reseededChain is the log of a vault that was deleted and re-created under the
+// same name: e0..e2 were signed with the OLD vault's seed, and the new vault,
+// finding the old log on disk, chained e3.. from e2's recorded head under its
+// own seed. Under the current seed every old line fails, not just the first.
+func reseededChain(t *testing.T) (*Logger, string) {
+	t.Helper()
+	l, _, dir := freshLogger(t)
+	oldSeed := l.seed
+	newSeed := make([]byte, len(oldSeed))
+	for i := range newSeed {
+		newSeed[i] = ^oldSeed[i]
+	}
+	l.seed = newSeed // pretend the old vault wrote these
+	mustAppend(t, l, "old0")
+	mustAppend(t, l, "old1")
+	mustAppend(t, l, "old2")
+	l.seed = oldSeed // the re-created vault's seed, which is what New() loaded
+	mustAppend(t, l, "new3")
+	mustAppend(t, l, "new4")
+	return l, dir
+}
+
+// One reseal covers the whole stretch of old-seed events, and verify reports
+// how many were signed off rather than pretending they were checked.
+func TestReseal_BridgesAStretchOfOldSeedEvents(t *testing.T) {
+	l, dir := reseededChain(t)
+	ctx := context.Background()
+	r, err := l.Verify(ctx)
+	if err != nil || r.BadIndex != 0 || r.Total != 5 {
+		t.Fatalf("pre: want break@0 of 5, got %+v err=%v", r, err)
+	}
+	before := readNewestLog(t, dir)
+
+	m, err := l.Reseal(ctx, "vault re-created", "owner")
+	if err != nil {
+		t.Fatalf("Reseal: %v", err)
+	}
+	if m.BrokenIndex != 0 || m.ResumeIndex != 3 {
+		t.Fatalf("marker = %+v, want broken 0 resume 3", m)
+	}
+	r, err = l.Verify(ctx)
+	if err != nil || r.BadIndex != -1 || r.Acked != 1 || r.Unverifiable != 3 || r.Total != 6 {
+		t.Fatalf("post: want intact, 1 acked, 3 unverifiable of 6, got %+v err=%v", r, err)
+	}
+	if after := readNewestLog(t, dir); !bytes.HasPrefix(after, before) {
+		t.Error("reseal rewrote existing log bytes — must only append")
+	}
+	// Life goes on: later events chain from the marker as usual.
+	mustAppend(t, l, "new6")
+	if r, err := l.Verify(ctx); err != nil || r.BadIndex != -1 || r.Total != 7 {
+		t.Fatalf("after another append: %+v err=%v", r, err)
+	}
+}
+
+// A marker written before ResumeIndex existed bridges one event, as it always
+// did; the next reseal then covers what remains.
+func TestReseal_OldSingleEventMarkerStillHonoured(t *testing.T) {
+	l, dir := reseededChain(t)
+	ctx := context.Background()
+	m, err := l.Reseal(ctx, "first try", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the marker as the old format would have written it: no range.
+	m.ResumeIndex = 0
+	lines := bytes.Split(bytes.TrimRight(readNewestLog(t, dir), "\n"), []byte("\n"))
+	var marker Event
+	if err := json.Unmarshal(lines[len(lines)-1], &marker); err != nil {
+		t.Fatal(err)
+	}
+	marker.Reseal = m
+	// Re-sign it under the current seed, chained as it was.
+	var prevEv Event
+	if err := json.Unmarshal(lines[len(lines)-2], &prevEv); err != nil {
+		t.Fatal(err)
+	}
+	prev, _ := hex.DecodeString(prevEv.HMACChain)
+	h, err := computeWithSeed(l.seed, prev, marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker.HMACChain = hex.EncodeToString(h)
+	l.prevHex = marker.HMACChain
+	line, _ := json.Marshal(marker)
+	lines[len(lines)-1] = line
+	if err := os.WriteFile(newestLogFile(t, dir), append(bytes.Join(lines, []byte("\n")), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := l.Verify(ctx)
+	if err != nil || r.BadIndex != 1 || r.Acked != 1 || r.Unverifiable != 1 {
+		t.Fatalf("old-format marker: want break@1 after bridging one event, got %+v err=%v", r, err)
+	}
+	m2, err := l.Reseal(ctx, "second try", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m2.BrokenIndex != 1 || m2.ResumeIndex != 3 {
+		t.Fatalf("second marker = %+v, want broken 1 resume 3", m2)
+	}
+	if r, err := l.Verify(ctx); err != nil || r.BadIndex != -1 || r.Acked != 2 || r.Unverifiable != 3 {
+		t.Fatalf("after second reseal: %+v err=%v", r, err)
+	}
+}
+
+// A single-point break — one event chained from a stale head, everything after
+// it consistent — is still bridged one event wide.
+func TestReseal_SinglePointBreakResumesAtNext(t *testing.T) {
+	l, _, _ := brokenChain(t)
+	m, err := l.Reseal(context.Background(), "crash", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.BrokenIndex != 3 || m.ResumeIndex != 4 {
+		t.Fatalf("marker = %+v, want broken 3 resume 4", m)
+	}
+	if r, err := l.Verify(context.Background()); err != nil || r.BadIndex != -1 || r.Unverifiable != 1 {
+		t.Fatalf("%+v err=%v", r, err)
 	}
 }

@@ -923,8 +923,11 @@ the break index, observed vs expected heads, a reason, and who/when). Requires
 the vault **unlocked** (a deliberate owner action). Interactive by default (shows
 the break, prompts for a reason, confirms); `--reason R --yes` runs
 non-interactively. Afterwards `verify` and `doctor` read the chain as intact
-(with the acknowledged reseal). A marker forged without the chain seed cannot
-clear a break. See the [Audit log guide](audit.md#chain-breaks-and-reseal).
+(with the acknowledged reseal). One marker covers the whole stretch up to where
+the chain verifies again, and the output says how many events it signed off —
+a vault re-created under the same name leaves every line of the old vault's log
+unverifiable. A marker forged without the chain seed cannot clear a break. See
+the [Audit log guide](audit.md#chain-breaks-and-reseal).
 
 ---
 
