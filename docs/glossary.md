@@ -40,8 +40,8 @@ XChaCha20-Poly1305 throughout.
 When `--json` appears in the CLI args (before any `--`), byn:
 - Emits machine-readable output where applicable
 - **Refuses to prompt** for anything (no `trust [y/N]:`)
-- Hard-fails on untrusted `.byn` instead of asking
-- Hard-fails on tampered `.byn`
+- Never asks to trust a `.byn`; an untrusted or tampered one gets no sealed
+  value (`exec` runs on unsecure values only, with a warning)
 
 Lets CI, scripts, and AI coding agents interact with
 byn safely.

@@ -425,9 +425,11 @@ a sensitive value.
 5.4.1. When `--json` appears anywhere before `--` in argv, the CLI
 enters agent mode.
 
-5.4.2. Agent mode MUST refuse all interactive prompts. Untrusted
-`.byn` files MUST hard-fail in agent mode; the user must run
-`byn trust PATH` from an interactive terminal first.
+5.4.2. Agent mode MUST refuse all interactive prompts. An untrusted
+`.byn` MUST NOT be trusted, prompted about, or silently applied in agent
+mode: `exec` runs on unsecure values alone with a warning (§6.3), and no
+sealed value flows until the user runs `byn trust PATH` from an interactive
+terminal.
 
 5.4.3. `--json` does NOT auto-enable on subcommands that don't
 support a JSON output today. The flag is a no-op for those (no error).
@@ -782,7 +784,7 @@ refreshes. `v` runs an `audit verify`.
 - Refusal to leak values via argv, environment, prompts, shell
   history, or scrollback.
 - Protection of agent harnesses against silent `.byn` redirection
-  (TOFU + agent-mode hard fail).
+  (TOFU; an untrusted file yields no sealed value and says so).
 - **Reduction and detection of dev-time AI-agent secret leakage** (the
   primary use case): a coding/debugging agent has no plaintext
   `.env`/credential file to read accidentally — values live only in the

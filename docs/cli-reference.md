@@ -23,7 +23,7 @@ is a TTY. See [Pager / hint env vars](#pager-and-hint-env-vars).
 | `--project NAME` | `BYN_PROJECT` | `default` | Target project |
 | `--env NAME` | `BYN_ENV` | `default` | Target env |
 | `--no-discovery` | `BYN_NO_DISCOVERY=1` | off | Skip `.byn` walk for this call |
-| `--json` | n/a | off | Agent mode: machine-readable output AND no interactive prompts; untrusted `.byn` hard-fails |
+| `--json` | n/a | off | Agent mode: machine-readable output AND no interactive prompts; an untrusted `.byn` yields no sealed value (`exec` runs on unsecure values only, with a warning) |
 
 Conflicting duplicate values are a **hard error**:
 

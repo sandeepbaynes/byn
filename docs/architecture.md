@@ -352,8 +352,9 @@ common.
 3. `preParseGlobals` extracts `--vault/--project/--env` from anywhere
    in argv; conflicts are a hard error.
 4. `.byn` discovery walks parents from CWD; first hit is hashed;
-   `isTrusted` checks against `trusted_byn.json`. Untrusted +
-   agent mode = hard fail; untrusted + TTY = prompt; trusted = apply.
+   `isTrusted` checks against `trusted_byn.json`. Trusted = apply;
+   untrusted = `exec` runs on unsecure values only, with a warning, and
+   nothing else applies (`byn trust PATH` is the only way in).
 5. Resolved scope = CLI flag > env var > discovered > daemon default.
 6. `runPut` reads the value from stdin (never argv).
 7. `newClient(dir).Call(OpPut, PutReq{Scope, Name, Value, CreateOnly}, …)`
